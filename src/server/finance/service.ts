@@ -466,6 +466,16 @@ export async function simulateSignature(contractId: string, email: string, actor
     payload: { contractId: contract.id, email: signer.email, simulated: true, envelopeId: contract.signatureEnvelopeId },
   });
   if (done) {
+    // Evidência da assinatura: o contrato assinado entra nos documentos do cliente (conta para o gate da jornada).
+    await addContractDocument(
+      {
+        contractId: contract.id,
+        name: `Contrato ${contract.number} v${contract.version} assinado · envelope ${contract.signatureEnvelopeId} · ${contract.documentHash?.slice(0, 19) ?? "sem hash"}`,
+        url: `/financeiro/contratos/${contract.id}`,
+        category: "Contrato assinado",
+      },
+      actor,
+    );
     await emitEvent({
       type: "contract.signed",
       actor,

@@ -1,6 +1,7 @@
 import type { registerHandler as RegisterFn } from "../emit";
-import { getById, update } from "../../db";
-import { COLLECTIONS, type Client, type DomainEvent, type WorkflowInstance, type WorkflowStep } from "@/domain/types";
+import { getById, list, update } from "../../db";
+import { COLLECTIONS, type Client, type Contract, type DomainEvent, type Opportunity, type Proposal, type WorkflowInstance, type WorkflowStep } from "@/domain/types";
+import type { GateContextData } from "@/server/workflow/gates";
 
 /**
  * Handlers que avançam a jornada do cliente a partir de eventos de outros módulos:
@@ -46,14 +47,47 @@ async function advanceStage(event: DomainEvent, expectedStageKey: string, except
   const step = await getById<WorkflowStep>(COLLECTIONS.workflowSteps, instance.currentStepId);
   if (!step || step.status === "concluida" || step.status === "pulada") return;
 
-  const { completeGate } = await import("@/server/workflow/service");
+  const { completeGate, evaluateStepGate } = await import("@/server/workflow/service");
+  const { describeMissing } = await import("@/server/workflow/gates");
+
+  // Marca no checklist do gate o que os dados dos módulos já comprovam, para que a etapa só seja
+  // concluída "por exceção" quando algo realmente ficou pendente (e o motivo diga o quê).
+  const { context } = await evaluateStepGate(step, { instance });
+  const proven = await provenChecklist(expectedStageKey, context.data);
+  const checklist = (step.checklist ?? []).filter((c) => !c.done && proven.has(c.id)).map((c) => ({ id: c.id, done: true }));
+  const { evaluation } = await evaluateStepGate({ ...step, checklist: (step.checklist ?? []).map((c) => (proven.has(c.id) ? { ...c, done: true } : c)) }, { instance });
+  const missing = evaluation.ok ? "" : describeMissing(evaluation);
+
   const result = await completeGate({
     stepId: step.id,
     actor: { id: event.actorId, name: event.actorName },
-    exceptionReason,
+    checklist: checklist.length > 0 ? checklist : undefined,
+    exceptionReason: missing ? `${exceptionReason} · pendente no gate: ${missing}` : exceptionReason,
     system: true,
   });
   if (result.status !== "completed") {
     console.warn(`[workflow] ${event.type} não avançou a etapa ${expectedStageKey} do cliente ${event.clientId}: ${result.status}`);
   }
+}
+
+/** Itens do checklist do gate comprovados pelos dados de Vendas/Financeiro (chaves do template padrão). */
+async function provenChecklist(stageKey: string, data: GateContextData): Promise<Set<string>> {
+  const proven = new Set<string>();
+  const opp = data.opportunity as Opportunity | undefined;
+  const c = data.contract as Contract | undefined;
+  if (stageKey === "vendas" && opp) {
+    if (opp.diagnosis?.trim()) proven.add("diagnostico");
+    const proposals = await list<Proposal>(COLLECTIONS.proposals, { where: [["opportunityId", "==", opp.id]] });
+    if (proposals.some((p) => p.sentAt)) proven.add("proposta_enviada");
+    if (proposals.some((p) => p.status === "aceita")) proven.add("proposta_aceita");
+    const b = opp.billingData;
+    if (b?.legalName && b.document && b.email && b.paymentCondition) proven.add("dados_faturamento");
+  }
+  if (stageKey === "financeiro" && c) {
+    if (c.number && c.items.length > 0) proven.add("contrato_gerado");
+    if (c.signedAt) proven.add("assinatura");
+    if (c.financialStatus === "aprovado") proven.add("pagamento");
+    if (c.proposalId) proven.add("escopo");
+  }
+  return proven;
 }

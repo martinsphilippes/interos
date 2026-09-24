@@ -96,7 +96,7 @@ export function ContractItemsCard({ contractId, items, products, canEdit, sent, 
         {view.length === 0 ? (
           <EmptyState size="sm" icon={<Package />} title="Nenhum item" description="Adicione os produtos vendidos." />
         ) : (
-          <Table className="min-w-[760px]">
+          <Table className="min-w-[680px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Produto</TableHead>

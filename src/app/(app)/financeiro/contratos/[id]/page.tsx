@@ -126,8 +126,8 @@ export default async function ContractPage({ params }: { params: Params }) {
         </div>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="flex min-w-0 flex-col gap-4 lg:col-span-2">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="flex min-w-0 flex-col gap-4">
           <ContractItemsCard contractId={contract.id} items={contract.items} products={detail.products} canEdit={canOperate && detail.editable} sent={sent} version={contract.version} />
           <ContractConditionsCard contract={contract} canEdit={canOperate && detail.editable} sent={sent} />
           <ContractBillingCard

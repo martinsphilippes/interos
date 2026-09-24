@@ -2,7 +2,7 @@ import { format, formatDistanceToNowStrict, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 const currency = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
-const compactCurrency = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", notation: "compact", maximumFractionDigits: 1 });
+const compactCurrency = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", notation: "compact", minimumFractionDigits: 0, maximumFractionDigits: 1 });
 const number = new Intl.NumberFormat("pt-BR");
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
 
@@ -95,7 +95,9 @@ export function formatDay(value: string | Date | undefined | null): string {
 export function formatRelative(value: string | Date | undefined | null): string {
   const d = toDate(value);
   if (!d) return "—";
-  return formatDistanceToNowStrict(d, { addSuffix: true, locale: ptBR });
+  // Abaixo de 1 minuto não mostra segundos: o texto mudaria entre o SSR e a hidratação no navegador.
+  if (Math.abs(Date.now() - d.getTime()) < 60_000) return "agora mesmo";
+  return formatDistanceToNowStrict(d, { addSuffix: true, locale: ptBR, roundingMethod: "floor" });
 }
 
 export function initials(name: string | undefined | null): string {

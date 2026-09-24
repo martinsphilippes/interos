@@ -389,7 +389,7 @@ export async function getSalesOverview(user: CurrentUser, escopo?: string): Prom
   const createdMonth = rows.filter((r) => competenceOf(r.createdAt) === comp);
   const commission = await getCommissionSummary(scope.userIds, comp, { opportunities: mine });
 
-  // "Contatar agora": urgência = follow-up vencido > sem próxima ação > parada > quente com valor alto.
+  // "Contatar agora": urgência = follow-up vencido > MQL novo sem primeiro contato > sem próxima ação > parada > quente com valor alto.
   const annual = (r: OpportunityRow) => r.monthlyTotal * 12 + r.setupTotal + r.hardwareTotal;
   const avgValue = open.length > 0 ? open.reduce((s, r) => s + annual(r), 0) / open.length : 0;
   const now = Date.now();
@@ -401,6 +401,11 @@ export async function getSalesOverview(user: CurrentUser, escopo?: string): Prom
       const late = Math.max(0, Math.floor((now - new Date(r.nextActionAt).getTime()) / DAY_MS));
       score += 100 + late * 5;
       reasons.push(late > 0 ? `Follow-up vencido há ${late} ${late === 1 ? "dia" : "dias"}` : "Follow-up vence hoje");
+    }
+    // MQL recém-chegado do Marketing sem nenhuma atividade desde a criação (speed-to-lead).
+    if (r.leadId && r.stage === "qualificacao" && Math.abs(new Date(r.lastActivityAt).getTime() - new Date(r.createdAt).getTime()) < 60_000) {
+      score += 80;
+      reasons.push("Novo MQL aguardando primeiro contato");
     }
     if (r.noNextAction) {
       score += 60;

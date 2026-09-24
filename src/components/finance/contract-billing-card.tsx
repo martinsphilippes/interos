@@ -81,11 +81,10 @@ export function ContractBillingCard({ contractId, clientName, billings, required
               ))}
             </ul>
             <div className="hidden md:block">
-              <Table className="min-w-[760px]">
+              <Table className="min-w-[640px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Cobrança</TableHead>
-                    <TableHead>Competência</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead>Vencimento</TableHead>
                     <TableHead>Status</TableHead>
@@ -101,8 +100,8 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                           {b.id === requiredBillingId ? <Star className="size-3.5 text-brand" aria-label="Exigida para liberar" /> : null}
                           {billingLabel(b)}
                         </span>
+                        <span className="block text-xs font-normal capitalize text-muted">{formatCompetence(b.competence)}</span>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap capitalize text-muted">{formatCompetence(b.competence)}</TableCell>
                       <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(b.amount)}</TableCell>
                       <TableCell className={cn("whitespace-nowrap", b.status === "vencida" ? "text-danger-fg" : "text-muted")}>{formatDate(b.dueDate)}</TableCell>
                       <TableCell>

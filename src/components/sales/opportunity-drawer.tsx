@@ -23,7 +23,8 @@ import { UserChip } from "@/components/ui/user-chip";
 import { Timeline } from "@/components/timeline/timeline";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { createOpportunityTaskAction, registerOpportunityContactAction, reopenOpportunityAction, updateOpportunity } from "@/server/sales/actions";
+import { changeOpportunityStage, createOpportunityTaskAction, registerOpportunityContactAction, reopenOpportunityAction, updateOpportunity } from "@/server/sales/actions";
+import type { OpenStage } from "@/server/sales/schemas";
 import type { OpportunityDetail } from "@/server/sales/queries";
 import { lossReasonLabel } from "@/server/sales/schemas";
 import { ContactButtons } from "./contact-buttons";
@@ -62,8 +63,22 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
   const [tab, setTab] = React.useState<TabKey>("resumo");
   const [dialog, setDialog] = React.useState<"ganho" | "perdido" | "reabrir" | "proposta" | null>(null);
   const [, startTransition] = React.useTransition();
+  const [stagePending, startStageTransition] = React.useTransition();
   const owner = users[opp.ownerId];
   const stageLabel = detail.stages.find((s) => s.key === opp.stage)?.label;
+
+  const moveStage = (stage: string) => {
+    if (!stage || stage === opp.stage) return;
+    startStageTransition(async () => {
+      const result = await changeOpportunityStage({ opportunityId: opp.id, stage: stage as OpenStage });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Etapa alterada para ${detail.stages.find((s) => s.key === stage)?.label ?? stage}`);
+      router.refresh();
+    });
+  };
 
   const reopen = async () => {
     const result = await reopenOpportunityAction({ opportunityId: opp.id });
@@ -107,6 +122,14 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {open ? (
             <>
+              <Select
+                aria-label="Etapa"
+                value={opp.stage}
+                onChange={(e) => moveStage(e.target.value)}
+                disabled={stagePending}
+                className="w-auto min-w-[160px]"
+                options={detail.stages.map((s) => ({ value: s.key, label: s.label }))}
+              />
               <Button size="sm" className="min-h-[44px] bg-success hover:bg-success-fg md:min-h-0" onClick={() => setDialog("ganho")}>
                 <Trophy /> Marcar como ganho
               </Button>

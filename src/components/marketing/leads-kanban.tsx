@@ -92,7 +92,7 @@ export function LeadsKanban({ items, sellers }: { items: LeadListItem[]; sellers
   return (
     <>
       <DndContext id={dndId} sensors={sensors} collisionDetection={closestCorners} onDragStart={(e) => setActiveId(String(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
-        <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 scrollbar-thin md:mx-0 md:grid md:grid-cols-5 md:overflow-visible md:px-0">
+        <div className="relative -mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 scrollbar-thin md:mx-0 md:grid md:grid-cols-5 md:overflow-visible md:px-0">
           {columns.map((col) => (
             <Column key={col.status} status={col.status} leads={col.leads} onOpen={(id) => navigate({ lead: id })} />
           ))}

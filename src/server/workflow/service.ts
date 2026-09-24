@@ -598,7 +598,10 @@ export async function completeGate(input: CompleteGateInput): Promise<CompleteGa
     current.approval = { ...(current.approval ?? {}), approvedAt: nowIso(), approvedBy: actor.id };
   }
 
-  return finalizeStep({ step: current, stage, instance, template, actor, exceptionReason: exception, fields, system: input.system });
+  // Chamada de sistema com o gate atendido não é exceção: o motivo só é registrado quando algo ficou pendente
+  // (ou quando um usuário informou a exceção explicitamente).
+  const recordedException = input.system && evaluation.ok ? undefined : exception;
+  return finalizeStep({ step: current, stage, instance, template, actor, exceptionReason: recordedException, fields, system: input.system });
 }
 
 interface FinalizeInput {

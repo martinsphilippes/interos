@@ -24,6 +24,7 @@ import {
   type Client,
   type Communication,
   type Contact,
+  type DomainEvent,
   type Lead,
   type LeadSource,
   type Opportunity,
@@ -32,6 +33,7 @@ import {
   type Prospect,
   type ProspectList,
   type Task,
+  type TimelineEvent,
   type User,
   type UserRef,
   type WorkflowInstance,
@@ -759,6 +761,8 @@ export async function qualifyLead(leadId: string, sellerId: string | undefined, 
     { exceptionReason: "Gate de MQL validado no módulo de Marketing" },
   );
 
+  await attachLeadHistoryToClient(lead.id, handoff.client.id);
+
   const qualifiedAt = nowIso();
   const patch: Partial<Lead> = { status: "qualificado", qualifiedAt, clientId: handoff.client.id, opportunityId: handoff.opportunity.id, nextAction: undefined, nextActionAt: undefined };
   await patchDoc<Lead>(COLLECTIONS.leads, lead, patch);
@@ -774,6 +778,35 @@ export async function qualifyLead(leadId: string, sellerId: string | undefined, 
   });
 
   return { ok: true, lead: { ...lead, ...patch }, handoff, seller };
+}
+
+/**
+ * Leva para a timeline do cliente o histórico do lead anterior à qualificação (lead criado, contatos,
+ * mudanças), que foi emitido sem clientId. Os eventos originais não mudam; só a projeção na timeline.
+ * Idempotente: ignora eventos que já estão na timeline do cliente.
+ */
+async function attachLeadHistoryToClient(leadId: string, clientId: string): Promise<void> {
+  const [events, existing] = await Promise.all([
+    list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", leadId]] }),
+    list<TimelineEvent>(COLLECTIONS.timelineEvents, { where: [["clientId", "==", clientId]] }),
+  ]);
+  const known = new Set(existing.map((t) => t.eventId));
+  for (const e of events) {
+    if (e.entityType !== "lead" || e.clientId || known.has(e.id)) continue;
+    await create<TimelineEvent>(COLLECTIONS.timelineEvents, {
+      clientId,
+      eventId: e.id,
+      type: e.type,
+      occurredAt: e.occurredAt,
+      actorId: e.actorId,
+      actorName: e.actorName,
+      title: e.title,
+      description: e.description,
+      entityType: e.entityType,
+      entityId: e.entityId,
+      department: e.department,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

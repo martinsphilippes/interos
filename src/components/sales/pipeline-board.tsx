@@ -116,7 +116,7 @@ export function PipelineBoard({ rows, stages, sellers, products, currentUserId, 
         </div>
       ) : (
         <DndContext id={dndId} sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
-          <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 scrollbar-thin md:mx-0 md:px-0">
+          <div className="relative -mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 scrollbar-thin md:mx-0 md:px-0">
             {stages.map((s) => {
               const cards = filtered.filter((r) => columnOf(r) === s.key);
               return <Column key={s.key} id={`col:${s.key}`} label={s.label} rows={cards} onOpen={(id) => navigate({ oportunidade: id })} />;
