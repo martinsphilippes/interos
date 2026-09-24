@@ -4,12 +4,13 @@ import * as React from "react";
 import Link from "next/link";
 import { BookOpen, Eye, Tag } from "lucide-react";
 import type { ArticleRow } from "@/server/support/queries";
-import { formatNumber, formatRelative } from "@/lib/format";
+import { formatNumber } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SearchInput } from "@/components/ui/search-input";
 import { Select } from "@/components/ui/select";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 const normalize = (v: string) =>
   v
@@ -65,7 +66,7 @@ export function ArticlesList({ articles, products, categories, initialQuery = ""
                   <span className="inline-flex items-center gap-1">
                     <Eye className="size-3.5" /> {formatNumber(a.views)}
                   </span>
-                  <span>atualizado {formatRelative(a.updatedAt)}</span>
+                  <span>atualizado <RelativeTime value={a.updatedAt} /></span>
                   {a.tags.length ? (
                     <span className="inline-flex items-center gap-1">
                       <Tag className="size-3.5" /> {a.tags.slice(0, 3).join(", ")}

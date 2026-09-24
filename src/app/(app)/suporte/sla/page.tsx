@@ -79,11 +79,11 @@ export default async function SupportSlaPage({ searchParams }: { searchParams: S
         <StatCard compact label="Em risco / violados agora" value={formatNumber(report.critical.length)} icon={<Timer />} tone={report.critical.length > 0 ? "danger" : "success"} href="/suporte/chamados?sla=violado" />
       </div>
 
-      <div className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <Card>
           <CardHeader>
             <CardTitle>Cumprimento de SLA · últimos 6 meses</CardTitle>
-            <CardDescription>1ª resposta: firstResponseAt ≤ prazo de resposta. Solução: resolvedAt ≤ prazo (chamados vencidos em aberto contam como violados).</CardDescription>
+            <CardDescription>1ª resposta: respondido até o prazo de resposta. Solução: resolvido até o prazo de solução (chamados vencidos em aberto contam como violados).</CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
             <SlaTrendChart data={report.series} target={targets.slaResolution} />
@@ -141,7 +141,7 @@ export default async function SupportSlaPage({ searchParams }: { searchParams: S
         </Card>
       </div>
 
-      <div className="mb-6 grid gap-4 xl:grid-cols-2">
+      <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle>Por atendente · {formatCompetence(report.month)}</CardTitle>
@@ -259,7 +259,7 @@ export default async function SupportSlaPage({ searchParams }: { searchParams: S
           <StatCard compact label="Notas 9–10" value={formatNumber(csat.team.promoters)} icon={<ThumbsUp />} tone="success" hint={csat.team.count ? formatPercent(csat.team.promoters / csat.team.count) : undefined} />
           <StatCard compact label="Notas 0–6" value={formatNumber(csat.team.detractors)} icon={<ThumbsDown />} tone={csat.team.detractors > 0 ? "danger" : "success"} hint="geram tarefa de investigação" />
         </div>
-        <div className="grid gap-4 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <Card>
             <CardHeader>
               <CardTitle>CSAT médio · últimos 6 meses</CardTitle>

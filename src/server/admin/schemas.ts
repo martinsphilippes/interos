@@ -140,7 +140,7 @@ export const setProductActiveSchema = z.object({ id: idSchema, active: z.boolean
 // Configurações do sistema (coleção settings, um documento por key)
 // ---------------------------------------------------------------------------
 
-export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro"] as const;
+export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const fraction = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(1, `${label} deve ser uma fração entre 0 e 1`);
@@ -217,6 +217,19 @@ export const gateFinanceiroSchema = z.object({
 });
 export type GateFinanceiroConfig = z.infer<typeof gateFinanceiroSchema>;
 
+/** Aprovação do go-live (lido por src/server/implementation/service.ts → getGoLiveSettings). */
+export const goLiveSchema = z.object({
+  exigeAprovacaoGestor: z.boolean("Informe se o go-live exige aprovação de gestor"),
+});
+export type GoLiveConfig = z.infer<typeof goLiveSchema>;
+
+/** Gate de ativação do cliente pelo CS (lido por src/server/cs/service.ts → getActivationSettings). */
+export const csAtivacaoSchema = z.object({
+  adocaoMinimaPct: z.number("Adoção mínima inválida").int("Use um percentual inteiro").min(0, "Mínimo 0%").max(100, "Máximo 100%"),
+  exigePlano: z.boolean("Informe se o plano de sucesso é obrigatório"),
+});
+export type CsAtivacaoConfig = z.infer<typeof csAtivacaoSchema>;
+
 export const SETTING_SCHEMAS = {
   horario_comercial: horarioComercialSchema,
   feriados: feriadosSchema,
@@ -225,6 +238,8 @@ export const SETTING_SCHEMAS = {
   health_score: healthScoreSchema,
   oportunidade: oportunidadeSchema,
   gate_financeiro: gateFinanceiroSchema,
+  go_live: goLiveSchema,
+  cs_ativacao: csAtivacaoSchema,
 } as const;
 
 export interface SettingValues {
@@ -235,6 +250,8 @@ export interface SettingValues {
   health_score: HealthScoreConfig;
   oportunidade: OportunidadeConfig;
   gate_financeiro: GateFinanceiroConfig;
+  go_live: GoLiveConfig;
+  cs_ativacao: CsAtivacaoConfig;
 }
 
 /** Valores usados quando o documento ainda não existe no banco (iguais ao seed). */
@@ -246,6 +263,8 @@ export const SETTING_DEFAULTS: SettingValues = {
   health_score: { pesos: { uso: 25, satisfacao: 20, sla: 15, suporte: 15, reincidencia: 10, financeiro: 15 }, limiares: { saudavel: 75, atencao: 50 } },
   oportunidade: { diasSemMovimentoParaParada: 7, horasSemInteracaoFollowup: 48 },
   gate_financeiro: { exigeContratoAssinado: true, exigePagamento: "setup", permiteExcecaoGestor: true },
+  go_live: { exigeAprovacaoGestor: true },
+  cs_ativacao: { adocaoMinimaPct: 30, exigePlano: true },
 };
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
@@ -256,6 +275,8 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   health_score: "Pesos e limiares do health score de clientes.",
   oportunidade: "Parâmetros de acompanhamento de oportunidades.",
   gate_financeiro: "Critérios do gate financeiro para liberar a implantação.",
+  go_live: "Regras de aprovação do go-live da implantação.",
+  cs_ativacao: "Critérios do gate de ativação do cliente pelo Customer Success.",
 };
 
 export const upsertSettingSchema = z.object({

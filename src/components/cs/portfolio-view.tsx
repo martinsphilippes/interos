@@ -6,7 +6,7 @@ import { AlertTriangle, CalendarCheck, CheckSquare, MessageCircle, Phone, Users 
 import type { PortfolioResult, PortfolioRow } from "@/server/cs/queries";
 import { HEALTH_LEVEL_LABELS } from "@/server/cs/schemas";
 import { HEALTH_LEVELS } from "@/domain/constants";
-import { formatCurrency, formatDate, formatRelative } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +22,7 @@ import { CheckpointDialog } from "./checkpoint-dialog";
 import { ChipList, HealthIndicator, OwnerCell, relationshipLabel } from "./cs-bits";
 import { ScopeSelect } from "./scope-select";
 import { useCsUrl } from "./use-cs";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 // ---------------------------------------------------------------------------
 // Filtros
@@ -117,7 +118,7 @@ function NextCell({ row }: { row: PortfolioRow }) {
   return (
     <span className={cn("whitespace-nowrap text-sm", row.nextOverdue && "font-medium text-danger-fg")} title={formatDate(row.nextInteractionAt)}>
       {row.nextOverdue ? "Vencida " : ""}
-      {formatRelative(row.nextInteractionAt)}
+      <RelativeTime value={row.nextInteractionAt} />
     </span>
   );
 }
@@ -194,7 +195,7 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }) {
                 <TableCell className="whitespace-nowrap">
                   <FinanceCell row={r} />
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-sm text-muted">{r.lastInteractionAt ? formatRelative(r.lastInteractionAt) : "—"}</TableCell>
+                <TableCell className="whitespace-nowrap text-sm text-muted">{r.lastInteractionAt ? <RelativeTime value={r.lastInteractionAt} /> : "—"}</TableCell>
                 <TableCell>
                   <NextCell row={r} />
                 </TableCell>
@@ -250,7 +251,7 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }) {
                 </div>
                 <div>
                   <dt className="label-caps">Última interação</dt>
-                  <dd>{r.lastInteractionAt ? formatRelative(r.lastInteractionAt) : "—"}</dd>
+                  <dd>{r.lastInteractionAt ? <RelativeTime value={r.lastInteractionAt} /> : "—"}</dd>
                 </div>
                 <div>
                   <dt className="label-caps">Próxima</dt>

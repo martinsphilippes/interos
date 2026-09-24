@@ -7,7 +7,7 @@ import { AlertTriangle, BookOpen, Building2, FileSignature, Paperclip, Plus, Rep
 import type { TicketDetail } from "@/server/support/queries";
 import { addAttachmentAction, classifyTicketAction } from "@/server/support/actions";
 import { TICKET_PRIORITIES, TICKET_PRIORITY_DEFINITIONS, TICKET_PRIORITY_LABELS, TICKET_QUEUES, TICKET_QUEUE_LABELS, type TicketPriority, type TicketQueue } from "@/server/support/schemas";
-import { formatCurrency, formatDate, formatPercent, formatRelative } from "@/lib/format";
+import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { TicketStatusBadge } from "./ticket-badges";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 const PRODUCT_STATUS_LABELS: Record<string, string> = { ativo: "Ativo", em_implantacao: "Em implantação", suspenso: "Suspenso", cancelado: "Cancelado" };
 const CONTRACT_STATUS_LABELS: Record<string, string> = {
@@ -119,7 +120,7 @@ export function TicketClientCard({ detail }: { detail: TicketDetail }) {
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-0.5">
                       <TicketStatusBadge status={t.status} />
-                      <span className="text-[11px] text-muted">{formatRelative(t.openedAt)}</span>
+                      <span className="text-[11px] text-muted"><RelativeTime value={t.openedAt} /></span>
                     </span>
                   </Link>
                 </li>
@@ -247,7 +248,7 @@ export function TicketAttachments({ detail, canOperate }: { detail: TicketDetail
                   {d.name}
                 </a>
                 <p className="text-[11px] text-muted">
-                  {detail.users[d.uploadedBy]?.name ?? "—"} · {formatRelative(d.createdAt)}
+                  {detail.users[d.uploadedBy]?.name ?? "—"} · <RelativeTime value={d.createdAt} />
                 </p>
               </li>
             ))}

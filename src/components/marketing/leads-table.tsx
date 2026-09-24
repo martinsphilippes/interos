@@ -8,10 +8,11 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination, paginate } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDateTime, formatPhone, formatRelative } from "@/lib/format";
+import { formatDateTime, formatPhone } from "@/lib/format";
 import { LeadStatusBadge, ScorePill, TemperatureBadge } from "./lead-badges";
 import type { LeadListItem } from "./marketing-model";
 import { useMarketingUrl } from "./use-marketing-url";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 const PAGE_SIZE = 25;
 
@@ -117,7 +118,7 @@ export function LeadsTable({ items, filtered }: { items: LeadListItem[]; filtere
                     <span className="text-sm text-muted-light">—</span>
                   )}
                 </TableCell>
-                <TableCell className="text-sm text-muted">{lead.lastContactAt ? formatRelative(lead.lastContactAt) : "Nunca"}</TableCell>
+                <TableCell className="text-sm text-muted">{lead.lastContactAt ? <RelativeTime value={lead.lastContactAt} /> : "Nunca"}</TableCell>
                 <TableCell className="text-sm">
                   {lead.nextActionAt ? <span className={lead.overdue ? "font-medium text-danger-fg" : undefined}>{formatDateTime(lead.nextActionAt)}</span> : <span className="text-muted-light">—</span>}
                   {lead.nextAction ? <span className="block max-w-[180px] truncate text-xs text-muted">{lead.nextAction}</span> : null}

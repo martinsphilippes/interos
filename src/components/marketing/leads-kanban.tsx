@@ -8,13 +8,13 @@ import type { LeadStatus } from "@/domain/types";
 import { Avatar } from "@/components/ui/avatar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { toast } from "@/components/ui/toast";
-import { formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { changeLeadStatusAction } from "@/server/marketing/actions";
 import { ScorePill, TemperatureBadge } from "./lead-badges";
 import { DisqualifyDialog, QualifyDialog } from "./lead-dialogs";
 import { LEAD_FUNNEL, LEAD_STATUSES, LEAD_STATUS_LABELS, type LeadListItem, type UserOption } from "./marketing-model";
 import { useMarketingUrl } from "./use-marketing-url";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 const COLUMN_TONE: Record<LeadStatus, string> = {
   novo: "border-t-info",
@@ -171,7 +171,7 @@ function LeadCard({ lead, onOpen, handleRef, handleProps, overlay }: { lead: Lea
           ) : null}
         </span>
         <span className="flex items-center justify-between gap-2 text-[11px] text-muted">
-          <span>{formatRelative(lead.createdAt)}</span>
+          <span><RelativeTime value={lead.createdAt} /></span>
           {lead.ownerName ? <Avatar name={lead.ownerName} size="xs" /> : <span className="text-warning-fg">sem responsável</span>}
         </span>
       </button>

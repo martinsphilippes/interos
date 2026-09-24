@@ -15,10 +15,11 @@ import { SectionTitle } from "@/components/ui/section-title";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
-import { formatPhone, formatRelative } from "@/lib/format";
+import { formatPhone } from "@/lib/format";
 import { assumeInboxItemAction, replyInboxAction } from "@/server/marketing/actions";
 import { ScorePill, TemperatureBadge } from "./lead-badges";
 import type { InboxData, InboxMessage } from "./marketing-model";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 type ReplyTarget = { communicationId?: string; leadId?: string; name: string; channel: "whatsapp" | "email"; quote?: string };
 
@@ -107,7 +108,7 @@ export function InboxView({ data, currentUserId }: { data: InboxData; currentUse
                       {[lead.company, lead.originName, lead.phone ? formatPhone(lead.phone) : lead.email].filter(Boolean).join(" · ")}
                     </p>
                     <p className="mt-1 flex items-center gap-2 text-xs text-muted">
-                      <TemperatureBadge temperature={lead.temperature} /> captado {formatRelative(lead.createdAt)}
+                      <TemperatureBadge temperature={lead.temperature} /> captado <RelativeTime value={lead.createdAt} />
                     </p>
                   </div>
                 </div>
@@ -156,7 +157,7 @@ function MessageItem({ message: m, currentUserId, busy, onAssume, onReply }: { m
               <span className="font-medium">{who}</span>
             )}
             {m.leadName && m.clientName ? <span className="text-xs text-muted">· {m.clientName}</span> : null}
-            <span className="text-xs text-muted">{formatRelative(m.receivedAt)}</span>
+            <span className="text-xs text-muted"><RelativeTime value={m.receivedAt} /></span>
             {m.replied ? (
               <Badge variant="success" size="sm">
                 Respondida

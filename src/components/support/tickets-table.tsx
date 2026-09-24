@@ -17,7 +17,7 @@ import {
   TICKET_STATUSES,
   TICKET_STATUS_LABELS,
 } from "@/server/support/schemas";
-import { dateKey, formatDateTime, formatRelative } from "@/lib/format";
+import { dateKey, formatDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -28,9 +28,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "@/components/ui/toast";
 import { UserChip } from "@/components/ui/user-chip";
 import { cn } from "@/lib/utils";
-import { SlaBadgeAt, useMinuteClock } from "./sla-live";
+import { ResponseCountdown, SlaBadgeAt, useMinuteClock } from "./sla-live";
 import { ChannelIcon, QueueBadge, TicketPriorityBadge, TicketStatusBadge } from "./ticket-badges";
 import { EMPTY_FILTERS, type TicketFilterState } from "./filters";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 const PERIOD_LABELS: Record<string, string> = { hoje: "Hoje", "7d": "Últimos 7 dias", "30d": "Últimos 30 dias", mes: "Este mês", "90d": "Últimos 90 dias" };
 
@@ -267,7 +268,7 @@ export function TicketsTable({ rows, mode, team, products, currentUserId, canOpe
                     <TableRow key={row.id} clickable onClick={() => openTicket(row)} className={cn(row.open && row.sla?.view.state === "violado" && "bg-danger-soft/30")}>
                       <TableCell>
                         {row.open ? <SlaBadgeAt sla={row.sla} now={now} /> : <SlaBadgeAt sla={row.sla} now={null} />}
-                        {row.open && !row.firstResponseAt ? <p className="mt-1 text-[11px] text-warning-fg">1ª resposta pendente</p> : null}
+                        {row.open ? <ResponseCountdown sla={row.sla} firstResponseAt={row.firstResponseAt} now={now} className="mt-1" /> : null}
                       </TableCell>
                       <TableCell className="max-w-[320px]">
                         <div className="flex items-center gap-2">
@@ -299,7 +300,7 @@ export function TicketsTable({ rows, mode, team, products, currentUserId, canOpe
                         {row.csatScore !== undefined ? <p className="mt-1 text-[11px] text-muted">CSAT {row.csatScore}</p> : null}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted" title={formatDateTime(row.openedAt)}>
-                        {formatRelative(row.openedAt)}
+                        <RelativeTime value={row.openedAt} />
                         {mode === "todos" && row.resolvedAt ? <p>resolvido {formatDateTime(row.resolvedAt)}</p> : null}
                       </TableCell>
                       <TableCell className="text-right">
@@ -348,7 +349,8 @@ export function TicketsTable({ rows, mode, team, products, currentUserId, canOpe
                   </button>
                   <div className="flex flex-wrap items-center gap-2">
                     {row.open ? <SlaBadgeAt sla={row.sla} now={now} /> : <SlaBadgeAt sla={row.sla} now={null} />}
-                    <span className="text-xs text-muted">{formatRelative(row.openedAt)}</span>
+                    {row.open ? <ResponseCountdown sla={row.sla} firstResponseAt={row.firstResponseAt} now={now} /> : null}
+                    <span className="text-xs text-muted"><RelativeTime value={row.openedAt} /></span>
                     {canOperate && row.open && row.assigneeId !== currentUserId ? (
                       <Button size="sm" variant="outline" className="ml-auto min-h-[44px]" loading={pendingId === row.id} onClick={() => assume(row)}>
                         <Hand /> Assumir

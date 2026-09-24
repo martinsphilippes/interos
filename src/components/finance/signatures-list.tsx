@@ -6,13 +6,14 @@ import { BellRing, CheckCircle2, FlaskConical, Send } from "lucide-react";
 import type { SignatureRow } from "@/server/finance/queries";
 import { sendForSignatureAction, sendSignatureReminderAction, simulateSignatureAction } from "@/server/finance/actions";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
-import { formatCurrency, formatDateTime, formatRelative } from "@/lib/format";
+import { formatCurrency, formatDateTime } from "@/lib/format";
 import { CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "@/components/clients/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useFinanceAction } from "./use-finance-action";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 /** Tom do tempo de espera: até 2 dias ok, até 5 atenção, acima crítico. */
 function waitingTone(days: number): string {
@@ -55,7 +56,7 @@ export function SignaturesList({ rows, mode, canOperate }: { rows: SignatureRow[
               </p>
               <p className="text-xs text-muted">
                 {mode === "waiting" ? (r.sentAt ? `Enviado em ${formatDateTime(r.sentAt)}` : "Envio anterior ao histórico") : `${r.signers.length} signatário(s) cadastrado(s)`}
-                {r.remindersSent > 0 ? ` · ${r.remindersSent} lembrete(s), último ${formatRelative(r.lastReminderAt)}` : mode === "waiting" ? " · nenhum lembrete" : ""}
+                {r.remindersSent > 0 ? <> · {r.remindersSent} lembrete(s), último <RelativeTime value={r.lastReminderAt} /></> : mode === "waiting" ? " · nenhum lembrete" : ""}
               </p>
             </div>
           </div>

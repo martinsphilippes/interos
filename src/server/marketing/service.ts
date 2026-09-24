@@ -653,18 +653,23 @@ export async function handoffToSales(contact: HandoffContact, seller: User, acto
   let workflowInstanceId: string | undefined;
   let workflowStepId: string | undefined;
   try {
-    const instance = client.workflowInstanceId ? await getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId) : null;
+    let instance = client.workflowInstanceId ? await getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId) : null;
     if (!instance) {
+      // Lead do Marketing: a jornada nasce em Marketing e o gate de MQL é concluído logo abaixo, para a
+      // jornada registrar as 6 etapas. Contato de prospecção (sem lead) começa direto em Vendas.
       const created = await createWorkflowInstanceForClient({
         clientId: client.id,
         clientName: client.tradeName,
-        startStageKey: "vendas",
+        startStageKey: contact.leadId ? "marketing" : "vendas",
+        skipInitialAutoTasks: Boolean(contact.leadId),
         actor,
         context: { leadId: contact.leadId, opportunityId: opportunity.id },
       });
       workflowInstanceId = created.instance.id;
       workflowStepId = created.step.id;
-    } else if (instance.status === "ativo") {
+      instance = created.instance.currentStageKey === "marketing" ? { ...created.instance, currentStepId: created.step.id } : null;
+    }
+    if (instance && instance.status === "ativo") {
       workflowInstanceId = instance.id;
       await update<WorkflowInstance>(COLLECTIONS.workflowInstances, instance.id, { context: { ...instance.context, leadId: contact.leadId ?? instance.context.leadId, opportunityId: opportunity.id } });
       workflowStepId = instance.currentStepId;
@@ -689,7 +694,7 @@ export async function handoffToSales(contact: HandoffContact, seller: User, acto
           else warnings.push("A etapa de Marketing da jornada não pôde ser concluída automaticamente.");
         }
       }
-    } else {
+    } else if (instance) {
       workflowInstanceId = instance.id;
     }
   } catch (error) {

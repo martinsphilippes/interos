@@ -15,7 +15,7 @@ import { registerWorkflowHandlers } from "@/server/events/handlers/workflow";
 import { notify } from "@/server/notifications";
 import { addBusinessHours, completeSla, computeSlaState, getHolidays, pauseSla, resumeSla, startSla } from "@/server/sla";
 import { createTaskInternal } from "@/server/tasks/service";
-import { formatDateTime } from "@/lib/format";
+import { formatCurrency, formatDateTime } from "@/lib/format";
 import {
   COLLECTIONS,
   type ChecklistItem,
@@ -40,7 +40,7 @@ import {
   type WorkflowStep,
   type WorkflowTemplate,
 } from "@/domain/types";
-import type { ClientStatus, DepartmentKey, RoleKey } from "@/domain/constants";
+import { CLIENT_STATUS_LABELS, type ClientStatus, type DepartmentKey, type RoleKey } from "@/domain/constants";
 import { coerceGateValue, describeMissing, evaluateGate, type GateContextData, type GateEvaluation } from "./gates";
 
 // ---------------------------------------------------------------------------
@@ -209,13 +209,15 @@ interface StartStepInput {
   instance: WorkflowInstance;
   stage: WorkflowStage;
   actor: UserRef;
+  /** Etapa que será concluída em seguida pelo próprio chamador (sem tarefas automáticas). */
+  skipAutoTasks?: boolean;
 }
 
 /**
  * Instancia uma etapa: responsável, SLA, checklist do gate, tarefas automáticas, evento
  * workflow.stage.started e notificações (responsável = ação; gestor do departamento = informativa).
  */
-async function startStep({ instance, stage, actor }: StartStepInput): Promise<WorkflowStep> {
+async function startStep({ instance, stage, actor, skipAutoTasks }: StartStepInput): Promise<WorkflowStep> {
   const now = nowIso();
   const assignee = await resolveStageAssignee(stage);
   const checklist: ChecklistItem[] = stage.gate.checklist.map((c) => ({ id: c.key, label: c.label, required: c.required, done: false }));
@@ -269,7 +271,7 @@ async function startStep({ instance, stage, actor }: StartStepInput): Promise<Wo
   // Tarefas automáticas da etapa (prazo em horas úteis a partir de agora).
   const holidays = await getHolidays();
   const taskIds: string[] = [];
-  for (const auto of stage.autoTasks) {
+  for (const auto of skipAutoTasks ? [] : stage.autoTasks) {
     const task = await createTaskInternal(
       {
         title: auto.title,
@@ -339,6 +341,8 @@ export interface CreateInstanceInput {
   actor: WorkflowActor;
   context?: WorkflowInstance["context"];
   templateKey?: string;
+  /** A etapa inicial será concluída logo em seguida (ex.: gate de MQL na qualificação): sem tarefas automáticas. */
+  skipInitialAutoTasks?: boolean;
 }
 
 export interface CreateInstanceResult {
@@ -396,7 +400,7 @@ export async function createWorkflowInstanceForClient(input: CreateInstanceInput
     payload: { templateKey: template.key, templateVersion: template.version, stageKey: stage.key },
   });
 
-  const step = await startStep({ instance, stage, actor: input.actor });
+  const step = await startStep({ instance, stage, actor: input.actor, skipAutoTasks: input.skipInitialAutoTasks });
   await update<WorkflowInstance>(COLLECTIONS.workflowInstances, instance.id, { currentStepId: step.id });
   await update<Client>(COLLECTIONS.clients, client.id, { workflowInstanceId: instance.id, currentStage: stage.key as Client["currentStage"] });
 
@@ -601,7 +605,28 @@ export async function completeGate(input: CompleteGateInput): Promise<CompleteGa
   // Chamada de sistema com o gate atendido não é exceção: o motivo só é registrado quando algo ficou pendente
   // (ou quando um usuário informou a exceção explicitamente).
   const recordedException = input.system && evaluation.ok ? undefined : exception;
-  return finalizeStep({ step: current, stage, instance, template, actor, exceptionReason: recordedException, fields, system: input.system });
+  // Os valores que o sistema comprovou (lidos do contexto do gate) ficam registrados em gateData junto
+  // com os manuais, para o histórico da jornada mostrar com que dados cada gate foi atendido.
+  const provenFields: Record<string, unknown> = { ...fields };
+  for (const f of evaluation.fields) {
+    if (f.filled && f.source === "sistema" && provenFields[f.path] === undefined && f.value !== undefined) {
+      provenFields[f.path] = await readableGateValue(f.path, f.label, f.value);
+    }
+  }
+  return finalizeStep({ step: current, stage, instance, template, actor, exceptionReason: recordedException, fields: provenFields, system: input.system });
+}
+
+/** Valor comprovado pelo sistema em forma legível para o histórico do gate (nomes em vez de IDs, moeda, Sim). */
+async function readableGateValue(path: string, label: string, value: unknown): Promise<unknown> {
+  if (value === true) return "Sim";
+  if (typeof value === "string" && /ownerId$|assigneeId$|responsibleId$/.test(path)) {
+    return (await getById<User>(COLLECTIONS.users, value))?.name ?? value;
+  }
+  if (typeof value === "string" && /successPlanId$/.test(path)) {
+    return (await getById<SuccessPlan>(COLLECTIONS.successPlans, value))?.objective ?? value;
+  }
+  if (typeof value === "number" && /(valor|mensal|total|R\$)/i.test(label) && !/%/.test(label)) return formatCurrency(value);
+  return JSON.parse(JSON.stringify(value)) as unknown;
 }
 
 interface FinalizeInput {
@@ -704,7 +729,7 @@ async function finalizeStep({ step, stage, instance, template, actor, fields, ex
         actor,
         clientId: client.id,
         entity: { type: "client", id: client.id },
-        title: `Status do cliente: ${client.status} → ${clientPatch.status}`,
+        title: `Status do cliente: ${CLIENT_STATUS_LABELS[client.status]} → ${CLIENT_STATUS_LABELS[clientPatch.status!]}`,
         description: `Alterado pela conclusão da etapa ${stage.name}`,
         department: stage.department,
         payload: { from: client.status, to: clientPatch.status, stageKey: stage.key },
@@ -1000,4 +1025,33 @@ export async function getInstanceDetail(instanceId: string): Promise<InstanceDet
     (tasksByStep[t.processId] ??= []).push(t);
   }
   return { instance, template, stages: template ? sortedStages(template) : [], steps, client, tasksByStep };
+}
+
+/**
+ * Encerra a jornada ativa do cliente por cancelamento (churn total): a etapa atual é marcada como pulada
+ * (SLA encerrado) e a instância fica "cancelado". Idempotente: sem jornada ativa, não faz nada.
+ */
+export async function cancelClientJourney(clientId: string, reason: string, actor: UserRef): Promise<WorkflowInstance | null> {
+  const client = await getById<Client>(COLLECTIONS.clients, clientId);
+  if (!client?.workflowInstanceId) return null;
+  const instance = await getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId);
+  if (!instance || instance.status !== "ativo") return null;
+  const now = nowIso();
+  const step = instance.currentStepId ? await getById<WorkflowStep>(COLLECTIONS.workflowSteps, instance.currentStepId) : null;
+  if (step && step.status !== "concluida" && step.status !== "pulada") {
+    await update<WorkflowStep>(COLLECTIONS.workflowSteps, step.id, { status: "pulada", completedAt: now, completedBy: actor.id, exceptionReason: `Jornada encerrada: ${reason}` });
+    if (step.slaInstanceId) await completeSla(step.slaInstanceId);
+  }
+  await update<WorkflowInstance>(COLLECTIONS.workflowInstances, instance.id, { status: "cancelado", completedAt: now });
+  await emitEvent({
+    type: "workflow.completed",
+    actor,
+    clientId,
+    entity: { type: "workflow_instance", id: instance.id },
+    title: "Jornada do cliente encerrada por cancelamento",
+    description: reason,
+    department: step?.department,
+    payload: { templateKey: instance.templateKey, templateVersion: instance.templateVersion, cancelled: true, stageKey: step?.stageKey },
+  });
+  return { ...instance, status: "cancelado", completedAt: now };
 }

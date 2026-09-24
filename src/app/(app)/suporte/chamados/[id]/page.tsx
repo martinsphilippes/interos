@@ -77,7 +77,7 @@ export default async function TicketPage({ params }: { params: Params }) {
         </div>
       ) : null}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex min-w-0 flex-col gap-4">
           {ticket.solution || ticket.csatScore !== undefined ? (
             <Card className="border-success/30">

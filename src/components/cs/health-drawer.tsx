@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import type { HealthDetail } from "@/server/cs/queries";
-import { formatCurrency, formatDateTime, formatRelative } from "@/lib/format";
+import { formatCurrency, formatDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerBody, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -14,6 +14,7 @@ import { FactorBars, FactorRadar, ScoreHistoryChart } from "./health-charts";
 import { RecalculateClientButton } from "./health-actions";
 import { CheckpointDialog } from "./checkpoint-dialog";
 import { useCsUrl } from "./use-cs";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 /** Drill-down do health score (?cliente=<id>): fatores, explicação textual e histórico. */
 export function HealthDrawer({ detail, limiares }: { detail: HealthDetail | null; limiares: { saudavel: number; atencao: number } }) {
@@ -29,7 +30,7 @@ export function HealthDrawer({ detail, limiares }: { detail: HealthDetail | null
                 <div className="min-w-0">
                   <DrawerTitle className="truncate">{detail.tradeName}</DrawerTitle>
                   <DrawerDescription>
-                    {formatCurrency(detail.mrr)}/mês{latest ? ` · calculado ${formatRelative(latest.computedAt)}` : ""}
+                    {formatCurrency(detail.mrr)}/mês{latest ? <> · calculado <RelativeTime value={latest.computedAt} /></> : ""}
                   </DrawerDescription>
                 </div>
                 {latest ? (

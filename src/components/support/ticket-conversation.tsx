@@ -6,7 +6,7 @@ import { ArrowRightLeft, Lock, Mail, MessageCircle, Globe, Paperclip, Phone, Pho
 import type { TicketDetail } from "@/server/support/queries";
 import { addNoteAction, registerCallAction, replyTicketAction } from "@/server/support/actions";
 import { INTERACTION_KIND_LABELS, REPLY_CHANNELS, TICKET_CHANNEL_LABELS, type ReplyChannel } from "@/server/support/schemas";
-import { formatDateTime, formatRelative } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { formatCallDuration } from "./format";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 type Interaction = TicketDetail["interactions"][number];
 
@@ -29,7 +30,7 @@ function Bubble({ item, detail }: { item: Interaction; detail: TicketDetail }) {
   const customerName = detail.contact?.name ?? detail.client?.tradeName ?? "Cliente";
   const time = (
     <time dateTime={item.createdAt} title={formatDateTime(item.createdAt)} className="text-[11px] text-muted">
-      {formatRelative(item.createdAt)}
+      <RelativeTime value={item.createdAt} />
     </time>
   );
 

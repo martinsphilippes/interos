@@ -5,7 +5,7 @@ import { BellRing, CheckCircle2, FlaskConical, PenLine, Plus, Send, ShieldCheck,
 import type { Contract } from "@/domain/types";
 import { addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction, simulateSignatureAction } from "@/server/finance/actions";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
-import { formatDateTime, formatRelative } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useFinanceAction } from "./use-finance-action";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 export interface SignatureCardProps {
   contract: Pick<Contract, "id" | "number" | "version" | "status" | "signers" | "signatureEnvelopeId" | "signatureProvider" | "documentHash" | "signedAt">;
@@ -63,7 +64,7 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
           {allSigned
             ? `Assinado por todos${contract.signedAt ? ` em ${formatDateTime(contract.signedAt)}` : ""}.`
             : sent
-              ? `Enviado ${sentAt ? formatRelative(sentAt) : ""} · ${signedCount}/${contract.signers.length} assinatura(s).`
+              ? <>Enviado {sentAt ? <RelativeTime value={sentAt} /> : ""} · {signedCount}/{contract.signers.length} assinatura(s).</>
               : "Ainda não enviado para assinatura."}
         </CardDescription>
       </CardHeader>
@@ -96,7 +97,7 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
                     {s.signedAt ? <p className="text-xs text-success-fg">Assinou em {formatDateTime(s.signedAt)}</p> : null}
                     {r ? (
                       <p className="text-xs text-muted">
-                        {r.count} lembrete(s) · último {formatRelative(r.lastAt)}
+                        {r.count} lembrete(s) · último <RelativeTime value={r.lastAt} />
                       </p>
                     ) : null}
                   </div>

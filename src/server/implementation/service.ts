@@ -42,7 +42,7 @@ import {
   type WorkflowInstance,
   type WorkflowStep,
 } from "@/domain/types";
-import type { RoleKey } from "@/domain/constants";
+import { CLIENT_STATUS_LABELS, type RoleKey } from "@/domain/constants";
 import { IMPLEMENTATION_PHASE_LABELS } from "@/components/clients/labels";
 import { combineTemplates, templatesForProducts } from "./templates";
 import {
@@ -274,7 +274,7 @@ export async function createProjectFromContract(contract: Contract, actor: UserR
       actor,
       clientId: client.id,
       entity: { type: "client", id: client.id },
-      title: `Status do cliente: ${client.status} → em_implantacao`,
+      title: `Status do cliente: ${CLIENT_STATUS_LABELS[client.status]} → ${CLIENT_STATUS_LABELS.em_implantacao}`,
       description: `Liberação financeira do contrato ${contract.number}`,
       department: "financeiro",
       payload: { from: client.status, to: "em_implantacao", contractId: contract.id },
@@ -1168,7 +1168,7 @@ export async function approveGoLive(projectId: string, actor: ImplementationActo
       actor,
       clientId: client.id,
       entity: { type: "client", id: client.id },
-      title: `Status do cliente: ${client.status} → ativo`,
+      title: `Status do cliente: ${CLIENT_STATUS_LABELS[client.status]} → ${CLIENT_STATUS_LABELS.ativo}`,
       description: `Go-live da implantação aprovado por ${actor.name}`,
       department: "implantacao",
       payload: { from: client.status, to: "ativo", projectId: project.id },

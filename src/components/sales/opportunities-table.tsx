@@ -6,11 +6,12 @@ import { Avatar } from "@/components/ui/avatar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination, paginate } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatCurrency, formatRelative } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 import type { OpportunityRow, PipelineStage, ProductOption, UserLite } from "@/server/sales/queries";
 import { NextActionLabel, ProposalIcon, StageBadge, TemperatureDot } from "./opportunity-bits";
 import { OpportunityFilterBar, applyFilters, readFilters } from "./opportunity-filters";
 import { useSalesUrl } from "./use-sales-url";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 export interface OpportunitiesTableProps {
   rows: OpportunityRow[];
@@ -87,7 +88,7 @@ export function OpportunitiesTable({ rows, stages, sellers, products, currentUse
                         <span className="truncate text-sm">{r.ownerName}</span>
                       </span>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs text-muted">{formatRelative(r.lastActivityAt)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted"><RelativeTime value={r.lastActivityAt} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

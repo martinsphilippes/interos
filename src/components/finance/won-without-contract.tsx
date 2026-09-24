@@ -6,9 +6,10 @@ import { useRouter } from "next/navigation";
 import { FilePlus2 } from "lucide-react";
 import type { WonWithoutContract } from "@/server/finance/queries";
 import { createContractFromOpportunityAction } from "@/server/finance/actions";
-import { formatCurrency, formatRelative } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 /**
  * Vendas ganhas que ainda não têm contrato (ex.: handler de vendas indisponível no momento do ganho).
@@ -43,7 +44,7 @@ export function WonWithoutContractList({ items, canOperate }: { items: WonWithou
             </Link>
             <p className="text-xs text-muted">
               {o.title} · {formatCurrency(o.monthlyTotal)}/mês{o.setupTotal > 0 ? ` · adesão ${formatCurrency(o.setupTotal)}` : ""}
-              {o.wonAt ? ` · ganha ${formatRelative(o.wonAt)}` : ""}
+              {o.wonAt ? <> · ganha <RelativeTime value={o.wonAt} /></> : ""}
             </p>
           </div>
           {canOperate ? (

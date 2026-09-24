@@ -7,7 +7,7 @@ import { ArrowRight, Building2, Hand, Repeat, Smile, TrendingUp } from "lucide-r
 import type { TicketDetail } from "@/server/support/queries";
 import { assumeTicketAction } from "@/server/support/actions";
 import { INTERACTION_KIND_LABELS, ROOT_CAUSE_LABELS, TICKET_QUEUE_LABELS, type TicketQueue } from "@/server/support/schemas";
-import { formatDateTime, formatRelative } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerBody, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { toast } from "@/components/ui/toast";
@@ -15,6 +15,7 @@ import { UserChip } from "@/components/ui/user-chip";
 import { cn } from "@/lib/utils";
 import { LiveSlaBadge } from "./sla-live";
 import { ChannelIcon, TicketPriorityBadge, TicketStatusBadge } from "./ticket-badges";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 /** Resumo do chamado (?chamado=<id>) com atalho para a página completa. */
 export function TicketDrawer({ detail, currentUserId, canOperate }: { detail: TicketDetail | null; currentUserId: string; canOperate: boolean }) {
@@ -69,7 +70,7 @@ function Inner({ detail, currentUserId, canOperate }: { detail: TicketDetail; cu
         </div>
         <DrawerTitle className="mt-1">{ticket.subject}</DrawerTitle>
         <DrawerDescription>
-          Aberto {formatRelative(ticket.openedAt)} · {formatDateTime(ticket.openedAt)}
+          Aberto <RelativeTime value={ticket.openedAt} /> · {formatDateTime(ticket.openedAt)}
         </DrawerDescription>
       </DrawerHeader>
       <DrawerBody className="flex flex-col gap-4">
@@ -138,7 +139,7 @@ function Inner({ detail, currentUserId, canOperate }: { detail: TicketDetail; cu
               {lastMessages.map((i) => (
                 <li key={i.id} className={cn("rounded-lg border px-3 py-2 text-sm", i.kind === "nota_interna" ? "border-warning/40 bg-warning-soft/60" : "border-border")}>
                   <p className="text-xs text-muted">
-                    {INTERACTION_KIND_LABELS[i.kind]} · {i.authorId ? (users[i.authorId]?.name ?? "Equipe") : "Cliente"} · {formatRelative(i.createdAt)}
+                    {INTERACTION_KIND_LABELS[i.kind]} · {i.authorId ? (users[i.authorId]?.name ?? "Equipe") : "Cliente"} · <RelativeTime value={i.createdAt} />
                   </p>
                   <p className="mt-0.5 line-clamp-3 whitespace-pre-line">{i.body}</p>
                 </li>

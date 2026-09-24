@@ -20,12 +20,13 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
-import { formatDateTime, formatPhone, formatRelative } from "@/lib/format";
+import { formatDateTime, formatPhone } from "@/lib/format";
 import { assignProspectsAction, convertProspectAction, recordProspectAttempt, scheduleProspectAction, setProspectListStatus } from "@/server/marketing/actions";
 import type { Prospect } from "@/domain/types";
 import { ProspectStatusBadge } from "./lead-badges";
 import { ImportProspectsDialog } from "./prospect-lists-view";
 import { ATTEMPT_RESULT_LABELS, PROSPECT_LIST_STATUS_LABELS, PROSPECT_STATUS_LABELS, type AttemptResult, type ContactChannel, type MarketingOptions, type ProspectListDetail, type ProspectRowItem } from "./marketing-model";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 type RowDialog = { kind: "attempt" | "schedule" | "convert"; prospect: ProspectRowItem } | null;
 
@@ -210,7 +211,7 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
                       <ProspectStatusBadge status={p.status} />
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{p.attempts}</TableCell>
-                    <TableCell className="text-sm text-muted">{p.lastAttemptAt ? formatRelative(p.lastAttemptAt) : "—"}</TableCell>
+                    <TableCell className="text-sm text-muted">{p.lastAttemptAt ? <RelativeTime value={p.lastAttemptAt} /> : "—"}</TableCell>
                     <TableCell className="text-sm">{p.nextActionAt ? <span className={p.overdue ? "font-medium text-danger-fg" : undefined}>{formatDateTime(p.nextActionAt)}</span> : <span className="text-muted-light">—</span>}</TableCell>
                     <TableCell className="max-w-[220px] text-sm">
                       <span className="line-clamp-2">{p.result ?? <span className="text-muted-light">—</span>}</span>

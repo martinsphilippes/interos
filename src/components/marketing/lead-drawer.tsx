@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
-import { formatDateTime, formatPhone, formatRelative } from "@/lib/format";
+import { formatDateTime, formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { assignLeadAction, changeLeadStatusAction, setLeadConsent, setLeadNextAction, updateLeadAction } from "@/server/marketing/actions";
 import { LeadStatusBadge, ScorePill, TemperatureBadge } from "./lead-badges";
@@ -23,6 +23,7 @@ import { ContactDialog, DisqualifyDialog, DuplicateDialog, QualifyDialog } from 
 import { LeadFormFields, leadFormPayload, leadToForm, type LeadFormState } from "./lead-form-fields";
 import { LEAD_STATUS_LABELS, type LeadDetail, type MarketingOptions } from "./marketing-model";
 import { useMarketingUrl } from "./use-marketing-url";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 export interface LeadDrawerProps {
   detail: LeadDetail | null;
@@ -100,7 +101,7 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
           <ScorePill score={lead.score} temperature={lead.temperature} />
         </DrawerTitle>
         <DrawerDescription>
-          {[lead.company, lead.city && `${lead.city}${lead.state ? `/${lead.state}` : ""}`, lead.originName].filter(Boolean).join(" · ")} · captado {formatRelative(lead.createdAt)}
+          {[lead.company, lead.city && `${lead.city}${lead.state ? `/${lead.state}` : ""}`, lead.originName].filter(Boolean).join(" · ")} · captado <RelativeTime value={lead.createdAt} />
         </DrawerDescription>
         <div className="mt-2 flex flex-wrap gap-2">
           {open ? (
@@ -323,7 +324,7 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
             </ol>
           )}
           <p className="mt-3 text-xs text-muted">
-            Contato: {lead.phone ? formatPhone(lead.phone) : "sem telefone"} · {lead.email ?? "sem e-mail"} · último contato {lead.lastContactAt ? formatRelative(lead.lastContactAt) : "nunca"}
+            Contato: {lead.phone ? formatPhone(lead.phone) : "sem telefone"} · {lead.email ?? "sem e-mail"} · último contato {lead.lastContactAt ? <RelativeTime value={lead.lastContactAt} /> : "nunca"}
           </p>
         </section>
       </DrawerBody>

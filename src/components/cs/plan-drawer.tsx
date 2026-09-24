@@ -7,7 +7,7 @@ import type { SuccessPlanWithTasks } from "@/server/cs/service";
 import type { UserLite } from "@/server/cs/queries";
 import { closePlan, saveSuccessPlan, togglePlanAction } from "@/server/cs/actions";
 import { SUCCESS_PLAN_ORIGIN_LABELS, SUCCESS_PLAN_STATUS_LABELS, SUCCESS_PLAN_STATUS_VARIANT } from "@/server/cs/schemas";
-import { formatDate, formatRelative } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ClientCombobox } from "@/components/tasks/client-combobox";
 import { useCsAction, useCsUrl } from "./use-cs";
+import { RelativeTime } from "@/components/ui/relative-time";
 
 type Plan = SuccessPlanWithTasks;
 
@@ -159,7 +160,7 @@ function PlanDetail({ plan, clientName, users, onEdit }: { plan: Plan; clientNam
           <Link href={`/clientes/${plan.clientId}?aba=cs`} className="hover:underline">
             {clientName ?? plan.clientId}
           </Link>{" "}
-          · responsável {userName(plan.ownerId)} · criado {formatRelative(plan.createdAt)}
+          · responsável {userName(plan.ownerId)} · criado <RelativeTime value={plan.createdAt} />
           {plan.checkpointAt ? ` · checkpoint ${formatDate(plan.checkpointAt)}` : ""}
         </DrawerDescription>
       </DrawerHeader>

@@ -5,6 +5,8 @@ import type { SlaState } from "@/domain/constants";
 import type { SlaLive } from "@/server/support/queries";
 import { SlaBadge } from "@/components/ui/sla-badge";
 import type { BadgeProps } from "@/components/ui/badge";
+import { formatRemaining } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 /**
  * Estado do SLA recalculado no navegador (mesma regra de computeSlaState em src/server/sla.ts, que não
@@ -59,6 +61,20 @@ export function responseDueLabel(sla: SlaLive | undefined, firstResponseAt: stri
   if (!sla?.responseDueAt) return null;
   if (firstResponseAt) return firstResponseAt <= sla.responseDueAt ? { label: "Respondido no prazo", tone: "success" } : { label: "Respondido fora do prazo", tone: "danger" };
   const remaining = new Date(sla.responseDueAt).getTime() - now;
-  if (remaining < 0) return { label: "Resposta atrasada", tone: "danger" };
-  return { label: "Aguardando 1ª resposta", tone: remaining < 30 * 60_000 ? "warning" : "muted" };
+  if (sla.status === "pausado") return { label: "1ª resposta pausada (aguardando cliente)", tone: "muted" };
+  if (remaining < 0) return { label: `Resposta atrasada há ${formatRemaining(-remaining)}`, tone: "danger" };
+  return { label: `Aguardando 1ª resposta · ${formatRemaining(remaining)}`, tone: remaining < 30 * 60_000 ? "warning" : "muted" };
+}
+
+const RESPONSE_TONE = { success: "text-success-fg", danger: "text-danger-fg", warning: "text-warning-fg", muted: "text-muted" } as const;
+
+/** Contagem regressiva da 1ª resposta para listas (usa o relógio da lista; null = antes da hidratação). */
+export function ResponseCountdown({ sla, firstResponseAt, now, className }: { sla?: SlaLive; firstResponseAt?: string; now: number | null; className?: string }) {
+  if (firstResponseAt) return null;
+  if (!sla?.responseDueAt || now === null) return <p className={cn("text-[11px] text-warning-fg", className)}>1ª resposta pendente</p>;
+  const remaining = new Date(sla.responseDueAt).getTime() - now;
+  const paused = sla.status === "pausado";
+  const label = paused ? "1ª resposta: SLA pausado" : remaining < 0 ? `1ª resposta atrasada ${formatRemaining(-remaining)}` : `1ª resposta em ${formatRemaining(remaining)}`;
+  const tone = paused ? "muted" : remaining < 0 ? "danger" : remaining < 30 * 60_000 ? "warning" : "muted";
+  return <p className={cn("text-[11px] tabular-nums", RESPONSE_TONE[tone], className)}>{label}</p>;
 }

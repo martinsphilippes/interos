@@ -14,7 +14,7 @@ import { registerHandler } from "@/server/events/emit";
 import { registerCsHandlers } from "@/server/events/handlers/cs";
 import { notify } from "@/server/notifications";
 import { assignTaskInternal, cancelTaskInternal, completeTaskInternal, createTaskInternal, reopenTaskInternal } from "@/server/tasks/service";
-import { getDepartmentManager, updateStepChecklist } from "@/server/workflow/service";
+import { cancelClientJourney, getDepartmentManager, updateStepChecklist } from "@/server/workflow/service";
 import { createOpportunity } from "@/server/sales/service";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { shortId } from "@/lib/utils";
@@ -1103,6 +1103,7 @@ export async function registerChurn(data: ChurnData, actor: UserRef): Promise<Ch
 
   if (fullChurn) {
     for (const plan of plans.filter((p) => p.status === "ativo")) await closeSuccessPlan(plan.id, "cancelado", "Cliente cancelado", actor);
+    await cancelClientJourney(client.id, `Cancelamento do cliente: ${CHURN_REASON_LABELS[data.reasonCategory]}`, actor);
   }
 
   const names = selected.map((p) => p.productName).join(", ");

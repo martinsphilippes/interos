@@ -38,7 +38,7 @@ import {
   type UserRef,
   type Visit,
 } from "@/domain/types";
-import type { Priority } from "@/domain/constants";
+import { CLIENT_STATUS_LABELS, type Priority } from "@/domain/constants";
 import { OPPORTUNITY_STAGE_LABELS, effectiveProposalStatus, netItem, productTotals, proposalTotals } from "@/components/sales/model";
 import { calculateCommissionsForOpportunity, SYSTEM_ACTOR } from "./commissions";
 import { geocode } from "./maps";
@@ -563,7 +563,7 @@ export async function processWonOpportunity(opportunityId: string, actor: UserRe
       actor,
       clientId: client.id,
       entity: { type: "client", id: client.id },
-      title: `Status do cliente: ${client.status} → ${clientPatch.status}`,
+      title: `Status do cliente: ${CLIENT_STATUS_LABELS[client.status]} → ${CLIENT_STATUS_LABELS[clientPatch.status!]}`,
       description: "Negócio ganho em Vendas",
       department: "vendas",
       payload: { from: client.status, to: clientPatch.status, opportunityId: opp.id },
