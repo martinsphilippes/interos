@@ -5,6 +5,7 @@ import { Repeat, Smile } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getTicket, getTicketTitle, listArticles } from "@/server/support/queries";
 import { canEditArticles, canOperateSupport, ROOT_CAUSE_LABELS } from "@/server/support/schemas";
+import { getSupportChannelStatus } from "@/server/support/integrations";
 import { formatDateTime } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,7 @@ export default async function TicketPage({ params }: { params: Params }) {
   const user = await requireUser();
   if (!canAccessModule(user, "suporte")) redirect("/meu-dia?erro=sem-permissao");
   const { id } = await params;
-  const [detail, kb] = await Promise.all([getTicket(id, user), listArticles({ includeDrafts: true })]);
+  const [detail, kb, channels] = await Promise.all([getTicket(id, user), listArticles({ includeDrafts: true }), getSupportChannelStatus()]);
   if (!detail) notFound();
   const { ticket } = detail;
   const canOperate = canOperateSupport(user);
@@ -45,6 +46,9 @@ export default async function TicketPage({ params }: { params: Params }) {
             <span>Aberto em {formatDateTime(ticket.openedAt)}</span>
             <ChannelIcon channel={ticket.channel} showLabel />
             <QueueBadge queue={ticket.queue} />
+            <Link href={`/suporte?chamado=${ticket.id}`} className="font-medium text-brand-fg hover:underline">
+              Abrir no workspace
+            </Link>
             {detail.client ? (
               <Link href={`/clientes/${detail.client.id}?aba=suporte`} className="font-medium text-foreground hover:text-brand hover:underline">
                 {detail.client.tradeName}
@@ -99,11 +103,11 @@ export default async function TicketPage({ params }: { params: Params }) {
               </CardContent>
             </Card>
           ) : null}
-          <TicketConversation detail={detail} canOperate={canOperate} />
+          <TicketConversation detail={detail} canOperate={canOperate} channels={channels} />
         </div>
 
         <aside className="flex flex-col gap-4">
-          <TicketActions detail={detail} currentUserId={user.id} canOperate={canOperate} canWriteArticles={canEditArticles(user)} articleCategories={kb.categories} />
+          <TicketActions detail={detail} currentUserId={user.id} canOperate={canOperate} canWriteArticles={canEditArticles(user)} articleCategories={kb.categories} articleModules={kb.modules} />
           <OpportunityLink detail={detail} />
           <TicketClientCard detail={detail} />
           {ticket.status !== "resolvido" && ticket.status !== "fechado" ? <AgentSuggestions kind="suporte" subjectId={ticket.id} title="Sugestões do assistente" limit={3} /> : null}

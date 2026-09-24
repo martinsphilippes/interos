@@ -17,7 +17,6 @@ import {
   type CurrentUser,
   type Document,
   type Kpi,
-  type KnowledgeArticle,
   type Opportunity,
   type Product,
   type Settings,
@@ -30,6 +29,7 @@ import {
 import type { SlaState } from "@/domain/constants";
 import { csatPath, getSupportTeam, isOpenTicket, type SlaInstanceExtra, type SupportTicketExtra, type TicketInteractionExtra } from "./service";
 import { TICKET_PRIORITIES, canOperateSupport, type TicketPriority } from "./schemas";
+import { normalizeText, plainText, rankArticles, type KnowledgeArticleExtra } from "./knowledge-search";
 
 // ---------------------------------------------------------------------------
 // Tipos compartilhados com os componentes
@@ -300,6 +300,8 @@ export type OverviewScope = "minha" | "equipe";
 
 export interface SupportOverview {
   scope: OverviewScope;
+  /** Instante do cálculo (ms): referência dos relógios de SLA no navegador até a hidratação. */
+  generatedAt: number;
   rows: TicketRow[];
   stats: {
     open: number;
@@ -317,6 +319,11 @@ export interface SupportOverview {
     reopenedMonth: number;
     resolvedMonth: number;
     reopenTarget: number;
+    /** Cumprimento do SLA de solução no mês (fração 0–1; undefined sem base) e sua base. */
+    slaCompliance?: number;
+    slaMet: number;
+    slaEvaluated: number;
+    slaTarget: number;
   };
 }
 
@@ -359,9 +366,14 @@ export async function getSupportOverview(user: Pick<CurrentUser, "id" | "isManag
   const mine = (t: SupportTicket) => effective === "equipe" || t.assigneeId === user.id;
   const reopenedMonth = base.tickets.filter((t) => t.reopenedFromId && monthKey(t.openedAt) === month && mine(t)).length;
   const resolvedMonth = base.tickets.filter((t) => t.resolvedAt && monthKey(t.resolvedAt) === month && mine(t)).length;
+  // SLA de solução do mês: mesma regra do relatório de SLA (resolvidos no mês no prazo + vencidos no mês em aberto).
+  const sla = emptyCompliance();
+  const nowStr = now.toISOString();
+  for (const t of base.tickets) if (mine(t)) add(sla, { resolution: evaluate(t, base.slaByTicket.get(t.id), month, nowStr).resolution });
 
   return {
     scope: effective,
+    generatedAt: now.getTime(),
     rows: open.sort(compareQueue),
     stats: {
       open: open.filter((r) => r.status === "aberto" || r.status === "reaberto").length,
@@ -379,6 +391,10 @@ export async function getSupportOverview(user: Pick<CurrentUser, "id" | "isManag
       reopenedMonth,
       resolvedMonth,
       reopenTarget: targets.reopenMax,
+      slaCompliance: sla.resolutionTotal > 0 ? sla.resolutionMet / sla.resolutionTotal : undefined,
+      slaMet: sla.resolutionMet,
+      slaEvaluated: sla.resolutionTotal,
+      slaTarget: targets.slaResolution,
     },
   };
 }
@@ -435,7 +451,7 @@ export async function getTicket(id: string, user?: CurrentUser): Promise<TicketD
     list<CsatResponse>(COLLECTIONS.csatResponses, { where: [["ticketId", "==", ticket.id]] }),
     list<Product>(COLLECTIONS.products),
     getSupportTeam(),
-    list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles),
+    list<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles),
   ]);
   const opportunity = ticket.originatedOpportunityId ? await getById<Opportunity>(COLLECTIONS.opportunities, ticket.originatedOpportunityId) : null;
 
@@ -489,7 +505,7 @@ export async function getTicket(id: string, user?: CurrentUser): Promise<TicketD
       csatAverage: avg(clientCsat),
     },
     documents: documents.filter((d) => d.entityType === "ticket").sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
-    suggestedArticles: suggestArticles(articles, ticket.subject, ticket.productId, products),
+    suggestedArticles: suggestArticles(articles, `${ticket.subject} ${ticket.category ?? ""} ${ticket.description}`, ticket.productId, products),
     opportunity: opportunity ? { id: opportunity.id, title: opportunity.title, stage: opportunity.stage, ownerId: opportunity.ownerId, originUserId: opportunity.originUserId } : null,
     csat: csatList[0] ?? null,
     reopenedFrom: reopenedFromTicket ? { id: reopenedFromTicket.id, number: reopenedFromTicket.number } : null,
@@ -752,68 +768,74 @@ export interface ArticleRow {
   title: string;
   productId?: string;
   productName?: string;
+  module?: string;
   category?: string;
+  problem?: string;
+  keywords: string[];
   tags: string[];
   authorId: string;
   authorName: string;
   views: number;
+  helpful: number;
+  notHelpful: number;
   published: boolean;
   updatedAt: string;
   excerpt: string;
+  /** Texto usado só pela busca (corpo sem markdown, limitado). */
+  body: string;
 }
 
 export interface ArticleSuggestion {
   id: string;
   title: string;
   productName?: string;
+  module?: string;
+  problem?: string;
   score: number;
 }
 
 /** Texto normalizado (minúsculas, sem acentos) para busca. */
-export function normalize(value: string | undefined | null): string {
-  return (value ?? "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
+export const normalize = normalizeText;
+
+type RankableArticle = KnowledgeArticleExtra & { productName?: string };
+
+function rankable(articles: KnowledgeArticleExtra[], products: Map<string, Product>): RankableArticle[] {
+  return articles.map((a) => ({ ...a, productName: a.productId ? products.get(a.productId)?.name : undefined }));
 }
 
-const STOPWORDS = new Set(["para", "com", "sem", "que", "nao", "uma", "como", "pelo", "pela", "esta", "este", "isso", "mais", "desde", "quando", "erro", "cliente", "sistema", "dando", "todas", "todos"]);
-
-function words(text: string): string[] {
-  return Array.from(new Set(normalize(text).split(/[^a-z0-9-]+/).filter((w) => w.length >= 3 && !STOPWORDS.has(w))));
-}
-
-/** Busca simples: palavras do assunto no título (peso 3), tags (2) e corpo (1); mesmo produto soma 2. */
-export function suggestArticles(articles: KnowledgeArticle[], subject: string, productId: string | undefined, products: Map<string, Product>, limit = 3): ArticleSuggestion[] {
-  const terms = words(subject);
-  if (terms.length === 0 && !productId) return [];
-  return articles
-    .filter((a) => a.published)
-    .map((a) => {
-      const title = normalize(a.title);
-      const body = normalize(a.body);
-      const tags = a.tags.map(normalize);
-      let score = 0;
-      for (const w of terms) {
-        if (title.includes(w)) score += 3;
-        if (tags.some((t) => t.includes(w) || w.includes(t))) score += 2;
-        if (body.includes(w)) score += 1;
-      }
-      if (score > 0 && productId && a.productId === productId) score += 2;
-      return { id: a.id, title: a.title, productName: a.productId ? products.get(a.productId)?.name : undefined, score };
-    })
-    .filter((s) => s.score >= 2)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+/**
+ * Sugestões para um texto livre (assunto do chamado, problema de um artigo): busca ponderada em qualquer termo
+ * (título e problema pesam mais, depois palavras-chave, tags, módulo/categoria e corpo); mesmo produto soma 3.
+ */
+export function suggestArticles(articles: KnowledgeArticleExtra[], text: string, productId: string | undefined, products: Map<string, Product>, limit = 3): ArticleSuggestion[] {
+  const ranked = rankArticles(
+    rankable(
+      articles.filter((a) => a.published),
+      products,
+    ),
+    text,
+    { mode: "any", minScore: 5, boost: (a) => (productId && a.productId === productId ? 3 : 0), limit },
+  );
+  return ranked.map((a) => ({ id: a.id, title: a.title, productName: a.productName, module: a.module, problem: a.problem, score: a.score }));
 }
 
 function excerpt(body: string): string {
-  const plain = body.replace(/[#*_`>\[\]()-]/g, " ").replace(/\s+/g, " ").trim();
+  const plain = plainText(body).replace(/\s+/g, " ");
   return plain.length > 180 ? `${plain.slice(0, 177)}…` : plain;
 }
 
-export async function listArticles(options: { includeDrafts?: boolean } = {}): Promise<{ articles: ArticleRow[]; products: { id: string; name: string }[]; categories: string[] }> {
-  const [articles, products] = await Promise.all([list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles), list<Product>(COLLECTIONS.products)]);
+const uniqSorted = (values: (string | undefined)[]) =>
+  Array.from(new Set(values.filter((v): v is string => Boolean(v)))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+export interface ArticleListData {
+  articles: ArticleRow[];
+  products: { id: string; name: string }[];
+  categories: string[];
+  modules: string[];
+}
+
+export async function listArticles(options: { includeDrafts?: boolean } = {}): Promise<ArticleListData> {
+  const [articles, products] = await Promise.all([list<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles), list<Product>(COLLECTIONS.products)]);
   const visible = options.includeDrafts ? articles : articles.filter((a) => a.published);
   const authors = await getManyByIds<User>(COLLECTIONS.users, visible.map((a) => a.authorId));
   const productNames = new Map(products.map((p) => [p.id, p.name]));
@@ -824,47 +846,67 @@ export async function listArticles(options: { includeDrafts?: boolean } = {}): P
         title: a.title,
         productId: a.productId,
         productName: a.productId ? productNames.get(a.productId) : undefined,
+        module: a.module,
         category: a.category,
+        problem: a.problem,
+        keywords: a.keywords ?? [],
         tags: a.tags ?? [],
         authorId: a.authorId,
         authorName: authors.get(a.authorId)?.name ?? "—",
         views: a.views ?? 0,
+        helpful: a.helpful ?? 0,
+        notHelpful: a.notHelpful ?? 0,
         published: a.published,
         updatedAt: a.updatedAt,
         excerpt: excerpt(a.body),
+        body: plainText(a.body).slice(0, 2000),
       }))
       .sort((a, b) => b.views - a.views || a.title.localeCompare(b.title, "pt-BR")),
     products: products
       .filter((p) => p.active !== false)
       .sort((a, b) => a.order - b.order)
       .map((p) => ({ id: p.id, name: p.name })),
-    categories: Array.from(new Set(articles.map((a) => a.category).filter((c): c is string => Boolean(c)))).sort((a, b) => a.localeCompare(b, "pt-BR")),
+    categories: uniqSorted(articles.map((a) => a.category)),
+    modules: uniqSorted(articles.map((a) => a.module)),
   };
 }
 
 export interface ArticleDetail {
-  article: KnowledgeArticle;
+  article: KnowledgeArticleExtra;
   productName?: string;
   author?: SupportUser;
   related: ArticleSuggestion[];
+  sourceTicket?: { id: string; number: string; subject: string };
 }
 
 export async function getArticle(id: string): Promise<ArticleDetail | null> {
-  const article = await getById<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, id);
+  const article = await getById<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, id);
   if (!article) return null;
-  const [author, products, articles] = await Promise.all([getById<User>(COLLECTIONS.users, article.authorId), list<Product>(COLLECTIONS.products), list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles)]);
+  const [author, products, articles, source] = await Promise.all([
+    getById<User>(COLLECTIONS.users, article.authorId),
+    list<Product>(COLLECTIONS.products),
+    list<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles),
+    article.sourceTicketId ? getById<SupportTicket>(COLLECTIONS.supportTickets, article.sourceTicketId) : null,
+  ]);
   const productMap = new Map(products.map((p) => [p.id, p]));
+  const others = articles.filter((a) => a.id !== article.id);
+  // Relacionados: pelo problema/título/palavras-chave; sem coincidência de texto, os do mesmo produto e módulo.
+  let related = suggestArticles(others, [article.title, article.problem, ...(article.keywords ?? []), ...article.tags].filter(Boolean).join(" "), article.productId, productMap, 4);
+  if (related.length < 4 && article.productId) {
+    const seen = new Set(related.map((r) => r.id));
+    const sameProduct = others
+      .filter((a) => a.published && !seen.has(a.id) && a.productId === article.productId)
+      .sort((a, b) => Number(b.module === article.module) - Number(a.module === article.module) || (b.views ?? 0) - (a.views ?? 0))
+      .slice(0, 4 - related.length)
+      .map((a) => ({ id: a.id, title: a.title, productName: productMap.get(a.productId!)?.name, module: a.module, problem: a.problem, score: 0 }));
+    related = [...related, ...sameProduct];
+  }
   return {
     article,
     productName: article.productId ? productMap.get(article.productId)?.name : undefined,
     author: author ? toUser(author) : undefined,
-    related: suggestArticles(
-      articles.filter((a) => a.id !== article.id),
-      `${article.title} ${article.tags.join(" ")}`,
-      article.productId,
-      productMap,
-      4,
-    ),
+    related,
+    sourceTicket: source ? { id: source.id, number: source.number, subject: source.subject } : undefined,
   };
 }
 

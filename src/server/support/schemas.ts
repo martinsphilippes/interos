@@ -168,17 +168,39 @@ export const attachmentSchema = z.object({
   url: z.string().trim().url("Informe uma URL válida (https://...)"),
 });
 
+export const transferSchema = z.object({
+  ticketId: id,
+  assigneeId: optionalText,
+  queue: z.enum(TICKET_QUEUES, { message: "Selecione a fila" }),
+  note: z.string().trim().min(3, "Explique o motivo da transferência").max(1000, "Nota muito longa"),
+});
+
 export const articleSchema = z.object({
   id: optionalText,
   title: z.string().trim().min(5, "Título muito curto").max(160, "Título muito longo"),
   productId: optionalText,
+  module: z
+    .string()
+    .trim()
+    .max(60, "Módulo muito longo")
+    .optional()
+    .transform((v) => (v ? v : undefined)),
   category: optionalText,
+  problem: z
+    .string()
+    .trim()
+    .max(1000, "Descrição do problema muito longa")
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  keywords: z.array(z.string().trim().toLowerCase().min(1).max(40)).max(30).default([]),
   body: z.string().trim().min(20, "O conteúdo precisa ter pelo menos 20 caracteres").max(20000, "Conteúdo muito longo"),
   tags: z.array(z.string().trim().toLowerCase().min(1).max(40)).max(20).default([]),
   published: z.boolean().default(true),
   sourceTicketId: optionalText,
 });
 export type ArticleData = z.infer<typeof articleSchema>;
+
+export const articleVoteSchema = z.object({ articleId: id, helpful: z.boolean() });
 
 export const csatSubmitSchema = z.object({
   token: z.string().trim().min(8, "Link de avaliação inválido"),
@@ -210,6 +232,9 @@ const FIELD_LABELS: Record<string, string> = {
   name: "Nome",
   title: "Título",
   score: "Nota",
+  note: "Nota",
+  problem: "Problema",
+  module: "Módulo",
 };
 
 /** Primeira mensagem de erro do zod, com o nome do campo quando ajuda. */

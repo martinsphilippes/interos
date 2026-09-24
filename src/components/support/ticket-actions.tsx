@@ -5,17 +5,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookPlus, CheckCircle2, ExternalLink, Hand, Lock, PauseCircle, PlayCircle, RotateCcw, Star, TrendingUp, UserRoundCog } from "lucide-react";
 import type { TicketDetail } from "@/server/support/queries";
+import type { ResolveResult } from "@/server/support/service";
 import {
-  assignTicketAction,
   assumeTicketAction,
   closeTicketAction,
   createTicketOpportunityAction,
   reopenTicketAction,
   resolveTicketAction,
   resumeTicketAction,
+  transferTicketAction,
   waitingClientAction,
 } from "@/server/support/actions";
-import { ROOT_CAUSES, ROOT_CAUSE_LABELS, type RootCause } from "@/server/support/schemas";
+import { ROOT_CAUSES, ROOT_CAUSE_LABELS, TICKET_QUEUES, TICKET_QUEUE_LABELS, type RootCause, type TicketQueue } from "@/server/support/schemas";
 import { PRODUCT_CATEGORY_LABELS } from "@/domain/constants";
 import { formatCurrency, formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -30,11 +31,12 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
-import { ArticleEditor } from "./article-editor";
+import { ArticleEditor, articleDraftFromTicket } from "./article-editor";
 import { LiveSlaBadge, responseDueLabel, useMinuteClock } from "./sla-live";
 import { TicketStatusBadge } from "./ticket-badges";
+import { contactTarget, mailtoHref, whatsappTextHref } from "./workspace-model";
 
-type DialogKey = "aguardar" | "resolver" | "fechar" | "reabrir" | "oportunidade" | null;
+type DialogKey = "aguardar" | "resolver" | "fechar" | "reabrir" | "oportunidade" | "transferir" | null;
 
 export interface TicketActionsProps {
   detail: TicketDetail;
@@ -42,16 +44,16 @@ export interface TicketActionsProps {
   canOperate: boolean;
   canWriteArticles: boolean;
   articleCategories: string[];
+  articleModules?: string[];
 }
 
 /** Painel de status do chamado: SLA ao vivo, transições (com diálogos), transferência e atalhos. */
-export function TicketActions({ detail, currentUserId, canOperate, canWriteArticles, articleCategories }: TicketActionsProps) {
+export function TicketActions({ detail, currentUserId, canOperate, canWriteArticles, articleCategories, articleModules = [] }: TicketActionsProps) {
   const router = useRouter();
   const { ticket, row } = detail;
   const now = useMinuteClock();
   const [dialog, setDialog] = React.useState<DialogKey>(null);
   const [pending, startTransition] = React.useTransition();
-  const [transferTo, setTransferTo] = React.useState("");
   const isOpen = row.open;
   const resolved = ticket.status === "resolvido";
   const closedOrResolved = ticket.status === "resolvido" || ticket.status === "fechado";
@@ -132,7 +134,7 @@ export function TicketActions({ detail, currentUserId, canOperate, canWriteArtic
             {closedOrResolved && detail.csatLink && ticket.csatScore === undefined ? (
               <Button variant="outline" asChild className="min-h-[44px] md:min-h-9">
                 <a href={detail.csatLink} target="_blank" rel="noreferrer">
-                  <Star /> Simular avaliação do cliente <ExternalLink className="ml-auto" />
+                  <Star /> Formulário de avaliação (link do cliente) <ExternalLink className="ml-auto" />
                 </a>
               </Button>
             ) : null}
@@ -145,15 +147,9 @@ export function TicketActions({ detail, currentUserId, canOperate, canWriteArtic
               <ArticleEditor
                 products={detail.catalog}
                 categories={articleCategories}
+                modules={articleModules}
                 sourceTicketId={ticket.id}
-                initial={{
-                  title: ticket.subject.replace(/^\[Reaberto\]\s*/, ""),
-                  productId: ticket.productId,
-                  category: ticket.category,
-                  body: `## Sintoma\n\n${ticket.description}\n\n## Solução\n\n${ticket.solution ?? ""}\n`,
-                  tags: [ticket.category?.toLowerCase()].filter((t): t is string => Boolean(t)),
-                  published: false,
-                }}
+                initial={articleDraftFromTicket(detail)}
                 trigger={
                   <Button variant="outline" className="min-h-[44px] md:min-h-9">
                     <BookPlus /> Criar artigo a partir deste chamado
@@ -170,34 +166,13 @@ export function TicketActions({ detail, currentUserId, canOperate, canWriteArtic
         ) : null}
 
         {canOperate && isOpen ? (
-          <div className="flex flex-col gap-1.5 border-t border-border pt-3">
-            <label htmlFor={`transfer-${ticket.id}`} className="text-[13px] font-medium">
-              Transferir para
-            </label>
-            <div className="flex gap-2">
-              <Select id={`transfer-${ticket.id}`} value={transferTo} onChange={(e) => setTransferTo(e.target.value)} placeholder="Escolha o atendente" size="sm">
-                {detail.team
-                  .filter((u) => u.id !== ticket.assigneeId)
-                  .map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-              </Select>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!transferTo}
-                loading={pending}
-                onClick={() => run(() => assignTicketAction({ ticketId: ticket.id, assigneeId: transferTo }), "Chamado transferido", () => setTransferTo(""))}
-              >
-                <UserRoundCog /> Transferir
-              </Button>
-            </div>
-          </div>
+          <Button variant="outline" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("transferir")}>
+            <UserRoundCog /> Transferir
+          </Button>
         ) : null}
       </CardContent>
 
+      <TransferDialog open={dialog === "transferir"} onOpenChange={(o) => setDialog(o ? "transferir" : null)} detail={detail} />
       <WaitingDialog open={dialog === "aguardar"} onOpenChange={(o) => setDialog(o ? "aguardar" : null)} ticketId={ticket.id} />
       <ResolveDialog open={dialog === "resolver"} onOpenChange={(o) => setDialog(o ? "resolver" : null)} detail={detail} />
       <ReopenDialog open={dialog === "reabrir"} onOpenChange={(o) => setDialog(o ? "reabrir" : null)} detail={detail} />
@@ -245,7 +220,7 @@ function useSubmit(onDone: () => void) {
   return { pending, submit };
 }
 
-function WaitingDialog({ open, onOpenChange, ticketId }: { open: boolean; onOpenChange: (open: boolean) => void; ticketId: string }) {
+export function WaitingDialog({ open, onOpenChange, ticketId }: { open: boolean; onOpenChange: (open: boolean) => void; ticketId: string }) {
   const [reason, setReason] = React.useState("");
   const { pending, submit } = useSubmit(() => {
     onOpenChange(false);
@@ -285,7 +260,26 @@ function WaitingDialog({ open, onOpenChange, ticketId }: { open: boolean; onOpen
   );
 }
 
-function ResolveDialog({ open, onOpenChange, detail }: { open: boolean; onOpenChange: (open: boolean) => void; detail: TicketDetail }) {
+/**
+ * Sem integração conectada o pedido de CSAT não sai do sistema: o atendente recebe um aviso com o atalho para
+ * enviar a mensagem com o link pelo WhatsApp/e-mail (ou copiar o link).
+ */
+function announceManualCsat(r: ResolveResult, detail: TicketDetail) {
+  const link = `${window.location.origin}${r.csatLink}`;
+  const text = `${r.csatMessage} ${link}`;
+  const target = contactTarget(detail);
+  const href = r.csatChannel === "whatsapp" ? whatsappTextHref(r.csatTo ?? target.whatsapp, text) : mailtoHref(r.csatTo ?? target.email, `Avalie o atendimento — chamado ${detail.ticket.number}`, text);
+  toast.info(`Pedido de avaliação não enviado: ${r.csatChannel === "whatsapp" ? "WhatsApp" : "e-mail"} não conectado.`, {
+    description: "Envie o link de avaliação ao cliente pelo app.",
+    duration: 20_000,
+    action: href
+      ? { label: r.csatChannel === "whatsapp" ? "Abrir WhatsApp" : "Abrir e-mail", onClick: () => window.open(href, "_blank", "noopener") }
+      : { label: "Copiar link", onClick: () => void navigator.clipboard?.writeText(link) },
+  });
+}
+
+export function ResolveDialog({ open, onOpenChange, detail }: { open: boolean; onOpenChange: (open: boolean) => void; detail: TicketDetail }) {
+  const router = useRouter();
   const [solution, setSolution] = React.useState("");
   const [rootCause, setRootCause] = React.useState<RootCause | "">("");
   const [trainingRelated, setTrainingRelated] = React.useState(false);
@@ -297,13 +291,21 @@ function ResolveDialog({ open, onOpenChange, detail }: { open: boolean; onOpenCh
       <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>Resolver chamado {detail.ticket.number}</DialogTitle>
-          <DialogDescription>Conclui o SLA, registra a solução na conversa e envia ao cliente o pedido de avaliação (CSAT).</DialogDescription>
+          <DialogDescription>Conclui o SLA, registra a solução na conversa e gera o pedido de avaliação (CSAT) para o cliente.</DialogDescription>
         </DialogHeader>
         <form
           className="contents"
           onSubmit={(e) => {
             e.preventDefault();
-            submit(() => resolveTicketAction({ ticketId: detail.ticket.id, solution, rootCause, trainingRelated, customerConfirmation: confirmation }), "Chamado resolvido · pedido de avaliação enviado (simulado)");
+            submit(
+              () => resolveTicketAction({ ticketId: detail.ticket.id, solution, rootCause, trainingRelated, customerConfirmation: confirmation }),
+              (data) => ((data as ResolveResult).csatSent ? "Chamado resolvido · pedido de avaliação enviado" : "Chamado resolvido"),
+              (data) => {
+                const r = data as ResolveResult;
+                if (!r.csatSent) announceManualCsat(r, detail);
+                router.refresh();
+              },
+            );
           }}
         >
           <DialogBody className="flex flex-col gap-4 py-2">
@@ -343,7 +345,7 @@ function ResolveDialog({ open, onOpenChange, detail }: { open: boolean; onOpenCh
   );
 }
 
-function ReopenDialog({ open, onOpenChange, detail }: { open: boolean; onOpenChange: (open: boolean) => void; detail: TicketDetail }) {
+export function ReopenDialog({ open, onOpenChange, detail }: { open: boolean; onOpenChange: (open: boolean) => void; detail: TicketDetail }) {
   const router = useRouter();
   const [reason, setReason] = React.useState("");
   const { pending, submit } = useSubmit(() => {
@@ -388,7 +390,7 @@ function ReopenDialog({ open, onOpenChange, detail }: { open: boolean; onOpenCha
   );
 }
 
-function OpportunityDialog({ open, onOpenChange, detail }: { open: boolean; onOpenChange: (open: boolean) => void; detail: TicketDetail }) {
+export function OpportunityDialog({ open, onOpenChange, detail }: { open: boolean; onOpenChange: (open: boolean) => void; detail: TicketDetail }) {
   const router = useRouter();
   const products = detail.availableProducts;
   const [productId, setProductId] = React.useState(products[0]?.id ?? "");
@@ -471,5 +473,69 @@ export function OpportunityLink({ detail }: { detail: TicketDetail }) {
         <span className="text-xs text-muted">Oportunidade gerada pelo suporte{origin ? ` · origem: ${origin}` : ""}</span>
       </span>
     </Link>
+  );
+}
+
+/** Transferência para outro atendente e/ou fila, com nota obrigatória (vira interação de status e notifica). */
+export function TransferDialog({ open, onOpenChange, detail }: { open: boolean; onOpenChange: (open: boolean) => void; detail: TicketDetail }) {
+  const { ticket } = detail;
+  const [assigneeId, setAssigneeId] = React.useState("");
+  const [queue, setQueue] = React.useState<TicketQueue>((ticket.queue as TicketQueue) ?? "n1");
+  const [note, setNote] = React.useState("");
+  const { pending, submit } = useSubmit(() => {
+    onOpenChange(false);
+    setAssigneeId("");
+    setNote("");
+  });
+  const id = React.useId();
+  const changed = Boolean(assigneeId) || queue !== ticket.queue;
+  const current = ticket.assigneeId ? detail.users[ticket.assigneeId]?.name : undefined;
+  return (
+    <Dialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>Transferir chamado {ticket.number}</DialogTitle>
+          <DialogDescription>
+            Hoje com {current ?? "ninguém (na fila)"} · fila {(TICKET_QUEUE_LABELS[ticket.queue as TicketQueue] ?? ticket.queue).split(" ")[0]}. Quem recebe é notificado e a transferência fica registrada na conversa.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="contents"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit(() => transferTicketAction({ ticketId: ticket.id, assigneeId: assigneeId || undefined, queue, note }), "Chamado transferido");
+          }}
+        >
+          <DialogBody className="flex flex-col gap-4 py-2">
+            <FormField label="Atendente" htmlFor={`${id}-to`} hint="Deixe em branco para devolver à fila escolhida, sem atendente.">
+              <Select id={`${id}-to`} value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} placeholder="Somente trocar a fila">
+                {detail.team
+                  .filter((u) => u.id !== ticket.assigneeId)
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                      {u.jobTitle ? ` · ${u.jobTitle}` : ""}
+                    </option>
+                  ))}
+              </Select>
+            </FormField>
+            <FormField label="Fila" htmlFor={`${id}-queue`}>
+              <Select id={`${id}-queue`} value={queue} onChange={(e) => setQueue(e.target.value as TicketQueue)} options={TICKET_QUEUES.map((q) => ({ value: q, label: TICKET_QUEUE_LABELS[q] }))} />
+            </FormField>
+            <FormField label="Nota da transferência" htmlFor={`${id}-note`} required>
+              <Textarea id={`${id}-note`} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ex.: precisa de acesso ao servidor fiscal; cliente já reiniciou o TEF" className="min-h-[80px]" required minLength={3} />
+            </FormField>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+              Cancelar
+            </Button>
+            <Button type="submit" loading={pending} disabled={!changed || note.trim().length < 3}>
+              <UserRoundCog /> Transferir
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

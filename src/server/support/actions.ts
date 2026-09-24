@@ -23,7 +23,10 @@ import {
   saveArticle,
   setWaitingClient,
   SupportError,
+  transferTicket,
   updateClassification,
+  voteArticle,
+  type ResolveResult,
 } from "./service";
 import { getClientTicketContext, type ClientTicketContext } from "./queries";
 import {
@@ -42,6 +45,8 @@ import {
   resolveSchema,
   ticketIdSchema,
   ticketOpportunitySchema,
+  transferSchema,
+  articleVoteSchema,
   waitingSchema,
   zodMessage,
 } from "./schemas";
@@ -64,7 +69,6 @@ async function requireOperator(): Promise<CurrentUser> {
 function revalidateSupport(ticketId?: string, clientId?: string) {
   revalidatePath("/suporte");
   revalidatePath("/suporte/chamados");
-  revalidatePath("/suporte/sla");
   if (ticketId) revalidatePath(`/suporte/chamados/${ticketId}`);
   if (clientId) revalidatePath(`/clientes/${clientId}`);
 }
@@ -121,13 +125,14 @@ export async function assignTicketAction(input: unknown): Promise<ActionResult<{
   }
 }
 
-export async function replyTicketAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+/** Resposta ao cliente. `manual` = registrada sem envio (integração não conectada); `to` = destinatário para wa.me/mailto. */
+export async function replyTicketAction(input: unknown): Promise<ActionResult<{ id: string; manual: boolean; to?: string }>> {
   try {
     const user = await requireOperator();
     const data = replySchema.parse(input);
-    const interaction = await replyToTicket(data.ticketId, data.channel, data.body, actor(user));
-    revalidateSupport(data.ticketId, interaction.clientId);
-    return { ok: true, data: { id: interaction.id } };
+    const result = await replyToTicket(data.ticketId, data.channel, data.body, actor(user));
+    revalidateSupport(data.ticketId, result.interaction.clientId);
+    return { ok: true, data: { id: result.interaction.id, manual: result.manual, to: result.to } };
   } catch (error) {
     return fail(error, "Não foi possível enviar a resposta");
   }
@@ -138,6 +143,7 @@ export async function addNoteAction(input: unknown): Promise<ActionResult<{ id: 
     const user = await requireOperator();
     const data = noteSchema.parse(input);
     const interaction = await addInternalNote(data.ticketId, data.body, actor(user));
+    revalidatePath("/suporte");
     revalidatePath(`/suporte/chamados/${data.ticketId}`);
     return { ok: true, data: { id: interaction.id } };
   } catch (error) {
@@ -162,10 +168,24 @@ export async function addAttachmentAction(input: unknown): Promise<ActionResult<
     const user = await requireOperator();
     const data = attachmentSchema.parse(input);
     const id = await addTicketAttachment(data.ticketId, { name: data.name, url: data.url }, actor(user));
+    revalidatePath("/suporte");
     revalidatePath(`/suporte/chamados/${data.ticketId}`);
     return { ok: true, data: { id } };
   } catch (error) {
     return fail(error, "Não foi possível adicionar o anexo");
+  }
+}
+
+/** Transferência para outro atendente e/ou fila, com nota (interação de status + notificação). */
+export async function transferTicketAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const user = await requireOperator();
+    const data = transferSchema.parse(input);
+    const ticket = await transferTicket(data.ticketId, { assigneeId: data.assigneeId, queue: data.queue, note: data.note }, actor(user));
+    revalidateSupport(ticket.id, ticket.clientId);
+    return { ok: true, data: { id: ticket.id } };
+  } catch (error) {
+    return fail(error, "Não foi possível transferir o chamado");
   }
 }
 
@@ -205,7 +225,7 @@ export async function resumeTicketAction(input: unknown): Promise<ActionResult> 
   }
 }
 
-export async function resolveTicketAction(input: unknown): Promise<ActionResult<{ csatLink: string }>> {
+export async function resolveTicketAction(input: unknown): Promise<ActionResult<ResolveResult>> {
   try {
     const user = await requireOperator();
     const { ticketId, ...data } = resolveSchema.parse(input);
@@ -283,5 +303,18 @@ export async function saveArticleAction(input: unknown): Promise<ActionResult<{ 
     return { ok: true, data: { id: article.id } };
   } catch (error) {
     return fail(error, "Não foi possível salvar o artigo");
+  }
+}
+
+/** "Este artigo foi útil?" — qualquer usuário com acesso ao suporte pode votar. */
+export async function voteArticleAction(input: unknown): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const data = articleVoteSchema.parse(input);
+    await voteArticle(data.articleId, data.helpful);
+    revalidatePath(`/suporte/base-de-conhecimento/${data.articleId}`);
+    return { ok: true, data: undefined };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar o voto");
   }
 }

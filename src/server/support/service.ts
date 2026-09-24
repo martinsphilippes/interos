@@ -37,7 +37,6 @@ import {
   type Document,
   type DomainEvent,
   type ImplementationProject,
-  type KnowledgeArticle,
   type Opportunity,
   type Product,
   type Settings,
@@ -48,7 +47,9 @@ import {
   type User,
   type UserRef,
 } from "@/domain/types";
-import { getSupportChannels, mockRecordingUrl, type SupportMessageChannel } from "./channels";
+import { getSupportChannels, type SupportMessageChannel } from "./channels";
+import { getSupportChannelStatus } from "./integrations";
+import type { KnowledgeArticleExtra } from "./knowledge-search";
 import {
   OPEN_TICKET_STATUSES,
   ROOT_CAUSE_LABELS,
@@ -74,8 +75,11 @@ const CUSTOMER_ACTOR: UserRef = { id: "cliente", name: "Cliente (avaliação)" }
 
 /** Campos opcionais gravados além do tipo `SupportTicket` (ver "needs" do relatório). */
 export type SupportTicketExtra = SupportTicket & { customerConfirmation?: "sim" | "pendente"; csatRequestedAt?: string };
-/** Canal de uma resposta do atendente (campo opcional além do tipo `TicketInteraction`). */
-export type TicketInteractionExtra = TicketInteraction & { channel?: ReplyChannel };
+/**
+ * Campos além do tipo `TicketInteraction`: canal da resposta e `manual` = registro manual (a mensagem/ligação
+ * aconteceu fora do sistema porque a integração do canal não está conectada).
+ */
+export type TicketInteractionExtra = TicketInteraction & { channel?: ReplyChannel; manual?: boolean };
 /** Marcas de alerta e substituição gravadas na instância de SLA (campos além do tipo `SlaInstance`). */
 export type SlaInstanceExtra = SlaInstance & { alertedRisk?: boolean; alertedBreach?: boolean; supersededBy?: string };
 
@@ -88,8 +92,9 @@ export function isOpenTicket(ticket: Pick<SupportTicket, "status">): boolean {
   return OPEN.has(ticket.status);
 }
 
+/** Link do chamado: abre o workspace da Central de Suporte com o chamado selecionado. */
 export function ticketHref(ticketId: string): string {
-  return `/suporte/chamados?chamado=${ticketId}`;
+  return `/suporte?chamado=${ticketId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +148,7 @@ async function nextTicketNumber(): Promise<string> {
 
 async function addInteraction(
   ticket: Pick<SupportTicket, "id" | "clientId">,
-  data: { kind: TicketInteraction["kind"]; body: string; authorId?: string; durationSeconds?: number; recordingUrl?: string; attachments?: string[]; channel?: ReplyChannel; createdAt?: string },
+  data: { kind: TicketInteraction["kind"]; body: string; authorId?: string; durationSeconds?: number; recordingUrl?: string; attachments?: string[]; channel?: ReplyChannel; manual?: boolean; createdAt?: string },
 ): Promise<TicketInteractionExtra> {
   return create<TicketInteractionExtra>(COLLECTIONS.ticketInteractions, {
     ticketId: ticket.id,
@@ -155,6 +160,7 @@ async function addInteraction(
     recordingUrl: data.recordingUrl,
     attachments: data.attachments,
     channel: data.channel,
+    manual: data.manual,
     createdBy: data.authorId,
     ...(data.createdAt ? { createdAt: data.createdAt } : {}),
   });
@@ -342,6 +348,56 @@ export async function assignTicket(ticketId: string, assigneeId: string, actor: 
 }
 
 /**
+ * Transferência para outro atendente e/ou outra fila, com nota obrigatória. Vira interação de status na
+ * conversa, evento `support.ticket.status_changed` (kind "transferencia") na timeline do cliente e notificação
+ * para quem recebe. Transferir só de fila, sem atendente, devolve o chamado à fila (sem atendente) e avisa a equipe.
+ */
+export async function transferTicket(ticketId: string, data: { assigneeId?: string; queue: TicketQueue; note: string }, actor: UserRef): Promise<SupportTicket> {
+  const ticket = await loadTicket(ticketId);
+  if (!isOpenTicket(ticket)) throw new SupportError("Só é possível transferir chamados em aberto");
+  const assignee = data.assigneeId ? await getById<User>(COLLECTIONS.users, data.assigneeId) : null;
+  if (data.assigneeId && (!assignee || assignee.active === false)) throw new SupportError("Atendente não encontrado ou inativo");
+  const assigneeChanged = Boolean(assignee) && assignee!.id !== ticket.assigneeId;
+  const queueChanged = data.queue !== ticket.queue;
+  if (!assigneeChanged && !queueChanged) throw new SupportError("Escolha outro atendente ou outra fila para transferir");
+
+  const previous = ticket.assigneeId ? await getById<User>(COLLECTIONS.users, ticket.assigneeId) : null;
+  // Mudou só a fila: o chamado volta para a fila de destino sem atendente.
+  const nextAssigneeId = assignee?.id ?? (queueChanged ? undefined : ticket.assigneeId);
+  await update<SupportTicket>(COLLECTIONS.supportTickets, ticket.id, { queue: data.queue, ...(nextAssigneeId ? { assigneeId: nextAssigneeId } : {}) });
+  if (!nextAssigneeId && ticket.assigneeId) await clearFields(ticket.id, ["assigneeId"]);
+  if (nextAssigneeId && nextAssigneeId !== ticket.assigneeId) await setSlaOwner(ticket, nextAssigneeId);
+
+  const queueLabel = TICKET_QUEUE_LABELS[data.queue].split(" ")[0];
+  const target = [assignee && assigneeChanged ? assignee.name : null, queueChanged ? `fila ${queueLabel}` : null].filter(Boolean).join(" · ");
+  const from = [previous?.name ?? "sem atendente", `fila ${(TICKET_QUEUE_LABELS[ticket.queue as TicketQueue] ?? ticket.queue).split(" ")[0]}`].join(" · ");
+  await addInteraction(ticket, { kind: "status", body: `Transferido de ${from} para ${target}: ${data.note}`, authorId: actor.id });
+  const event = await emitEvent({
+    type: "support.ticket.status_changed",
+    actor,
+    clientId: ticket.clientId,
+    entity: { type: "ticket", id: ticket.id },
+    title: `Chamado ${ticket.number} transferido para ${target}`,
+    description: data.note,
+    department: "suporte",
+    payload: { kind: "transferencia", from: ticket.status, to: ticket.status, number: ticket.number, assigneeId: nextAssigneeId, previousAssigneeId: ticket.assigneeId, queue: data.queue, previousQueue: ticket.queue },
+  });
+
+  const urgent = ticket.priority === "critico" || ticket.priority === "alto";
+  const recipients = assignee ? [assignee.id] : (await getSupportTeam()).map((u) => u.id);
+  await notify({
+    userIds: recipients.filter((id) => id !== actor.id),
+    kind: urgent ? "acao" : "informativa",
+    title: assignee ? `Chamado ${ticket.number} transferido para você` : `Chamado ${ticket.number} na fila ${queueLabel} sem atendente`,
+    body: `${ticket.subject} · ${TICKET_PRIORITY_LABELS[ticket.priority]} · por ${actor.name}: ${data.note}`,
+    href: ticketHref(ticket.id),
+    entity: { type: "ticket", id: ticket.id },
+    eventId: event.id,
+  });
+  return { ...ticket, queue: data.queue, assigneeId: nextAssigneeId };
+}
+
+/**
  * Primeira resposta do atendente: marca firstResponseAt, a resposta no SLA e emite
  * support.ticket.first_response. Chamado sem atendente passa a ser de quem respondeu; aberto vira em atendimento.
  */
@@ -382,37 +438,61 @@ async function registerAgentResponse(ticket: SupportTicketExtra, actor: UserRef,
 
 const CHANNEL_KIND: Record<ReplyChannel, TicketInteraction["kind"]> = { whatsapp: "mensagem", email: "mensagem", portal: "mensagem" };
 
-export async function replyToTicket(ticketId: string, channel: ReplyChannel, body: string, actor: UserRef): Promise<TicketInteraction> {
+export interface ReplyResult {
+  interaction: TicketInteraction;
+  /** true quando a integração do canal não está conectada: a resposta foi só registrada no chamado. */
+  manual: boolean;
+  /** Telefone (WhatsApp) ou e-mail do destinatário, para o atendente abrir wa.me/mailto com o texto. */
+  to?: string;
+}
+
+/**
+ * Resposta do atendente. Com a integração do canal conectada, envia pelo adapter; sem integração (situação
+ * atual) grava um REGISTRO MANUAL com o texto digitado e devolve o destinatário para o atendente enviar pelo
+ * app (wa.me / mailto). Portal é interno: a resposta fica visível no chamado.
+ */
+export async function replyToTicket(ticketId: string, channel: ReplyChannel, body: string, actor: UserRef): Promise<ReplyResult> {
   const ticket = await loadTicket(ticketId);
   if (!isOpenTicket(ticket) && ticket.status !== "resolvido") throw new SupportError("Chamado fechado: reabra para continuar a conversa");
-  const contact = ticket.contactId ? await getById<Contact>(COLLECTIONS.contacts, ticket.contactId) : null;
-  const client = await loadClient(ticket.clientId);
-
-  const interaction = await addInteraction(ticket, { kind: CHANNEL_KIND[channel], body, authorId: actor.id, channel });
+  const [contact, client, status] = await Promise.all([
+    ticket.contactId ? getById<Contact>(COLLECTIONS.contacts, ticket.contactId) : null,
+    loadClient(ticket.clientId),
+    getSupportChannelStatus(),
+  ]);
   const to = channel === "whatsapp" ? (contact?.whatsapp ?? contact?.phone ?? client.whatsapp ?? client.phone) : channel === "email" ? (contact?.email ?? client.email) : undefined;
-  const communication = await getSupportChannels().sendMessage({
-    channel: channel as SupportMessageChannel,
-    to,
-    body,
-    clientId: ticket.clientId,
-    contactId: contact?.id,
-    entity: { type: "ticket", id: ticket.id },
-    sender: actor,
-  });
+  const connected = channel === "portal" || (channel === "whatsapp" ? status.whatsapp : status.email);
+  const manual = !connected;
+
+  const interaction = await addInteraction(ticket, { kind: CHANNEL_KIND[channel], body, authorId: actor.id, channel, manual });
+  let communicationId: string | undefined;
+  if (connected && channel !== "portal") {
+    const communication = await getSupportChannels().sendMessage({
+      channel: channel as SupportMessageChannel,
+      to,
+      body,
+      clientId: ticket.clientId,
+      contactId: contact?.id,
+      entity: { type: "ticket", id: ticket.id },
+      sender: actor,
+    });
+    communicationId = communication.id;
+  }
   if (channel === "whatsapp") {
     await emitEvent({
       type: "whatsapp.message.sent",
       actor,
       clientId: ticket.clientId,
       entity: { type: "ticket", id: ticket.id },
-      title: `WhatsApp enviado no chamado ${ticket.number}${contact ? ` para ${contact.name}` : ""} (simulado)`,
+      title: manual
+        ? `WhatsApp registrado manualmente no chamado ${ticket.number}${contact ? ` (${contact.name})` : ""}`
+        : `WhatsApp enviado no chamado ${ticket.number}${contact ? ` para ${contact.name}` : ""}`,
       description: body.length > 280 ? `${body.slice(0, 277)}…` : body,
       department: "suporte",
-      payload: { communicationId: communication.id, to, provider: communication.provider, simulated: communication.provider === "mock", ticketId: ticket.id },
+      payload: { communicationId, to, manual, ticketId: ticket.id },
     });
   }
-  await registerAgentResponse(ticket, actor, TICKET_CHANNEL_LABELS[channel]);
-  return interaction;
+  await registerAgentResponse(ticket, actor, `${TICKET_CHANNEL_LABELS[channel]}${manual ? " (registro manual)" : ""}`);
+  return { interaction, manual, to };
 }
 
 export async function addInternalNote(ticketId: string, body: string, actor: UserRef): Promise<TicketInteraction> {
@@ -435,35 +515,39 @@ export async function addInternalNote(ticketId: string, body: string, actor: Use
 
 export async function registerCall(ticketId: string, data: { direction: "entrada" | "saida"; durationMinutes: number; summary: string }, actor: UserRef): Promise<TicketInteraction> {
   const ticket = await loadTicket(ticketId);
-  const contact = ticket.contactId ? await getById<Contact>(COLLECTIONS.contacts, ticket.contactId) : null;
+  const [contact, status] = await Promise.all([ticket.contactId ? getById<Contact>(COLLECTIONS.contacts, ticket.contactId) : null, getSupportChannelStatus()]);
   const durationSeconds = Math.round(data.durationMinutes * 60);
-  const recordingKey = `${ticket.number}-${Date.now().toString(36)}`;
-  const communication = await getSupportChannels().registerCall({
-    direction: data.direction,
-    durationSeconds,
-    summary: data.summary,
-    clientId: ticket.clientId,
-    contactId: contact?.id,
-    entity: { type: "ticket", id: ticket.id },
-    user: actor,
-    recordingKey,
-  });
+  // Sem VoIP conectado a ligação aconteceu no discador: registro manual, sem gravação.
+  const manual = !status.voip;
+  const communication = manual
+    ? null
+    : await getSupportChannels().registerCall({
+        direction: data.direction,
+        durationSeconds,
+        summary: data.summary,
+        clientId: ticket.clientId,
+        contactId: contact?.id,
+        entity: { type: "ticket", id: ticket.id },
+        user: actor,
+        recordingKey: `${ticket.number}-${Date.now().toString(36)}`,
+      });
   const interaction = await addInteraction(ticket, {
     kind: "ligacao",
     body: data.summary,
     authorId: actor.id,
     durationSeconds,
-    recordingUrl: communication.recordingUrl ?? mockRecordingUrl(recordingKey),
+    recordingUrl: communication?.recordingUrl,
+    manual,
   });
   await emitEvent({
     type: "call.completed",
     actor,
     clientId: ticket.clientId,
     entity: { type: "ticket", id: ticket.id },
-    title: `Ligação ${data.direction === "saida" ? "para" : "de"} ${contact?.name ?? "cliente"} no chamado ${ticket.number}`,
+    title: `Ligação ${data.direction === "saida" ? "para" : "de"} ${contact?.name ?? "cliente"} no chamado ${ticket.number}${manual ? " (registro manual)" : ""}`,
     description: `${data.durationMinutes} min · ${data.summary}`,
     department: "suporte",
-    payload: { communicationId: communication.id, durationSeconds, direction: data.direction, ticketId: ticket.id, simulated: communication.provider === "mock" },
+    payload: { communicationId: communication?.id, durationSeconds, direction: data.direction, ticketId: ticket.id, manual },
   });
   // Ligação feita pelo atendente conta como resposta ao cliente.
   if (data.direction === "saida" && isOpenTicket(ticket)) await registerAgentResponse(ticket, actor, "ligação");
@@ -591,7 +675,18 @@ export async function resumeTicket(ticketId: string, actor: UserRef): Promise<vo
   await changeStatus(ticket, "em_atendimento", actor, "SLA retomado");
 }
 
-export async function resolveTicket(ticketId: string, data: Omit<ResolveData, "ticketId">, actor: UserRef): Promise<{ csatLink: string }> {
+export interface ResolveResult {
+  /** Caminho relativo do formulário público de CSAT. */
+  csatLink: string;
+  /** true só quando o pedido saiu por uma integração conectada. */
+  csatSent: boolean;
+  csatChannel: "whatsapp" | "email";
+  csatTo?: string;
+  /** Texto do pedido (sem o link) para o envio manual. */
+  csatMessage: string;
+}
+
+export async function resolveTicket(ticketId: string, data: Omit<ResolveData, "ticketId">, actor: UserRef): Promise<ResolveResult> {
   const ticket = await loadTicket(ticketId);
   if (!isOpenTicket(ticket)) throw new SupportError("O chamado já está resolvido ou fechado");
   // Pausado: retoma antes de concluir para o prazo refletir o tempo de pausa.
@@ -623,23 +718,31 @@ export async function resolveTicket(ticketId: string, data: Omit<ResolveData, "t
     payload: { number: ticket.number, rootCause: data.rootCause, trainingRelated: data.trainingRelated, customerConfirmation: data.customerConfirmation, withinSla, assigneeId: ticket.assigneeId },
   });
 
-  // Pedido de CSAT (mock): WhatsApp quando o chamado veio por WhatsApp, senão e-mail.
-  const contact = ticket.contactId ? await getById<Contact>(COLLECTIONS.contacts, ticket.contactId) : null;
-  const client = await getById<Client>(COLLECTIONS.clients, ticket.clientId);
-  const link = csatPath(ticket.id, true);
+  // Pedido de CSAT: WhatsApp quando o chamado veio por WhatsApp, senão e-mail. Sem integração conectada o pedido
+  // NÃO é enviado: o atendente recebe o texto e o destinatário para enviar pelo app (wa.me / mailto).
+  const [contact, client, status] = await Promise.all([
+    ticket.contactId ? getById<Contact>(COLLECTIONS.contacts, ticket.contactId) : null,
+    getById<Client>(COLLECTIONS.clients, ticket.clientId),
+    getSupportChannelStatus(),
+  ]);
   const channel: SupportMessageChannel = ticket.channel === "whatsapp" ? "whatsapp" : "email";
-  await getSupportChannels().sendMessage({
-    channel,
-    to: channel === "whatsapp" ? (contact?.whatsapp ?? contact?.phone ?? client?.whatsapp) : (contact?.email ?? client?.email),
-    body: `Olá${contact ? `, ${contact.name.split(" ")[0]}` : ""}! Seu chamado ${ticket.number} (${ticket.subject}) foi resolvido. Como foi o atendimento? Dê uma nota de 0 a 10: ${link}`,
-    clientId: ticket.clientId,
-    contactId: contact?.id,
-    entity: { type: "ticket", id: ticket.id },
-    sender: actor,
-    templateKey: "csat_pedido",
-  });
-  await update<SupportTicketExtra>(COLLECTIONS.supportTickets, ticket.id, { csatRequestedAt: nowIso() });
-  return { csatLink: csatPath(ticket.id) };
+  const to = channel === "whatsapp" ? (contact?.whatsapp ?? contact?.phone ?? client?.whatsapp ?? client?.phone) : (contact?.email ?? client?.email);
+  const greeting = `Olá${contact ? `, ${contact.name.split(" ")[0]}` : ""}! Seu chamado ${ticket.number} (${ticket.subject}) foi resolvido. Como foi o atendimento? Dê uma nota de 0 a 10:`;
+  const sent = channel === "whatsapp" ? status.whatsapp : status.email;
+  if (sent) {
+    await getSupportChannels().sendMessage({
+      channel,
+      to,
+      body: `${greeting} ${csatPath(ticket.id, true)}`,
+      clientId: ticket.clientId,
+      contactId: contact?.id,
+      entity: { type: "ticket", id: ticket.id },
+      sender: actor,
+      templateKey: "csat_pedido",
+    });
+    await update<SupportTicketExtra>(COLLECTIONS.supportTickets, ticket.id, { csatRequestedAt: nowIso() });
+  }
+  return { csatLink: csatPath(ticket.id), csatSent: sent, csatChannel: channel, csatTo: to, csatMessage: greeting };
 }
 
 export async function closeTicket(ticketId: string, actor: UserRef, note?: string): Promise<void> {
@@ -857,20 +960,26 @@ export async function createOpportunityFromTicket(ticketId: string, data: { prod
 // Base de conhecimento
 // ---------------------------------------------------------------------------
 
-export async function saveArticle(data: ArticleData, actor: UserRef): Promise<KnowledgeArticle> {
+export async function saveArticle(data: ArticleData, actor: UserRef): Promise<KnowledgeArticleExtra> {
+  const keywords = Array.from(new Set(data.keywords.map((k) => k.trim().toLowerCase()).filter(Boolean)));
   const payload = {
     title: data.title,
     productId: data.productId,
+    module: data.module,
     category: data.category,
+    problem: data.problem,
+    keywords,
     body: data.body,
     tags: Array.from(new Set(data.tags)),
     published: data.published,
   };
   if (data.id) {
-    const current = await getById<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, data.id);
+    const current = await getById<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, data.id);
     if (!current) throw new SupportError("Artigo não encontrado");
-    await update<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, current.id, payload);
-    const cleared = [!data.productId && current.productId ? "productId" : null, !data.category && current.category ? "category" : null].filter((f): f is string => Boolean(f));
+    await update<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, current.id, payload);
+    // Campos opcionais esvaziados no formulário são removidos do documento (o update ignora undefined).
+    const optional = ["productId", "module", "category", "problem"] as const;
+    const cleared = optional.filter((f) => !data[f] && current[f]);
     if (cleared.length) {
       const patch: Record<string, unknown> = {};
       for (const f of cleared) patch[f] = FieldValue.delete();
@@ -878,16 +987,44 @@ export async function saveArticle(data: ArticleData, actor: UserRef): Promise<Kn
     }
     return { ...current, ...payload };
   }
-  const article = await create<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, { ...payload, authorId: actor.id, views: 0, createdBy: actor.id });
-  if (data.sourceTicketId) {
-    const ticket = await getById<SupportTicket>(COLLECTIONS.supportTickets, data.sourceTicketId);
-    if (ticket) await addInteraction(ticket, { kind: "nota_interna", body: `Artigo da base de conhecimento criado a partir deste chamado: ${article.title}`, authorId: actor.id });
+  const source = data.sourceTicketId ? await getById<SupportTicket>(COLLECTIONS.supportTickets, data.sourceTicketId) : null;
+  const article = await create<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, {
+    ...payload,
+    authorId: actor.id,
+    views: 0,
+    helpful: 0,
+    notHelpful: 0,
+    sourceTicketId: source?.id,
+    createdBy: actor.id,
+  });
+  if (source) {
+    await addInteraction(source, { kind: "nota_interna", body: `Artigo da base de conhecimento criado a partir deste chamado: ${article.title}`, authorId: actor.id });
+    // Nota interna: registra no histórico do cliente sem ir para a timeline pública.
+    await emitEvent({
+      type: "note.added",
+      actor,
+      clientId: source.clientId,
+      entity: { type: "ticket", id: source.id },
+      title: `Artigo da base criado a partir do chamado ${source.number}: ${article.title}`,
+      department: "suporte",
+      payload: { ticketId: source.id, articleId: article.id, internal: true },
+      timeline: false,
+    });
   }
   return article;
 }
 
 export async function incrementArticleViews(id: string): Promise<void> {
   await col(COLLECTIONS.knowledgeArticles).doc(id).update({ views: FieldValue.increment(1) });
+}
+
+/** "Este artigo foi útil?": incrementa helpful ou notHelpful. */
+export async function voteArticle(id: string, helpful: boolean): Promise<void> {
+  const article = await getById<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, id);
+  if (!article) throw new SupportError("Artigo não encontrado");
+  await col(COLLECTIONS.knowledgeArticles)
+    .doc(id)
+    .update({ [helpful ? "helpful" : "notHelpful"]: FieldValue.increment(1) });
 }
 
 // ---------------------------------------------------------------------------

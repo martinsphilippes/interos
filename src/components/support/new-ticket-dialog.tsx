@@ -159,12 +159,12 @@ export function NewTicketDialog({ options, fixedClient, trigger, openAfterCreate
         return;
       }
       toast.success(`Chamado ${result.data.number} aberto`, {
-        action: { label: "Abrir", onClick: () => router.push(`/suporte/chamados/${result.data.id}`) },
+        action: { label: "Abrir", onClick: () => router.push(`/suporte?chamado=${result.data.id}`) },
       });
       setOpen(false);
       reset();
       if (urlOpen) flag.clear();
-      if (openAfterCreate) router.push(`/suporte/chamados/${result.data.id}`);
+      if (openAfterCreate) router.push(`/suporte?chamado=${result.data.id}`);
       else router.refresh();
     });
   };

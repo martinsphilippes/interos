@@ -139,7 +139,7 @@ export function TicketClientCard({ detail }: { detail: TicketDetail }) {
 }
 
 /** Classificação editável: produto, categoria, criticidade (recalcula o SLA) e fila. */
-export function TicketClassification({ detail, canOperate }: { detail: TicketDetail; canOperate: boolean }) {
+export function TicketClassification({ detail, canOperate, bare, onSaved }: { detail: TicketDetail; canOperate: boolean; /** Só o formulário (dentro de um diálogo). */ bare?: boolean; onSaved?: () => void }) {
   const router = useRouter();
   const { ticket } = detail;
   const [productId, setProductId] = React.useState(ticket.productId ?? "");
@@ -159,15 +159,11 @@ export function TicketClassification({ detail, canOperate }: { detail: TicketDet
         return;
       }
       toast.success(result.data.slaRestarted ? "Classificação salva · SLA recalculado pela nova criticidade" : "Classificação salva");
+      onSaved?.();
       router.refresh();
     });
 
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Classificação</CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0">
+  const form = (
         <form
           className="flex flex-col gap-3"
           onSubmit={(e) => {
@@ -193,12 +189,19 @@ export function TicketClassification({ detail, canOperate }: { detail: TicketDet
             <Input id={`${id}-category`} value={category} onChange={(e) => setCategory(e.target.value)} disabled={!canOperate} maxLength={60} placeholder="Ex.: Fiscal" />
           </FormField>
           {canOperate ? (
-            <Button type="submit" variant="outline" size="sm" loading={pending} disabled={!dirty} className="min-h-[44px] md:min-h-8">
+            <Button type="submit" variant={bare ? "primary" : "outline"} size="sm" loading={pending} disabled={!dirty} className="min-h-[44px] md:min-h-8">
               <Save /> Salvar classificação
             </Button>
           ) : null}
         </form>
-      </CardContent>
+  );
+  if (bare) return form;
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Classificação</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">{form}</CardContent>
     </Card>
   );
 }
