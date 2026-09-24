@@ -11,40 +11,32 @@ import "server-only";
  * como Error com mensagem em português (as actions devolvem a mensagem ao usuário).
  */
 import { FieldValue } from "firebase-admin/firestore";
-import { batchSet, col, create, getById, getManyByIds, list, newId, nowIso, update } from "@/server/db";
+import { batchSet, col, create, getById, list, newId, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { registerHandler } from "@/server/events/emit";
 import { registerFinanceHandlers } from "@/server/events/handlers/finance";
 import { notify } from "@/server/notifications";
-import { addBusinessHours, businessDaysToHours, getHolidays, startSla } from "@/server/sla";
+import { addBusinessHours, getHolidays } from "@/server/sla";
 import { completeTaskInternal, createTaskInternal } from "@/server/tasks/service";
 import { completeGate, getDepartmentManager } from "@/server/workflow/service";
+import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
-import { shortId } from "@/lib/utils";
 import {
   COLLECTIONS,
-  IMPLEMENTATION_PHASES,
   type Address,
   type Billing,
-  type ChecklistItem,
   type Client,
   type Communication,
   type Contact,
   type Contract,
   type Document,
   type DomainEvent,
-  type ImplementationPhase,
-  type ImplementationProject,
-  type ImplementationTask,
-  type ImplementationTemplate,
   type Opportunity,
-  type Product,
   type Proposal,
   type ProposalItem,
   type Settings,
   type Task,
-  type User,
   type UserRef,
   type WorkflowInstance,
 } from "@/domain/types";
@@ -821,7 +813,8 @@ export async function releaseContract(contractId: string, actor: FinanceActor, e
   // Exceção: conclui a etapa Financeiro com o motivo informado (antes do evento, para ficar registrado no step).
   if (exception) await completeFinanceStepWithException(client, contract, actor, reason!, gate.checks.filter((c) => !c.ok).map((c) => c.label));
 
-  const project = await createImplementationProject(released, client, actor);
+  // Criação do projeto: caminho único no módulo de Implantação (combina templates, SLA, evento implementation.created).
+  const project = await createProjectFromContract(released, actor, client);
 
   await emitEvent({
     type: "financial.released",
@@ -866,201 +859,6 @@ async function completeFinanceStepWithException(client: Client, contract: Contra
     notes: `Contrato ${contract.number} liberado por exceção.`,
   });
   if (result.status !== "completed") console.warn(`[financeiro] etapa financeiro do cliente ${client.id} não concluída por exceção: ${result.status}`);
-}
-
-/** Responsável do projeto: implantador do cliente; senão o analista de implantação com menos projetos ativos; senão o gestor. */
-async function pickImplementationOwner(client: Client): Promise<User | null> {
-  if (client.ownerImplementationId) {
-    const current = await getById<User>(COLLECTIONS.users, client.ownerImplementationId);
-    if (current && current.active !== false) return current;
-  }
-  const [users, projects, manager] = await Promise.all([
-    list<User>(COLLECTIONS.users, { where: [["departmentId", "==", "implantacao"]] }),
-    list<ImplementationProject>(COLLECTIONS.implementationProjects),
-    getDepartmentManager("implantacao"),
-  ]);
-  const analysts = users.filter((u) => u.active !== false && u.role === "implantacao");
-  if (analysts.length > 0) {
-    const load = new Map<string, number>();
-    for (const p of projects) if (p.status !== "concluida" && p.status !== "cancelada") load.set(p.ownerId, (load.get(p.ownerId) ?? 0) + 1);
-    analysts.sort((a, b) => (load.get(a.id) ?? 0) - (load.get(b.id) ?? 0) || a.name.localeCompare(b.name, "pt-BR"));
-    return analysts[0];
-  }
-  return manager ?? users.find((u) => u.active !== false) ?? null;
-}
-
-/**
- * Cria o projeto de implantação a partir dos produtos do contrato, combinando os templates de cada
- * produto: fases unidas (sem duplicar, na ordem padrão), tarefas de todos os templates e checklist
- * combinado. Idempotente por contrato.
- */
-export async function createImplementationProject(contract: Contract, client: Client, actor: UserRef): Promise<ImplementationProject | null> {
-  const existing = (await list<ImplementationProject>(COLLECTIONS.implementationProjects, { where: [["contractId", "==", contract.id]] })).find((p) => p.status !== "cancelada");
-  if (existing) return existing;
-
-  const productIds = Array.from(new Set(contract.items.map((i) => i.productId)));
-  const products = await getManyByIds<Product>(COLLECTIONS.products, productIds);
-  const templateIds = Array.from(products.values())
-    .map((p) => p.implementationTemplateId)
-    .filter((id): id is string => Boolean(id));
-  const templatesById = await getManyByIds<ImplementationTemplate>(COLLECTIONS.implementationTemplates, templateIds);
-  // Produtos sem template vinculado: procura um template ativo do próprio produto.
-  if (templatesById.size < productIds.length) {
-    const byProduct = await list<ImplementationTemplate>(COLLECTIONS.implementationTemplates, { where: [["productId", "in", productIds]] });
-    for (const t of byProduct) if (t.active && !templatesById.has(t.id)) templatesById.set(t.id, t);
-  }
-  const templates = Array.from(templatesById.values()).filter((t) => t.active !== false);
-
-  const maxDays = Math.max(
-    1,
-    ...Array.from(products.values()).map((p) => p.implementationDays ?? 0),
-    ...(Array.from(products.values()).some((p) => p.implementationDays) ? [] : templates.map((t) => t.totalDays)),
-  );
-  const holidays = await getHolidays();
-  const now = new Date();
-  const dueDate = addBusinessHours(now, businessDaysToHours(maxDays), holidays).toISOString();
-
-  const owner = await pickImplementationOwner(client);
-  if (!owner) throw new Error("Nenhum usuário de implantação ativo para assumir o projeto");
-
-  // Fases unidas na ordem padrão; tarefas deduplicadas por título dentro da fase.
-  const phases = IMPLEMENTATION_PHASES.filter((ph) => templates.some((t) => t.phases.some((p) => p.key === ph)));
-  const checklist: ChecklistItem[] = [];
-  const seenChecklist = new Set<string>();
-  const taskDrafts: Omit<ImplementationTask, "id" | "organizationId" | "createdAt" | "updatedAt">[] = [];
-  let dayCursor = 0;
-  const projectId = newId(COLLECTIONS.implementationProjects);
-  for (const ph of phases) {
-    const seenTitles = new Set<string>();
-    let phaseSpan = 0;
-    for (const tpl of templates) {
-      const spec = tpl.phases.find((p) => p.key === ph);
-      if (!spec) continue;
-      for (const item of spec.checklist) {
-        if (seenChecklist.has(item.label)) continue;
-        seenChecklist.add(item.label);
-        checklist.push({ id: shortId("chk"), label: item.label, required: item.required, done: false });
-      }
-      for (const t of spec.tasks) {
-        phaseSpan = Math.max(phaseSpan, t.dueInDays);
-        if (seenTitles.has(t.title)) continue;
-        seenTitles.add(t.title);
-        taskDrafts.push({
-          projectId,
-          clientId: client.id,
-          phase: ph,
-          title: templates.length > 1 && ph !== "kickoff" && ph !== "go_live" ? `${t.title} (${tpl.name.replace(/^(Implantação|Entrega) /, "")})` : t.title,
-          description: t.description,
-          assigneeId: owner.id,
-          dueAt: addBusinessHours(now, businessDaysToHours(dayCursor + t.dueInDays), holidays).toISOString(),
-          status: "aberta",
-          required: t.required,
-          createdBy: actor.id,
-        });
-      }
-    }
-    dayCursor += phaseSpan;
-  }
-
-  const productNames = contract.items.map((i) => (i.quantity > 1 ? `${i.productName} (${i.quantity})` : i.productName));
-  const project = await create<ImplementationProject>(
-    COLLECTIONS.implementationProjects,
-    {
-      clientId: client.id,
-      contractId: contract.id,
-      workflowInstanceId: client.workflowInstanceId,
-      name: `Implantação ${client.tradeName}`,
-      productIds,
-      scope: `Contrato ${contract.number} v${contract.version}. Produtos: ${productNames.join(", ")}.`,
-      ownerId: owner.id,
-      teamIds: [owner.id],
-      status: "aguardando_inicio",
-      currentPhase: (phases[0] ?? "kickoff") as ImplementationPhase,
-      dueDate,
-      progress: 0,
-      externalDelayDays: 0,
-      internalDelayDays: 0,
-      checklist,
-      createdBy: actor.id,
-    },
-    projectId,
-  );
-
-  const stamp = nowIso();
-  await batchSet(taskDrafts.map((t) => ({ collection: COLLECTIONS.implementationTasks, id: newId(COLLECTIONS.implementationTasks), data: { ...t, organizationId: contract.organizationId, createdAt: stamp, updatedAt: stamp } })));
-
-  const sla = await startSla({
-    ruleKey: "implantacao.projeto",
-    entityType: "projeto",
-    entityId: project.id,
-    clientId: client.id,
-    ownerId: owner.id,
-    department: "implantacao",
-    resolutionHours: businessDaysToHours(maxDays),
-  });
-  await update<ImplementationProject>(COLLECTIONS.implementationProjects, project.id, { slaInstanceId: sla.id });
-
-  // Cliente em implantação, com o responsável de implantação definido.
-  const clientPatch: Partial<Client> = { ownerImplementationId: owner.id };
-  if (client.status !== "em_implantacao" && client.status !== "ativo") clientPatch.status = "em_implantacao";
-  await update<Client>(COLLECTIONS.clients, client.id, clientPatch);
-  if (clientPatch.status) {
-    await emitEvent({
-      type: "client.status_changed",
-      actor,
-      clientId: client.id,
-      entity: { type: "client", id: client.id },
-      title: `Status do cliente: ${client.status} → em_implantacao`,
-      description: `Liberação financeira do contrato ${contract.number}`,
-      department: "financeiro",
-      payload: { from: client.status, to: "em_implantacao", contractId: contract.id },
-    });
-  }
-
-  const event = await emitEvent({
-    type: "implementation.created",
-    actor,
-    clientId: client.id,
-    entity: { type: "project", id: project.id },
-    title: `Projeto de implantação criado: ${project.name}`,
-    description: `Responsável: ${owner.name} · ${phases.length} fase(s) · ${taskDrafts.length} tarefa(s) · prazo ${formatDate(dueDate)} (${maxDays} dia(s) útil(eis))`,
-    department: "implantacao",
-    payload: { projectId: project.id, contractId: contract.id, ownerId: owner.id, productIds, templateIds: templates.map((t) => t.id), taskCount: taskDrafts.length, dueDate, slaInstanceId: sla.id },
-  });
-  await emitEvent({
-    type: "sla.started",
-    actor,
-    clientId: client.id,
-    entity: { type: "project", id: project.id },
-    title: `SLA do projeto de implantação iniciado: ${sla.ruleName}`,
-    description: `Prazo: ${formatDate(sla.dueAt)}`,
-    department: "implantacao",
-    payload: { slaInstanceId: sla.id, dueAt: sla.dueAt, ownerId: owner.id, ruleKey: sla.ruleKey },
-    timeline: false,
-  });
-
-  const manager = await getDepartmentManager("implantacao");
-  await notify({
-    userIds: [owner.id].filter((id) => id !== actor.id),
-    kind: "acao",
-    title: `Novo projeto de implantação: ${client.tradeName}`,
-    body: `${productNames.join(", ")} · prazo ${formatDate(dueDate)}. Agende o kickoff.`,
-    href: `/implantacao?projeto=${project.id}`,
-    entity: { type: "project", id: project.id },
-    eventId: event.id,
-  });
-  if (manager && manager.id !== owner.id && manager.id !== actor.id) {
-    await notify({
-      userIds: [manager.id],
-      kind: "informativa",
-      title: `${client.tradeName} liberado para implantação`,
-      body: `Projeto atribuído a ${owner.name}.`,
-      href: `/implantacao?projeto=${project.id}`,
-      entity: { type: "project", id: project.id },
-      eventId: event.id,
-    });
-  }
-  return { ...project, slaInstanceId: sla.id };
 }
 
 // ---------------------------------------------------------------------------
