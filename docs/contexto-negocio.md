@@ -1,9 +1,11 @@
 # INTEROS — Contexto de negócio (síntese dos documentos recebidos)
 
-Fonte: 5 documentos enviados pelo Philippe em 24/09/2026:
+Fonte: 8 documentos enviados pelo Philippe em 24/09/2026:
 Especificação Funcional v1.0 (21 slides), Workflow para o Time de Desenvolvimento (19 slides),
 Operational Blueprint (15 slides), Programa de Excelência em Suporte (12 páginas),
-Plano de Comissionamento e Crescimento 2026 — Vendas (11 páginas).
+Plano de Comissionamento e Crescimento 2026 — Vendas (11 páginas),
+Centro de Comando Financeiro (13 slides), Excelência em Implantação (10 slides),
+planilha Modelos de Relatórios Departamentais (8 abas).
 
 ## Empresa
 Intercert: revenda/integradora de software de gestão. Produto principal é o ERP
@@ -70,6 +72,48 @@ Adesão/setup 25% · Recorrência: comissão paga na 3ª mensalidade · Hardware
 Metas mensais: setup R$ 10.000 · recorrência R$ 5.000 · hardware R$ 25.000.
 Prêmio por meta batida: adesão 1 salário mínimo · recorrência 1 salário mínimo · hardware R$ 500.
 Estratégia: pacotes (ERP + TEF + maquininha), venda cruzada, foco em recorrência.
+
+## Financeiro: metas e bônus (deck "Centro de Comando Financeiro")
+Papel: portão de qualidade do workflow. Valida e libera (faturamento correto de múltiplos
+produtos, contrato assinado, confirmação de pagamento, validação de escopo) antes da
+implantação, que deve ativar o cliente em < 7 dias. Meta macro da empresa: 5.000 clientes.
+Linguagem SaaS: ARR, CAC, LTV.
+Metas táticas: MRR +8% ao mês · ticket médio de venda R$ 350 (o slide de bônus cita R$ 300) ·
+churn mensal < 3% (operacional: falta de uso/técnico/fechamento; financeiro: inadimplência,
+falha de cobrança, faturamento incorreto).
+Bônus por resultado com a mesma escala do Suporte (100%→100%, 90–99%→70%, 80–89%→40%, <80%→0).
+Bloqueios: descumprimento grave de processo (pular etapas de liberação), vendas fora de
+conformidade (faturar sem escopo documentado), churn imediato por erro operacional.
+Ecossistema de produtos citado: ERP Web + InterCert Bank, Consultoria, Meios de pagamento (TEF),
+Ponto e Gourmet, Certificação Digital.
+
+## Implantação: metas e bônus (deck "Excelência em Implantação") — até 20% do salário base
+Individual 60%: SLA de implantação no prazo 30% (meta 90%) · ativação em até 7 dias 30% (≥80%) ·
+chamados abertos nos primeiros 30 dias 20% (≤ meta) · aprovação na auditoria de qualidade 20% (≥95%).
+Coletivo 40%: SLA médio da equipe 25% (90%) · ativação geral em 7 dias 25% (≥80%) · chamados
+gerais pós-implantação 30% (≤ meta) · churn inicial da base até 90 dias 20% (≤3%).
+Janelas: dias 0–7 time to value · 8–30 qualidade e estabilidade · 31–90 retenção.
+Escala de pagamento idêntica (100/70/40/0). Bloqueios: implantação divergente do escopo,
+reclamação formal procedente, descumprimento técnico dos manuais.
+
+## Modelos de relatórios departamentais (planilha)
+Padrão: uma linha por mês (competência), campos de entrada manual + campos calculados, meta,
+atingimento e status (Atingida ≥100% · Atenção 85–99% ou 90–99% conforme aba · Crítico).
+Aba Diretoria consolida o indicador principal de cada departamento e alertas executivos.
+Instrução explícita: ao integrar ao INTEROS, substituir entradas manuais por APIs.
+
+| Aba | Entradas manuais | Calculados | Meta / status |
+|---|---|---|---|
+| Marketing | leads, MQLs, investimento, reuniões, oportunidades, meta leads, meta MQL | CPL, conv. MQL, atingimento | MQL/meta; Atenção ≥85% |
+| Vendas | MQLs recebidos, reuniões, propostas, vendas, receita, ciclo (dias), meta receita | ticket médio, conversão, atingimento | receita/meta; Atenção ≥85% |
+| Financeiro | faturado, recebido, vencido, MRR, contratos assinados, prazo receb., orçamento | inadimplência, var. R$ e % | Atingida: var ≥0 e inad ≤4%; Atenção: var ≥−5% e inad ≤6% |
+| Implantação | novas, em andamento, concluídas, atrasadas, tempo médio, satisfação, backlog, meta % prazo (90%) | % no prazo, atingimento | Atenção ≥90% |
+| CS | clientes ativos, onboardings, saúde média, NPS, cancelamentos, upsell R$, renovações, adoção, meta saúde (85) | churn | saúde ≥ meta; Atenção ≥90% da meta |
+| Suporte | novos, resolvidos, backlog, SLA 1ª resposta, SLA solução, resp. média (min), solução média (h), reabertos, CSAT (escala 1–5) | taxa de reabertura | Atingida: SLA solução ≥90% e CSAT ≥4,5; Atenção: ≥85% e ≥4,2 |
+| Diretoria | — | leads, receita, MRR, saúde; tabela por departamento com responsável e alerta | inadimplência máx. 4%; saúde < 70 dispara ação; 90% no prazo |
+
+Observação: a planilha usa CSAT em escala 1–5 (meta 4,5) enquanto o deck de Suporte usa nota > 8,5
+(escala 0–10). Precisa de padronização antes de implementar o KPI.
 
 ## Requisitos transversais
 Auditoria imutável (usuário, timestamp, valor_antigo, valor_novo) · RBAC com manager_id
