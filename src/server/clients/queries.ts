@@ -2,6 +2,8 @@ import "server-only";
 import { cache } from "react";
 import { getById, getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
+import { listBillingsSwept } from "@/server/finance/billing";
+import { getClientFinancialSummary, type ClientFinancialSummary } from "@/server/finance/queries";
 import {
   COLLECTIONS,
   type Billing,
@@ -405,15 +407,11 @@ export async function getClientFormOptions(): Promise<ClientFormOptions> {
 
 export type TicketWithSla = SupportTicket & { sla?: SlaView };
 
-export interface FinancialSummary {
-  /** MRR calculado dos produtos ativos (fonte: client_products). */
-  mrr: number;
-  openAmount: number;
-  openCount: number;
-  overdueAmount: number;
-  overdueCount: number;
-  nextDue?: { dueDate: string; amount: number; type: Billing["type"] };
-}
+/**
+ * Resumo financeiro da ficha: vem do módulo Financeiro (`getClientFinancialSummary`, que também
+ * marca cobranças vencidas na leitura). `mrr` usa os contratos liberados e, sem eles, os produtos ativos.
+ */
+export type FinancialSummary = ClientFinancialSummary;
 
 export interface SupportSummary {
   total: number;
@@ -503,7 +501,7 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     list<Opportunity>(COLLECTIONS.opportunities, byClient()),
     list<Proposal>(COLLECTIONS.proposals, byClient()),
     list<Contract>(COLLECTIONS.contracts, byClient()),
-    list<Billing>(COLLECTIONS.billing, byClient()),
+    listBillingsSwept(byClient()),
     list<ImplementationProject>(COLLECTIONS.implementationProjects, byClient()),
     list<ImplementationTask>(COLLECTIONS.implementationTasks, byClient()),
     list<Training>(COLLECTIONS.trainings, byClient()),
@@ -561,19 +559,11 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     return sla ? { ...t, sla: computeSlaState(sla) } : t;
   });
 
-  // Resumo financeiro.
-  const today = new Date().toISOString().slice(0, 10);
-  const open = billing.filter((b) => b.status === "aberta");
-  const overdue = billing.filter((b) => b.status === "vencida");
-  const upcoming = open.filter((b) => b.dueDate.slice(0, 10) >= today).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  const nextDueBill = upcoming[0] ?? open.sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
+  // Resumo financeiro (fonte: módulo Financeiro).
+  const financeSummary = await getClientFinancialSummary(id);
   const financial: FinancialSummary = {
-    mrr: products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0),
-    openAmount: open.reduce((s, b) => s + b.amount, 0),
-    openCount: open.length,
-    overdueAmount: overdue.reduce((s, b) => s + b.amount, 0),
-    overdueCount: overdue.length,
-    nextDue: nextDueBill ? { dueDate: nextDueBill.dueDate, amount: nextDueBill.amount, type: nextDueBill.type } : undefined,
+    ...financeSummary,
+    mrr: financeSummary.mrr || products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0),
   };
 
   // Resumo de suporte: reincidência e CSAT.

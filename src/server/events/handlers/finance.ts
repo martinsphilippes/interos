@@ -3,8 +3,8 @@ import type { registerHandler as RegisterFn } from "../emit";
 /**
  * Handlers do módulo Financeiro:
  *
- * - opportunity.won  → garante o contrato inicial da oportunidade (idempotente: se o handler de Vendas
- *                      já criou, não faz nada; senão cria em "aguardando_contrato").
+ * - opportunity.won  → NÃO é tratado aqui: o handler de Vendas (processWonOpportunity) chama
+ *                      `ensureContractForOpportunity` deste serviço, caminho único e idempotente do contrato.
  * - contract.signed  → tarefa "Gerar cobrança e liberar" para o responsável financeiro + notificação.
  * - payment.overdue  → notifica o financeiro (responsável e gestor) e o vendedor do cliente.
  *
@@ -20,12 +20,6 @@ let registered = false;
 export function registerFinanceHandlers(registerHandler: typeof RegisterFn): void {
   if (registered) return;
   registered = true;
-
-  registerHandler("opportunity.won", async function financeOnOpportunityWon(event) {
-    if (event.entityType !== "opportunity" || !event.entityId) return;
-    const { ensureContractForOpportunity } = await import("@/server/finance/service");
-    await ensureContractForOpportunity(event.entityId, { id: event.actorId, name: event.actorName });
-  });
 
   registerHandler("contract.signed", async function financeOnContractSigned(event) {
     if (event.entityType !== "contract" || !event.entityId) return;

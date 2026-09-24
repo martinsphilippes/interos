@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CalendarOff, Clock, Gauge, HeartPulse, Target, Timer, TrendingUp } from "lucide-react";
+import { CalendarOff, Clock, Gauge, HeartPulse, ShieldCheck, Target, Timer, TrendingUp } from "lucide-react";
 import type { SlaRule } from "@/domain/types";
 import type { SettingKey, SettingValues } from "@/server/admin/schemas";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,6 +11,7 @@ import { SettingsHealthScore } from "./settings-health-score";
 import { SettingsHolidays } from "./settings-holidays";
 import { SettingsLeadScoring } from "./settings-lead-scoring";
 import { SettingsOpportunity } from "./settings-opportunity";
+import { SettingsFinanceGate } from "./settings-finance-gate";
 import { SettingsSlaRules } from "./settings-sla-rules";
 import { parseSettingsTab, type SettingsTab } from "./admin-model";
 import { useAdminUrl } from "./use-admin-url";
@@ -24,6 +25,7 @@ const TAB_ITEMS: { value: SettingsTab; label: string; icon: React.ReactNode }[] 
   { value: "lead-scoring", label: "Lead scoring", icon: <TrendingUp /> },
   { value: "health-score", label: "Health score", icon: <HeartPulse /> },
   { value: "oportunidades", label: "Oportunidades", icon: <Gauge /> },
+  { value: "gate-financeiro", label: "Gate financeiro", icon: <ShieldCheck /> },
   { value: "sla", label: "Regras de SLA", icon: <Timer /> },
 ];
 
@@ -75,6 +77,9 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
       </TabsContent>
       <TabsContent value="oportunidades">
         <SettingsOpportunity key={JSON.stringify(values.oportunidade)} value={values.oportunidade} stored={has("oportunidade")} />
+      </TabsContent>
+      <TabsContent value="gate-financeiro">
+        <SettingsFinanceGate key={JSON.stringify(values.gate_financeiro)} value={values.gate_financeiro} stored={has("gate_financeiro")} />
       </TabsContent>
       <TabsContent value="sla">
         <SettingsSlaRules rules={slaRules} />

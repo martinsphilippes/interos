@@ -140,7 +140,7 @@ export const setProductActiveSchema = z.object({ id: idSchema, active: z.boolean
 // Configurações do sistema (coleção settings, um documento por key)
 // ---------------------------------------------------------------------------
 
-export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade"] as const;
+export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const fraction = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(1, `${label} deve ser uma fração entre 0 e 1`);
@@ -209,6 +209,14 @@ export const oportunidadeSchema = z.object({
 });
 export type OportunidadeConfig = z.infer<typeof oportunidadeSchema>;
 
+/** Critérios do gate financeiro (lido por src/server/finance/service.ts → getGateSettings). */
+export const gateFinanceiroSchema = z.object({
+  exigeContratoAssinado: z.boolean("Informe se o contrato assinado é obrigatório"),
+  exigePagamento: z.enum(["setup", "primeira_mensalidade", "nenhum"], { message: "Exigência de pagamento inválida" }),
+  permiteExcecaoGestor: z.boolean("Informe se o gestor pode liberar por exceção"),
+});
+export type GateFinanceiroConfig = z.infer<typeof gateFinanceiroSchema>;
+
 export const SETTING_SCHEMAS = {
   horario_comercial: horarioComercialSchema,
   feriados: feriadosSchema,
@@ -216,6 +224,7 @@ export const SETTING_SCHEMAS = {
   lead_scoring: leadScoringSchema,
   health_score: healthScoreSchema,
   oportunidade: oportunidadeSchema,
+  gate_financeiro: gateFinanceiroSchema,
 } as const;
 
 export interface SettingValues {
@@ -225,6 +234,7 @@ export interface SettingValues {
   lead_scoring: LeadScoring;
   health_score: HealthScoreConfig;
   oportunidade: OportunidadeConfig;
+  gate_financeiro: GateFinanceiroConfig;
 }
 
 /** Valores usados quando o documento ainda não existe no banco (iguais ao seed). */
@@ -235,6 +245,7 @@ export const SETTING_DEFAULTS: SettingValues = {
   lead_scoring: { origem: {}, interesse: {}, cidade: {}, limiares: { quente: 70, morno: 40 } },
   health_score: { pesos: { uso: 25, satisfacao: 20, sla: 15, suporte: 15, reincidencia: 10, financeiro: 15 }, limiares: { saudavel: 75, atencao: 50 } },
   oportunidade: { diasSemMovimentoParaParada: 7, horasSemInteracaoFollowup: 48 },
+  gate_financeiro: { exigeContratoAssinado: true, exigePagamento: "setup", permiteExcecaoGestor: true },
 };
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
@@ -244,6 +255,7 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   lead_scoring: "Pontuação de leads por origem, interesse e cidade; limiares de temperatura.",
   health_score: "Pesos e limiares do health score de clientes.",
   oportunidade: "Parâmetros de acompanhamento de oportunidades.",
+  gate_financeiro: "Critérios do gate financeiro para liberar a implantação.",
 };
 
 export const upsertSettingSchema = z.object({

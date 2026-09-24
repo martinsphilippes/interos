@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { PanelLeft, PanelLeftClose } from "lucide-react";
-import type { NavSection } from "@/domain/constants";
+import { CURRENT_WAVE, type NavSection } from "@/domain/constants";
 import { Tooltip } from "@/components/ui/tooltip";
 import { NavIcon } from "./nav-icon";
 import { UserMenu, type ShellUser } from "./user-menu";
@@ -95,7 +95,7 @@ export function Sidebar({ user, sections, variant = "desktop", collapsed = false
             <ul className="flex flex-col gap-0.5">
               {section.items.map((item) => {
                 const active = item.href === activeHref;
-                const soon = (item.wave ?? 1) > 1;
+                const soon = (item.wave ?? 1) > CURRENT_WAVE;
                 const tooltip = isCollapsed ? (soon ? `${item.label} · em breve (onda ${item.wave})` : item.label) : soon ? `Em breve · onda ${item.wave}` : null;
                 const link = (
                   <Link

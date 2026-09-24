@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import { NAVIGATION } from "@/domain/constants";
+import { CURRENT_WAVE, NAVIGATION } from "@/domain/constants";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { PageContainer } from "@/components/layout/page-container";
 import { NavIcon } from "@/components/layout/nav-icon";
@@ -30,7 +30,7 @@ export default async function MenuPage() {
                       <NavIcon name={item.icon} className="size-4" />
                     </span>
                     <span className="flex-1 truncate font-medium">{item.label}</span>
-                    {(item.wave ?? 1) > 1 ? <span className="text-xs text-muted">em breve</span> : null}
+                    {(item.wave ?? 1) > CURRENT_WAVE ? <span className="text-xs text-muted">em breve</span> : null}
                     <ChevronRight className="size-4 text-muted-light" aria-hidden />
                   </Link>
                 </li>

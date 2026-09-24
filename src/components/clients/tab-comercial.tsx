@@ -197,7 +197,10 @@ export function TabComercial({ data, options }: { data: Client360; options: Clie
                 {proposals.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="whitespace-nowrap font-medium">
-                      {p.number} <span className="text-xs text-muted">v{p.version}</span>
+                      <Link href={`/vendas/propostas?proposta=${p.id}`} className="hover:text-secondary hover:underline">
+                        {p.number}
+                      </Link>{" "}
+                      <span className="text-xs text-muted">v{p.version}</span>
                     </TableCell>
                     <TableCell>
                       <Badge variant={PROPOSAL_STATUS_VARIANT[p.status]} size="sm">

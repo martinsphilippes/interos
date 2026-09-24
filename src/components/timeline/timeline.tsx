@@ -36,6 +36,13 @@ export function entityHref(entityType: string | undefined, entityId: string | un
       return `/implantacao?projeto=${entityId}`;
     case "lead":
       return `/marketing/leads?lead=${entityId}`;
+    case "visit":
+      return `/vendas/visitas?visita=${entityId}`;
+    case "campaign":
+      return `/marketing/campanhas?campanha=${entityId}`;
+    case "prospect_list":
+      return `/marketing/prospeccao/${entityId}`;
+
     default:
       return null;
   }

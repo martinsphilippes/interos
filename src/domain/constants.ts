@@ -68,12 +68,15 @@ export const MODULE_ACCESS: Record<string, readonly RoleKey[] | "all"> = {
   admin: ["admin"],
 };
 
+/** Onda de entrega atual: itens com `wave` até este número já têm tela pronta. */
+export const CURRENT_WAVE = 2;
+
 export type NavItem = {
   label: string;
   href: string;
   /** Nome do ícone lucide-react (ex.: "Sun", "CheckSquare"). */
   icon: string;
-  /** Marca itens cuja rota ainda mostra a página "em construção". */
+  /** Onda em que a tela é entregue; acima de CURRENT_WAVE a rota ainda mostra "em construção". */
   wave?: 1 | 2 | 3 | 4 | 5 | 6;
 };
 
@@ -128,6 +131,7 @@ export const NAVIGATION: NavSection[] = [
     key: "financeiro",
     label: "Financeiro",
     items: [
+      { label: "Visão Geral", href: "/financeiro", icon: "LayoutDashboard", wave: 2 },
       { label: "Contratos", href: "/financeiro/contratos", icon: "FileSignature", wave: 2 },
       { label: "Assinaturas", href: "/financeiro/assinaturas", icon: "PenLine", wave: 2 },
       { label: "Cobranças", href: "/financeiro/cobrancas", icon: "Receipt", wave: 2 },

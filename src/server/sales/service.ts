@@ -573,46 +573,11 @@ export async function processWonOpportunity(opportunityId: string, actor: UserRe
   // 2. Contrato inicial.
   const financeManager = await getDepartmentManager("financeiro");
   const salesManager = await getDepartmentManager("vendas");
-  let contract = (await list<Contract>(COLLECTIONS.contracts, { where: [["opportunityId", "==", opp.id]] })).find((c) => c.status !== "cancelado");
-  if (!contract) {
-    const contacts = await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", client.id]] });
-    const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
-    const proposal = opp.proposalId ? await getById<Proposal>(COLLECTIONS.proposals, opp.proposalId) : null;
-    const items: ProposalItem[] = opp.products.map((p) => ({ ...p, discountPct: 0 }));
-    const signerEmail = primary?.email ?? opp.billingData?.email ?? client.email;
-    contract = await create<Contract>(COLLECTIONS.contracts, {
-      clientId: client.id,
-      opportunityId: opp.id,
-      proposalId: proposal?.status === "aceita" ? proposal.id : undefined,
-      number: await nextSequence(COLLECTIONS.contracts, "CT"),
-      version: 1,
-      status: "aguardando_contrato",
-      items,
-      setupTotal: opp.setupTotal,
-      monthlyTotal: opp.monthlyTotal,
-      hardwareTotal: opp.hardwareTotal,
-      billingDay: 10,
-      recurrence: "mensal",
-      termMonths: 12,
-      signers: signerEmail ? [{ name: primary?.name ?? opp.billingData?.legalName ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [],
-      paymentCondition: opp.billingData?.paymentCondition,
-      financialStatus: "pendente",
-      ownerId: financeManager?.id,
-      documentIds: [],
-      createdBy: actor.id,
-    });
-    await update<Opportunity>(COLLECTIONS.opportunities, opp.id, { contractId: contract.id });
-    await emitEvent({
-      type: "contract.created",
-      actor,
-      clientId: client.id,
-      entity: { type: "contract", id: contract.id },
-      title: `Contrato ${contract.number} criado (aguardando contrato)`,
-      description: [contract.monthlyTotal > 0 ? `${formatCurrency(contract.monthlyTotal)}/mês` : null, contract.setupTotal > 0 ? `adesão ${formatCurrency(contract.setupTotal)}` : null, `${contract.termMonths} meses`].filter(Boolean).join(" · "),
-      department: "financeiro",
-      payload: { opportunityId: opp.id, ownerId: contract.ownerId, number: contract.number, monthlyTotal: contract.monthlyTotal, setupTotal: contract.setupTotal, hardwareTotal: contract.hardwareTotal },
-    });
-  }
+  // Caminho único de criação do contrato: o serviço do Financeiro (idempotente; usa os itens da
+  // proposta aceita, com desconto, quando houver). Import dinâmico para evitar ciclo de módulos.
+  const { ensureContractForOpportunity } = await import("@/server/finance/service");
+  const contract = await ensureContractForOpportunity(opp.id, actor);
+  if (!contract) return null;
 
   // 3. Produtos do cliente em implantação.
   let clientProducts = await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["contractId", "==", contract.id]] });

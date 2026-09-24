@@ -1,4 +1,5 @@
-import { AlertTriangle, CalendarClock, FileSignature, Receipt, Wallet } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ArrowRight, CalendarClock, FileSignature, Receipt, Wallet } from "lucide-react";
 import type { Client360 } from "@/server/clients/queries";
 import { formatCompetence, formatCurrency, formatDate, formatRelative } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +24,7 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="MRR" value={formatCurrency(mrr)} icon={<Wallet />} tone="success" hint="mensalidades dos produtos ativos" compact />
+        <StatCard label="MRR" value={formatCurrency(mrr)} icon={<Wallet />} tone="success" hint="mensalidades dos contratos liberados" compact />
         <StatCard label="Em aberto" value={formatCurrency(financial.openAmount)} icon={<Receipt />} tone="info" hint={`${financial.openCount} cobrança${financial.openCount === 1 ? "" : "s"} a vencer`} compact />
         <StatCard
           label="Vencido (inadimplência)"
@@ -43,8 +44,21 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
         />
       </div>
 
+      {financial.pendingContract ? (
+        <Card className="flex flex-wrap items-center gap-3 border-warning/40 bg-warning-soft/40 p-4">
+          <FileSignature className="size-5 shrink-0 text-warning-fg" aria-hidden />
+          <p className="min-w-0 flex-1 text-sm">
+            Contrato <strong>{financial.pendingContract.number}</strong> em andamento no Financeiro: {CONTRACT_STATUS_LABELS[financial.pendingContract.status]}
+            {financial.pendingContract.pendingReason ? ` · ${financial.pendingContract.pendingReason}` : ""}
+          </p>
+          <Link href={`/financeiro/contratos/${financial.pendingContract.id}`} className="inline-flex min-h-[40px] items-center gap-1 text-sm font-medium text-secondary hover:underline">
+            Abrir contrato <ArrowRight className="size-4" aria-hidden />
+          </Link>
+        </Card>
+      ) : null}
+
       <section>
-        <SectionTitle title="Contratos" count={contracts.length} />
+        <SectionTitle title="Contratos" count={contracts.length} description={financial.paidLast12Months > 0 ? `Recebido nos últimos 12 meses: ${formatCurrency(financial.paidLast12Months)}` : undefined} />
         <Card className="overflow-hidden">
           {contracts.length === 0 ? (
             <EmptyState size="sm" icon={<FileSignature />} title="Nenhum contrato" description="O contrato é gerado pelo Financeiro quando a venda é ganha." />
@@ -67,7 +81,10 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
                 {contracts.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="whitespace-nowrap font-medium">
-                      {c.number} <span className="text-xs text-muted">v{c.version}</span>
+                      <Link href={`/financeiro/contratos/${c.id}`} className="hover:text-secondary hover:underline">
+                        {c.number}
+                      </Link>{" "}
+                      <span className="text-xs text-muted">v{c.version}</span>
                       <p className="text-xs font-normal text-muted">
                         {c.items.length} item{c.items.length === 1 ? "" : "s"} · {c.recurrence === "mensal" ? "mensal" : c.recurrence === "anual" ? "anual" : "único"} · {c.termMonths} meses · dia {c.billingDay}
                       </p>

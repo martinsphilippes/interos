@@ -13,8 +13,10 @@ import {
   type Contact,
   type Contract,
   type ImplementationProject,
+  type Campaign,
   type Lead,
   type Opportunity,
+  type Proposal,
   type SupportTicket,
   type Task,
   type User,
@@ -22,7 +24,7 @@ import {
 import { CLIENT_STATUS_LABELS, DEPARTMENT_LABELS, ROLE_LABELS, TASK_STATUS_LABELS } from "@/domain/constants";
 import { formatCurrency, formatDocument } from "@/lib/format";
 
-export const SEARCH_KINDS = ["cliente", "contato", "tarefa", "oportunidade", "contrato", "implantacao", "chamado", "lead", "usuario"] as const;
+export const SEARCH_KINDS = ["cliente", "contato", "tarefa", "oportunidade", "proposta", "contrato", "implantacao", "chamado", "lead", "campanha", "usuario"] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
 
 export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
@@ -30,10 +32,12 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   contato: "Contatos",
   tarefa: "Tarefas",
   oportunidade: "Oportunidades",
+  proposta: "Propostas",
   contrato: "Contratos",
   implantacao: "Implantações",
   chamado: "Chamados",
   lead: "Leads",
+  campanha: "Campanhas",
   usuario: "Usuários",
 };
 
@@ -80,6 +84,21 @@ const CONTRACT_STATUS_LABELS: Record<Contract["status"], string> = {
   pendencia: "Pendência",
   liberado: "Liberado",
   cancelado: "Cancelado",
+};
+const PROPOSAL_STATUS_LABELS: Record<Proposal["status"], string> = {
+  rascunho: "Rascunho",
+  enviada: "Enviada",
+  visualizada: "Visualizada",
+  negociacao: "Em negociação",
+  aceita: "Aceita",
+  recusada: "Recusada",
+  vencida: "Vencida",
+};
+const CAMPAIGN_STATUS_LABELS: Record<Campaign["status"], string> = {
+  planejada: "Planejada",
+  ativa: "Ativa",
+  pausada: "Pausada",
+  encerrada: "Encerrada",
 };
 const PROJECT_STATUS_LABELS: Record<ImplementationProject["status"], string> = {
   aguardando_inicio: "Aguardando início",
@@ -151,10 +170,12 @@ interface Loaded {
   contacts: Contact[];
   tasks: Task[];
   opportunities: Opportunity[];
+  proposals: Proposal[];
   contracts: Contract[];
   projects: ImplementationProject[];
   tickets: SupportTicket[];
   leads: Lead[];
+  campaigns: Campaign[];
   users: User[];
 }
 
@@ -169,18 +190,20 @@ async function recent<T extends BaseEntity>(name: CollectionName, where?: [strin
 
 async function loadAll(): Promise<Loaded> {
   if (cache && Date.now() - cache.loadedAt < CACHE_TTL_MS) return cache.data;
-  const [clients, contacts, tasks, opportunities, contracts, projects, tickets, leads, users] = await Promise.all([
+  const [clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, leads, campaigns, users] = await Promise.all([
     recent<Client>(COLLECTIONS.clients),
     recent<Contact>(COLLECTIONS.contacts),
     recent<Task>(COLLECTIONS.tasks),
     recent<Opportunity>(COLLECTIONS.opportunities),
+    recent<Proposal>(COLLECTIONS.proposals),
     recent<Contract>(COLLECTIONS.contracts),
     recent<ImplementationProject>(COLLECTIONS.implementationProjects),
     recent<SupportTicket>(COLLECTIONS.supportTickets),
     recent<Lead>(COLLECTIONS.leads),
+    recent<Campaign>(COLLECTIONS.campaigns),
     recent<User>(COLLECTIONS.users, ["active", "==", true]),
   ]);
-  const data = { clients, contacts, tasks, opportunities, contracts, projects, tickets, leads, users };
+  const data = { clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, leads, campaigns, users };
   cache = { loadedAt: Date.now(), data };
   return data;
 }
@@ -223,9 +246,13 @@ export async function searchGlobalQuery(rawTerm: string): Promise<SearchResponse
     const score = matchScore(term, termDigits, [o.title, clientById.get(o.clientId)?.tradeName]);
     add("oportunidade", o, score, o.title, `/vendas/oportunidades?oportunidade=${o.id}`, [OPP_STAGE_LABELS[o.stage], o.monthlyTotal > 0 ? `${formatCurrency(o.monthlyTotal)}/mês` : undefined].filter(Boolean).join(" · "));
   }
+  for (const p of data.proposals) {
+    const score = matchScore(term, termDigits, [p.number, clientById.get(p.clientId)?.tradeName], [p.number]);
+    add("proposta", p, score, `${p.number} v${p.version}`, `/vendas/propostas?proposta=${p.id}`, [PROPOSAL_STATUS_LABELS[p.status], p.monthlyTotal > 0 ? `${formatCurrency(p.monthlyTotal)}/mês` : undefined].filter(Boolean).join(" · "));
+  }
   for (const c of data.contracts) {
     const score = matchScore(term, termDigits, [c.number, clientById.get(c.clientId)?.tradeName], [c.number]);
-    add("contrato", c, score, c.number, `/financeiro/contratos?contrato=${c.id}`, [CONTRACT_STATUS_LABELS[c.status], c.monthlyTotal > 0 ? `${formatCurrency(c.monthlyTotal)}/mês` : undefined].filter(Boolean).join(" · "));
+    add("contrato", c, score, c.number, `/financeiro/contratos/${c.id}`, [CONTRACT_STATUS_LABELS[c.status], c.monthlyTotal > 0 ? `${formatCurrency(c.monthlyTotal)}/mês` : undefined].filter(Boolean).join(" · "));
   }
   for (const p of data.projects) {
     const score = matchScore(term, termDigits, [p.name, clientById.get(p.clientId)?.tradeName]);
@@ -238,6 +265,10 @@ export async function searchGlobalQuery(rawTerm: string): Promise<SearchResponse
   for (const l of data.leads) {
     const score = matchScore(term, termDigits, [l.name, l.company, l.email, l.city], [l.phone]);
     add("lead", l, score, `${l.name}${l.company ? ` · ${l.company}` : ""}`, `/marketing/leads?lead=${l.id}`, [LEAD_STATUS_LABELS[l.status], l.city].filter(Boolean).join(" · "));
+  }
+  for (const c of data.campaigns) {
+    const score = matchScore(term, termDigits, [c.name, c.channel]);
+    add("campanha", c, score, c.name, `/marketing/campanhas?campanha=${c.id}`, [CAMPAIGN_STATUS_LABELS[c.status], c.channel].filter(Boolean).join(" · "));
   }
   for (const u of data.users) {
     const score = matchScore(term, termDigits, [u.name, u.email, u.jobTitle], [u.phone]);
@@ -252,7 +283,7 @@ export async function searchGlobalQuery(rawTerm: string): Promise<SearchResponse
     const items = results.filter((r) => r.kind === kind).slice(0, PER_GROUP);
     if (items.length > 0) groups.push({ kind, label: SEARCH_KIND_LABELS[kind], items });
   }
-  const needClient = groups.flatMap((g) => (g.kind === "contato" || g.kind === "oportunidade" || g.kind === "contrato" || g.kind === "implantacao" || g.kind === "chamado" ? g.items : [])) as (SearchResult & { clientId?: string })[];
+  const needClient = groups.flatMap((g) => (g.kind === "contato" || g.kind === "oportunidade" || g.kind === "proposta" || g.kind === "contrato" || g.kind === "implantacao" || g.kind === "chamado" ? g.items : [])) as (SearchResult & { clientId?: string })[];
   const missing = needClient.map((r) => r.clientId ?? "").filter((id) => id && !clientById.has(id));
   const fetched = await getManyByIds<Client>(COLLECTIONS.clients, missing);
   for (const [id, c] of fetched) clientById.set(id, c);
