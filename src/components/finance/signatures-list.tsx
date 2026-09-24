@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { BellRing, CheckCircle2, FlaskConical, Send } from "lucide-react";
+import { BellRing, CheckCircle2, FileText } from "lucide-react";
 import type { SignatureRow } from "@/server/finance/queries";
-import { sendForSignatureAction, sendSignatureReminderAction, simulateSignatureAction } from "@/server/finance/actions";
+import type { IntegrationFlags } from "@/server/integrations/types";
+import { sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
 import { formatCurrency, formatDateTime } from "@/lib/format";
 import { CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "@/components/clients/labels";
@@ -12,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { contractDocumentPath, reminderEmailHref } from "./contract-links";
+import { ManualSignatureButton } from "./manual-signature-dialog";
 import { useFinanceAction } from "./use-finance-action";
 import { RelativeTime } from "@/components/ui/relative-time";
 
@@ -22,8 +25,12 @@ function waitingTone(days: number): string {
   return "text-danger-fg";
 }
 
-/** Contratos aguardando assinatura (ou envio): signatários pendentes, espera, lembretes e ações. */
-export function SignaturesList({ rows, mode, canOperate }: { rows: SignatureRow[]; mode: "waiting" | "toSend"; canOperate: boolean }) {
+/**
+ * Contratos aguardando assinatura (ou geração do documento): signatários pendentes, espera, lembretes e
+ * ações. Sem provedor de assinatura: lembrete pelo e-mail do usuário e assinatura registrada com evidência.
+ */
+export function SignaturesList({ rows, mode, canOperate, integrations }: { rows: SignatureRow[]; mode: "waiting" | "toSend"; canOperate: boolean; integrations: IntegrationFlags }) {
+  const emailConnected = integrations.email === "conectado";
   const { pending, run } = useFinanceAction();
   const [busy, setBusy] = React.useState<string | null>(null);
   const act = async (key: string, fn: () => Promise<boolean>) => {
@@ -52,10 +59,10 @@ export function SignaturesList({ rows, mode, canOperate }: { rows: SignatureRow[
             </div>
             <div className="text-sm md:text-right">
               <p className={cn("font-medium tabular-nums", waitingTone(r.daysWaiting))}>
-                {r.daysWaiting === 0 ? "Hoje" : `${r.daysWaiting} dia(s)`} {mode === "waiting" ? "aguardando" : "sem envio"}
+                {r.daysWaiting === 0 ? "Hoje" : `${r.daysWaiting} dia(s)`} {mode === "waiting" ? "aguardando" : "sem documento"}
               </p>
               <p className="text-xs text-muted">
-                {mode === "waiting" ? (r.sentAt ? `Enviado em ${formatDateTime(r.sentAt)}` : "Envio anterior ao histórico") : `${r.signers.length} signatário(s) cadastrado(s)`}
+                {mode === "waiting" ? (r.sentAt ? `Documento gerado em ${formatDateTime(r.sentAt)}` : "Geração anterior ao histórico") : `${r.signers.length} signatário(s) cadastrado(s)`}
                 {r.remindersSent > 0 ? <> · {r.remindersSent} lembrete(s), último <RelativeTime value={r.lastReminderAt} /></> : mode === "waiting" ? " · nenhum lembrete" : ""}
               </p>
             </div>
@@ -78,27 +85,25 @@ export function SignaturesList({ rows, mode, canOperate }: { rows: SignatureRow[
                   </div>
                   {canOperate && s.status !== "assinado" ? (
                     <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-10 sm:h-8"
-                        loading={busy === `rem:${r.contractId}:${s.email}`}
-                        disabled={pending}
-                        onClick={() => act(`rem:${r.contractId}:${s.email}`, () => run(() => sendSignatureReminderAction({ contractId: r.contractId, email: s.email }), `Lembrete enviado para ${s.name}`))}
-                      >
-                        <BellRing /> Reenviar lembrete
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-10 sm:h-8"
-                        title="Ação de demonstração"
-                        loading={busy === `sim:${r.contractId}:${s.email}`}
-                        disabled={pending}
-                        onClick={() => act(`sim:${r.contractId}:${s.email}`, () => run(() => simulateSignatureAction({ contractId: r.contractId, email: s.email }), (d) => (d.allSigned ? `${r.number} assinado por todos` : `Assinatura de ${s.name} registrada`)))}
-                      >
-                        <FlaskConical /> Simular assinatura
-                      </Button>
+                      {emailConnected ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-10 sm:h-8"
+                          loading={busy === `rem:${r.contractId}:${s.email}`}
+                          disabled={pending}
+                          onClick={() => act(`rem:${r.contractId}:${s.email}`, () => run(() => sendSignatureReminderAction({ contractId: r.contractId, email: s.email }), (d) => (d.delivered ? `Lembrete enviado para ${s.name}` : `Falha ao enviar o lembrete para ${s.name}`)))}
+                        >
+                          <BellRing /> Reenviar lembrete
+                        </Button>
+                      ) : (
+                        <Button asChild variant="ghost" size="sm" className="h-10 sm:h-8">
+                          <a href={reminderEmailHref(r, s)} onClick={() => void run(() => sendSignatureReminderAction({ contractId: r.contractId, email: s.email }), `Lembrete para ${s.name} registrado (enviado pelo seu e-mail)`)}>
+                            <BellRing /> Lembrete por e-mail
+                          </a>
+                        </Button>
+                      )}
+                      <ManualSignatureButton contractId={r.contractId} contractNumber={r.number} signer={s} label="Registrar assinatura" className="h-10 sm:h-8" />
                     </div>
                   ) : null}
                 </li>
@@ -111,14 +116,17 @@ export function SignaturesList({ rows, mode, canOperate }: { rows: SignatureRow[
                 className="h-10 sm:h-8"
                 loading={busy === `send:${r.contractId}`}
                 disabled={pending || r.signers.length === 0}
-                onClick={() => act(`send:${r.contractId}`, () => run(() => sendForSignatureAction({ contractId: r.contractId }), "Contrato enviado para assinatura"))}
+                onClick={() => act(`send:${r.contractId}`, () => run(() => sendForSignatureAction({ contractId: r.contractId }), "Documento gerado: aguardando assinatura (envio manual)"))}
               >
-                <Send /> Enviar para assinatura
+                <FileText /> Gerar documento para assinatura
+              </Button>
+              <Button asChild variant="outline" size="sm" className="h-10 sm:h-8">
+                <Link href={contractDocumentPath(r.contractId)}>Ver contrato</Link>
               </Button>
               <Button asChild variant="outline" size="sm" className="h-10 sm:h-8">
                 <Link href={`/financeiro/contratos/${r.contractId}`}>Revisar contrato</Link>
               </Button>
-              {r.signers.length === 0 ? <p className="self-center text-xs text-danger-fg">Cadastre os signatários no contrato antes de enviar.</p> : null}
+              {r.signers.length === 0 ? <p className="self-center text-xs text-danger-fg">Cadastre os signatários no contrato antes de gerar o documento.</p> : null}
             </div>
           ) : null}
         </Card>

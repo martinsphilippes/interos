@@ -2,35 +2,22 @@ import "server-only";
 /**
  * Canais do Suporte (WhatsApp, e-mail, portal e telefonia/VoIP).
  *
- * Hoje só existe a implementação `mock`: nada sai do sistema. Cada envio/ligação é registrado em
- * `communications` com provider "mock" (status "simulada") para aparecer no histórico do cliente e
- * nos relatórios. O restante do módulo só conhece a interface `SupportChannelAdapter`; para ligar um
- * provedor real basta implementá-la e trocar o retorno de `getSupportChannels()`.
- *
- * ONDE PLUGAR OS PROVEDORES REAIS
- *
- * 1) WhatsApp — Meta WhatsApp Business (Cloud API):
- *    - Envio: `sendMessage` com channel "whatsapp" deve fazer
- *      POST https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_NUMBER_ID}/messages
- *      (Authorization: Bearer {WHATSAPP_ACCESS_TOKEN}; corpo { messaging_product: "whatsapp", to, type: "text", text: { body } }).
- *      Fora da janela de 24 h a Meta só aceita mensagens de template aprovadas (use `templateKey`).
- *      Grave `externalId` = messages[0].id e provider "meta"; o status (entregue/lida) chega pelo webhook.
- *    - Recebimento: a rota POST /api/webhooks/whatsapp recebe o webhook da Meta. Ela já trata o formato
- *      `entry[].changes[].value.messages[]` e o formato simplificado { from, body, id } e chama
- *      `receiveWhatsappMessage`. Configure WHATSAPP_VERIFY_TOKEN (handshake GET) e valide a assinatura
- *      `X-Hub-Signature-256` com WHATSAPP_APP_SECRET antes de ir para produção.
- *
- * 2) VoIP / PABX (click-to-call e gravação):
- *    - `registerCall` hoje só registra a ligação feita fora do sistema. Com um provedor (ex.: Twilio,
- *      Zenvia Voice, PABX IP próprio), `startCall` pediria a chamada ao provedor e o webhook de fim de
- *      chamada chamaria `registerCall` com duração real, `externalId` e `recordingUrl` do provedor.
- *
- * 3) E-mail: `sendMessage` com channel "email" pode usar qualquer provedor transacional (SES, SendGrid,
- *    Resend). Respostas do cliente entram por um webhook de inbound parse que chama `receiveEmailMessage`
- *    (a implementar junto com o provedor).
+ * O adaptador consulta o registro de integrações (src/server/integrations/status.ts):
+ * - WhatsApp conectado (Meta Cloud API: WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID) → envio real,
+ *   provider "meta"; o status (entregue/lida) chega pelo webhook /api/webhooks/whatsapp.
+ * - E-mail conectado (Resend: RESEND_API_KEY + EMAIL_FROM) → envio real, provider "resend".
+ * - VoIP: nenhum adaptador implementado. `registerCall` só registra a ligação feita no discador
+ *   (status "manual", sem gravação). Com um provedor (Twilio, Zenvia Voice, PABX IP), o webhook de fim de
+ *   chamada chamaria `registerCall` com duração real, `externalId` e `recordingUrl` do provedor.
+ * - Sem integração (situação padrão): nada sai do sistema; a mensagem é um REGISTRO MANUAL do que o
+ *   atendente enviou pelo próprio app (wa.me / mailto).
+ * Respostas de e-mail do cliente entram por um webhook de inbound parse que chama `receiveMessage`
+ * (a implementar junto com o provedor).
  */
-import { create } from "@/server/db";
-import { COLLECTIONS, type Communication, type UserRef } from "@/domain/types";
+import { MANUAL, recordCommunication } from "@/server/integrations/communications";
+import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
+import { isConnected } from "@/server/integrations/status";
+import type { Communication, UserRef } from "@/domain/types";
 
 export type SupportMessageChannel = "whatsapp" | "email" | "portal";
 
@@ -54,7 +41,7 @@ export interface SupportCall {
   contactId?: string;
   entity?: { type: string; id: string };
   user: UserRef;
-  /** Usado para montar a URL (simulada) da gravação. */
+  /** Chave da ligação (o provedor VoIP real devolve a gravação; sem provedor não há gravação). */
   recordingKey: string;
 }
 
@@ -77,13 +64,26 @@ export interface SupportChannelAdapter {
 
 const COMM_CHANNEL: Record<SupportMessageChannel, Communication["channel"]> = { whatsapp: "whatsapp", email: "email", portal: "interno" };
 
-const mockId = () => `mock_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-
-const mockAdapter: SupportChannelAdapter = {
-  provider: "mock",
+const adapter: SupportChannelAdapter = {
+  // Tipo público mantido; o provider real de cada envio fica gravado na comunicação.
+  provider: "outro",
 
   async sendMessage(message) {
-    return create<Communication>(COLLECTIONS.communications, {
+    let sent: { provider: "meta" | "resend"; ok: boolean; externalId?: string } | null = null;
+    if (message.to && message.channel === "whatsapp" && isConnected("whatsapp")) {
+      const r = await sendWhatsappText(message.to, message.body);
+      sent = { provider: "meta", ok: r.ok, externalId: r.ok ? r.externalId : undefined };
+    } else if (message.to && message.channel === "email" && isConnected("email")) {
+      const r = await sendEmail({ to: message.to, subject: "Intercert — Suporte", text: message.body });
+      sent = { provider: "resend", ok: r.ok, externalId: r.ok ? r.externalId : undefined };
+    }
+    // Portal é interno (a resposta fica no chamado); canais externos sem integração viram registro manual.
+    const outcome = sent
+      ? { status: sent.ok ? ("enviada" as const) : ("falha" as const), provider: sent.provider, externalId: sent.externalId }
+      : message.channel === "portal"
+        ? { status: "enviada" as const, provider: "outro" as const }
+        : MANUAL;
+    return recordCommunication({
       clientId: message.clientId,
       contactId: message.contactId,
       channel: COMM_CHANNEL[message.channel],
@@ -93,15 +93,14 @@ const mockAdapter: SupportChannelAdapter = {
       entityId: message.entity?.id,
       body: message.body,
       templateKey: message.templateKey,
-      status: "simulada",
-      externalId: mockId(),
-      provider: "mock",
+      ...outcome,
       createdBy: message.sender.id,
     });
   },
 
   async registerCall(call) {
-    return create<Communication>(COLLECTIONS.communications, {
+    // Sem provedor VoIP: ligação feita no discador, registrada à mão e sem gravação.
+    return recordCommunication({
       clientId: call.clientId,
       contactId: call.contactId,
       channel: "voip",
@@ -110,17 +109,14 @@ const mockAdapter: SupportChannelAdapter = {
       entityType: call.entity?.type,
       entityId: call.entity?.id,
       body: call.summary,
-      status: "simulada",
+      ...MANUAL,
       durationSeconds: call.durationSeconds,
-      recordingUrl: mockRecordingUrl(call.recordingKey),
-      externalId: mockId(),
-      provider: "mock",
       createdBy: call.user.id,
     });
   },
 
   async receiveMessage(message) {
-    return create<Communication>(COLLECTIONS.communications, {
+    return recordCommunication({
       clientId: message.clientId,
       contactId: message.contactId,
       channel: message.channel,
@@ -130,17 +126,20 @@ const mockAdapter: SupportChannelAdapter = {
       // Sem cliente identificado, o número vai no corpo para a Caixa de Entrada do Marketing mostrar a origem.
       body: !message.clientId && message.from ? `[${message.from}] ${message.body}` : message.body,
       status: "recebida",
-      externalId: message.externalId ?? mockId(),
-      provider: "mock",
+      externalId: message.externalId,
+      provider: message.channel === "whatsapp" && isConnected("whatsapp") ? "meta" : "outro",
     });
   },
 };
 
-/** URL simulada da gravação (o provedor VoIP real devolve a URL do arquivo). */
+/**
+ * @deprecated Não há gravação sem provedor VoIP. Mantido apenas pela assinatura pública; não use para
+ * exibir links de gravação (a URL não existe).
+ */
 export function mockRecordingUrl(key: string): string {
   return `https://mock.intercert.com.br/gravacoes/${encodeURIComponent(key)}.mp3`;
 }
 
 export function getSupportChannels(): SupportChannelAdapter {
-  return mockAdapter;
+  return adapter;
 }

@@ -12,7 +12,7 @@ interface FlowStep {
   hint?: string;
 }
 
-/** Passos visuais: Gerar contrato → Enviar para assinatura → Assinado → Cobrança/pagamento → Liberado. */
+/** Passos visuais: Gerar contrato → Documento para assinatura → Assinado → Cobrança/pagamento → Liberado. */
 export function buildFlow(contract: Contract, billings: Billing[], paymentOk: boolean): FlowStep[] {
   const released = contract.status === "liberado";
   const sent = Boolean(contract.signatureEnvelopeId) || released;
@@ -29,7 +29,7 @@ export function buildFlow(contract: Contract, billings: Billing[], paymentOk: bo
 
   return [
     { key: "gerar", label: "Gerar contrato", icon: FileSignature, state: states[0], hint: ready ? `${contract.items.length} item(ns) · ${contract.signers.length} signatário(s)` : "Itens e signatários" },
-    { key: "enviar", label: "Enviar para assinatura", icon: Send, state: states[1], hint: sent ? `v${contract.version}` : undefined },
+    { key: "enviar", label: "Documento para assinatura", icon: Send, state: states[1], hint: sent ? `v${contract.version}${contract.signatureProvider === "manual" ? " · envio manual" : ""}` : undefined },
     { key: "assinado", label: "Assinado", icon: Check, state: states[2], hint: contract.signers.length > 0 ? `${signedCount}/${contract.signers.length}` : undefined },
     { key: "pagamento", label: "Cobrança / pagamento", icon: Wallet, state: states[3], hint: billed ? (paymentOk ? "Pagamento exigido ok" : "Aguardando pagamento") : "Cobranças não geradas" },
     { key: "liberado", label: "Liberado", icon: Rocket, state: states[4], hint: released ? "Implantação iniciada" : undefined },

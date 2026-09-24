@@ -1,9 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { BellRing, CheckCircle2, FlaskConical, PenLine, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { BellRing, CheckCircle2, FileText, Mail, PenLine, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
 import type { Contract } from "@/domain/types";
-import { addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction, simulateSignatureAction } from "@/server/finance/actions";
+import type { ContractSigner, IntegrationFlags } from "@/server/integrations/types";
+import { addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -12,8 +14,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Tooltip } from "@/components/ui/tooltip";
+import { contractDocumentPath, contractEmailHref, reminderEmailHref } from "./contract-links";
+import { ManualSignatureButton } from "./manual-signature-dialog";
 import { useFinanceAction } from "./use-finance-action";
+import { useOrigin } from "./use-origin";
 import { RelativeTime } from "@/components/ui/relative-time";
 
 export interface SignatureCardProps {
@@ -23,12 +27,18 @@ export interface SignatureCardProps {
   canOperate: boolean;
   /** Itens/condições/signatários ainda podem mudar. */
   editable: boolean;
+  clientName: string;
+  /** Estado real das integrações (e-mail e assinatura decidem envio automático x manual). */
+  integrations: IntegrationFlags;
 }
 
 const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "danger" } as const;
 
-/** Signatários (adicionar/remover) e assinatura digital (envio, lembrete e simulação de assinatura). */
-export function SignatureCard({ contract, sentAt, reminders, canOperate, editable }: SignatureCardProps) {
+/**
+ * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
+ * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
+ */
+export function SignatureCard({ contract, sentAt, reminders, canOperate, editable, clientName, integrations }: SignatureCardProps) {
   const id = React.useId();
   const { pending, run } = useFinanceAction();
   const [adding, setAdding] = React.useState(false);
@@ -39,6 +49,18 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
   const closed = contract.status === "liberado" || contract.status === "cancelado";
   const signedCount = contract.signers.filter((s) => s.status === "assinado").length;
   const allSigned = sent && contract.signers.length > 0 && signedCount === contract.signers.length;
+  const providerConnected = integrations.assinatura === "conectado";
+  const emailConnected = integrations.email === "conectado";
+  const manual = !providerConnected || contract.signatureProvider === "manual";
+  const origin = useOrigin();
+  const mailHref = contractEmailHref({
+    number: contract.number,
+    version: contract.version,
+    clientName,
+    documentHash: contract.documentHash,
+    documentUrl: `${origin}${contractDocumentPath(contract.id)}`,
+    signers: contract.signers,
+  });
 
   const act = async (key: string, fn: () => Promise<boolean>) => {
     setBusy(key);
@@ -64,15 +86,18 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
           {allSigned
             ? `Assinado por todos${contract.signedAt ? ` em ${formatDateTime(contract.signedAt)}` : ""}.`
             : sent
-              ? <>Enviado {sentAt ? <RelativeTime value={sentAt} /> : ""} · {signedCount}/{contract.signers.length} assinatura(s).</>
-              : "Ainda não enviado para assinatura."}
+              ? <>{manual ? "Documento gerado" : "Enviado"} {sentAt ? <RelativeTime value={sentAt} /> : ""} · {signedCount}/{contract.signers.length} assinatura(s).</>
+              : manual
+                ? "Documento ainda não gerado. Assinatura digital não conectada: envio manual e registro com evidência."
+                : "Ainda não enviado para assinatura."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-0">
         {sent ? (
           <div className="rounded-md bg-surface-muted px-3 py-2 text-xs text-muted">
             <p className="flex items-center gap-1.5">
-              <ShieldCheck className="size-3.5 text-success" /> Provedor: {contract.signatureProvider ?? "—"} · envelope <span className="font-mono">{contract.signatureEnvelopeId}</span> · v{contract.version}
+              <ShieldCheck className="size-3.5 text-success" /> {contract.signatureProvider === "manual" ? "Envio manual · documento" : `Provedor: ${contract.signatureProvider ?? "—"} · envelope`}{" "}
+              <span className="font-mono">{contract.signatureEnvelopeId}</span> · v{contract.version}
             </p>
             {contract.documentHash ? (
               <p className="mt-1 truncate font-mono" title={contract.documentHash}>
@@ -84,7 +109,7 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
 
         <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
           {contract.signers.length === 0 ? <li className="px-3 py-4 text-center text-sm text-muted">Nenhum signatário. Adicione quem assina pelo cliente.</li> : null}
-          {contract.signers.map((s) => {
+          {(contract.signers as ContractSigner[]).map((s) => {
             const r = reminders[s.email.toLowerCase()];
             return (
               <li key={s.email} className="flex flex-col gap-2 px-3 py-3">
@@ -94,7 +119,22 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
                     <p className="truncate text-xs text-muted">
                       {s.role} · {s.email}
                     </p>
-                    {s.signedAt ? <p className="text-xs text-success-fg">Assinou em {formatDateTime(s.signedAt)}</p> : null}
+                    {s.signedAt ? (
+                      <p className="text-xs text-success-fg">
+                        Assinou em {formatDateTime(s.signedAt)}
+                        {s.method === "manual" ? " · registro manual" : ""}
+                      </p>
+                    ) : null}
+                    {s.evidence ? (
+                      <p className="break-words text-xs text-muted" title={s.evidence}>
+                        Evidência: {s.evidenceUrl ? s.evidence.replace(` · ${s.evidenceUrl}`, "").replace(s.evidenceUrl, "") : s.evidence}
+                        {s.evidenceUrl ? (
+                          <a href={s.evidenceUrl} target="_blank" rel="noreferrer" className="ml-1 text-brand-fg hover:underline">
+                            abrir documento assinado
+                          </a>
+                        ) : null}
+                      </p>
+                    ) : null}
                     {r ? (
                       <p className="text-xs text-muted">
                         {r.count} lembrete(s) · último <RelativeTime value={r.lastAt} />
@@ -110,28 +150,28 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
                   <div className="flex flex-wrap gap-2">
                     {sent ? (
                       <>
-                        <Tooltip content="Ação de demonstração: registra a assinatura como se viesse do provedor.">
+                        <ManualSignatureButton contractId={contract.id} contractNumber={contract.number} signer={s} className="h-10 md:h-8" />
+                        {emailConnected ? (
                           <Button
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
                             className="h-10 md:h-8"
-                            loading={busy === `sim:${s.email}`}
+                            loading={busy === `rem:${s.email}`}
                             disabled={pending}
-                            onClick={() => act(`sim:${s.email}`, () => run(() => simulateSignatureAction({ contractId: contract.id, email: s.email }), (d) => (d.allSigned ? "Contrato assinado por todos" : `Assinatura de ${s.name} registrada`)))}
+                            onClick={() => act(`rem:${s.email}`, () => run(() => sendSignatureReminderAction({ contractId: contract.id, email: s.email }), (d) => (d.delivered ? `Lembrete enviado para ${s.name}` : `Falha ao enviar o lembrete para ${s.name}`)))}
                           >
-                            <FlaskConical /> Simular assinatura de {s.name.split(" ")[0]}
+                            <BellRing /> Reenviar lembrete
                           </Button>
-                        </Tooltip>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-10 md:h-8"
-                          loading={busy === `rem:${s.email}`}
-                          disabled={pending}
-                          onClick={() => act(`rem:${s.email}`, () => run(() => sendSignatureReminderAction({ contractId: contract.id, email: s.email }), `Lembrete enviado para ${s.name}`))}
-                        >
-                          <BellRing /> Reenviar lembrete
-                        </Button>
+                        ) : (
+                          <Button asChild variant="ghost" size="sm" className="h-10 md:h-8">
+                            <a
+                              href={reminderEmailHref(contract, s)}
+                              onClick={() => void run(() => sendSignatureReminderAction({ contractId: contract.id, email: s.email }), `Lembrete para ${s.name} registrado (enviado pelo seu e-mail)`)}
+                            >
+                              <BellRing /> Lembrete por e-mail
+                            </a>
+                          </Button>
+                        )}
                       </>
                     ) : null}
                     {editable ? (
@@ -176,13 +216,39 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
 
         {canOperate && editable ? (
           <Button
-            onClick={() => act("send", () => run(() => sendForSignatureAction({ contractId: contract.id }), (d) => `Contrato enviado para assinatura (envelope ${d.envelopeId})`))}
+            onClick={() =>
+              act("send", () =>
+                run(
+                  () => sendForSignatureAction({ contractId: contract.id }),
+                  (d) => (manual ? `Documento gerado (${d.envelopeId}): aguardando assinatura — envio manual` : `Contrato enviado para assinatura (envelope ${d.envelopeId})`),
+                ),
+              )
+            }
             loading={busy === "send"}
             disabled={pending || contract.signers.length === 0}
             className="h-11 md:h-10"
           >
-            <Send /> {sent ? "Reenviar para assinatura" : "Enviar para assinatura"}
+            {manual ? <FileText /> : <Send />}
+            {manual ? (sent ? "Gerar nova versão do documento" : "Gerar documento para assinatura") : sent ? "Reenviar para assinatura" : "Enviar para assinatura"}
           </Button>
+        ) : null}
+
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" className="h-11 flex-1 md:h-9">
+            <Link href={contractDocumentPath(contract.id)}>
+              <FileText /> Ver contrato
+            </Link>
+          </Button>
+          {sent && !allSigned && manual ? (
+            <Button asChild variant="outline" className="h-11 flex-1 md:h-9">
+              <a href={mailHref}>
+                <Mail /> Enviar por e-mail
+              </a>
+            </Button>
+          ) : null}
+        </div>
+        {sent && !allSigned && manual ? (
+          <p className="text-xs text-muted">Envio manual: salve o documento em PDF (Ver contrato → Imprimir) e anexe ao e-mail. Depois registre cada assinatura com a evidência.</p>
         ) : null}
       </CardContent>
 

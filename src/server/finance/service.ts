@@ -27,7 +27,6 @@ import {
   type Address,
   type Billing,
   type Client,
-  type Communication,
   type Contact,
   type Contract,
   type Document,
@@ -42,8 +41,13 @@ import {
 } from "@/domain/types";
 import type { RoleKey } from "@/domain/constants";
 import { allSigned, buildBillingPlan, defaultFirstDueDate, deriveContractStatus, dueIso, evaluateReleaseGate, listBillingsSwept, round2, SYSTEM_ACTOR } from "./billing";
-import { getSignatureProvider } from "./signature";
-import { DEFAULT_GATE_SETTINGS, GATE_SETTING_KEY, PAYMENT_REQUIREMENTS, type BillingDataInput, type ContractItemInput, type FinanceGateSettings, type RegisterPaymentInput, type UpdateConditionsInput } from "./schemas";
+import { contractDocumentHash, getSignatureProvider } from "./signature";
+import { MANUAL, recordCommunication } from "@/server/integrations/communications";
+import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
+import { isConnected } from "@/server/integrations/status";
+import type { ContractSigner } from "@/server/integrations/types";
+import { telHref, whatsappHref } from "@/components/clients/contact-links";
+import { DEFAULT_GATE_SETTINGS, GATE_SETTING_KEY, PAYMENT_REQUIREMENTS, type BillingDataInput, type ContractItemInput, type FinanceGateSettings, type ManualSignatureInput, type RegisterPaymentInput, type UpdateConditionsInput } from "./schemas";
 
 // Registro idempotente dos handlers do Financeiro (ver src/server/events/handlers/finance.ts).
 registerFinanceHandlers(registerHandler);
@@ -194,6 +198,47 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
     description: [contract.monthlyTotal > 0 ? `${formatCurrency(contract.monthlyTotal)}/mês` : null, contract.setupTotal > 0 ? `adesão ${formatCurrency(contract.setupTotal)}` : null, `${contract.termMonths} meses`].filter(Boolean).join(" · "),
     department: "financeiro",
     payload: { opportunityId: opp.id, ownerId: contract.ownerId, number: contract.number, monthlyTotal: contract.monthlyTotal, setupTotal: contract.setupTotal, hardwareTotal: contract.hardwareTotal, source: "financeiro" },
+  });
+  return contract;
+}
+
+/**
+ * Contrato manual para um cliente existente (renovação, aditivo, venda registrada fora do CRM). Nasce em
+ * "aguardando contrato", com o contato principal como signatário; itens e condições são preenchidos na
+ * página do contrato. Para venda ganha no CRM use `ensureContractForOpportunity` (caminho único).
+ */
+export async function createManualContract(input: { clientId: string; recurrence: Contract["recurrence"]; termMonths: number; billingDay: number }, actor: UserRef): Promise<Contract> {
+  const client = await loadClient(input.clientId);
+  const [contacts, financeManager] = await Promise.all([list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", client.id]] }), getDepartmentManager("financeiro")]);
+  const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
+  const signerEmail = primary?.email ?? client.email;
+  const contract = await create<Contract>(COLLECTIONS.contracts, {
+    clientId: client.id,
+    number: await nextContractNumber(),
+    version: 1,
+    status: "aguardando_contrato",
+    items: [],
+    setupTotal: 0,
+    monthlyTotal: 0,
+    hardwareTotal: 0,
+    billingDay: input.billingDay,
+    recurrence: input.recurrence,
+    termMonths: input.termMonths,
+    signers: signerEmail ? [{ name: primary?.name ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [],
+    financialStatus: "pendente",
+    ownerId: financeManager?.id ?? actor.id,
+    documentIds: [],
+    createdBy: actor.id,
+  });
+  await emitEvent({
+    type: "contract.created",
+    actor,
+    clientId: client.id,
+    entity: { type: "contract", id: contract.id },
+    title: `Contrato ${contract.number} criado manualmente (aguardando contrato)`,
+    description: `${input.termMonths} meses · vencimento dia ${input.billingDay} · itens a preencher`,
+    department: "financeiro",
+    payload: { ownerId: contract.ownerId, number: contract.number, monthlyTotal: 0, setupTotal: 0, hardwareTotal: 0, source: "manual" },
   });
   return contract;
 }
@@ -396,17 +441,23 @@ export async function removeSigner(input: { contractId: string; email: string },
 }
 
 // ---------------------------------------------------------------------------
-// Assinatura (adaptador mock)
+// Assinatura: documento gerado no INTEROS + assinatura registrada com evidência
 // ---------------------------------------------------------------------------
 
+/**
+ * Gera o documento do contrato para assinatura: hash SHA-256 do conteúdo, identificador do documento e
+ * status "aguardando assinatura". Sem provedor de assinatura conectado (situação atual) o envio ao cliente é
+ * MANUAL (e-mail/WhatsApp do usuário, com o PDF salvo de /financeiro/contratos/[id]/documento).
+ */
 export async function sendForSignature(contractId: string, actor: UserRef): Promise<Contract> {
   const contract = await loadContract(contractId);
   assertEditable(contract);
-  if (contract.items.length === 0) throw new Error("Adicione pelo menos um item antes de enviar o contrato");
-  if (contract.signers.length === 0) throw new Error("Adicione pelo menos um signatário antes de enviar o contrato");
+  if (contract.items.length === 0) throw new Error("Adicione pelo menos um item antes de gerar o documento do contrato");
+  if (contract.signers.length === 0) throw new Error("Adicione pelo menos um signatário antes de gerar o documento do contrato");
   const client = await loadClient(contract.clientId);
   const provider = getSignatureProvider();
   const envelope = await provider.createEnvelope(contract, client.tradeName);
+  const manual = envelope.provider === "manual";
   const signers = contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const }));
   const patch: Partial<Contract> = {
     status: contract.status === "pendencia" ? "pendencia" : "aguardando_assinatura",
@@ -422,48 +473,70 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
     actor,
     clientId: contract.clientId,
     entity: { type: "contract", id: contract.id },
-    title: `Contrato ${contract.number} v${contract.version} enviado para assinatura`,
-    description: `${signers.length} signatário(s): ${signers.map((s) => s.name).join(", ")} · envelope ${envelope.envelopeId}`,
+    title: manual
+      ? `Documento do contrato ${contract.number} v${contract.version} gerado para assinatura`
+      : `Contrato ${contract.number} v${contract.version} enviado para assinatura`,
+    description: manual
+      ? `Aguardando assinatura — envio manual ao cliente. ${signers.length} signatário(s): ${signers.map((s) => s.name).join(", ")} · documento ${envelope.envelopeId}`
+      : `${signers.length} signatário(s): ${signers.map((s) => s.name).join(", ")} · envelope ${envelope.envelopeId}`,
     department: "financeiro",
-    payload: { contractId: contract.id, envelopeId: envelope.envelopeId, provider: envelope.provider, documentHash: envelope.documentHash, signers: signers.map((s) => s.email), version: contract.version },
+    payload: { contractId: contract.id, envelopeId: envelope.envelopeId, provider: envelope.provider, method: manual ? "manual" : "provedor", documentHash: envelope.documentHash, signers: signers.map((s) => s.email), version: contract.version },
   });
   return { ...contract, ...patch };
 }
 
-/** Ação de demonstração: registra a assinatura de um signatário como se viesse do provedor. */
-export async function simulateSignature(contractId: string, email: string, actor: UserRef): Promise<{ allSigned: boolean }> {
-  const contract = await loadContract(contractId);
-  if (!contract.signatureEnvelopeId) throw new Error("Envie o contrato para assinatura antes");
+/**
+ * Registra a assinatura de um signatário feita fora do sistema (papel, provedor externo, aceite por e-mail).
+ * Exige evidência: URL do documento assinado ou descrição, e a data. Grava signedAt, evidence e method
+ * "manual" no signatário; quando todos assinaram, o contrato fica assinado (o hash é o do conteúdo gerado).
+ */
+export async function registerManualSignature(input: ManualSignatureInput, actor: UserRef): Promise<{ allSigned: boolean }> {
+  const contract = await loadContract(input.contractId);
+  if (!contract.signatureEnvelopeId) throw new Error("Gere o documento do contrato para assinatura antes de registrar assinaturas");
   if (contract.status === "liberado" || contract.status === "cancelado") throw new Error("Contrato encerrado");
-  const signer = contract.signers.find((s) => s.email.toLowerCase() === email.toLowerCase());
+  const signer = contract.signers.find((s) => s.email.toLowerCase() === input.email.toLowerCase());
   if (!signer) throw new Error("Signatário não encontrado");
   if (signer.status === "assinado") throw new Error(`${signer.name} já assinou`);
-  const signedAt = nowIso();
-  const signers = contract.signers.map((s) => (s === signer ? { ...s, status: "assinado" as const, signedAt } : s));
+  const evidenceUrl = input.evidenceUrl?.trim() || undefined;
+  const description = input.description?.trim() || undefined;
+  if (!evidenceUrl && !description) throw new Error("Informe a evidência: link do documento assinado ou uma descrição");
+  const signedAt = dueIso(input.signedAt);
+  if (dateKey(signedAt) > dateKey(new Date())) throw new Error("A data da assinatura não pode ser futura");
+  const now = nowIso();
+  const evidence = [description, evidenceUrl].filter(Boolean).join(" · ");
+  const signers: ContractSigner[] = contract.signers.map((s) =>
+    s === signer ? { ...s, status: "assinado" as const, signedAt, method: "manual" as const, evidence, evidenceUrl, registeredBy: actor.id, registeredAt: now } : s,
+  );
   const done = signers.every((s) => s.status === "assinado");
-  const patch: Partial<Contract> = { signers };
+  // O hash identifica o conteúdo assinado: recalculado do contrato (o mesmo gerado no documento).
+  const documentHash = contract.documentHash ?? contractDocumentHash(contract);
+  const patch: Partial<Contract> = { signers, documentHash };
   if (done) {
-    patch.signedAt = signedAt;
+    patch.signedAt = signers.map((s) => s.signedAt ?? "").sort().pop() || signedAt;
     if (contract.status !== "pendencia") patch.status = "assinado";
   }
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
+  if (evidenceUrl) {
+    await addContractDocument({ contractId: contract.id, name: `Evidência de assinatura — ${signer.name} (${contract.number} v${contract.version})`, url: evidenceUrl, category: "Contrato assinado" }, actor);
+  }
   await emitEvent({
     type: "note.added",
     actor,
     clientId: contract.clientId,
     entity: { type: "contract", id: contract.id },
-    title: `${signer.name} assinou o contrato ${contract.number}`,
-    description: `${signer.role} · ${signer.email} · assinatura simulada (demonstração)`,
+    title: `${signer.name} assinou o contrato ${contract.number} (registro manual)`,
+    description: `${signer.role} · ${signer.email} · assinado em ${formatDate(signedAt)} · evidência: ${evidence}`,
     department: "financeiro",
-    payload: { contractId: contract.id, email: signer.email, simulated: true, envelopeId: contract.signatureEnvelopeId },
+    payload: { contractId: contract.id, email: signer.email, method: "manual", evidence, evidenceUrl, signedAt, documentHash, envelopeId: contract.signatureEnvelopeId },
   });
   if (done) {
-    // Evidência da assinatura: o contrato assinado entra nos documentos do cliente (conta para o gate da jornada).
+    const version = contract.version;
+    // Contrato assinado entra nos documentos do cliente (conta para o gate da jornada).
     await addContractDocument(
       {
         contractId: contract.id,
-        name: `Contrato ${contract.number} v${contract.version} assinado · envelope ${contract.signatureEnvelopeId} · ${contract.documentHash?.slice(0, 19) ?? "sem hash"}`,
-        url: `/financeiro/contratos/${contract.id}`,
+        name: `Contrato ${contract.number} v${version} assinado · ${contract.signatureEnvelopeId} · ${documentHash.slice(0, 19)}`,
+        url: `/financeiro/contratos/${contract.id}/documento`,
         category: "Contrato assinado",
       },
       actor,
@@ -474,22 +547,35 @@ export async function simulateSignature(contractId: string, email: string, actor
       clientId: contract.clientId,
       entity: { type: "contract", id: contract.id },
       title: `Contrato ${contract.number} assinado por todos`,
-      description: `${signers.length} assinatura(s) · hash ${contract.documentHash?.slice(0, 19) ?? "—"}…`,
+      description: `${signers.length} assinatura(s) registrada(s) com evidência · hash ${documentHash.slice(0, 19)}…`,
       department: "financeiro",
-      payload: { contractId: contract.id, signedAt, envelopeId: contract.signatureEnvelopeId, documentHash: contract.documentHash, ownerId: contract.ownerId },
+      payload: { contractId: contract.id, signedAt: patch.signedAt, envelopeId: contract.signatureEnvelopeId, documentHash, ownerId: contract.ownerId, method: "manual" },
     });
   }
   return { allSigned: done };
 }
 
-export async function sendSignatureReminder(contractId: string, email: string, actor: UserRef): Promise<void> {
+/**
+ * Lembrete de assinatura. Com e-mail conectado (Resend) envia de fato; senão registra o lembrete que o
+ * usuário enviou pelo próprio e-mail (link mailto na tela).
+ */
+export async function sendSignatureReminder(contractId: string, email: string, actor: UserRef): Promise<{ delivered: boolean; manual: boolean }> {
   const contract = await loadContract(contractId);
-  if (!contract.signatureEnvelopeId) throw new Error("O contrato ainda não foi enviado para assinatura");
+  if (!contract.signatureEnvelopeId) throw new Error("O documento do contrato ainda não foi gerado para assinatura");
   const signer = contract.signers.find((s) => s.email.toLowerCase() === email.toLowerCase());
   if (!signer) throw new Error("Signatário não encontrado");
   if (signer.status === "assinado") throw new Error(`${signer.name} já assinou`);
   const reminder = await getSignatureProvider().sendReminder(contract, signer.email);
-  await create<Communication>(COLLECTIONS.communications, {
+  let sent: Awaited<ReturnType<typeof sendEmail>> | null = null;
+  if (isConnected("email")) {
+    sent = await sendEmail({
+      to: signer.email,
+      subject: `Contrato ${contract.number} aguardando sua assinatura`,
+      text: `Olá, ${signer.name.split(" ")[0]}!\n\nO contrato ${contract.number} (versão ${contract.version}) da Intercert aguarda a sua assinatura. Código de integridade do documento: ${contract.documentHash ?? "—"}.\n\nQualquer dúvida, responda este e-mail.`,
+    });
+  }
+  const manual = sent === null;
+  await recordCommunication({
     clientId: contract.clientId,
     channel: "email",
     direction: "saida",
@@ -498,9 +584,7 @@ export async function sendSignatureReminder(contractId: string, email: string, a
     entityId: contract.id,
     body: reminder.message,
     templateKey: "lembrete_assinatura",
-    status: "simulada",
-    provider: "mock",
-    externalId: reminder.envelopeId,
+    ...(sent ? { status: sent.ok ? "enviada" : "falha", provider: "resend", externalId: sent.ok ? sent.externalId : undefined } : MANUAL),
     createdBy: actor.id,
   });
   await emitEvent({
@@ -508,11 +592,12 @@ export async function sendSignatureReminder(contractId: string, email: string, a
     actor,
     clientId: contract.clientId,
     entity: { type: "contract", id: contract.id },
-    title: `Lembrete de assinatura enviado para ${signer.name}`,
-    description: `Contrato ${contract.number} · ${signer.email} (simulado)`,
+    title: manual ? `Lembrete de assinatura enviado manualmente para ${signer.name}` : `Lembrete de assinatura enviado para ${signer.name}`,
+    description: `Contrato ${contract.number} · ${signer.email}${manual ? " · enviado pelo e-mail do usuário (registro manual)" : sent?.ok ? "" : " · falha no envio"}`,
     department: "financeiro",
-    payload: { contractId: contract.id, email: signer.email, channel: "email", simulated: true },
+    payload: { contractId: contract.id, email: signer.email, channel: "email", manual, delivered: sent?.ok ?? false },
   });
+  return { delivered: sent?.ok ?? false, manual };
 }
 
 // ---------------------------------------------------------------------------
@@ -630,14 +715,47 @@ async function billingContext(billingId: string): Promise<{ billing: Billing; cl
   return { billing, client, contact: contacts.find((c) => c.isPrimary) ?? contacts[0] };
 }
 
-/** Cobrança por WhatsApp (adaptador mock): registra a comunicação e o evento na timeline. */
-export async function sendBillingWhatsapp(billingId: string, notes: string | undefined, actor: UserRef): Promise<void> {
+function defaultBillingMessage(billing: Billing, contact?: Contact): string {
+  return `Olá${contact ? `, ${contact.name.split(" ")[0]}` : ""}! Lembrete da Intercert: ${TYPE_LABEL[billing.type].toLowerCase()}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(billing.amount)} com vencimento em ${formatDate(billing.dueDate)}. Precisa da 2ª via do boleto ou da chave PIX?`;
+}
+
+export interface BillingContactInfo {
+  /** Telefone usado no WhatsApp/ligação (contato principal ou cliente). */
+  phone?: string;
+  contactName: string;
+  message: string;
+  whatsappUrl: string | null;
+  telUrl: string | null;
+  whatsappConnected: boolean;
+  voipConnected: boolean;
+}
+
+/** Destinatário e texto padrão da cobrança, para a tela abrir wa.me/tel: com tudo pronto. */
+export async function getBillingContactInfo(billingId: string): Promise<BillingContactInfo> {
+  const { billing, client, contact } = await billingContext(billingId);
+  const phone = contact?.whatsapp ?? contact?.phone ?? client.whatsapp ?? client.phone;
+  return {
+    phone,
+    contactName: contact?.name ?? client.tradeName,
+    message: defaultBillingMessage(billing, contact),
+    whatsappUrl: whatsappHref(phone),
+    telUrl: telHref(contact?.phone ?? contact?.whatsapp ?? client.phone ?? client.whatsapp),
+    whatsappConnected: isConnected("whatsapp"),
+    voipConnected: isConnected("voip"),
+  };
+}
+
+/**
+ * Cobrança por WhatsApp. Com a Meta conectada envia pela API; sem integração (situação atual) o usuário
+ * abriu o wa.me com o texto e aqui só se registra "cobrança enviada manualmente".
+ */
+export async function sendBillingWhatsapp(billingId: string, notes: string | undefined, actor: UserRef): Promise<{ manual: boolean; delivered: boolean }> {
   const { billing, client, contact } = await billingContext(billingId);
   const to = contact?.whatsapp ?? contact?.phone ?? client.whatsapp ?? client.phone;
-  const body =
-    notes?.trim() ||
-    `Olá${contact ? `, ${contact.name.split(" ")[0]}` : ""}! Lembrete da Intercert: ${TYPE_LABEL[billing.type].toLowerCase()}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(billing.amount)} com vencimento em ${formatDate(billing.dueDate)}. Precisa da 2ª via do boleto ou da chave PIX?`;
-  await create<Communication>(COLLECTIONS.communications, {
+  const body = notes?.trim() || defaultBillingMessage(billing, contact);
+  const sent = isConnected("whatsapp") && to ? await sendWhatsappText(to, body) : null;
+  const manual = sent === null;
+  const communication = await recordCommunication({
     clientId: client.id,
     contactId: contact?.id,
     channel: "whatsapp",
@@ -647,8 +765,7 @@ export async function sendBillingWhatsapp(billingId: string, notes: string | und
     entityId: billing.id,
     body,
     templateKey: "cobranca",
-    status: "simulada",
-    provider: "mock",
+    ...(sent ? { status: sent.ok ? "enviada" : "falha", provider: "meta", externalId: sent.ok ? sent.externalId : undefined } : MANUAL),
     createdBy: actor.id,
   });
   await emitEvent({
@@ -656,17 +773,18 @@ export async function sendBillingWhatsapp(billingId: string, notes: string | und
     actor,
     clientId: client.id,
     entity: { type: "billing", id: billing.id },
-    title: `Cobrança enviada por WhatsApp para ${contact?.name ?? client.tradeName}`,
+    title: manual ? `Cobrança enviada manualmente por WhatsApp para ${contact?.name ?? client.tradeName}` : `Cobrança enviada por WhatsApp para ${contact?.name ?? client.tradeName}${sent?.ok ? "" : " (falha no envio)"}`,
     description: body,
     department: "financeiro",
-    payload: { billingId: billing.id, contractId: billing.contractId, to, simulated: true },
+    payload: { billingId: billing.id, contractId: billing.contractId, to, communicationId: communication.id, manual, delivered: sent?.ok ?? false },
   });
+  return { manual, delivered: sent?.ok ?? false };
 }
 
-/** Ligação de cobrança (adaptador VoIP mock). */
+/** Ligação de cobrança feita no discador (sem VoIP conectado): registro manual do resultado. */
 export async function registerBillingCall(billingId: string, notes: string | undefined, actor: UserRef): Promise<void> {
   const { billing, client, contact } = await billingContext(billingId);
-  await create<Communication>(COLLECTIONS.communications, {
+  const communication = await recordCommunication({
     clientId: client.id,
     contactId: contact?.id,
     channel: "voip",
@@ -676,8 +794,7 @@ export async function registerBillingCall(billingId: string, notes: string | und
     entityId: billing.id,
     body: notes?.trim() || undefined,
     templateKey: "cobranca",
-    status: "simulada",
-    provider: "mock",
+    ...MANUAL,
     createdBy: actor.id,
   });
   await emitEvent({
@@ -685,10 +802,10 @@ export async function registerBillingCall(billingId: string, notes: string | und
     actor,
     clientId: client.id,
     entity: { type: "billing", id: billing.id },
-    title: `Ligação de cobrança para ${contact?.name ?? client.tradeName}`,
+    title: `Ligação de cobrança para ${contact?.name ?? client.tradeName} (registro manual)`,
     description: notes?.trim() || `${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(billing.amount)} · vencimento ${formatDate(billing.dueDate)}`,
     department: "financeiro",
-    payload: { billingId: billing.id, contractId: billing.contractId, simulated: true },
+    payload: { billingId: billing.id, contractId: billing.contractId, communicationId: communication.id, manual: true },
   });
 }
 

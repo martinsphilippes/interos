@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { Building2, GitBranch, History } from "lucide-react";
+import { Building2, FileText, GitBranch, History } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getContract } from "@/server/finance/queries";
 import { canOperateFinance, FINANCIAL_STATUS_LABELS, FINANCIAL_STATUS_VARIANT } from "@/server/finance/schemas";
+import { getIntegrationFlags } from "@/server/integrations/status";
 import { formatCurrency, formatDate, formatRelative } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
@@ -73,6 +74,11 @@ export default async function ContractPage({ params }: { params: Params }) {
         breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contratos", href: "/financeiro/contratos" }, { label: contract.number }]}
         actions={
           <>
+            <Button asChild variant="outline" className="h-11 md:h-9">
+              <Link href={`/financeiro/contratos/${contract.id}/documento`}>
+                <FileText /> Ver contrato
+              </Link>
+            </Button>
             <Button asChild variant="outline" className="h-11 md:h-9">
               <Link href={`/clientes/${client.id}?aba=financeiro`}>
                 <Building2 /> Ficha do cliente
@@ -163,7 +169,15 @@ export default async function ContractPage({ params }: { params: Params }) {
             isManager={user.isManager}
             closed={closed}
           />
-          <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} canOperate={canOperate} editable={detail.editable} />
+          <SignatureCard
+            contract={contract}
+            sentAt={detail.sentAt}
+            reminders={detail.reminders}
+            canOperate={canOperate}
+            editable={detail.editable}
+            clientName={client.tradeName}
+            integrations={getIntegrationFlags()}
+          />
           <PendencyCard contractId={contract.id} pendingReason={contract.pendingReason} isPending={contract.status === "pendencia"} closed={closed} canOperate={canOperate} />
           <BillingDataCard
             contractId={contract.id}

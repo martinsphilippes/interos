@@ -8,12 +8,15 @@ import { z } from "zod";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getById } from "@/server/db";
 import { COLLECTIONS, type ActionResult, type Billing, type CurrentUser, type UserRef } from "@/domain/types";
+import type { BillingContactInfo } from "./service";
 import {
   addContractDocument,
   addSigner,
   cancelBilling,
   completeBillingData,
+  createManualContract,
   ensureContractForOpportunity,
+  getBillingContactInfo,
   generateBillings,
   registerBillingCall,
   registerPayment,
@@ -23,8 +26,8 @@ import {
   resolvePendency,
   sendBillingWhatsapp,
   sendForSignature,
+  registerManualSignature,
   sendSignatureReminder,
-  simulateSignature,
   updateContractConditions,
   updateContractItems,
 } from "./service";
@@ -32,9 +35,12 @@ import {
   billingContactSchema,
   canOperateFinance,
   billingDataSchema,
+  billingIdSchema,
   cancelBillingSchema,
   contractDocumentSchema,
   contractIdSchema,
+  manualContractSchema,
+  manualSignatureSchema,
   opportunityIdSchema,
   pendencySchema,
   registerPaymentSchema,
@@ -103,6 +109,18 @@ export async function createContractFromOpportunityAction(input: unknown): Promi
     return { ok: true, data: { contractId: contract.id } };
   } catch (error) {
     return fail(error, "Não foi possível gerar o contrato");
+  }
+}
+
+export async function createManualContractAction(input: unknown): Promise<ActionResult<{ contractId: string }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const data = manualContractSchema.parse(input);
+    const contract = await createManualContract(data, actorOf(user));
+    revalidateFinance(contract.clientId, contract.id);
+    return { ok: true, data: { contractId: contract.id } };
+  } catch (error) {
+    return fail(error, "Não foi possível criar o contrato");
   }
 }
 
@@ -178,11 +196,11 @@ export async function sendForSignatureAction(input: unknown): Promise<ActionResu
   }
 }
 
-export async function simulateSignatureAction(input: unknown): Promise<ActionResult<{ allSigned: boolean }>> {
+export async function registerManualSignatureAction(input: unknown): Promise<ActionResult<{ allSigned: boolean }>> {
   try {
     const user = await requireFinanceOperator();
-    const data = signerRefSchema.parse(input);
-    const result = await simulateSignature(data.contractId, data.email, actorOf(user));
+    const data = manualSignatureSchema.parse(input);
+    const result = await registerManualSignature(data, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
     return { ok: true, data: result };
   } catch (error) {
@@ -190,13 +208,13 @@ export async function simulateSignatureAction(input: unknown): Promise<ActionRes
   }
 }
 
-export async function sendSignatureReminderAction(input: unknown): Promise<ActionResult> {
+export async function sendSignatureReminderAction(input: unknown): Promise<ActionResult<{ delivered: boolean; manual: boolean }>> {
   try {
     const user = await requireFinanceOperator();
     const data = signerRefSchema.parse(input);
-    await sendSignatureReminder(data.contractId, data.email, actorOf(user));
+    const result = await sendSignatureReminder(data.contractId, data.email, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
-    return { ok: true, data: undefined };
+    return { ok: true, data: result };
   } catch (error) {
     return fail(error, "Não foi possível enviar o lembrete");
   }
@@ -244,14 +262,24 @@ export async function cancelBillingAction(input: unknown): Promise<ActionResult>
   }
 }
 
-export async function sendBillingWhatsappAction(input: unknown): Promise<ActionResult> {
+export async function getBillingContactAction(input: unknown): Promise<ActionResult<BillingContactInfo>> {
+  try {
+    await requireFinanceOperator();
+    const { billingId } = billingIdSchema.parse(input);
+    return { ok: true, data: await getBillingContactInfo(billingId) };
+  } catch (error) {
+    return fail(error, "Não foi possível carregar o contato da cobrança");
+  }
+}
+
+export async function sendBillingWhatsappAction(input: unknown): Promise<ActionResult<{ manual: boolean; delivered: boolean }>> {
   try {
     const user = await requireFinanceOperator();
     const data = billingContactSchema.parse(input);
     const billing = await billingRef(data.billingId);
-    await sendBillingWhatsapp(data.billingId, data.notes, actorOf(user));
+    const result = await sendBillingWhatsapp(data.billingId, data.notes, actorOf(user));
     revalidateFinance(billing?.clientId, billing?.contractId);
-    return { ok: true, data: undefined };
+    return { ok: true, data: result };
   } catch (error) {
     return fail(error, "Não foi possível enviar a cobrança por WhatsApp");
   }

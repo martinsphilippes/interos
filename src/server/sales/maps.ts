@@ -1,16 +1,15 @@
 import type { Address } from "@/domain/types";
+import { googleGeocode, googleRoute } from "@/server/integrations/google-maps";
+import { isConnected } from "@/server/integrations/status";
 
 /**
  * Módulo de mapas (geocodificação e rota) usado pelas visitas.
  *
- * Implementação atual: MOCK sem rede. `geocode` devolve a coordenada aproximada da cidade a partir de
- * uma tabela pequena de cidades do Nordeste; `route` calcula a distância em linha reta (haversine)
- * corrigida por um fator de estrada e estima o tempo a 60 km/h.
- *
- * Integração real (Google Maps Platform): criar a variável de ambiente GOOGLE_MAPS_API_KEY (somente
- * servidor, nunca NEXT_PUBLIC_) e trocar o corpo destas duas funções por chamadas à Geocoding API
- * (https://maps.googleapis.com/maps/api/geocode/json?address=...&key=...) e à Routes API
- * (computeRoutes). A interface pública (`geocode`, `route`, `HEADQUARTERS`) não muda.
+ * Com o Google Maps conectado (GOOGLE_MAPS_API_KEY, ver src/server/integrations/status.ts) `geocode` usa a
+ * Geocoding API e `route` a Distance Matrix API (provider "google"). Sem a chave, ou se o Google falhar,
+ * cai na ESTIMATIVA local: coordenada aproximada da cidade (tabela de cidades do Nordeste) e distância em
+ * linha reta (haversine) × fator de estrada a 60 km/h — `provider: "mock"` significa "estimativa", e a tela
+ * deve apresentá-la assim. Mapas sem chave: iframe/links do Google Maps por URL (funções abaixo).
  */
 
 export interface LatLng {
@@ -70,6 +69,10 @@ function normalize(text: string): string {
 export async function geocode(address: Address | undefined | null): Promise<LatLng | null> {
   if (!address) return null;
   if (typeof address.lat === "number" && typeof address.lng === "number") return { lat: address.lat, lng: address.lng };
+  if (isConnected("mapas")) {
+    const found = await googleGeocode(formatAddressLine(address));
+    if (found) return found;
+  }
   if (!address.city) return null;
   const city = normalize(address.city);
   const state = (address.state ?? "").toUpperCase();
@@ -90,8 +93,12 @@ export function haversineKm(a: LatLng, b: LatLng): number {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-/** Estimativa de rota (mock): linha reta × 1,25 (fator de estrada), 60 km/h. */
+/** Rota pelo Google (conectado) ou estimativa local: linha reta × 1,25 (fator de estrada), 60 km/h. */
 export async function route(from: LatLng, to: LatLng): Promise<RouteEstimate> {
+  if (isConnected("mapas")) {
+    const real = await googleRoute(from, to);
+    if (real) return { ...real, provider: "google" };
+  }
   const distanceKm = Math.round(haversineKm(from, to) * 1.25 * 10) / 10;
   return { distanceKm, durationMinutes: Math.round((distanceKm / 60) * 60), provider: "mock" };
 }

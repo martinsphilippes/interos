@@ -141,6 +141,28 @@ export type SignerInput = z.input<typeof signerSchema>;
 
 export const signerRefSchema = z.object({ contractId: id("Contrato"), email: z.email("E-mail do signatário inválido") });
 
+/** Assinatura registrada manualmente: exige evidência (link do documento assinado ou descrição) e a data. */
+export const manualSignatureSchema = z
+  .object({
+    contractId: id("Contrato"),
+    email: z.email("E-mail do signatário inválido"),
+    signedAt: dateKey("Data da assinatura"),
+    evidenceUrl: z.union([z.literal(""), url]).optional(),
+    description: z.string().trim().max(500, "Descrição muito longa").optional(),
+  })
+  .refine((v) => Boolean(v.evidenceUrl?.trim()) || (v.description?.trim().length ?? 0) >= 10, {
+    message: "Informe a evidência: link do documento assinado ou uma descrição (mín. 10 caracteres)",
+    path: ["description"],
+  });
+export type ManualSignatureInput = z.input<typeof manualSignatureSchema>;
+
+export const manualContractSchema = z.object({
+  clientId: id("Cliente"),
+  recurrence: z.enum(["mensal", "anual", "unico"], { message: "Recorrência inválida" }),
+  termMonths: z.number("Prazo inválido").int("Prazo deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses"),
+  billingDay: z.number("Dia de vencimento inválido").int().min(1, "Dia de vencimento mínimo é 1").max(28, "Dia de vencimento máximo é 28"),
+});
+
 export const billingDataSchema = z.object({
   contractId: id("Contrato"),
   legalName: z.string().trim().max(160, "Razão social muito longa").optional(),

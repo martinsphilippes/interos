@@ -2,14 +2,18 @@ import "server-only";
 /**
  * Adaptadores de canal (WhatsApp, e-mail) da Caixa de Entrada.
  *
- * Hoje só existe a implementação `mock`: o envio é simulado (registrado em `communications` com
- * provider "mock" e status "simulada") e o recebimento grava a mensagem de entrada. Quando a
- * WhatsApp Business API (Meta) for conectada, basta implementar `ChannelAdapter` e trocar o
- * retorno de `getChannelAdapter` — o restante do módulo não muda.
+ * O envio consulta o registro de integrações (src/server/integrations/status.ts):
+ * - WhatsApp conectado (Meta Cloud API) → envia de verdade e grava provider "meta" (status "enviada" ou "falha");
+ * - e-mail conectado (Resend) → envia de verdade e grava provider "resend";
+ * - sem integração (situação padrão) → nada sai do sistema: a mensagem é gravada como REGISTRO MANUAL
+ *   (status/provider "manual") do que o usuário enviou pelo próprio app (wa.me / mailto) e aparece na timeline.
+ * O recebimento grava a mensagem de entrada (webhook /api/webhooks/whatsapp).
  */
-import { create } from "@/server/db";
 import { emitEvent } from "@/server/events";
-import { COLLECTIONS, type Communication, type UserRef } from "@/domain/types";
+import { MANUAL, recordCommunication } from "@/server/integrations/communications";
+import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
+import { isConnected } from "@/server/integrations/status";
+import type { Communication, UserRef } from "@/domain/types";
 
 export type MessageChannel = "whatsapp" | "email";
 
@@ -42,12 +46,27 @@ export interface ChannelAdapter {
 
 const SYSTEM_ACTOR: UserRef = { id: "sistema", name: "INTEROS" };
 
-/** Implementação simulada: nada sai do sistema; tudo fica registrado e aparece na timeline. */
-const mockAdapter: ChannelAdapter = {
-  provider: "mock",
+/** Envia pelo provedor quando o canal está conectado; senão devolve null (registro manual). */
+async function deliver(message: OutgoingMessage): Promise<{ provider: "meta" | "resend"; ok: boolean; externalId?: string } | null> {
+  if (!message.to) return null;
+  if (message.channel === "whatsapp" && isConnected("whatsapp")) {
+    const r = await sendWhatsappText(message.to, message.body);
+    return { provider: "meta", ok: r.ok, externalId: r.ok ? r.externalId : undefined };
+  }
+  if (message.channel === "email" && isConnected("email")) {
+    const r = await sendEmail({ to: message.to, subject: "Intercert", text: message.body });
+    return { provider: "resend", ok: r.ok, externalId: r.ok ? r.externalId : undefined };
+  }
+  return null;
+}
+
+const adapter: ChannelAdapter = {
+  // Tipo público mantido; o provider real de cada envio fica gravado na comunicação.
+  provider: "outro",
 
   async sendMessage(message) {
-    const communication = await create<Communication>(COLLECTIONS.communications, {
+    const sent = await deliver(message);
+    const communication = await recordCommunication({
       clientId: message.clientId,
       contactId: message.contactId,
       channel: message.channel,
@@ -56,28 +75,27 @@ const mockAdapter: ChannelAdapter = {
       entityType: message.entity?.type,
       entityId: message.entity?.id,
       body: message.body,
-      status: "simulada",
-      externalId: `mock_${Date.now().toString(36)}`,
-      provider: "mock",
+      ...(sent ? { status: sent.ok ? "enviada" : "falha", provider: sent.provider, externalId: sent.externalId } : MANUAL),
       createdBy: message.sender.id,
     });
     if (message.channel === "whatsapp") {
+      const how = !sent ? " (registro manual)" : sent.ok ? "" : " (falha no envio)";
       await emitEvent({
         type: "whatsapp.message.sent",
         actor: message.sender,
         clientId: message.clientId,
         entity: message.entity ?? { type: "communication", id: communication.id },
-        title: `WhatsApp enviado${message.to ? ` para ${message.to}` : ""} (simulado)`,
+        title: `WhatsApp ${sent ? "enviado" : "registrado"}${message.to ? ` para ${message.to}` : ""}${how}`,
         description: message.body,
         department: "marketing",
-        payload: { communicationId: communication.id, to: message.to, provider: "mock", simulated: true },
+        payload: { communicationId: communication.id, to: message.to, provider: sent?.provider ?? "manual", manual: !sent, delivered: sent?.ok ?? false },
       });
     }
     return communication;
   },
 
   async receiveMessage(message) {
-    const communication = await create<Communication>(COLLECTIONS.communications, {
+    const communication = await recordCommunication({
       clientId: message.clientId,
       contactId: message.contactId,
       channel: message.channel,
@@ -86,8 +104,8 @@ const mockAdapter: ChannelAdapter = {
       entityId: message.entity?.id,
       body: message.body,
       status: "recebida",
-      externalId: message.externalId ?? `mock_${Date.now().toString(36)}`,
-      provider: "mock",
+      externalId: message.externalId,
+      provider: message.channel === "whatsapp" && isConnected("whatsapp") ? "meta" : "outro",
     });
     if (message.channel === "whatsapp") {
       await emitEvent({
@@ -98,7 +116,7 @@ const mockAdapter: ChannelAdapter = {
         title: `WhatsApp recebido${message.from ? ` de ${message.from}` : ""}`,
         description: message.body,
         department: "marketing",
-        payload: { communicationId: communication.id, from: message.from, provider: "mock", entityType: message.entity?.type, entityId: message.entity?.id },
+        payload: { communicationId: communication.id, from: message.from, provider: communication.provider, entityType: message.entity?.type, entityId: message.entity?.id },
       });
     }
     return communication;
@@ -106,5 +124,5 @@ const mockAdapter: ChannelAdapter = {
 };
 
 export function getChannelAdapter(): ChannelAdapter {
-  return mockAdapter;
+  return adapter;
 }
