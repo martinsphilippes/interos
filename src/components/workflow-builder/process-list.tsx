@@ -5,11 +5,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatRelative } from "@/lib/format";
 import { PROCESS_STATUS_LABELS } from "@/domain/workflow-graph";
+import { eventTypeLabel } from "@/domain/event-labels";
 import type { ProcessSummary } from "@/server/process-engine/queries";
 import { NewProcessButton } from "./new-process-button";
 
 function triggerLabel(p: ProcessSummary): string {
-  return p.trigger.type === "evento" ? p.trigger.eventType : "Manual";
+  return p.trigger.type === "evento" ? eventTypeLabel(p.trigger.eventType) : "Manual";
 }
 
 function StatusBadges({ p }: { p: ProcessSummary }) {

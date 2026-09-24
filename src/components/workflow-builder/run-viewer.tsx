@@ -1,5 +1,6 @@
 "use client";
 
+import { eventTypeLabel } from "@/domain/event-labels";
 import "@xyflow/react/dist/style.css";
 import * as React from "react";
 import Link from "next/link";
@@ -233,7 +234,7 @@ function RunDetail({ run, definition, tasks }: { run: ProcessRun; definition: Pr
               <Badge variant="muted">v{run.version}</Badge>
             </CardTitle>
             <p className="mt-1 text-sm text-muted">
-              {run.context.trigger.type === "evento" ? `Gatilho ${run.context.trigger.eventType}: ${run.context.trigger.eventTitle ?? ""}` : `Início manual por ${run.startedBy.name}`} · iniciada em {formatDateTime(run.startedAt)}
+              {run.context.trigger.type === "evento" ? `Gatilho ${eventTypeLabel(run.context.trigger.eventType ?? "")}: ${run.context.trigger.eventTitle ?? ""}` : `Início manual por ${run.startedBy.name}`} · iniciada em {formatDateTime(run.startedAt)}
               {run.completedAt ? ` · encerrada em ${formatDateTime(run.completedAt)}` : ""}
             </p>
             {run.error ? <p className="mt-1 text-sm text-danger-fg">Erro: {run.error}</p> : null}

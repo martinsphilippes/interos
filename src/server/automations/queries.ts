@@ -3,6 +3,7 @@ import "server-only";
  * Leituras da tela de automações (/admin/automacoes): regras com estatísticas de execução, detalhe
  * de uma regra com histórico, opções do editor e sugestões de caminhos por tipo de evento.
  */
+import { eventTypeLabel } from "@/domain/event-labels";
 import { getById, list } from "@/server/db";
 import { COLLECTIONS, type AutomationRule, type DomainEvent, type SlaRule, type User } from "@/domain/types";
 import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, ROLE_LABELS, type DepartmentKey, type RoleKey } from "@/domain/constants";
@@ -32,7 +33,7 @@ export interface RuleListItem {
 
 export function triggerLabel(rule: AutomationRuleRecord): string {
   const t = rule.trigger;
-  if (t.type === "evento") return t.eventType ? `Evento ${t.eventType}` : "Evento (não definido)";
+  if (t.type === "evento") return t.eventType ? `Evento ${eventTypeLabel(t.eventType)}` : "Evento (não definido)";
   const freq = SCHEDULE_LABELS[(t.schedule as RuleSchedule) ?? "diaria"] ?? t.schedule;
   if (t.sweep) return `${freq} · varredura ${SWEEP_DEFINITIONS[t.sweep].label}`;
   if (t.entity) return `${freq} · ${SCAN_ENTITY_LABELS[t.entity]}`;

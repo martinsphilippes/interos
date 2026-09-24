@@ -10,11 +10,11 @@ import { Select } from "@/components/ui/select";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { EventTypeSelect } from "@/components/ui/event-type-select";
 import { cn } from "@/lib/utils";
 import {
   DEPARTMENT_KEYS,
   DEPARTMENT_LABELS,
-  EVENT_TYPES,
   NOTIFICATION_KINDS,
   PRIORITIES,
   PRIORITY_LABELS,
@@ -57,29 +57,8 @@ const PATH_SUGGESTIONS = [
   "payload.priority",
 ];
 
-/** Tipos de evento agrupados pelo domínio ("payment.overdue" → payment). */
-export const EVENT_GROUPS: { domain: string; types: EventType[] }[] = Object.entries(
-  EVENT_TYPES.reduce<Record<string, EventType[]>>((acc, t) => {
-    const d = t.split(".")[0];
-    (acc[d] ??= []).push(t);
-    return acc;
-  }, {}),
-).map(([domain, types]) => ({ domain, types }));
-
 function EventSelect({ value, onChange, id }: { value?: string; onChange: (v: EventType) => void; id?: string }) {
-  return (
-    <Select id={id} value={value ?? ""} onChange={(e) => onChange(e.target.value as EventType)} placeholder="Escolha o evento">
-      {EVENT_GROUPS.map((g) => (
-        <optgroup key={g.domain} label={g.domain}>
-          {g.types.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </Select>
-  );
+  return <EventTypeSelect id={id} value={value} onChange={onChange} />;
 }
 
 function RecipientSelect({ value, onChange, users, allowTeams, id }: { value: string; onChange: (v: string) => void; users: BuilderUser[]; allowTeams?: boolean; id?: string }) {

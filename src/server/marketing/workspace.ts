@@ -7,6 +7,7 @@ import "server-only";
  */
 import { list } from "@/server/db";
 import { canAccessModule } from "@/server/auth/session";
+import { eventTypeLabel } from "@/domain/event-labels";
 import { COLLECTIONS, type AutomationRule, type Campaign, type Communication, type CurrentUser, type DomainEvent, type LeadSource, type Product, type Prospect, type ProspectList, type User } from "@/domain/types";
 import { dateKey, formatDateKey } from "@/lib/format";
 import { inPeriod, leadsHref, periodRange, type PeriodKey, type UserOption } from "@/components/marketing/marketing-model";
@@ -29,15 +30,6 @@ function previousRange(startKey: string, endKey: string): { startKey: string; en
 
 /** Gatilhos que caracterizam uma automação de captação. */
 const CAPTURE_EVENTS = new Set(["lead.created", "lead.updated", "lead.qualified", "lead.disqualified", "lead.contacted", "whatsapp.message.received", "prospect.contacted"]);
-const TRIGGER_LABELS: Record<string, string> = {
-  "lead.created": "Lead criado",
-  "lead.updated": "Lead atualizado",
-  "lead.qualified": "Lead qualificado",
-  "lead.disqualified": "Lead desqualificado",
-  "lead.contacted": "Lead contatado",
-  "whatsapp.message.received": "WhatsApp recebido",
-  "prospect.contacted": "Contato da prospecção",
-};
 const ACTION_LABELS: Record<AutomationRule["actions"][number]["type"], string> = {
   criar_tarefa: "Criar tarefa",
   notificar: "Notificar",
@@ -56,7 +48,7 @@ function isCaptureRule(rule: AutomationRule): boolean {
 
 function toAutomation(rule: AutomationRule): CaptureAutomation {
   const t = rule.trigger;
-  const triggerLabel = t.type === "evento" ? (TRIGGER_LABELS[t.eventType ?? ""] ?? t.eventType ?? "Evento") : "Varredura de leads";
+  const triggerLabel = t.type === "evento" ? (t.eventType ? eventTypeLabel(t.eventType) : "Evento") : "Varredura de leads";
   const actions = Array.from(new Set(rule.actions.map((a) => ACTION_LABELS[a.type] ?? a.type)));
   return { id: rule.id, name: rule.name, description: rule.description, triggerLabel, flow: `${triggerLabel} → ${actions.join(", ") || "sem ação"}`, active: rule.active, runCount: rule.runCount ?? 0 };
 }

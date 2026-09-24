@@ -150,12 +150,21 @@ export function LocationBlock({ location, compact }: { location: WorkspaceLocati
       </p>
       {location.distanceKm !== undefined ? (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm tabular-nums" title={`Estimativa a partir da ${location.origin}${location.provider === "estimativa" ? " (linha reta × 1,25 a 60 km/h, sem Google Maps conectado)" : ""}`}>
-          <span className="inline-flex items-center gap-1">
-            <Car className="size-4 text-muted" aria-hidden /> {location.distanceKm.toLocaleString("pt-BR")} km
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Clock className="size-4 text-muted" aria-hidden /> {travelLabel(location.travelMinutes)}
-          </span>
+          {location.distanceKm < 1 ? (
+            // Sem coordenada própria, o endereço cai no centro da cidade: mesma cidade da sede, sem distância útil.
+            <span className="inline-flex items-center gap-1">
+              <Car className="size-4 text-muted" aria-hidden /> Mesma cidade da sede
+            </span>
+          ) : (
+            <>
+              <span className="inline-flex items-center gap-1">
+                <Car className="size-4 text-muted" aria-hidden /> {location.distanceKm.toLocaleString("pt-BR")} km
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Clock className="size-4 text-muted" aria-hidden /> {travelLabel(location.travelMinutes)}
+              </span>
+            </>
+          )}
           <span className="text-[11px] text-muted-light">estimativa da sede</span>
         </p>
       ) : (

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { eventTypeLabel } from "@/domain/event-labels";
 import { History } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -25,7 +26,7 @@ export function RunsHistory({ runs, total }: { runs: AutomationRunRecord[]; tota
                 <RelativeTime value={run.ranAt} />
               </span>
               {run.trigger ? <span className="text-muted">· {TRIGGER_KIND_LABELS[run.trigger] ?? run.trigger}</span> : null}
-              {run.eventType ? <code className="text-muted">{run.eventType}</code> : null}
+              {run.eventType ? <span className="text-muted" title={run.eventType}>{eventTypeLabel(run.eventType)}</span> : null}
               {run.depth && run.depth > 1 ? <Badge variant="outline" size="sm">encadeada nível {run.depth}</Badge> : null}
               {run.clientId ? (
                 <Link href={`/clientes/${run.clientId}`} className="text-brand hover:underline">

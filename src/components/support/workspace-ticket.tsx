@@ -192,7 +192,8 @@ export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, c
         <div className="flex flex-wrap items-center gap-2 text-[13px]">
           <TicketPriorityBadge priority={ticket.priority} size="md" />
           <TicketStatusBadge status={ticket.status} size="md" />
-          <span className="lg:hidden">
+          <span className="inline-flex items-center gap-1 lg:hidden">
+            <span className="text-xs font-medium text-muted">SLA</span>
             <LiveSlaBadge sla={row.sla} size="md" timeOnly />
           </span>
           <Badge variant="outline" size="md" className="font-mono uppercase" title={TICKET_QUEUE_LABELS[ticket.queue as TicketQueue]}>

@@ -12,12 +12,13 @@ import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Select } from "@/components/ui/select";
+import { EventTypeSelect } from "@/components/ui/event-type-select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/format";
 import { shortId } from "@/lib/utils";
-import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, NOTIFICATION_KINDS, PRIORITIES, PRIORITY_LABELS } from "@/domain/constants";
+import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, NOTIFICATION_KINDS, PRIORITIES, PRIORITY_LABELS, type EventType } from "@/domain/constants";
 import { deleteAutomationRule, getPathSuggestionsAction, saveAutomationRule, testAutomationRule } from "@/server/automations/actions";
 import type { SimulationResult } from "@/server/automations/engine";
 import type { EditorOptions } from "@/server/automations/queries";
@@ -470,17 +471,7 @@ export function RuleEditor({ rule, options, eventGroups }: RuleEditorProps) {
           />
           {draft.triggerType === "evento" ? (
             <Field label="Evento" hint="Toda vez que este evento for emitido, as condições são avaliadas">
-              <Select value={draft.eventType} onChange={(e) => update({ eventType: e.target.value })} placeholder="Escolha o evento">
-                {eventGroups.map((g) => (
-                  <optgroup key={g.domain} label={g.domain}>
-                    {g.types.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </Select>
+              <EventTypeSelect value={draft.eventType} onChange={(v) => update({ eventType: v })} types={eventGroups.flatMap((g) => g.types) as EventType[]} />
             </Field>
           ) : (
             <div className="grid gap-3 md:grid-cols-3">
