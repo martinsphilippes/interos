@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { VISIT_KINDS } from "@/domain/sales-extra";
 
 /**
  * Esquemas (zod) e constantes puras do módulo de Vendas. Sem dependências de servidor: é importado
@@ -218,6 +219,7 @@ export const createVisitSchema = z.object({
   objective: z.string().trim().min(3, "Descreva o objetivo da visita").max(300),
   notes: optionalText(2000),
   address: visitAddressSchema,
+  kind: z.enum(VISIT_KINDS, { message: "Tipo de visita inválido" }).default("comercial"),
 });
 export type CreateVisitInput = z.input<typeof createVisitSchema>;
 
@@ -236,6 +238,61 @@ export const rescheduleVisitSchema = z.object({
   visitId: id("Visita"),
   scheduledAt: isoDate("Informe a nova data e hora"),
   reason: optionalText(1000),
+});
+
+// ---------------------------------------------------------------------------
+// Workspace da Central de Vendas (comunicação registrada manualmente, anexos, transferência)
+// ---------------------------------------------------------------------------
+
+export const WORKSPACE_MESSAGE_CHANNELS = ["whatsapp", "email"] as const;
+export type WorkspaceMessageChannel = (typeof WORKSPACE_MESSAGE_CHANNELS)[number];
+
+export const workspaceMessageSchema = z.object({
+  opportunityId: id("Oportunidade"),
+  channel: z.enum(WORKSPACE_MESSAGE_CHANNELS, { message: "Canal inválido" }),
+  body: z.string().trim().min(1, "Escreva a mensagem").max(4000, "Mensagem muito longa"),
+});
+
+export const internalNoteSchema = z.object({
+  opportunityId: id("Oportunidade"),
+  body: z.string().trim().min(2, "Escreva a nota").max(4000, "Nota muito longa"),
+});
+
+export const CALL_OUTCOMES = ["atendeu", "nao_atendeu"] as const;
+export const registerCallSchema = z
+  .object({
+    opportunityId: id("Oportunidade"),
+    outcome: z.enum(CALL_OUTCOMES, { message: "Informe se o cliente atendeu" }),
+    durationSeconds: z.coerce.number({ message: "Duração inválida" }).int().min(0, "Duração inválida").max(6 * 3600, "Duração máxima de 6 horas"),
+    summary: optionalText(2000),
+  })
+  .superRefine((d, ctx) => {
+    if (d.outcome !== "atendeu") return;
+    if (d.durationSeconds <= 0) ctx.addIssue({ code: "custom", path: ["durationSeconds"], message: "Informe a duração da ligação" });
+    if (!d.summary || d.summary.length < 3) ctx.addIssue({ code: "custom", path: ["summary"], message: "Resuma o que foi conversado" });
+  });
+
+export const attachDocumentSchema = z.object({
+  opportunityId: id("Oportunidade"),
+  name: z.string().trim().min(2, "Informe o nome do documento").max(200),
+  url: z
+    .string()
+    .trim()
+    .max(2000, "URL muito longa")
+    .refine((v) => {
+      try {
+        return ["http:", "https:"].includes(new URL(v).protocol);
+      } catch {
+        return false;
+      }
+    }, "Informe um link válido (https://…)"),
+  category: optionalText(80),
+});
+
+export const transferOpportunitySchema = z.object({
+  opportunityId: id("Oportunidade"),
+  ownerId: id("Vendedor"),
+  reason: optionalText(500),
 });
 
 /** Primeira mensagem de erro de um ZodError, legível. */

@@ -23,7 +23,6 @@ import {
   type Client,
   type ClientProduct,
   type CollectionName,
-  type Communication,
   type Contact,
   type Contract,
   type DomainEvent,
@@ -39,6 +38,8 @@ import {
   type Visit,
 } from "@/domain/types";
 import { CLIENT_STATUS_LABELS, type Priority } from "@/domain/constants";
+import { VISIT_KIND_LABELS, type VisitKind, type VisitRecord } from "@/domain/sales-extra";
+import { MANUAL, recordCommunication } from "@/server/integrations/communications";
 import { OPPORTUNITY_STAGE_LABELS, effectiveProposalStatus, netItem, productTotals, proposalTotals } from "@/components/sales/model";
 import { calculateCommissionsForOpportunity, SYSTEM_ACTOR } from "./commissions";
 import { geocode } from "./maps";
@@ -341,21 +342,22 @@ export async function registerOpportunityContact(
   const client = await loadClientOf(opp);
   const who = primary?.name ?? client.tradeName;
 
-  if (input.channel !== "nota") {
-    await create<Communication>(COLLECTIONS.communications, {
-      clientId: opp.clientId,
-      contactId: primary?.id,
-      channel: input.channel === "ligacao" ? "voip" : "whatsapp",
-      direction: "saida",
-      userId: actor.id,
-      entityType: "opportunity",
-      entityId: opp.id,
-      body: input.notes,
-      status: "simulada",
-      provider: "mock",
-      createdBy: actor.id,
-    });
-  }
+  // Sem integração conectada: o contato feito pelo app/discador do usuário fica como registro manual.
+  const communication =
+    input.channel !== "nota"
+      ? await recordCommunication({
+          clientId: opp.clientId,
+          contactId: primary?.id,
+          channel: input.channel === "ligacao" ? "voip" : "whatsapp",
+          direction: "saida",
+          userId: actor.id,
+          entityType: "opportunity",
+          entityId: opp.id,
+          body: input.notes,
+          createdBy: actor.id,
+          ...MANUAL,
+        })
+      : null;
   const outcome = input.outcome === "nao_atendeu" ? "não atendeu" : input.outcome === "mensagem_enviada" ? "mensagem enviada" : input.outcome === "atendeu" ? "atendeu" : null;
   const event = await emitEvent({
     type: input.channel === "ligacao" ? "call.completed" : input.channel === "whatsapp" ? "whatsapp.message.sent" : "note.added",
@@ -370,7 +372,7 @@ export async function registerOpportunityContact(
           : `Nota na oportunidade: ${opp.title}`,
     description: input.notes,
     department: "vendas",
-    payload: { opportunityId: opp.id, channel: input.channel, outcome: input.outcome, contactId: primary?.id, simulated: input.channel !== "nota" },
+    payload: { opportunityId: opp.id, channel: input.channel, outcome: input.outcome, contactId: primary?.id, communicationId: communication?.id, manual: input.channel !== "nota" },
   });
   await update<Opportunity>(COLLECTIONS.opportunities, opp.id, { lastActivityAt: event.occurredAt });
   return event;
@@ -840,6 +842,8 @@ export interface CreateVisitData {
   objective: string;
   notes?: string;
   address: Address;
+  /** Comercial (padrão) ou técnica. */
+  kind?: VisitKind;
 }
 
 export async function createVisit(data: CreateVisitData, actor: UserRef): Promise<Visit> {
@@ -857,7 +861,8 @@ export async function createVisit(data: CreateVisitData, actor: UserRef): Promis
     address.lng = position.lng;
   }
   const scheduledAt = new Date(data.scheduledAt).toISOString();
-  const visit = await create<Visit>(COLLECTIONS.visits, {
+  const kind: VisitKind = data.kind ?? "comercial";
+  const visit = await create<VisitRecord>(COLLECTIONS.visits, {
     clientId: client.id,
     opportunityId: data.opportunityId,
     sellerId: seller.id,
@@ -867,6 +872,7 @@ export async function createVisit(data: CreateVisitData, actor: UserRef): Promis
     objective: data.objective,
     notes: data.notes,
     status: "agendada",
+    kind,
     createdBy: actor.id,
   });
   if (data.opportunityId) await update<Opportunity>(COLLECTIONS.opportunities, data.opportunityId, { lastActivityAt: nowIso() });
@@ -875,10 +881,10 @@ export async function createVisit(data: CreateVisitData, actor: UserRef): Promis
     actor,
     clientId: client.id,
     entity: { type: "visit", id: visit.id },
-    title: `Visita agendada: ${data.objective}`,
+    title: `Visita ${VISIT_KIND_LABELS[kind].toLowerCase()} agendada: ${data.objective}`,
     description: `${formatDateTime(scheduledAt)} · ${seller.name}`,
     department: "vendas",
-    payload: { sellerId: seller.id, opportunityId: data.opportunityId, scheduledAt },
+    payload: { sellerId: seller.id, opportunityId: data.opportunityId, scheduledAt, kind },
   });
   if (seller.id !== actor.id) {
     await notify({ userIds: [seller.id], kind: "acao", title: `Visita agendada: ${client.tradeName}`, body: `${formatDateTime(scheduledAt)} · ${data.objective}`, href: `/vendas/visitas?visita=${visit.id}`, entity: { type: "visit", id: visit.id } });
@@ -919,9 +925,8 @@ export async function cancelVisit(input: { visitId: string; reason: string }, ac
   if (!PENDING_VISIT.has(visit.status)) throw new Error("Só visitas agendadas ou remarcadas podem ser canceladas");
   const patch: Partial<Visit> = { status: "cancelada", result: `Cancelada: ${input.reason}` };
   await update<Visit>(COLLECTIONS.visits, visit.id, patch);
-  // Não há tipo de evento "visit.cancelled": o cancelamento entra na timeline como nota.
   await emitEvent({
-    type: "note.added",
+    type: "visit.cancelled",
     actor,
     clientId: visit.clientId,
     entity: { type: "visit", id: visit.id },

@@ -25,8 +25,9 @@ export interface RouteEstimate {
 }
 
 /** Sede da Intercert: Juazeiro do Norte (CE). */
-export const HEADQUARTERS: { label: string; position: LatLng } = {
+export const HEADQUARTERS: { label: string; address: string; position: LatLng } = {
   label: "Sede Intercert — Juazeiro do Norte/CE",
+  address: "Juazeiro do Norte, CE",
   position: { lat: -7.2131, lng: -39.3153 },
 };
 
@@ -116,4 +117,18 @@ export function googleMapsSearchUrl(address: Address | undefined | null): string
   const line = formatAddressLine(address);
   if (!line) return null;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(line)}`;
+}
+
+/** Mapa incorporado por endereço (iframe do Google Maps sem chave de API). */
+export function googleMapsEmbedUrl(address: Address | undefined | null): string | null {
+  const line = formatAddressLine(address);
+  if (!line) return null;
+  return `https://www.google.com/maps?q=${encodeURIComponent(line)}&output=embed`;
+}
+
+/** Link "Traçar rota" da sede até o endereço (abre o Google Maps com a rota, sem chave). */
+export function googleMapsDirectionsUrl(address: Address | undefined | null): string | null {
+  const line = formatAddressLine(address);
+  if (!line) return null;
+  return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(HEADQUARTERS.address)}&destination=${encodeURIComponent(line)}`;
 }

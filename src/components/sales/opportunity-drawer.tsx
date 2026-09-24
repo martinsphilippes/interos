@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Building2, CalendarPlus, CheckSquare, ExternalLink, FileSignature, FileText, MapPin, Plus, Printer, RotateCcw, Trophy, XCircle } from "lucide-react";
+import { Building2, CalendarPlus, CheckSquare, ExternalLink, FileSignature, FileText, MapPin, MessagesSquare, Plus, Printer, RotateCcw, Trophy, XCircle } from "lucide-react";
 import { PRIORITIES, PRIORITY_LABELS, TASK_STATUS_LABELS, type Priority } from "@/domain/constants";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ import type { OpportunityDetail } from "@/server/sales/queries";
 import { lossReasonLabel } from "@/server/sales/schemas";
 import { ContactButtons } from "./contact-buttons";
 import { LostDialog } from "./lost-dialog";
-import { OPPORTUNITY_KIND_LABELS, VISIT_STATUS_LABELS, VISIT_STATUS_VARIANT, isOpenStage, proposalHref, visitHref } from "./model";
+import { OPPORTUNITY_KIND_LABELS, VISIT_STATUS_LABELS, VISIT_STATUS_VARIANT, isOpenStage, proposalHref, visitHref, workspaceHref } from "./model";
 import { NextActionLabel, ProposalStatusBadge, StageBadge, TemperatureDot, ValueLine } from "./opportunity-bits";
 import { ProductsEditor, toEditableLines, toPayloadLines, type EditableLine } from "./products-editor";
 import { ProposalEditorDialog } from "./proposal-editor-dialog";
@@ -100,7 +100,10 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
           </Badge>
           {sla ? <SlaBadge state={sla.view.state} remainingMs={sla.view.remainingMs} /> : null}
         </div>
-        <DrawerTitle className="mt-1">{opp.title}</DrawerTitle>
+        <DrawerTitle className="mt-1">
+          <span className="mr-2 text-base font-bold tabular-nums text-brand-fg">#{opp.code}</span>
+          {opp.title}
+        </DrawerTitle>
         <DrawerDescription asChild>
           <div className="flex flex-col gap-2">
             <Link href={`/clientes/${client.id}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-secondary hover:underline">
@@ -151,6 +154,11 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
             </Button>
           ) : null}
           <ContactButtons opportunityId={opp.id} phone={opp.contactPhone} whatsapp={opp.contactWhatsapp} />
+          <Button size="sm" variant="ghost" asChild className="min-h-[44px] md:min-h-0">
+            <Link href={workspaceHref(opp.id)}>
+              <MessagesSquare /> Abrir no workspace
+            </Link>
+          </Button>
         </div>
         {opp.stage === "ganho" ? (
           <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success-fg">Ganha em {formatDateTime(opp.wonAt)}. Contrato, produtos e comissões foram gerados; a jornada segue no Financeiro.</p>

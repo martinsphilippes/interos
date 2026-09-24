@@ -25,8 +25,14 @@ import {
   saveProposalSchema,
   scheduleNextActionSchema,
   updateOpportunitySchema,
+  attachDocumentSchema,
+  internalNoteSchema,
+  registerCallSchema,
+  transferOpportunitySchema,
+  workspaceMessageSchema,
   zodMessage,
 } from "./schemas";
+import { attachOpportunityDocument, registerCall, registerInternalNote, sendOrRegisterMessage, transferOpportunity, type MessageResult } from "./workspace";
 import {
   cancelVisit,
   changeStage,
@@ -216,6 +222,79 @@ export async function reopenOpportunityAction(input: unknown): Promise<ActionRes
     return { ok: true, data: { stage: opp.stage } };
   } catch (error) {
     return fail(error, "Não foi possível reabrir a oportunidade");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Workspace: comunicação registrada manualmente, anexos e transferência
+// ---------------------------------------------------------------------------
+
+/** Envia pelo provedor quando o canal está conectado; senão registra manualmente (delivery "manual"). */
+export async function registerWorkspaceMessageAction(input: unknown): Promise<ActionResult<MessageResult>> {
+  try {
+    const user = await requireSalesUser();
+    const data = workspaceMessageSchema.parse(input);
+    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const result = await sendOrRegisterMessage(data, actorOf(user));
+    revalidateSales(opp.clientId);
+    return { ok: true, data: result };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar a mensagem");
+  }
+}
+
+export async function registerInternalNoteAction(input: unknown): Promise<ActionResult<{ eventId: string }>> {
+  try {
+    const user = await requireSalesUser();
+    const data = internalNoteSchema.parse(input);
+    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const event = await registerInternalNote(data, actorOf(user));
+    revalidateSales(opp.clientId);
+    return { ok: true, data: { eventId: event.id } };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar a nota");
+  }
+}
+
+export async function registerCallAction(input: unknown): Promise<ActionResult<{ communicationId: string; eventId: string }>> {
+  try {
+    const user = await requireSalesUser();
+    const data = registerCallSchema.parse(input);
+    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const result = await registerCall(data, actorOf(user));
+    revalidateSales(opp.clientId);
+    return { ok: true, data: result };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar a ligação");
+  }
+}
+
+export async function attachOpportunityDocumentAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const user = await requireSalesUser();
+    const data = attachDocumentSchema.parse(input);
+    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const doc = await attachOpportunityDocument(data, actorOf(user));
+    revalidateSales(opp.clientId);
+    return { ok: true, data: { id: doc.id } };
+  } catch (error) {
+    return fail(error, "Não foi possível anexar o documento");
+  }
+}
+
+/** Transferir para outro vendedor: dono ou gestores. Quem transfere perde o acesso se não for gestor. */
+export async function transferOpportunityAction(input: unknown): Promise<ActionResult<{ ownerId: string; stillVisible: boolean }>> {
+  try {
+    const user = await requireSalesUser();
+    const data = transferOpportunitySchema.parse(input);
+    const current = await requireOpportunityAccess(user, data.opportunityId);
+    const opp = await transferOpportunity(data, actorOf(user));
+    revalidateSales(opp.clientId);
+    revalidatePath("/tarefas");
+    const stillVisible = user.isManager || opp.ownerId === user.id || current.originUserId === user.id;
+    return { ok: true, data: { ownerId: opp.ownerId, stillVisible } };
+  } catch (error) {
+    return fail(error, "Não foi possível transferir a oportunidade");
   }
 }
 

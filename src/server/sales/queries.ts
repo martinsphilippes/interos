@@ -31,7 +31,8 @@ import {
   type Visit,
 } from "@/domain/types";
 import type { DepartmentKey } from "@/domain/constants";
-import { effectiveProposalStatus, isOpenStage, type CommissionRuleView } from "@/components/sales/model";
+import type { VisitRecord } from "@/domain/sales-extra";
+import { effectiveProposalStatus, isOpenStage, opportunityCode, type CommissionRuleView } from "@/components/sales/model";
 import { competenceOf, getCommissionSummary, listActiveCommissionRules, type CommissionSummary } from "./commissions";
 import { HEADQUARTERS, formatAddressLine, geocode, googleMapsSearchUrl, route } from "./maps";
 import { getLastSweep, getOpportunitySettings, getPipelineStages, type OpportunitySettings, type PipelineStage } from "./service";
@@ -51,6 +52,8 @@ export interface UserLite {
 }
 
 export interface OpportunityRow extends Opportunity {
+  /** Código curto derivado do id ("OP-2026-0001"). */
+  code: string;
   clientName: string;
   clientCity?: string;
   /** Padrões de faturamento do cadastro (diálogo de ganho). */
@@ -98,7 +101,7 @@ export interface SalesFormOptions {
 
 const DAY_MS = 86_400_000;
 
-function toLite(u: User): UserLite {
+export function toLite(u: User): UserLite {
   return { id: u.id, name: u.name, avatarUrl: u.avatarUrl, jobTitle: u.jobTitle, departmentId: u.departmentId };
 }
 
@@ -171,6 +174,7 @@ async function buildRows(opps: Opportunity[], settings: OpportunitySettings): Pr
     const sinceActivity = daysSince(o.lastActivityAt, now);
     return {
       ...o,
+      code: opportunityCode(o),
       clientName: client?.tradeName ?? "Cliente removido",
       clientCity: client?.address?.city,
       clientLegalName: client?.legalName,
@@ -567,7 +571,7 @@ export async function listOpenOpportunityOptions(user: CurrentUser): Promise<{ i
 // Visitas
 // ---------------------------------------------------------------------------
 
-export interface VisitRow extends Visit {
+export interface VisitRow extends VisitRecord {
   clientName: string;
   sellerName: string;
   sellerAvatarUrl?: string;
@@ -579,7 +583,7 @@ export interface VisitRow extends Visit {
   travelMinutes?: number;
 }
 
-async function toVisitRows(visits: Visit[]): Promise<VisitRow[]> {
+export async function toVisitRows(visits: Visit[]): Promise<VisitRow[]> {
   const [clients, sellers, opps] = await Promise.all([
     getManyByIds<Client>(COLLECTIONS.clients, visits.map((v) => v.clientId ?? "")),
     getManyByIds<User>(COLLECTIONS.users, visits.map((v) => v.sellerId)),
@@ -762,7 +766,7 @@ export async function getAgenda(user: CurrentUser, options: { view: AgendaView; 
       day: dateKey(o.nextActionAt),
       title: `Follow-up · ${o.nextAction ?? o.title}`,
       subtitle: clients.get(o.clientId)?.tradeName,
-      href: `/vendas/oportunidades?oportunidade=${o.id}`,
+      href: `/vendas?oportunidade=${o.id}`,
       done: false,
       overdue: o.nextActionAt! < nowIso,
       ownerName: team ? users.get(o.ownerId)?.name : undefined,

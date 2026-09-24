@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Building2, CalendarClock, CheckCircle2, ExternalLink, MapPin, Navigation, RefreshCw, Target, XCircle } from "lucide-react";
 import type { TimelineEvent } from "@/domain/types";
+import { VISIT_KIND_LABELS } from "@/domain/sales-extra";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -76,9 +77,16 @@ export function VisitsList({ rows }: { rows: VisitRow[] }) {
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center justify-between gap-2">
                       <span className="truncate font-medium">{v.clientName}</span>
-                      <Badge variant={VISIT_STATUS_VARIANT[v.status]} size="sm">
-                        {VISIT_STATUS_LABELS[v.status]}
-                      </Badge>
+                      <span className="flex shrink-0 items-center gap-1">
+                        {v.kind === "tecnica" ? (
+                          <Badge variant="purple" size="sm">
+                            Técnica
+                          </Badge>
+                        ) : null}
+                        <Badge variant={VISIT_STATUS_VARIANT[v.status]} size="sm">
+                          {VISIT_STATUS_LABELS[v.status]}
+                        </Badge>
+                      </span>
                     </span>
                     <span className="block truncate text-sm text-muted">{v.objective}</span>
                     <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -141,9 +149,14 @@ function VisitInner({ visit, activities }: { visit: VisitRow; activities: Timeli
   return (
     <>
       <DrawerHeader>
-        <Badge variant={VISIT_STATUS_VARIANT[visit.status]} size="md" className="self-start">
-          {VISIT_STATUS_LABELS[visit.status]}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={VISIT_STATUS_VARIANT[visit.status]} size="md">
+            {VISIT_STATUS_LABELS[visit.status]}
+          </Badge>
+          <Badge variant={visit.kind === "tecnica" ? "purple" : "outline"} size="md">
+            Visita {VISIT_KIND_LABELS[visit.kind ?? "comercial"].toLowerCase()}
+          </Badge>
+        </div>
         <DrawerTitle className="mt-1">{visit.objective}</DrawerTitle>
         <DrawerDescription asChild>
           <div className="flex flex-col gap-1.5 text-sm">

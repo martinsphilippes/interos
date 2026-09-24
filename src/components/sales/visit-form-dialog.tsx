@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { CalendarPlus } from "lucide-react";
 import type { Address } from "@/domain/types";
+import { VISIT_KINDS, VISIT_KIND_LABELS, type VisitKind } from "@/domain/sales-extra";
 import { Button } from "@/components/ui/button";
 import { DateInput, dateValueToIso, isoToDateTimeLocal } from "@/components/ui/date-input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -32,6 +33,8 @@ export interface VisitFormDialogProps {
   defaults?: { clientId?: string; opportunityId?: string; scheduledAt?: string };
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Depois de agendar: sem esta prop, abre o drawer da visita (?visita=) na página atual. */
+  onCreated?: (visitId: string) => void;
 }
 
 const emptyAddress = { street: "", number: "", district: "", city: "", state: "", zip: "" };
@@ -41,7 +44,7 @@ function addressDraft(a: Address | undefined) {
 }
 
 /** Agendar visita: endereço pré-preenchido do cadastro do cliente (editável). */
-export function VisitFormDialog({ options, currentUserId, canChooseSeller, defaults, open, onOpenChange }: VisitFormDialogProps) {
+export function VisitFormDialog({ options, currentUserId, canChooseSeller, defaults, open, onOpenChange, onCreated }: VisitFormDialogProps) {
   const router = useRouter();
   const { navigate } = useSalesUrl();
   const id = React.useId();
@@ -56,6 +59,7 @@ export function VisitFormDialog({ options, currentUserId, canChooseSeller, defau
     return isoToDateTimeLocal(d.toISOString());
   });
   const [duration, setDuration] = React.useState("60");
+  const [kind, setKind] = React.useState<VisitKind>("comercial");
   const [objective, setObjective] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [address, setAddress] = React.useState(defaults?.clientId ? addressDraft(options.addresses[defaults.clientId]) : emptyAddress);
@@ -77,14 +81,15 @@ export function VisitFormDialog({ options, currentUserId, canChooseSeller, defau
       return;
     }
     startTransition(async () => {
-      const result = await createVisitAction({ clientId, opportunityId, sellerId, scheduledAt: iso, durationMinutes: Number(duration), objective, notes, address });
+      const result = await createVisitAction({ clientId, opportunityId, sellerId, scheduledAt: iso, durationMinutes: Number(duration), objective, notes, address, kind });
       if (!result.ok) {
         toast.error(result.error);
         return;
       }
       toast.success("Visita agendada");
       onOpenChange(false);
-      navigate({ visita: result.data.id, nova: null, cliente: null, oportunidade: null }, { replace: true });
+      if (onCreated) onCreated(result.data.id);
+      else navigate({ visita: result.data.id, nova: null, cliente: null, oportunidade: null }, { replace: true });
       router.refresh();
     });
   };
@@ -124,9 +129,14 @@ export function VisitFormDialog({ options, currentUserId, canChooseSeller, defau
               <Select id={`${id}-d`} value={duration} onChange={(e) => setDuration(e.target.value)} options={["30", "45", "60", "90", "120", "180"].map((m) => ({ value: m, label: `${m} min` }))} />
             </FormField>
           </div>
-          <FormField label="Objetivo" htmlFor={`${id}-ob`} required>
-            <Input id={`${id}-ob`} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="Ex.: Diagnóstico no ponto de venda" />
-          </FormField>
+          <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+            <FormField label="Tipo" htmlFor={`${id}-k`} required>
+              <Select id={`${id}-k`} value={kind} onChange={(e) => setKind(e.target.value as VisitKind)} options={VISIT_KINDS.map((k) => ({ value: k, label: VISIT_KIND_LABELS[k] }))} />
+            </FormField>
+            <FormField label="Motivo / objetivo" htmlFor={`${id}-ob`} required>
+              <Input id={`${id}-ob`} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="Ex.: Diagnóstico no ponto de venda" />
+            </FormField>
+          </div>
           <fieldset className="grid gap-3 sm:grid-cols-6">
             <legend className="mb-1 text-[13px] font-medium">Endereço</legend>
             {field("street", "Logradouro", "sm:col-span-4")}

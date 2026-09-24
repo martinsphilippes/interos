@@ -34,6 +34,26 @@ export function isOpenStage(stage: Opportunity["stage"]): boolean {
   return stage !== "ganho" && stage !== "perdido";
 }
 
+/**
+ * Código curto e estável da oportunidade para exibição: "OP-<ano de criação>-<4 dígitos>".
+ * Ids determinísticos do seed (opp_001) viram 0001; ids automáticos do Firestore usam os 4 últimos caracteres
+ * alfanuméricos do id automático do Firestore, em maiúsculas. Não é gravado: é derivado do id.
+ */
+export function opportunityCode(opp: Pick<Opportunity, "id" | "createdAt">): string {
+  const year = (opp.createdAt ?? "").slice(0, 4) || "0000";
+  const digits = opp.id.match(/^[a-z]+_(\d+)$/)?.[1];
+  const tail = digits ? digits.slice(-4).padStart(4, "0") : opp.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase();
+  return `OP-${year}-${tail}`;
+}
+
+/** Duração legível de uma ligação: "6min 18s", "45s" (vazio sem duração). */
+export function formatCallDuration(seconds: number | undefined): string {
+  if (!seconds || seconds <= 0) return "";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}min ${String(s).padStart(2, "0")}s` : `${s}s`;
+}
+
 // ---------------------------------------------------------------------------
 // Totais
 // ---------------------------------------------------------------------------
@@ -143,5 +163,7 @@ export function describeRule(rule: CommissionRuleView): string {
 // ---------------------------------------------------------------------------
 
 export const opportunityHref = (id: string, base = "/vendas/oportunidades") => `${base}?oportunidade=${id}`;
+/** Oportunidade selecionada no workspace da Central de Vendas. */
+export const workspaceHref = (id: string) => `/vendas?oportunidade=${id}`;
 export const proposalHref = (id: string) => `/vendas/propostas?proposta=${id}`;
 export const visitHref = (id: string) => `/vendas/visitas?visita=${id}`;
