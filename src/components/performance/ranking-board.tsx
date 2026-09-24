@@ -123,7 +123,7 @@ export function RankingTable({ ranking, hrefFor, viewerId, limit }: { ranking: R
               <span className="col-span-3 flex items-center gap-2 md:col-span-1 md:justify-center">
                 <Delta row={row} />
               </span>
-              <div className="col-span-3 flex min-w-0 items-center gap-1.5 overflow-hidden md:col-span-1">
+              <div className="col-span-3 flex min-w-0 flex-wrap items-center gap-1.5 md:col-span-1">
                 {row.level ? (
                   <Badge variant="brand" size="sm">
                     {row.level.nome}
