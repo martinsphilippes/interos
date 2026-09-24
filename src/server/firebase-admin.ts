@@ -27,6 +27,13 @@ function createApp(): App {
       projectId: serviceAccount.project_id,
     });
   }
+  // Sem service account: o cliente do Firestore recorre às Application Default Credentials e sonda o servidor
+  // de metadata do GCE. Fora do GCP essa sonda falha (com proxy, responde 403) e o google-auth-library emite um
+  // MetadataLookupWarning a cada processo — aparece como erro no console do Next dev. Com emuladores a
+  // credencial é irrelevante ("Bearer owner"), então desligamos a detecção antes da primeira chamada.
+  if (process.env.FIRESTORE_EMULATOR_HOST && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    process.env.METADATA_SERVER_DETECTION ??= "none";
+  }
   return initializeApp({ projectId });
 }
 
