@@ -33,4 +33,10 @@ function createApp(): App {
 export const adminApp = createApp();
 export const adminAuth = getAuth(adminApp);
 export const firestore = getFirestore(adminApp);
-firestore.settings({ ignoreUndefinedProperties: true });
+// O Next pode avaliar este módulo mais de uma vez no mesmo processo (build/coleta de dados) enquanto a
+// instância do Firestore é compartilhada; settings() só pode ser chamado uma vez, então ignoramos a repetição.
+try {
+  firestore.settings({ ignoreUndefinedProperties: true });
+} catch {
+  /* já configurado */
+}

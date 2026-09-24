@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 48" width="220" height="48" role="img" aria-label="INTEROS">
+  <polygon points="24,3 42,13.5 42,34.5 24,45 6,34.5 6,13.5" fill="#F26A21"/>
+  <rect x="21" y="14" width="6" height="20" rx="1.2" fill="#FFFFFF"/>
+  <text x="56" y="33" font-family="Geist, Inter, ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="700" letter-spacing="2" fill="#FFFFFF">INTEROS</text>
+</svg>
