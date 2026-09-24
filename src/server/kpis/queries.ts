@@ -12,6 +12,7 @@ import {
   SCORECARD_KEYS,
   computeKpiBatch,
   computeKpis,
+  statusFor,
   getHistory,
   loadKpiDocs,
   resolveDefinition,
@@ -133,6 +134,11 @@ export interface Scorecard {
   withTarget: number;
 }
 
+/** Atingimento geral de uma lista de resultados (mesma régua do scorecard: peso, cada indicador limitado a 100%). */
+export function summarizeScorecard(items: KpiResult[]): Pick<Scorecard, "overallAttainment" | "achieved" | "withTarget"> {
+  return summarize(items);
+}
+
 function summarize(items: KpiResult[]): Pick<Scorecard, "overallAttainment" | "achieved" | "withTarget"> {
   const scored = items.filter((i) => i.attainment !== null);
   const weight = scored.reduce((s, i) => s + (i.weight || 0), 0);
@@ -225,6 +231,29 @@ export async function getCompanyScorecard(period: Period): Promise<CompanyScorec
     alerts: rows.filter((r) => r.alert).map((r) => ({ department: r.department, tone: r.alert!.tone, message: r.alert!.message, href: r.result!.href })),
     overallAttainment: summarize(principal).overallAttainment,
   };
+}
+
+export interface DepartmentAttainment {
+  department: DepartmentKey;
+  label: string;
+  attainment: number | null;
+  status: KpiStatus | null;
+  href: string;
+}
+
+/** Atingimento médio do scorecard de cada departamento operacional (uma carga do motor para todos). */
+export async function getDepartmentsAttainment(period: Period): Promise<DepartmentAttainment[]> {
+  const docs = await loadKpiDocs();
+  const keysOf = (dep: DepartmentKey) => [...(SCORECARD_KEYS[dep] ?? []), ...docs.filter((d) => d.department === dep && d.active !== false).map((d) => d.key)];
+  const batch = await computeKpiBatch(
+    OPERATIONAL_DEPARTMENTS.map((dep) => ({ keys: keysOf(dep), scope: "departamento" as const, scopeId: dep })),
+    period,
+    { withTrend: false, withSources: false },
+  );
+  return OPERATIONAL_DEPARTMENTS.map((dep, i) => {
+    const { overallAttainment } = summarize(batch[i]);
+    return { department: dep, label: DEPARTMENT_LABELS[dep], attainment: overallAttainment, status: statusFor(overallAttainment), href: `/gestao?departamento=${dep}&periodo=${encodeURIComponent(period.key)}` };
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -5,17 +5,20 @@ import "server-only";
  * de bônus (./bonus) e da gamificação (./gamification, ./ranking). Nada é calculado na UI.
  */
 import { create, getById, list } from "@/server/db";
-import { COLLECTIONS, type BonusRule, type CurrentUser, type DomainEvent, type GamificationCampaign, type Settings, type User } from "@/domain/types";
+import { COLLECTIONS, type Achievement, type BonusRule, type CurrentUser, type DomainEvent, type GamificationCampaign, type Settings, type Task, type User } from "@/domain/types";
 import { DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
 import {
   computeAttainment,
   computeKpiBatch,
   computeKpis,
   currentMonthKey,
+  getDepartmentsAttainment,
   getGoalPermissions,
   getHistory,
   getUserScorecard,
   listKpiDefinitions,
+  listRecentMonths,
+  previousPeriod,
   monthPeriod,
   periodFromKey,
   statusFor,
@@ -23,15 +26,20 @@ import {
   type KpiResult,
   type KpiStatus,
   type Period,
+  type DepartmentAttainment,
   type Scorecard,
 } from "@/server/kpis/queries";
+import { getPerformanceIndexConfig, indexFromScorecard, type PerformanceIndex } from "@/server/kpis/operation-health";
+import { getSlaSummaries } from "@/server/sla-report/queries";
+import { formatCompetence } from "@/lib/format";
 import { inPeriod, localDayKey } from "@/server/kpis/period";
 import { getCommissionSummary, listActiveCommissionRules, type CommissionSummary } from "@/server/sales/commissions";
 import { REVENUE_TYPES, type CommissionRuleView } from "@/components/sales/model";
 import { activeRuleFor, computeBonus, computeBonusForUsers, listBonusBlocks, listBonusHistory, listBonusRules, type BonusBlockView, type BonusComputation } from "./bonus";
-import { listUserPoints } from "./gamification";
+import { getGamificationSettings, listUserPoints } from "./gamification";
+import { computeStreak, type Streak } from "./streak";
 import { getUserRankingSummary, type UserRankingSummary } from "./ranking";
-import { DEFAULT_SALES_PRIZES, describePrize, prizeValue, type SalesPrizeSettings } from "./schemas";
+import { ACHIEVEMENT_DEFS, DEFAULT_SALES_PRIZES, describePrize, prizeValue, type AchievementKey, type GamificationLevel, type SalesPrizeSettings } from "./schemas";
 
 export { computeBonus, computeBonusForUsers, storeBonusResults, listBonusBlocks } from "./bonus";
 export { awardPointsForEvent } from "./gamification";
@@ -148,6 +156,25 @@ export interface MyPerformance {
   sales: SalesPerformance | null;
   bonus: BonusComputation | null;
   gamification: (UserRankingSummary & { recentPoints: { id: string; points: number; reason: string; createdAt: string }[] }) | null;
+  /** Período anterior de mesma natureza (comparativos). */
+  previous: Period;
+  /** Atingimento geral das metas no período anterior. */
+  previousAttainment: number | null;
+  index: PerformanceIndex | null;
+  previousIndex: PerformanceIndex | null;
+  /** Índice de desempenho e atingimento geral dos últimos 6 meses (até o mês do período). */
+  evolution: { period: string; label: string; index: number | null; attainment: number | null }[];
+  sla: { rate: number | null; met: number; evaluated: number; previousRate: number | null };
+  taskSummary: { done: number; total: number; previousDone: number };
+  /** Atingimento médio de cada departamento no período (indicadores do mês por área). */
+  areas: DepartmentAttainment[];
+}
+
+/** Tarefas do período: concluídas no período e total = concluídas + em aberto com prazo até o fim do período. */
+function taskCounts(tasks: Task[], period: Period): { done: number; total: number } {
+  const done = tasks.filter((t) => t.status === "concluida" && inPeriod(t.completedAt, period)).length;
+  const open = tasks.filter((t) => t.status !== "concluida" && t.status !== "cancelada" && t.dueAt && t.dueAt < period.end && t.createdAt < period.end).length;
+  return { done, total: done + open };
 }
 
 /** Três indicadores principais: com meta e maior peso primeiro; depois os que têm valor. */
@@ -173,11 +200,28 @@ export async function getMyPerformance(userId: string, period: Period): Promise<
   if (!scorecard) return null;
 
   const top = pickHighlights(scorecard.items);
-  const [histories, sales, bonus] = await Promise.all([
+  const previous = previousPeriod(period);
+  const months = listRecentMonths(6, month);
+  const [histories, sales, bonus, indexConfig, monthCards, previousCard, slaSummaries, tasks, areas] = await Promise.all([
     Promise.all(top.map((r) => getHistory(r.key, scorecard.subject.scope, scorecard.subject.scope === "empresa" ? undefined : userId, 6))),
     user.departmentId === "vendas" ? getSalesPerformance(userId, month.key) : Promise.resolve(null),
     rule ? computeBonus(userId, month) : Promise.resolve(null),
+    getPerformanceIndexConfig(),
+    Promise.all(months.map((m) => (m.key === period.key ? Promise.resolve(scorecard) : getUserScorecard(userId, m, { withTrend: false, withSources: false })))),
+    months.some((m) => m.key === previous.key) ? Promise.resolve(null) : getUserScorecard(userId, previous, { withTrend: false, withSources: false }),
+    getSlaSummaries([period, previous], { ownerIds: [userId] }),
+    list<Task>(COLLECTIONS.tasks, { where: [["assigneeId", "==", userId]] }),
+    getDepartmentsAttainment(period),
   ]);
+  const prevCard = previousCard ?? monthCards[months.findIndex((m) => m.key === previous.key)] ?? null;
+  const index = indexFromScorecard(user, scorecard, indexConfig);
+  const previousIndex = prevCard ? indexFromScorecard(user, prevCard, indexConfig) : null;
+  const evolution = months.map((m, i) => {
+    const card = monthCards[i];
+    return { period: m.key, label: formatCompetence(m.key), index: card ? indexFromScorecard(user, card, indexConfig).score : null, attainment: card?.overallAttainment ?? null };
+  });
+  const [slaNow, slaPrev] = slaSummaries;
+  const counts = taskCounts(tasks, period);
 
   return {
     user: { id: user.id, name: user.name, departmentId: user.departmentId, jobTitle: user.jobTitle, avatarUrl: user.avatarUrl, managerId: user.managerId },
@@ -193,6 +237,14 @@ export async function getMyPerformance(userId: string, period: Period): Promise<
     sales,
     bonus,
     gamification: gamification ? { ...gamification, recentPoints: points.map((p) => ({ id: p.id, points: p.points, reason: p.reason, createdAt: p.createdAt })) } : null,
+    previous,
+    previousAttainment: prevCard?.overallAttainment ?? null,
+    index,
+    previousIndex,
+    evolution,
+    sla: { rate: slaNow.compliance.rate, met: slaNow.compliance.met, evaluated: slaNow.compliance.evaluated, previousRate: slaPrev.compliance.rate },
+    taskSummary: { ...counts, previousDone: taskCounts(tasks, previous).done },
+    areas,
   };
 }
 
@@ -409,5 +461,52 @@ export async function getCampaignFormOptions(): Promise<CampaignFormOptions> {
       .filter((u) => u.active !== false)
       .map((u) => ({ id: u.id, name: u.name, department: u.departmentId }))
       .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Ranking e gamificação (visão do colaborador)
+// ---------------------------------------------------------------------------
+
+export interface AchievementCard {
+  key: string;
+  name: string;
+  description: string;
+  icon: string;
+  unlocked: boolean;
+  /** Última vez desbloqueada (medalhas mensais podem repetir). */
+  unlockedAt?: string;
+  count: number;
+}
+
+export interface RankingOverview {
+  summary: UserRankingSummary | null;
+  streak: Streak;
+  achievements: AchievementCard[];
+  campaigns: CampaignProgress[];
+  levels: GamificationLevel[];
+}
+
+/** Painel do colaborador no Ranking: posição/pontos/nível, sequência em dias, medalhas (todas) e campanhas ativas. */
+export async function getRankingOverview(userId: string, period: Period): Promise<RankingOverview> {
+  const [summary, streak, achievements, campaigns, settings] = await Promise.all([
+    getUserRankingSummary(userId, period),
+    computeStreak(userId),
+    list<Achievement>(COLLECTIONS.achievements, { where: [["userId", "==", userId]] }),
+    getCampaignsProgress(userId),
+    getGamificationSettings(),
+  ]);
+  const cards: AchievementCard[] = (Object.keys(ACHIEVEMENT_DEFS) as AchievementKey[]).map((key) => {
+    const def = ACHIEVEMENT_DEFS[key];
+    const mine = achievements.filter((a) => a.key === key).sort((a, b) => (a.unlockedAt < b.unlockedAt ? 1 : -1));
+    return { key, name: def.name, description: def.description, icon: def.icon, unlocked: mine.length > 0, unlockedAt: mine[0]?.unlockedAt, count: mine.length };
+  });
+  cards.sort((a, b) => Number(b.unlocked) - Number(a.unlocked));
+  return {
+    summary,
+    streak,
+    achievements: cards,
+    campaigns: campaigns.filter((c) => c.campaign.status === "ativa"),
+    levels: [...settings.niveis].sort((a, b) => a.minimo - b.minimo),
   };
 }

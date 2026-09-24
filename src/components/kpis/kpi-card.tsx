@@ -63,9 +63,9 @@ export function KpiCard({ result, href, eyebrow, compact, className }: KpiCardPr
     </>
   );
   const base = cn("flex flex-col gap-3 rounded-lg border border-border bg-surface shadow-card", compact ? "p-3.5" : "p-4", className);
-  if (!link) return <div className={base}>{content}</div>;
+  if (!link) return <div data-kpi-card={result.key} className={base}>{content}</div>;
   return (
-    <Link href={link} className={cn(base, "transition-colors hover:border-border-strong hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25")}>
+    <Link href={link} data-kpi-card={result.key} className={cn(base, "transition-colors hover:border-border-strong hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25")}>
       {content}
     </Link>
   );

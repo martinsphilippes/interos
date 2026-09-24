@@ -12,11 +12,15 @@ import { getById, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { dateLabel, dayKey, todayKey } from "@/server/tasks/queries";
 import { evaluateInsights, evaluateInsightsForDepartments, type Insight } from "@/server/insights/engine";
-import { computeKpiBatch, getHistory, statusFor, type HistoryPoint, type KpiResult } from "@/server/kpis/engine";
+import { SCORECARD_KEYS, computeKpiBatch, getHistory, loadKpiDocs, statusFor, type HistoryPoint, type KpiResult } from "@/server/kpis/engine";
 import { loadDataBundle } from "@/server/kpis/formulas";
-import { OPERATIONAL_DEPARTMENTS, getDepartmentScorecard, getUserScorecard, type Scorecard } from "@/server/kpis/queries";
-import { inPeriod, isCurrentPeriod, periodReference, previousPeriod, type Period } from "@/server/kpis/period";
-import { kpiHref, type KpiStatus, type KpiUnit } from "@/server/kpis/schemas";
+import { OPERATIONAL_DEPARTMENTS, getCompanyScorecard, getDepartmentScorecard, getUserScorecard, summarizeScorecard, type Scorecard } from "@/server/kpis/queries";
+import { inPeriod, isCurrentPeriod, localDayKey, periodReference, previousPeriod, type Period } from "@/server/kpis/period";
+import { formatKpiValue, kpiHref, type KpiStatus, type KpiUnit } from "@/server/kpis/schemas";
+import { computeOperationHealth, getPerformanceIndexConfig, goalsAttainment, indexFromScorecard, type OperationHealth } from "@/server/kpis/operation-health";
+import { getSlaSummary } from "@/server/sla-report/queries";
+import { getSetting } from "@/server/admin/queries";
+import { slaHref as slaPageHref } from "@/server/sla-report/schemas";
 import { isOpenStatus, processHrefFor, PROCESS_TYPE_LABELS } from "@/components/tasks/task-model";
 import {
   COLLECTIONS,
@@ -26,6 +30,8 @@ import {
   type Department,
   type DomainEvent,
   type GamificationPoints,
+  type ImplementationProject,
+  type Proposal,
   type SlaInstance,
   type SlaView,
   type SupportTicket,
@@ -35,7 +41,7 @@ import {
 } from "@/domain/types";
 import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, ROLE_LABELS, SLA_STATE_LABELS, TASK_STATUS_LABELS, WORKFLOW_STEP_STATUS_LABELS, type DepartmentKey, type Priority, type TaskStatus } from "@/domain/constants";
 import { formatCurrency } from "@/lib/format";
-import { STALLED_STEP_DAYS, type FocusKey } from "./schemas";
+import { OVERLOAD_RATIO, STALLED_STEP_DAYS, type FocusKey } from "./schemas";
 
 const DAY_MS = 86_400_000;
 const OPEN_STEP_STATUSES: WorkflowStep["status"][] = ["pendente", "em_andamento", "aguardando_cliente", "aguardando_aprovacao"];
@@ -55,8 +61,10 @@ export interface ManagerScope {
   members: User[];
   /** Departamentos cujos indicadores e alertas aparecem no dashboard. */
   departments: DepartmentKey[];
-  /** Admin/diretoria escolhem departamento ou empresa via ?departamento=. */
+  /** Admin/diretoria escolhem departamento ou empresa; gestor de vários departamentos, um deles (?departamento=). */
   canChoose: boolean;
+  /** Opções do seletor de departamento. */
+  options: { value: string; label: string }[];
   /** Valor atual do seletor. */
   selected: string;
 }
@@ -89,6 +97,14 @@ function isDepartment(value: string | undefined): value is DepartmentKey {
 }
 
 function scopeFrom(user: CurrentUser, requested: string | undefined, users: User[], departments: Department[]): ManagerScope {
+  const scope = resolveScope(user, requested, users, departments);
+  const options = user.isDirector
+    ? [{ value: "empresa", label: "Empresa inteira" }, ...DEPARTMENT_KEYS.filter((d) => d !== "diretoria").map((d) => ({ value: d as string, label: DEPARTMENT_LABELS[d] }))]
+    : [{ value: "equipe", label: "Minha equipe" }, ...managedDepartments(user, departments).map((d) => ({ value: d as string, label: DEPARTMENT_LABELS[d] }))];
+  return { ...scope, options };
+}
+
+function resolveScope(user: CurrentUser, requested: string | undefined, users: User[], departments: Department[]): Omit<ManagerScope, "options"> {
   if (user.isDirector) {
     if (isDepartment(requested) && requested !== "diretoria") {
       return {
@@ -113,13 +129,27 @@ function scopeFrom(user: CurrentUser, requested: string | undefined, users: User
     };
   }
   const members = teamOf(user.id, users);
+  const managed = managedDepartments(user, departments);
+  // Gestor de mais de um departamento pode olhar um deles (só os colaboradores da sua equipe nesse departamento).
+  if (isDepartment(requested) && managed.includes(requested)) {
+    return {
+      kind: "departamento",
+      department: requested,
+      label: DEPARTMENT_LABELS[requested],
+      description: `Sua equipe em ${DEPARTMENT_LABELS[requested]}`,
+      members: members.filter((m) => m.departmentId === requested),
+      departments: [requested],
+      canChoose: managed.length > 1,
+      selected: requested,
+    };
+  }
   return {
     kind: "equipe",
     label: `Equipe de ${user.name.split(" ")[0]}`,
     description: "Seus liderados diretos e os liderados deles",
     members,
-    departments: managedDepartments(user, departments),
-    canChoose: false,
+    departments: managed,
+    canChoose: managed.length > 1,
     selected: "equipe",
   };
 }
@@ -372,6 +402,17 @@ export interface MemberRow {
   withTarget: number;
   points: number;
   rank: number | null;
+  /** Tarefas do período: concluídas no período ÷ (concluídas + em aberto com prazo até o fim do período). */
+  tasksDone: number;
+  tasksTotal: number;
+  /** Cumprimento de SLA do colaborador no período (mesma regra da tela /sla). */
+  slaRate: number | null;
+  /** Nota de Qualidade do Índice de desempenho (0–100). */
+  quality: number | null;
+  /** Índice de desempenho (0–100). */
+  performanceIndex: number | null;
+  /** Resultado pelo atingimento das metas: Acima da meta / No caminho / Abaixo da meta. */
+  result: { label: string; tone: "success" | "info" | "warning" | "danger" | "neutral" };
 }
 
 export interface ReassignTask {
@@ -395,6 +436,91 @@ export interface ManagerDashboard {
   scorecards: Scorecard[];
   insights: Insight[];
   reassign: { targets: { id: string; name: string; subtitle: string }[]; tasksByUser: Record<string, ReassignTask[]> };
+  summary: ManagerSummary;
+  week: TeamWeek;
+  goals: DepartmentGoalRow[];
+  alerts: ManagerAlert[];
+}
+
+export interface ManagerSummary {
+  members: number;
+  /** Tarefas no prazo (motor: tarefas_no_prazo_pct) somando numerador/denominador dos colaboradores. */
+  productivity: { rate: number | null; met: number; total: number; target: number | null; status: KpiStatus | null };
+  sla: { rate: number | null; met: number; evaluated: number; target: number };
+  tasks: { done: number; total: number };
+  /** Soma dos focos críticos (atrasadas, SLAs em risco, etapas paradas, clientes críticos, metas críticas). */
+  pending: number;
+}
+
+export interface TeamWeekDay {
+  key: string;
+  label: string;
+  due: number;
+  onTime: number;
+  rate: number | null;
+  future: boolean;
+}
+
+export interface TeamWeek {
+  label: string;
+  days: TeamWeekDay[];
+  target: number | null;
+  overall: number | null;
+}
+
+export interface DepartmentGoalRow {
+  key: string;
+  label: string;
+  department: DepartmentKey;
+  value: string;
+  target: string;
+  attainment: number | null;
+  status: KpiStatus | null;
+  href: string;
+}
+
+export interface ManagerAlert {
+  key: string;
+  kind: "sla" | "capacidade" | "implantacao" | "backlog" | "meta";
+  tone: "danger" | "warning";
+  title: string;
+  detail?: string;
+  href: string;
+}
+
+const WEEKDAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+/** Semana corrente (seg–sex): por dia, tarefas da equipe com prazo no dia e quantas foram entregues até o prazo. */
+function teamWeek(tasks: Task[], now: Date, target: number | null): TeamWeek {
+  const today = localDayKey(now);
+  const ref = new Date(`${today}T12:00:00Z`);
+  const monday = new Date(ref.getTime() - ((ref.getUTCDay() + 6) % 7) * DAY_MS);
+  const days: TeamWeekDay[] = [];
+  let due = 0;
+  let onTime = 0;
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(monday.getTime() + i * DAY_MS);
+    const key = d.toISOString().slice(0, 10);
+    const future = key > today;
+    const ofDay = tasks.filter((t) => t.status !== "cancelada" && t.dueAt && localDayKey(t.dueAt) === key);
+    const ok = ofDay.filter((t) => t.status === "concluida" && t.completedAt && t.completedAt <= t.dueAt!).length;
+    // Dia futuro: ainda não avaliado. Hoje: só as que já venceram ou já foram entregues contam.
+    const evaluated = future ? [] : key === today ? ofDay.filter((t) => (t.status === "concluida" && t.completedAt) || t.dueAt! < now.toISOString()) : ofDay;
+    const okEvaluated = evaluated.filter((t) => t.status === "concluida" && t.completedAt && t.completedAt <= t.dueAt!).length;
+    due += evaluated.length;
+    onTime += okEvaluated;
+    days.push({ key, label: `${WEEKDAY_LABELS[d.getUTCDay()]} ${key.slice(8, 10)}/${key.slice(5, 7)}`, due: ofDay.length, onTime: ok, rate: evaluated.length > 0 ? okEvaluated / evaluated.length : null, future });
+  }
+  const first = days[0].key;
+  const last = days[4].key;
+  return { label: `Semana atual (${first.slice(8, 10)}/${first.slice(5, 7)} a ${last.slice(8, 10)}/${last.slice(5, 7)})`, days, target, overall: due > 0 ? onTime / due : null };
+}
+
+function resultFor(status: KpiStatus | null): MemberRow["result"] {
+  if (status === "atingida") return { label: "Acima da meta", tone: "success" };
+  if (status === "atencao") return { label: "No caminho", tone: "info" };
+  if (status === "critico") return { label: "Abaixo da meta", tone: "danger" };
+  return { label: "Sem meta", tone: "neutral" };
 }
 
 export async function getManagerDashboard(user: CurrentUser, options: { departamento?: string; period: Period }): Promise<ManagerDashboard> {
@@ -404,12 +530,20 @@ export async function getManagerDashboard(user: CurrentUser, options: { departam
   const memberIds = scope.members.map((m) => m.id);
   const memberSet = new Set(memberIds);
 
-  const [data, points, scorecards, userScorecards, insights] = await Promise.all([
+  const backlogKeys = (dep: DepartmentKey) => (dep === "suporte" ? ["backlog_suporte"] : dep === "implantacao" ? ["backlog_implantacao"] : []);
+  const backlogDeps = scope.departments.filter((d) => backlogKeys(d).length > 0);
+  const [data, points, scorecards, userScorecards, insights, productivityBatch, sla, indexConfig, projects, backlogBatch, refs] = await Promise.all([
     loadOperational(memberIds),
     list<GamificationPoints>(COLLECTIONS.gamificationPoints, { where: [["period", "==", period.key]] }),
     Promise.all(scope.departments.map((d) => getDepartmentScorecard(d, period, { withSources: false }))),
     Promise.all(scope.members.map((m) => getUserScorecard(m.id, period, { withTrend: false, withSources: false }))),
     scope.kind === "empresa" ? evaluateInsights({ period, scope: "empresa" }) : evaluateInsightsForDepartments(period, scope.departments),
+    memberIds.length > 0 ? computeKpiBatch(memberIds.map((id) => ({ keys: ["tarefas_no_prazo_pct"], scope: "usuario" as const, scopeId: id })), period, { withTrend: false, withSources: false }) : Promise.resolve([] as KpiResult[][]),
+    getSlaSummary(period, { ownerIds: memberIds }),
+    getPerformanceIndexConfig(),
+    list<ImplementationProject>(COLLECTIONS.implementationProjects),
+    backlogDeps.length > 0 ? computeKpiBatch(backlogDeps.map((d) => ({ keys: backlogKeys(d), scope: "departamento" as const, scopeId: d })), period, { withTrend: false, withSources: false }) : Promise.resolve([] as KpiResult[][]),
+    getSetting<{ slaSuporte?: number }>("metas_referencia", { slaSuporte: 0.9 }),
   ]);
 
   const now = new Date();
@@ -427,11 +561,26 @@ export async function getManagerDashboard(user: CurrentUser, options: { departam
   for (const t of data.tasks) if (t.assigneeId && isOpenStatus(t.status)) openByUser.set(t.assigneeId, (openByUser.get(t.assigneeId) ?? 0) + 1);
   const teamAverageOpen = memberIds.length > 0 ? memberIds.reduce((s, id) => s + (openByUser.get(id) ?? 0), 0) / memberIds.length : 0;
 
+  const slaByOwner = new Map(sla.byOwner.map((r) => [r.key, r]));
+  const periodTasks = (tasks: Task[]) => {
+    const done = tasks.filter((t) => t.status === "concluida" && inPeriod(t.completedAt, period)).length;
+    const pendingDue = tasks.filter((t) => isOpenStatus(t.status) && t.dueAt && t.dueAt < period.end).length;
+    return { done, total: done + pendingDue };
+  };
+
   const members: MemberRow[] = scope.members.map((m, i) => {
     const tasks = data.tasks.filter((t) => t.assigneeId === m.id);
     const open = tasks.filter((t) => isOpenStatus(t.status)).length;
     const card = userScorecards[i];
+    const index = card ? indexFromScorecard(m, card, indexConfig) : null;
+    const mine = periodTasks(tasks);
     return {
+      tasksDone: mine.done,
+      tasksTotal: mine.total,
+      slaRate: slaByOwner.get(m.id)?.rate ?? null,
+      quality: index?.dimensions.find((d) => d.key === "qualidade")?.score ?? null,
+      performanceIndex: index?.score ?? null,
+      result: resultFor(statusFor(card?.overallAttainment ?? null)),
       id: m.id,
       name: m.name,
       avatarUrl: m.avatarUrl,
@@ -466,16 +615,74 @@ export async function getManagerDashboard(user: CurrentUser, options: { departam
   }
   const targets = [...scope.members, ...(memberSet.has(user.id) ? [] : [user])].map((u) => ({ id: u.id, name: u.name, subtitle: u.jobTitle ?? DEPARTMENT_LABELS[u.departmentId] })).sort(byName);
 
+  const stats: Record<FocusKey, number> = {
+    atrasadas: members.reduce((s, m) => s + m.overdueTasks, 0),
+    sla: slaRows.filter((s) => RISK_STATES.has(s.view.state)).length,
+    etapas: stepRows.filter((s) => s.stalled).length,
+    clientes: teamClients.length,
+    metas: criticalKpis.length,
+  };
+
+  // Produtividade: numerador/denominador do indicador tarefas_no_prazo_pct de cada colaborador (mesma fórmula do motor).
+  const productivityResults = productivityBatch.map((r) => r[0]).filter((r): r is KpiResult => Boolean(r));
+  const prodMet = productivityResults.reduce((s, r) => s + (r.numerator ?? 0), 0);
+  const prodTotal = productivityResults.reduce((s, r) => s + (r.denominator ?? 0), 0);
+  const prodTarget = productivityResults.find((r) => r.target !== null)?.target ?? null;
+  const prodRate = prodTotal > 0 ? prodMet / prodTotal : null;
+  const allTasks = periodTasks(data.tasks);
+
+  const goals: DepartmentGoalRow[] = scorecards.flatMap((card) =>
+    card.items
+      .filter((r) => r.target !== null)
+      .map((r) => ({
+        key: `${card.subject.id}-${r.key}`,
+        label: scorecards.length > 1 ? `${r.kpi.name} · ${card.subject.name}` : r.kpi.name,
+        department: card.subject.id as DepartmentKey,
+        value: formatKpiValue(r.value, r.kpi.unit, r.kpi.formulaMeta?.suffix),
+        target: formatKpiValue(r.target, r.kpi.unit, r.kpi.formulaMeta?.suffix),
+        attainment: r.attainment,
+        status: r.status,
+        href: r.href,
+      })),
+  );
+
+  // Alertas do gestor.
+  const alerts: ManagerAlert[] = [];
+  const oneDep = scope.kind === "departamento" ? scope.department : undefined;
+  if (sla.dueNextHour.length > 0) {
+    alerts.push({ key: "sla-1h", kind: "sla", tone: "danger", title: `${sla.dueNextHour.length} SLA(s) vencem em até 1 hora`, detail: sla.dueNextHour.slice(0, 3).map((i) => `${i.reference === "Tarefa" || i.reference === "Etapa" ? i.title : i.reference}${i.ownerName ? ` · ${i.ownerName.split(" ")[0]}` : ""}`).join(" · "), href: slaPageHref({ janela: "1h", departamento: oneDep, periodo: period.key }) });
+  }
+  for (const m of members.filter((x) => x.load !== null && x.load > OVERLOAD_RATIO).sort((a, b) => (b.load ?? 0) - (a.load ?? 0)).slice(0, 3)) {
+    alerts.push({ key: `load-${m.id}`, kind: "capacidade", tone: "danger", title: `${m.name.split(" ")[0]} está com ${Math.round((m.load ?? 0) * 100)}% da carga média`, detail: `${m.openTasks} tarefas abertas · média da equipe ${teamAverageOpen.toFixed(1).replace(".", ",")}`, href: `/gestao/equipe/${m.id}` });
+  }
+  const nowIso = now.toISOString();
+  const lateProjects = projects.filter((p) => p.status !== "concluida" && p.status !== "cancelada" && p.dueDate && p.dueDate < nowIso && (memberSet.has(p.ownerId) || (scope.kind !== "equipe" && scope.departments.includes("implantacao"))));
+  if (lateProjects.length > 0) {
+    alerts.push({ key: "impl-late", kind: "implantacao", tone: "warning", title: `${lateProjects.length} implantação(ões) atrasada(s)`, detail: lateProjects.slice(0, 3).map((p) => p.name).join(" · "), href: "/implantacao?atrasadas=1" });
+  }
+  backlogDeps.forEach((dep, i) => {
+    const r = backlogBatch[i]?.[0];
+    if (!r || r.value === null || r.target === null || r.value <= r.target) return;
+    alerts.push({ key: `backlog-${dep}`, kind: "backlog", tone: "warning", title: `${r.kpi.name} elevado: ${formatKpiValue(r.value, r.kpi.unit)} (meta até ${formatKpiValue(r.target, r.kpi.unit)})`, href: r.href });
+  });
+  for (const r of criticalKpis.slice(0, 3)) {
+    alerts.push({ key: `meta-${r.scopeId ?? ""}-${r.key}`, kind: "meta", tone: "warning", title: `${r.kpi.name} abaixo do esperado`, detail: `${formatKpiValue(r.value, r.kpi.unit, r.kpi.formulaMeta?.suffix)} de ${formatKpiValue(r.target, r.kpi.unit, r.kpi.formulaMeta?.suffix)} (${r.attainment !== null ? Math.round(r.attainment * 100) : "—"}%)`, href: r.href });
+  }
+
   return {
     scope,
     period,
-    stats: {
-      atrasadas: members.reduce((s, m) => s + m.overdueTasks, 0),
-      sla: slaRows.filter((s) => RISK_STATES.has(s.view.state)).length,
-      etapas: stepRows.filter((s) => s.stalled).length,
-      clientes: teamClients.length,
-      metas: criticalKpis.length,
+    stats,
+    summary: {
+      members: members.length,
+      productivity: { rate: prodRate, met: prodMet, total: prodTotal, target: prodTarget, status: statusFor(prodRate === null || prodTarget === null ? null : prodRate / prodTarget) },
+      sla: { rate: sla.compliance.rate, met: sla.compliance.met, evaluated: sla.compliance.evaluated, target: typeof refs.slaSuporte === "number" ? refs.slaSuporte : 0.9 },
+      tasks: allTasks,
+      pending: stats.atrasadas + stats.sla + stats.etapas + stats.clientes + stats.metas,
     },
+    week: teamWeek(data.tasks, now, prodTarget),
+    goals,
+    alerts,
     members,
     teamAverageOpen,
     criticalClients: teamClients,
@@ -609,7 +816,7 @@ export async function getTeamMemberView(user: CurrentUser, memberId: string, per
     .map((e) => ({ id: e.id, title: e.title, description: e.description, occurredAt: e.occurredAt, occurredLabel: dateLabel(e.occurredAt, today), href: eventHref(e) }));
 
   const manager = member.managerId ? users.find((u) => u.id === member.managerId) : undefined;
-  const scope = scopeFrom(user, member.departmentId, users, departments);
+  const scope = scopeFrom(user, user.isDirector ? member.departmentId : undefined, users, departments);
   const reassignTargets = [...scope.members, user]
     .filter((u, i, arr) => u.id !== memberId && arr.findIndex((x) => x.id === u.id) === i)
     .map((u) => ({ id: u.id, name: u.name, subtitle: u.jobTitle ?? DEPARTMENT_LABELS[u.departmentId] }))
@@ -694,10 +901,40 @@ export interface FunnelStep {
   href: string;
 }
 
+export interface CockpitDepartmentRow {
+  department: DepartmentKey;
+  label: string;
+  manager?: { id: string; name: string };
+  /** Indicador principal do departamento (aba Diretoria da planilha) com meta e realizado. */
+  principal: KpiResult | null;
+  /** Atingimento médio das metas do scorecard do departamento. */
+  attainment: number | null;
+  status: KpiStatus | null;
+  productivity: number | null;
+  sla: number | null;
+  href: string;
+}
+
 export interface Cockpit {
   period: Period;
   previous: Period;
   current: boolean;
+  strip: {
+    mrr: KpiResult | null;
+    newSales: KpiResult | null;
+    soldRevenue: KpiResult | null;
+    activeClients: KpiResult | null;
+    received: KpiResult | null;
+    globalGoal: { attainment: number | null; previous: number | null; count: number; href: string };
+  };
+  health: OperationHealth;
+  departments: CockpitDepartmentRow[];
+  salesFunnel: { leads: number | null; qualified: number | null; proposals: number; sales: number | null; conversion: number | null; hrefs: { leads: string; qualified: string; proposals: string; sales: string } };
+  operation: {
+    implementation: { inProgress: number; late: number; href: string; lateHref: string };
+    support: { opened: KpiResult | null; backlog: number; sla: KpiResult | null };
+    finance: { delinquency: KpiResult | null };
+  };
   company: KpiResult[];
   stages: CockpitStage[];
   handoffs: CockpitHandoff[];
@@ -718,7 +955,7 @@ const STAGE_KPIS: Record<string, { key: string; label?: string }[]> = {
   suporte: [{ key: "chamados_abertos", label: "Chamados" }, { key: "sla_solucao", label: "SLA de solução" }, { key: "csat", label: "CSAT" }, { key: "reincidencia", label: "Reincidência" }],
 };
 
-const EXTRA_KPIS = ["inadimplencia", "conversao_mql_oportunidade", "leads_captados", "mqls", "implantacoes_concluidas"];
+const EXTRA_KPIS = ["inadimplencia", "conversao_mql_oportunidade", "leads_captados", "mqls", "implantacoes_concluidas", "recebido", "receita_vendida", "backlog_suporte"];
 
 const HANDOFF_LABELS: Record<string, string> = {
   marketing: "MQL → oportunidade",
@@ -755,13 +992,29 @@ function workflowRiskHref(dep: DepartmentKey): string {
  */
 export async function getCockpit(period: Period): Promise<Cockpit> {
   const stageKeys = Object.values(STAGE_KPIS).flat().map((k) => k.key);
-  const [[results], bundle, mrrHistory, revenueHistory, bottlenecks, org] = await Promise.all([
-    computeKpiBatch([{ keys: Array.from(new Set([...COMPANY_KEYS, ...stageKeys, ...EXTRA_KPIS])), scope: "empresa" }], period, { withSources: false }),
+  const previous = previousPeriod(period);
+  const kpiDocs = await loadKpiDocs();
+  const depKeys = (dep: DepartmentKey) => Array.from(new Set([...(SCORECARD_KEYS[dep] ?? []), ...kpiDocs.filter((d) => d.department === dep && d.active !== false).map((d) => d.key)]));
+  const [[results, ...depResults], bundle, mrrHistory, revenueHistory, bottlenecks, org, health, globalGoal, previousGoal, sla, proposals, principal] = await Promise.all([
+    computeKpiBatch(
+      [
+        { keys: Array.from(new Set([...COMPANY_KEYS, ...stageKeys, ...EXTRA_KPIS])), scope: "empresa" },
+        ...OPERATIONAL_DEPARTMENTS.map((dep) => ({ keys: [...depKeys(dep), "tarefas_no_prazo_pct"], scope: "departamento" as const, scopeId: dep })),
+      ],
+      period,
+      { withSources: false },
+    ),
     loadDataBundle(period),
     getHistory("mrr", "empresa", undefined, 8),
     getHistory("faturamento", "empresa", undefined, 8),
     evaluateInsights({ period, scope: "empresa" }),
     loadOrg(),
+    computeOperationHealth(period, { kind: "empresa" }),
+    goalsAttainment(period, { kind: "empresa" }, { companyOnly: true }),
+    previous.kind === "mes" ? goalsAttainment(previous, { kind: "empresa" }, { companyOnly: true }) : Promise.resolve(null),
+    getSlaSummary(period),
+    list<Proposal>(COLLECTIONS.proposals),
+    getCompanyScorecard(period),
   ]);
   const byKey = new Map(results.map((r) => [r.key, r]));
   const now = new Date(bundle.now);
@@ -890,10 +1143,58 @@ export async function getCockpit(period: Period): Promise<Cockpit> {
     { key: "ativados", label: "Clientes ativados", value: activatedInPeriod, href: "/cs" },
   ];
 
+  // Desempenho por departamento: scorecard (atingimento), produtividade (tarefas no prazo) e SLA (tela /sla).
+  const slaByDep = new Map(sla.byDepartment.map((r) => [r.key, r]));
+  const departmentRows: CockpitDepartmentRow[] = OPERATIONAL_DEPARTMENTS.map((dep, i) => {
+    const items = depResults[i] ?? [];
+    const scorecardItems = items.filter((r) => r.key !== "tarefas_no_prazo_pct" || depKeys(dep).includes("tarefas_no_prazo_pct"));
+    const { overallAttainment } = summarizeScorecard(scorecardItems);
+    const row = principal.departments.find((d) => d.department === dep);
+    return {
+      department: dep,
+      label: DEPARTMENT_LABELS[dep],
+      manager: row?.manager,
+      principal: row?.result ?? null,
+      attainment: overallAttainment,
+      status: statusFor(overallAttainment),
+      productivity: items.find((r) => r.key === "tarefas_no_prazo_pct")?.value ?? null,
+      sla: slaByDep.get(dep)?.rate ?? null,
+      href: `/gestao?departamento=${dep}&periodo=${encodeURIComponent(period.key)}`,
+    };
+  });
+
+  const proposalsInPeriod = proposals.filter((p) => (p.sentAt ? inPeriod(p.sentAt, period) : p.status !== "rascunho" && inPeriod(p.createdAt, period))).length;
+  const leads = byKey.get("leads_captados")?.value ?? null;
+  const sales = byKey.get("novas_vendas")?.value ?? null;
+  const backlog = byKey.get("backlog_suporte")?.value ?? bundle.tickets.filter((t) => t.status === "aberto" || t.status === "em_atendimento" || t.status === "aguardando_cliente" || t.status === "reaberto").length;
+
   return {
     period,
-    previous: previousPeriod(period),
+    previous,
     current,
+    strip: {
+      mrr: byKey.get("mrr") ?? null,
+      newSales: byKey.get("novas_vendas") ?? null,
+      soldRevenue: byKey.get("receita_vendida") ?? null,
+      activeClients: byKey.get("clientes_ativos") ?? null,
+      received: byKey.get("recebido") ?? null,
+      globalGoal: { attainment: globalGoal.attainment, previous: previousGoal?.attainment ?? null, count: globalGoal.count, href: globalGoal.href },
+    },
+    health,
+    departments: departmentRows,
+    salesFunnel: {
+      leads,
+      qualified: byKey.get("mqls")?.value ?? null,
+      proposals: proposalsInPeriod,
+      sales,
+      conversion: leads && sales !== null ? sales / leads : null,
+      hrefs: { leads: kpiHref("leads_captados", period), qualified: kpiHref("mqls", period), proposals: "/vendas/propostas", sales: kpiHref("novas_vendas", period) },
+    },
+    operation: {
+      implementation: { inProgress: openProjects.length, late: lateProjects, href: "/implantacao", lateHref: "/implantacao?atrasadas=1" },
+      support: { opened: byKey.get("chamados_abertos") ?? null, backlog: typeof backlog === "number" ? backlog : 0, sla: byKey.get("sla_solucao") ?? null },
+      finance: { delinquency: delinquency ?? null },
+    },
     company: COMPANY_KEYS.map((k) => byKey.get(k)).filter((r): r is KpiResult => Boolean(r)),
     stages,
     handoffs,

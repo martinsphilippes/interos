@@ -3,13 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
-import { batchSet, create, getById, list, nowIso, remove, update } from "@/server/db";
+import { batchSet, col, create, getById, list, nowIso, remove, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
-import { COLLECTIONS, type ActionResult, type CurrentUser, type Goal, type Kpi, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type ActionResult, type CurrentUser, type Goal, type Kpi, type Settings, type UserRef } from "@/domain/types";
 import { getFormula, invalidateDataBundle } from "./formulas";
 import { storeSnapshots } from "./engine";
 import { monthPeriod, previousPeriod } from "./period";
 import { canManageGoal, getGoalPermissions } from "./queries";
+import { OPERATION_HEALTH_SETTING, PERFORMANCE_INDEX_SETTING } from "./operation-health";
+import { operationHealthSchema, performanceIndexSchema, type OperationHealthInput, type PerformanceIndexInput } from "./health-schemas";
 import { copyGoalsSchema, goalDocId, goalIdSchema, goalInputSchema, kpiInputSchema, toggleKpiSchema, zodMessage, type GoalInput, type KpiInput } from "./schemas";
 
 /**
@@ -248,5 +250,56 @@ export async function copyGoalsFromPreviousMonth(input: { period: string }): Pro
     return { ok: true, data: { copied: toCopy.length } };
   } catch (error) {
     return fail(error, "Não foi possível copiar as metas");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Saúde da operação e Índice de desempenho (admin/diretoria)
+// ---------------------------------------------------------------------------
+
+async function saveIndexSetting(key: string, value: Record<string, unknown>, description: string, user: CurrentUser, title: string): Promise<void> {
+  const existing = await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", key]] });
+  if (existing[0]) {
+    // Substitui o valor inteiro (componentes/indicadores removidos somem de fato).
+    await col(COLLECTIONS.settings).doc(existing[0].id).set(stripUndefined({ ...existing[0], id: undefined, value, updatedAt: nowIso() }));
+  } else {
+    await create<Settings>(COLLECTIONS.settings, { key, value, description, createdBy: user.id }, `setting_${key}`);
+  }
+  await emitEvent({
+    type: "kpi.updated",
+    actor: actor(user),
+    entity: { type: "setting", id: key },
+    title,
+    payload: { kind: "config", setting: key },
+    timeline: false,
+  });
+  revalidatePath("/gestao", "layout");
+  revalidatePath("/performance", "layout");
+  revalidatePath("/admin/configuracoes");
+}
+
+/** Salva o setting "saude_operacao" (componentes, pesos, normalização e faixas). Admin ou diretoria. */
+export async function saveOperationHealthSettings(input: OperationHealthInput): Promise<ActionResult<{ key: string }>> {
+  try {
+    const user = await requireUser();
+    if (!user.isDirector) throw new ActionError("Apenas administradores e diretoria podem configurar a Saúde da operação");
+    const value = operationHealthSchema.parse(input);
+    await saveIndexSetting(OPERATION_HEALTH_SETTING, value as unknown as Record<string, unknown>, "Componentes, pesos, normalização e faixas do índice de Saúde da operação.", user, "Configuração da Saúde da operação atualizada");
+    return { ok: true, data: { key: OPERATION_HEALTH_SETTING } };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar a configuração da Saúde da operação");
+  }
+}
+
+/** Salva o setting "indice_desempenho" (meta, pesos e indicadores por departamento, faixas). Admin ou diretoria. */
+export async function savePerformanceIndexSettings(input: PerformanceIndexInput): Promise<ActionResult<{ key: string }>> {
+  try {
+    const user = await requireUser();
+    if (!user.isDirector) throw new ActionError("Apenas administradores e diretoria podem configurar o Índice de desempenho");
+    const value = performanceIndexSchema.parse(input);
+    await saveIndexSetting(PERFORMANCE_INDEX_SETTING, value as unknown as Record<string, unknown>, "Pesos e indicadores do Índice de desempenho por departamento.", user, "Configuração do Índice de desempenho atualizada");
+    return { ok: true, data: { key: PERFORMANCE_INDEX_SETTING } };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar a configuração do Índice de desempenho");
   }
 }

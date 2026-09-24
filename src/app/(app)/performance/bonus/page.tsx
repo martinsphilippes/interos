@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Award, Calculator, CircleDollarSign, Gauge, Layers, Settings2 } from "lucide-react";
+import { Award, CircleDollarSign, Coins, FileText, Gem, Settings2, Target } from "lucide-react";
 import { requireUser } from "@/server/auth/session";
 import { getBonusPageData, getPerformanceAccess, resolveSubjectId } from "@/server/performance/queries";
 import { currentMonthKey, listRecentMonths, monthPeriod, periodFromKey } from "@/server/kpis/queries";
@@ -16,7 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PeriodSelect } from "@/components/kpis/period-select";
 import { BonusAlerts, BonusBreakdown, bonusTotalText } from "@/components/performance/bonus-summary";
 import { BonusHistory, BonusRegulation, type KpiNames } from "@/components/performance/bonus-regulation";
-import { BonusSimulator, type SimulatorLine } from "@/components/performance/bonus-simulator";
+import { type SimulatorLine } from "@/components/performance/bonus-simulator";
+import { BonusCompositionDonut, BonusGoalsTable, BonusHistoryChart, BonusTierCard, BonusTiersList } from "@/components/performance/bonus-dashboard";
+import { KpiStrip } from "@/components/ui/kpi-strip";
 import { BonusBlocksList, BonusTeamPanel, type TeamBonusRow } from "@/components/performance/bonus-team";
 import { UserSelect } from "@/components/performance/user-select";
 import { formatGap } from "@/components/performance/bonus-status";
@@ -40,6 +42,12 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
   const data = await getBonusPageData(viewer, access, subjectId, month);
   const c = data.subject;
   const self = subjectId === viewer.id;
+  const tab = one(query.aba);
+  const tabQuery = `periodo=${month.key}${self ? "" : `&usuario=${subjectId}`}`;
+  const year = month.key.slice(0, 4);
+  const yearResults = data.history.filter((r) => r.period.startsWith(year) && r.period <= month.key);
+  const yearTotal = yearResults.reduce((s, r) => s + (r.blocked ? 0 : r.projectedAmount + r.extrasAmount), 0);
+  const yearClosed = yearResults.length;
   const monthOptions = listRecentMonths(12)
     .reverse()
     .map((p) => ({ value: p.key, label: p.label }));
@@ -67,10 +75,10 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
   }));
 
   return (
-    <PageContainer>
+    <PageContainer size="full">
       <PageHeader
         title="Bônus e Premiação"
-        description={c ? `${self ? "Seu bônus" : `Bônus de ${c.userName}`} · ${DEPARTMENT_LABELS[c.department]} · ${month.label}` : month.label}
+        description={c ? `Acompanhe seus resultados e veja quanto falta para aumentar sua premiação · ${self ? "Seu bônus" : `Bônus de ${c.userName}`} · ${DEPARTMENT_LABELS[c.department]} · ${month.label}` : month.label}
         breadcrumbs={[{ label: "Performance", href: "/performance" }, { label: "Bônus" }]}
         actions={
           <>
@@ -87,7 +95,7 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
         }
       />
 
-      <Tabs defaultValue={c?.rule ? "mes" : data.canManage ? "equipe" : "mes"}>
+      <Tabs key={tab ?? "padrao"} defaultValue={tab && ["mes", "regulamento", "equipe"].includes(tab) ? tab : c?.rule ? "mes" : data.canManage ? "equipe" : "mes"}>
         <TabsList>
           <TabsTrigger value="mes">Bônus do mês</TabsTrigger>
           {c?.rule ? <TabsTrigger value="regulamento">Regulamento</TabsTrigger> : null}
@@ -109,14 +117,60 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
               />
             </Card>
           ) : (
-            <div className="flex flex-col gap-6">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <StatCard label="Bônus projetado" value={bonusTotalText(c)} icon={<CircleDollarSign />} tone={c.blocked ? "danger" : "success"} hint={c.maxAmount !== null ? `Máximo da faixa ${formatCurrency(c.maxAmount)} + extras` : "Salário base não cadastrado"} compact />
-                <StatCard label="Atingimento geral" value={formatPercent(c.overallAttainment)} icon={<Gauge />} tone="info" hint={`Individual ${formatPercent(c.individual.attainment)} · coletivo ${formatPercent(c.collective.attainment)}`} compact />
-                <StatCard label="Faixa" value={c.tier?.label ?? "—"} icon={<Layers />} tone="info" hint={c.nextTier ? `Faltam ${formatGap(c.nextTier.gap)} para ${c.nextTier.label}` : c.tier ? "Faixa máxima" : undefined} compact />
-                <StatCard label="Extras" value={formatCurrency(c.extrasAmount)} icon={<Award />} tone="neutral" hint={c.extras.map((e) => `${e.quantity ?? "—"} × ${formatCurrency(e.amount)}`).join(" · ") || "Sem extras na regra"} compact />
-              </div>
+            <div className="flex flex-col gap-4">
+              <KpiStrip columns={4} mobileColumns={2} className="mb-1">
+                <StatCard label="Bônus acumulado" value={formatCurrency(yearTotal)} icon={<Coins />} tone="success" hint={yearClosed > 0 ? `${yearClosed} competência(s) fechada(s) em ${year}` : `Nenhuma competência fechada em ${year}`} compact />
+                <StatCard label="Projeção do mês" value={bonusTotalText(c)} icon={<CircleDollarSign />} tone={c.blocked ? "danger" : "info"} hint={c.maxAmount !== null ? `Máximo da faixa ${formatCurrency(c.maxAmount)} + extras` : "Salário base não cadastrado"} compact />
+                <StatCard label="Meta atingida" value={formatPercent(c.overallAttainment)} icon={<Target />} tone="brand" progress={c.overallAttainment === null ? undefined : Math.min(100, c.overallAttainment * 100)} hint={`Individual ${formatPercent(c.individual.attainment)} · coletivo ${formatPercent(c.collective.attainment)}`} compact />
+                <StatCard label="Próxima faixa" value={c.nextTier ? `faltam ${formatGap(c.nextTier.gap)}` : c.tier ? "Faixa máxima" : "—"} icon={<Gem />} tone="purple" progress={c.nextTier && c.overallAttainment !== null ? Math.min(100, (c.overallAttainment / c.nextTier.minAttainment) * 100) : undefined} hint={c.nextTier ? `para a faixa ${c.nextTier.label}` : c.tier?.label} compact />
+              </KpiStrip>
               <BonusAlerts c={c} />
+
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Composição do bônus</CardTitle>
+                    <CardDescription>Valor da faixa rateado pela contribuição de cada critério ao atingimento geral, mais os extras.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <BonusCompositionDonut c={c} />
+                  </CardContent>
+                </Card>
+                <Card className="p-5">
+                  <BonusTierCard c={c} simulatorLines={simulatorLines} />
+                </Card>
+                <Card className="lg:col-span-2 2xl:col-span-1">
+                  <CardHeader className="pb-2">
+                    <CardTitle>Faixas de premiação</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-1">
+                    <BonusTiersList c={c} />
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Minhas metas</CardTitle>
+                    <CardDescription>Cada indicador vem do motor de indicadores; clique para ver os registros de origem.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="pb-2 pt-0">
+                    <BonusGoalsTable c={c} />
+                  </CardContent>
+                </Card>
+                <Card className="flex flex-col">
+                  <CardHeader className="pb-2">
+                    <CardTitle>Histórico de premiações</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-1 flex-col pt-1">
+                    <BonusHistoryChart items={data.history} />
+                    <Link href={`/performance/bonus?${tabQuery}&aba=regulamento`} className="mt-auto inline-flex min-h-[44px] items-center justify-center gap-1 border-t border-border pt-3 text-sm font-medium text-brand-fg hover:text-brand-hover">
+                      <FileText className="size-4" aria-hidden /> Ver regulamento
+                    </Link>
+                  </CardContent>
+                </Card>
+              </div>
 
               <Card>
                 <CardHeader>
@@ -130,19 +184,7 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Calculator className="size-4 text-muted" aria-hidden /> Simulador
-                  </CardTitle>
-                  <CardDescription>“Se meu SLA de solução for X% e o CSAT Y…”: ajuste os indicadores e veja a faixa e o valor resultantes.</CardDescription>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <BonusSimulator rule={c.rule} lines={simulatorLines} salary={c.salary} extrasAmount={c.extrasAmount} blocked={c.blocked} />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Histórico de competências fechadas</CardTitle>
+                  <CardTitle>Competências fechadas</CardTitle>
                   <CardDescription>Resultados gravados no fechamento, com a versão da regra usada.</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0">
