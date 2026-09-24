@@ -8,7 +8,22 @@ import { ORG_ID } from "../../src/server/db";
 import { NOW, daysAgo, type SeedDoc } from "./lib";
 import type { SeedContext, UserKey } from "./context";
 
-export const SEED_PASSWORD = "interos123";
+/**
+ * Senha dos usuários de demonstração. Nos emuladores vale a padrão "interos123" (usada pelos testes e2e).
+ * Fora dos emuladores é obrigatório informar INTEROS_SEED_PASSWORD: o repositório é público e uma senha
+ * conhecida daria acesso de administrador à produção.
+ */
+export const SEED_PASSWORD = resolveSeedPassword();
+
+function resolveSeedPassword(): string {
+  const fromEnv = process.env.INTEROS_SEED_PASSWORD?.trim();
+  if (fromEnv) {
+    if (fromEnv.length < 10) throw new Error("INTEROS_SEED_PASSWORD precisa ter pelo menos 10 caracteres.");
+    return fromEnv;
+  }
+  if (process.env.FIRESTORE_EMULATOR_HOST) return "interos123";
+  throw new Error("Defina INTEROS_SEED_PASSWORD para rodar o seed fora dos emuladores.");
+}
 const DOMAIN = "intercert.com.br";
 
 interface UserSpec {
