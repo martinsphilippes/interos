@@ -8,7 +8,7 @@ Aplicação web construída com Next.js (App Router), TypeScript, Tailwind CSS e
 | -------- | ----------------------------------------- | ------------------------------------------------------------- |
 | GitHub   | `martinsphilippes/interos`                | Branch padrão `main`. CI roda lint, typecheck e build.        |
 | Vercel   | Projeto `interos`, time `martinsphilippes` | Deploy automático a cada push. Preview por branch/PR.         |
-| Firebase | Auth, Firestore, Storage                  | Regras versionadas em `firestore.rules` e `storage.rules`.    |
+| Firebase | Projeto `interos-crm`, Auth e Firestore   | Regras versionadas em `firestore.rules`. Storage exige plano Blaze. |
 
 ## Primeiros passos
 
@@ -29,7 +29,7 @@ Abra http://localhost:3000. A página inicial mostra o estado da configuração 
 | `npm run lint`                 | ESLint                                                           |
 | `npm run typecheck`            | Verificação de tipos sem emitir arquivos                         |
 | `npm run firebase:emulators`   | Sobe Auth, Firestore e Storage locais (requer `firebase-tools`) |
-| `npm run firebase:deploy:rules`| Publica regras e índices no projeto Firebase                     |
+| `npm run firebase:deploy:rules`| Publica regras e índices do Firestore no projeto Firebase        |
 
 ## Variáveis de ambiente
 
@@ -45,13 +45,14 @@ Todas as chaves estão documentadas em `.env.example`. As variáveis `NEXT_PUBLI
 2. Adicione um app Web e copie a configuração para `.env.local`.
 3. Ative os provedores de Auth desejados.
 4. Em **Authentication > Settings > Authorized domains**, adicione `localhost`, o domínio `*.vercel.app` do projeto e o domínio final.
-5. Vincule o projeto localmente e publique as regras:
+5. O projeto já está vinculado em `.firebaserc` (`interos-crm`). Para publicar regras:
 
 ```bash
 npx firebase-tools login
-npx firebase-tools use --add   # cria .firebaserc com o ID do projeto
 npm run firebase:deploy:rules
 ```
+
+O Storage fica fora do `firebase.json` até o projeto migrar para o plano Blaze, exigido pelo Cloud Storage for Firebase. As regras já estão prontas em `storage.rules`; ao ativar o Blaze, crie o bucket no console e adicione `"storage": { "rules": "storage.rules" }` ao `firebase.json`.
 
 As regras iniciais negam tudo por padrão e liberam apenas o documento do próprio usuário em `users/{uid}`. Amplie por coleção conforme o domínio evoluir, sempre testando nos emuladores.
 

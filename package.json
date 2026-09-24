@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "firebase:emulators": "firebase emulators:start",
-    "firebase:deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage"
+    "firebase:deploy:rules": "firebase deploy --only firestore"
   },
   "dependencies": {
     "firebase": "^12.19.0",
