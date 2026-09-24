@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * A verificação real (assinatura, expiração, usuário ativo) acontece no servidor em requireUser().
  */
 const SESSION_COOKIE = "interos_session";
-const PUBLIC_PATHS = ["/login", "/offline"];
+const PUBLIC_PATHS = ["/login", "/offline", "/csat"];
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

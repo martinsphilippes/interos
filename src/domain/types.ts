@@ -542,6 +542,10 @@ export interface ImplementationProject extends BaseEntity {
   internalDelayDays: number;
   checklist: ChecklistItem[];
   acceptance?: { acceptedAt: string; acceptedBy: string; notes?: string };
+  /** Validação interna da implantação antes do aceite (Onda 3). */
+  validation?: { validatedBy: string; validatedAt: string; notes?: string };
+  /** Bloqueio interno ativo (atraso contado em internalDelayDays ao desbloquear). */
+  blocked?: { reason: string; since: string; byId: string };
 }
 
 export interface ImplementationTask extends BaseEntity {
@@ -606,7 +610,7 @@ export interface SuccessPlan extends BaseEntity {
   clientId: string;
   ownerId: string;
   objective: string;
-  actions: { id: string; description: string; responsibleId: string; dueAt: string; done: boolean; doneAt?: string }[];
+  actions: { id: string; description: string; responsibleId: string; dueAt: string; done: boolean; doneAt?: string; taskId?: string }[];
   checkpointAt?: string;
   result?: string;
   status: "ativo" | "concluido" | "cancelado";
@@ -669,6 +673,8 @@ export interface SupportTicket extends BaseEntity {
   csatScore?: number;
   originatedOpportunityId?: string;
   trainingRelated?: boolean;
+  customerConfirmation?: "sim" | "pendente";
+  csatRequestedAt?: string;
 }
 
 export interface TicketInteraction extends BaseEntity {
@@ -680,6 +686,7 @@ export interface TicketInteraction extends BaseEntity {
   attachments?: string[];
   durationSeconds?: number;
   recordingUrl?: string;
+  channel?: "whatsapp" | "email" | "portal";
 }
 
 export interface CsatResponse extends BaseEntity {
@@ -841,6 +848,9 @@ export interface SlaInstance extends BaseEntity {
   breachedAt?: string;
   attentionPct: number;
   riskPct: number;
+  alertedRisk?: boolean;
+  alertedBreach?: boolean;
+  supersededBy?: string;
 }
 
 /** Estado de SLA calculado na leitura. */

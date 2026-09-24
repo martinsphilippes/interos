@@ -24,20 +24,17 @@ import { formatDate } from "@/lib/format";
 import { shortId } from "@/lib/utils";
 import {
   COLLECTIONS,
-  type Billing,
   type Client,
   type ClientProduct,
   type Contract,
   type CsAccount,
   type Document,
   type DomainEvent,
-  type HealthScore,
   type ImplementationPhase,
   type ImplementationProject,
   type ImplementationTask,
   type Settings,
   type SlaInstance,
-  type SupportTicket,
   type Task,
   type Training,
   type User,
@@ -45,7 +42,7 @@ import {
   type WorkflowInstance,
   type WorkflowStep,
 } from "@/domain/types";
-import type { HealthLevel, RoleKey } from "@/domain/constants";
+import type { RoleKey } from "@/domain/constants";
 import { IMPLEMENTATION_PHASE_LABELS } from "@/components/clients/labels";
 import { combineTemplates, templatesForProducts } from "./templates";
 import {
@@ -1075,42 +1072,6 @@ async function pickCsOwner(): Promise<User> {
   return candidates[0];
 }
 
-interface HealthSettings {
-  pesos: Record<string, number>;
-  limiares: { saudavel: number; atencao: number };
-}
-const DEFAULT_HEALTH: HealthSettings = { pesos: { uso: 25, satisfacao: 20, sla: 15, suporte: 15, reincidencia: 10, financeiro: 15 }, limiares: { saudavel: 75, atencao: 50 } };
-const HEALTH_LABELS: Record<string, string> = { uso: "Uso do sistema", satisfacao: "Satisfação (CSAT)", sla: "SLA cumprido nos chamados", suporte: "Volume de chamados", reincidencia: "Reincidência de chamados", financeiro: "Situação financeira" };
-
-/** Health score inicial do cliente recém-implantado: adoção zero, sem histórico de CSAT, dados reais de chamados e financeiro. */
-async function initialHealthScore(client: Client, project: ProjectRecord, trainingsDone: number): Promise<Omit<HealthScore, "id" | "organizationId" | "createdAt" | "updatedAt">> {
-  const [settings, billings, tickets] = await Promise.all([
-    getSetting<HealthSettings>("health_score", DEFAULT_HEALTH),
-    list<Billing>(COLLECTIONS.billing, { where: [["clientId", "==", client.id]] }),
-    list<SupportTicket>(COLLECTIONS.supportTickets, { where: [["clientId", "==", client.id]] }),
-  ]);
-  const since = project.startDate ?? project.createdAt;
-  const recentTickets = tickets.filter((t) => t.openedAt >= since);
-  const reopened = recentTickets.filter((t) => t.reopenCount > 0).length;
-  const overdue = billings.filter((b) => b.status === "vencida" || (b.status === "aberta" && b.dueDate < nowIso())).length;
-  const values: Record<string, { value: number; note: string }> = {
-    uso: { value: 0, note: "Recém-implantado: adoção ainda não medida." },
-    satisfacao: { value: trainingsDone > 0 ? 70 : 50, note: trainingsDone > 0 ? `Sem CSAT ainda; ${trainingsDone} treinamento(s) realizado(s).` : "Sem CSAT ainda." },
-    sla: { value: 100, note: "Sem histórico de SLA de suporte após o go-live." },
-    suporte: { value: Math.max(0, 100 - recentTickets.length * 20), note: `${recentTickets.length} chamado(s) desde o início da implantação.` },
-    reincidencia: { value: reopened > 0 ? 50 : 100, note: reopened > 0 ? `${reopened} chamado(s) reaberto(s).` : "Sem reincidência." },
-    financeiro: { value: overdue > 0 ? 30 : 100, note: overdue > 0 ? `${overdue} cobrança(s) vencida(s).` : "Pagamentos em dia." },
-  };
-  const factors = Object.entries(settings.pesos).map(([key, weight]) => {
-    const v = values[key] ?? { value: 50, note: "Sem dados." };
-    return { key, label: HEALTH_LABELS[key] ?? key, weight, value: v.value, contribution: Number(((weight * v.value) / 100).toFixed(1)), note: v.note };
-  });
-  const totalWeight = factors.reduce((s, f) => s + f.weight, 0) || 100;
-  const score = Math.round((factors.reduce((s, f) => s + f.contribution, 0) * 100) / totalWeight);
-  const level: HealthLevel = score >= settings.limiares.saudavel ? "saudavel" : score >= settings.limiares.atencao ? "atencao" : "risco";
-  return { clientId: client.id, score, level, factors, computedAt: nowIso() };
-}
-
 /**
  * Aprova o go-live. Exige o gate completo (checklist obrigatório, tarefas obrigatórias, treinamento
  * realizado, validação e aceite do cliente) e a permissão da configuração "go_live". Efeitos:
@@ -1178,29 +1139,24 @@ export async function approveGoLive(projectId: string, actor: ImplementationActo
     `Atraso: ${project.externalDelayDays ?? 0} dia(s) do cliente, ${project.internalDelayDays ?? 0} interno(s).`,
   ].join("\n");
   const nextInteractionAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
-  let csAccountId: string;
-  if (existingAccount) {
-    csAccountId = existingAccount.id;
-    await update<CsAccount>(COLLECTIONS.csAccounts, existingAccount.id, { nextInteractionAt, notes: [existingAccount.notes, notes].filter(Boolean).join("\n\n"), renewalDate: existingAccount.renewalDate ?? contract?.endDate });
-  } else {
-    const account = await create<CsAccount>(COLLECTIONS.csAccounts, {
-      clientId: client.id,
-      ownerId: csOwner.id,
-      adoptionPct: 0,
-      riskLevel: "atencao",
-      riskReasons: ["Recém-implantado"],
-      nextInteractionAt,
-      renewalDate: contract?.endDate,
-      notes,
-      createdBy: actor.id,
-    });
-    csAccountId = account.id;
+  // Caminho único da conta de CS: `ensureCsAccount` do CS (idempotente, ID `csacc_<clientId>`). O dono
+  // escolhido aqui (menor carteira) é gravado no cliente antes, para que a conta nasça com ele.
+  const cs = await import("@/server/cs/service");
+  if (!existingAccount && client.ownerCsId !== csOwner.id) {
+    await update<Client>(COLLECTIONS.clients, client.id, { ownerCsId: csOwner.id });
   }
-  const health = await initialHealthScore(client, project, trainingsDone.length);
-  await create<HealthScore>(COLLECTIONS.healthScores, health);
+  const account = await cs.ensureCsAccount(client.id, actor);
+  const csAccountId = account.id;
+  const manualReasons = account.riskReasons.filter((r) => r !== "Recém-implantado");
+  await update<CsAccount>(COLLECTIONS.csAccounts, account.id, {
+    nextInteractionAt,
+    notes: [account.notes, notes].filter(Boolean).join("\n\n"),
+    renewalDate: account.renewalDate ?? contract?.endDate,
+    riskReasons: existingAccount ? account.riskReasons : ["Recém-implantado", ...manualReasons],
+  });
 
   // 4) Cliente ativo em CS (a ativação formal "cliente ativado" é o gate do CS).
-  const clientPatch: Partial<Client> = { currentStage: "cs", ownerCsId: csOwner.id, mrr, healthScore: health.score, healthLevel: health.level, nextInteractionAt };
+  const clientPatch: Partial<Client> = { currentStage: "cs", ownerCsId: csOwner.id, mrr, nextInteractionAt };
   if (client.status !== "ativo") {
     clientPatch.status = "ativo";
     clientPatch.activatedAt = goLiveAt;
@@ -1294,16 +1250,9 @@ export async function approveGoLive(projectId: string, actor: ImplementationActo
     }
   }
 
-  await emitEvent({
-    type: "customer.health_changed",
-    actor,
-    clientId: client.id,
-    entity: { type: "client", id: client.id },
-    title: `Health score inicial: ${health.score} (${health.level === "saudavel" ? "saudável" : health.level === "atencao" ? "atenção" : "risco"})`,
-    description: "Calculado no handoff da implantação para o CS.",
-    department: "cs",
-    payload: { score: health.score, level: health.level, previousScore: client.healthScore, adoptionPct: 0, origin: "go_live", csAccountId },
-  });
+  // Health score inicial pelo motor único do CS (histórico em health_scores; emite customer.health_changed
+  // quando o nível muda).
+  const health = await cs.recalculateClientHealth(client.id, actor);
 
   const [csManager, implManager] = await Promise.all([getDepartmentManager("cs"), getDepartmentManager("implantacao")]);
   await notify({
@@ -1330,7 +1279,7 @@ export async function approveGoLive(projectId: string, actor: ImplementationActo
     csAccountId,
     csOwner: ref(csOwner),
     onboardingTaskId: onboarding.id,
-    healthScore: health.score,
+    healthScore: health?.score ?? 0,
     activatedProducts: toActivate.length,
   };
 }

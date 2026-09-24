@@ -258,6 +258,8 @@ const SETTINGS: (SeedDoc<Settings> & { id: string })[] = [
   { id: "setting_health_score", key: "health_score", description: "Pesos e limiares do health score de clientes.", value: { pesos: { uso: 25, satisfacao: 20, sla: 15, suporte: 15, reincidencia: 10, financeiro: 15 }, limiares: { saudavel: 75, atencao: 50 } } },
   { id: "setting_horario_comercial", key: "horario_comercial", description: "Expediente considerado pelo SLA.", value: { inicio: 8, fim: 18, dias: [1, 2, 3, 4, 5] } },
   { id: "setting_oportunidade", key: "oportunidade", description: "Parâmetros de acompanhamento de oportunidades.", value: { diasSemMovimentoParaParada: 7, horasSemInteracaoFollowup: 48 } },
+  { id: "setting_go_live", key: "go_live", description: "Regras de aprovação do go-live da implantação.", value: { exigeAprovacaoGestor: true } },
+  { id: "setting_cs_ativacao", key: "cs_ativacao", description: "Critérios do gate de ativação do cliente pelo Customer Success.", value: { adocaoMinimaPct: 30, exigePlano: true } },
 ];
 
 // ---------------------------------------------------------------------------

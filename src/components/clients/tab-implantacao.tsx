@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Circle, GraduationCap, Rocket } from "lucide-react";
 import type { Client360 } from "@/server/clients/queries";
 import { IMPLEMENTATION_PHASES, type ImplementationPhase } from "@/domain/types";
@@ -13,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { UserCell } from "./client-badges";
 import { IMPLEMENTATION_PHASE_LABELS, IMPLEMENTATION_STATUS_LABELS, IMPLEMENTATION_STATUS_VARIANT, TRAINING_STATUS_LABELS, TRAINING_STATUS_VARIANT } from "./labels";
 
-/** Aba Implantação (somente leitura): projetos, fase, checklist, tarefas por fase e treinamentos. */
+/** Aba Implantação (somente leitura; a operação fica em /implantacao/<id>): projetos, fase, checklist, tarefas por fase e treinamentos. */
 export function TabImplantacao({ data }: { data: Client360 }) {
   const { projects, implementationTasks, trainings, users } = data;
   const now = new Date().toISOString();
@@ -35,7 +36,9 @@ export function TabImplantacao({ data }: { data: Client360 }) {
               <CardHeader className="gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <CardTitle className="flex items-center gap-2">
-                    {project.name}
+                    <Link href={`/implantacao/${project.id}`} className="hover:text-brand hover:underline">
+                      {project.name}
+                    </Link>
                     <Badge variant={IMPLEMENTATION_STATUS_VARIANT[project.status]} size="sm">
                       {IMPLEMENTATION_STATUS_LABELS[project.status]}
                     </Badge>

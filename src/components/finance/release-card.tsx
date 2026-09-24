@@ -72,7 +72,7 @@ export function ReleaseCard({ contractId, number, gate, released, project, canOp
             <p className="font-medium">{project.name}</p>
             <p className="text-xs">
               {project.ownerName ? `Responsável: ${project.ownerName} · ` : ""}prazo {formatDate(project.dueDate)} ·{" "}
-              <Link href={`/implantacao?projeto=${project.id}`} className="underline">
+              <Link href={`/implantacao/${project.id}`} className="underline">
                 abrir projeto
               </Link>
             </p>

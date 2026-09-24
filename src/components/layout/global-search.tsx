@@ -9,7 +9,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
-import { Bell, Building2, CheckSquare, Contact, FileSignature, FileText, GitBranch, Loader2, Megaphone, Plus, Rocket, Search, Sun, Target, Ticket, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { Bell, BookOpen, Building2, CheckSquare, Contact, FileSignature, FileText, GitBranch, Loader2, Route, Megaphone, Plus, Rocket, Search, Sun, Target, Ticket, UserPlus, Users, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { searchGlobal } from "@/server/search/actions";
@@ -27,7 +27,9 @@ const KIND_ICONS: Record<SearchKind, LucideIcon> = {
   proposta: FileText,
   contrato: FileSignature,
   implantacao: Rocket,
+  plano: Route,
   chamado: Ticket,
+  artigo: BookOpen,
   lead: UserPlus,
   campanha: Megaphone,
   usuario: Users,

@@ -4,6 +4,8 @@ import { getById, getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { listBillingsSwept } from "@/server/finance/billing";
 import { getClientFinancialSummary, type ClientFinancialSummary } from "@/server/finance/queries";
+import { getClientImplementation } from "@/server/implementation/queries";
+import { getClientSupport } from "@/server/support/queries";
 import {
   COLLECTIONS,
   type Billing,
@@ -457,7 +459,6 @@ export interface Client360 {
 }
 
 const OPEN_TASK_STATUSES = new Set(["aberta", "em_andamento", "aguardando"]);
-const OPEN_TICKET_STATUSES = new Set(["aberto", "em_atendimento", "aguardando_cliente", "reaberto"]);
 
 /** Agrega tudo que a Ficha 360º mostra em uma única chamada (leituras em paralelo). */
 export async function getClient360(id: string): Promise<Client360 | null> {
@@ -477,15 +478,13 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     proposals,
     contracts,
     billing,
-    projects,
-    implementationTasks,
-    trainings,
+    implementation,
     csAccounts,
     healthScores,
     successPlans,
     renewals,
     tickets,
-    csat,
+    supportModule,
     documents,
     tasks,
     instance,
@@ -502,21 +501,23 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     list<Proposal>(COLLECTIONS.proposals, byClient()),
     list<Contract>(COLLECTIONS.contracts, byClient()),
     listBillingsSwept(byClient()),
-    list<ImplementationProject>(COLLECTIONS.implementationProjects, byClient()),
-    list<ImplementationTask>(COLLECTIONS.implementationTasks, byClient()),
-    list<Training>(COLLECTIONS.trainings, byClient()),
+    // Implantação e Suporte: fonte é o próprio módulo.
+    getClientImplementation(id),
     list<CsAccount>(COLLECTIONS.csAccounts, byClient()),
     list<HealthScore>(COLLECTIONS.healthScores, byClient()),
     list<SuccessPlan>(COLLECTIONS.successPlans, byClient()),
     list<Renewal>(COLLECTIONS.renewals, byClient()),
     list<SupportTicket>(COLLECTIONS.supportTickets, byClient()),
-    list<CsatResponse>(COLLECTIONS.csatResponses, byClient()),
+    getClientSupport(id),
     list<Document>(COLLECTIONS.documents, byClient()),
     list<Task>(COLLECTIONS.tasks, byClient()),
     client.workflowInstanceId ? getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId) : Promise.resolve(null),
     list<WorkflowStep>(COLLECTIONS.workflowSteps, byClient()),
     list<SlaInstance>(COLLECTIONS.slaInstances, byClient()),
   ]);
+
+  const { projects, tasks: implementationTasks, trainings } = implementation;
+  const csat = supportModule.recentCsat;
 
   // Ordenações.
   contacts.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.name.localeCompare(b.name, "pt-BR"));
@@ -531,7 +532,6 @@ export async function getClient360(id: string): Promise<Client360 | null> {
   successPlans.sort(byIsoDesc((p) => p.createdAt));
   renewals.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   tickets.sort(byIsoDesc((t) => t.openedAt));
-  csat.sort(byIsoDesc((c) => c.respondedAt));
   documents.sort(byIsoDesc((d) => d.createdAt));
   tasks.sort((a, b) => {
     const aOpen = OPEN_TASK_STATUSES.has(a.status) ? 0 : 1;
@@ -566,16 +566,14 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     mrr: financeSummary.mrr || products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0),
   };
 
-  // Resumo de suporte: reincidência e CSAT.
-  const reopened = tickets.filter((t) => t.reopenedFromId || t.reopenCount > 0).length;
-  const csatScores = csat.length > 0 ? csat.map((c) => c.score) : tickets.map((t) => t.csatScore).filter((s): s is number => typeof s === "number");
+  // Resumo de suporte (fonte: módulo de Suporte): reincidência e CSAT.
   const support: SupportSummary = {
-    total: tickets.length,
-    open: tickets.filter((t) => OPEN_TICKET_STATUSES.has(t.status)).length,
-    reopened,
-    reopenRate: tickets.length > 0 ? reopened / tickets.length : 0,
-    csatAverage: csatScores.length > 0 ? csatScores.reduce((s, v) => s + v, 0) / csatScores.length : undefined,
-    csatCount: csatScores.length,
+    total: supportModule.total,
+    open: supportModule.open,
+    reopened: supportModule.reopened,
+    reopenRate: supportModule.reopenRate,
+    csatAverage: supportModule.csatAverage,
+    csatCount: supportModule.csatCount,
   };
 
   // Saúde e conta de CS mais recentes.

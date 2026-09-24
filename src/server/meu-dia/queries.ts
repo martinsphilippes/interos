@@ -195,7 +195,7 @@ function slaEntityHref(sla: SlaInstance): string {
     case "chamado":
       return `/suporte/chamados?chamado=${sla.entityId}`;
     case "projeto":
-      return `/implantacao?projeto=${sla.entityId}`;
+      return `/implantacao/${sla.entityId}`;
     case "oportunidade":
       return `/vendas/oportunidades?oportunidade=${sla.entityId}`;
     default:
@@ -602,7 +602,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
       sla,
       impactLabel: `${p.progress}% concluído`,
       score: urgencyScore(p.dueDate, nowMs) + bonus + slaScore(sla) + impactScore(clientMrr(p.clientId), maxMrr),
-      href: `/implantacao?projeto=${p.id}`,
+      href: `/implantacao/${p.id}`,
       canComplete: false,
       assigneeId: p.ownerId,
       assigneeName: isTeam ? nameOf(p.ownerId) : undefined,
@@ -715,7 +715,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
       dueLabel: dateLabel(r.dueDate, today),
       impactLabel: mrrLabel(r.clientId),
       score: (daysLeft < 0 ? 40 : 25 * Math.max(0, 1 - daysLeft / 60)) + riskBonus + impactScore(clientMrr(r.clientId), maxMrr),
-      href: `/clientes/${r.clientId}?aba=cs`,
+      href: `/cs/renovacoes`,
       canComplete: false,
       assigneeId: r.ownerId,
       assigneeName: isTeam ? nameOf(r.ownerId) : undefined,
@@ -787,7 +787,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   }
   for (const tr of trainings) {
     if (tr.status === "cancelado" || dayKey(tr.scheduledAt) !== today) continue;
-    agenda.push({ id: `treinamento:${tr.id}`, kind: "treinamento", at: tr.scheduledAt, timeLabel: timeLabel(tr.scheduledAt), title: `Treinamento · ${tr.subject}`, clientId: tr.clientId, clientName: clientName(tr.clientId), href: tr.projectId ? `/implantacao?projeto=${tr.projectId}` : "/implantacao/treinamentos", done: tr.status === "realizado", assigneeName: isTeam ? nameOf(tr.instructorId) : undefined });
+    agenda.push({ id: `treinamento:${tr.id}`, kind: "treinamento", at: tr.scheduledAt, timeLabel: timeLabel(tr.scheduledAt), title: `Treinamento · ${tr.subject}`, clientId: tr.clientId, clientName: clientName(tr.clientId), href: tr.projectId ? `/implantacao/${tr.projectId}?aba=treinamentos` : "/implantacao/treinamentos", done: tr.status === "realizado", assigneeName: isTeam ? nameOf(tr.instructorId) : undefined });
   }
   agenda.sort((a, b) => a.at.localeCompare(b.at));
 

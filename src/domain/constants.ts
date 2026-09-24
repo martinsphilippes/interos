@@ -69,7 +69,7 @@ export const MODULE_ACCESS: Record<string, readonly RoleKey[] | "all"> = {
 };
 
 /** Onda de entrega atual: itens com `wave` até este número já têm tela pronta. */
-export const CURRENT_WAVE = 2;
+export const CURRENT_WAVE = 3;
 
 export type NavItem = {
   label: string;
@@ -161,6 +161,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Renovações", href: "/cs/renovacoes", icon: "RefreshCw", wave: 3 },
       { label: "Riscos", href: "/cs/riscos", icon: "AlertTriangle", wave: 3 },
       { label: "Upsell", href: "/cs/upsell", icon: "TrendingUp", wave: 3 },
+      { label: "Churn", href: "/cs/churn", icon: "UserMinus", wave: 3 },
     ],
   },
   {

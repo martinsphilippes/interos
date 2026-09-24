@@ -15,6 +15,10 @@ import { TabCs } from "@/components/clients/tab-cs";
 import { TabSuporte } from "@/components/clients/tab-suporte";
 import { TabDocumentos } from "@/components/clients/tab-documentos";
 import { TabTarefas } from "@/components/clients/tab-tarefas";
+import { getClientCs } from "@/server/cs/queries";
+import { getSupportOptions } from "@/server/support/queries";
+import { ClientCsPanel } from "@/components/cs/client-cs-panel";
+import { NewTicketDialog } from "@/components/support/new-ticket-dialog";
 
 type Params = Promise<{ id: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
@@ -30,12 +34,14 @@ const OPEN_TICKETS = new Set(["aberto", "em_atendimento", "aguardando_cliente", 
 
 /** Ficha 360º do cliente: cabeçalho, abas por área e contatos. */
 export default async function ClientePage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
-  await requireUser();
+  const user = await requireUser();
   const [{ id }, query] = await Promise.all([params, searchParams]);
   const [data, options] = await Promise.all([getClient360(id), getClientFormOptions()]);
   if (!data) notFound();
 
   const tab = parseClientTab(query.aba);
+  // Dados dos módulos carregados só na aba que os usa.
+  const [csData, supportOptions] = await Promise.all([tab === "cs" ? getClientCs(id) : Promise.resolve(null), tab === "suporte" ? getSupportOptions(user) : Promise.resolve(null)]);
   const counts: Partial<Record<ClientTab, number>> = {
     timeline: data.timeline.length,
     comercial: data.opportunities.filter((o) => o.stage !== "ganho" && o.stage !== "perdido").length,
@@ -54,8 +60,8 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
     produtos: <TabProdutos data={data} />,
     financeiro: <TabFinanceiro data={data} />,
     implantacao: <TabImplantacao data={data} />,
-    cs: <TabCs data={data} />,
-    suporte: <TabSuporte data={data} />,
+    cs: <TabCs data={data} panel={csData ? <ClientCsPanel clientId={data.client.id} clientName={data.client.tradeName} data={csData} /> : null} />,
+    suporte: <TabSuporte data={data} action={supportOptions ? <NewTicketDialog options={supportOptions} fixedClient={{ id: data.client.id, name: data.client.tradeName }} /> : null} />,
     documentos: <TabDocumentos data={data} />,
     tarefas: <TabTarefas data={data} />,
   };

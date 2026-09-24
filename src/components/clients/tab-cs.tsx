@@ -21,7 +21,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /** Aba CS: conta de sucesso, saúde explicada por fatores, planos de sucesso e renovações. */
-export function TabCs({ data }: { data: Client360 }) {
+export function TabCs({ data, panel }: { data: Client360; panel?: React.ReactNode }) {
   const { client, csAccount, healthScore, successPlans, renewals, users } = data;
   const now = new Date().toISOString();
   const level = healthScore?.level ?? client.healthLevel;
@@ -29,6 +29,7 @@ export function TabCs({ data }: { data: Client360 }) {
 
   return (
     <div className="flex flex-col gap-5">
+      {panel}
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>
           <CardHeader className="pb-3">

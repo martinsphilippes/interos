@@ -18,13 +18,15 @@ import {
   type Opportunity,
   type Proposal,
   type SupportTicket,
+  type SuccessPlan,
+  type KnowledgeArticle,
   type Task,
   type User,
 } from "@/domain/types";
 import { CLIENT_STATUS_LABELS, DEPARTMENT_LABELS, ROLE_LABELS, TASK_STATUS_LABELS } from "@/domain/constants";
 import { formatCurrency, formatDocument } from "@/lib/format";
 
-export const SEARCH_KINDS = ["cliente", "contato", "tarefa", "oportunidade", "proposta", "contrato", "implantacao", "chamado", "lead", "campanha", "usuario"] as const;
+export const SEARCH_KINDS = ["cliente", "contato", "tarefa", "oportunidade", "proposta", "contrato", "implantacao", "plano", "chamado", "artigo", "lead", "campanha", "usuario"] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
 
 export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
@@ -35,7 +37,9 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   proposta: "Propostas",
   contrato: "Contratos",
   implantacao: "Implantações",
+  plano: "Planos de sucesso",
   chamado: "Chamados",
+  artigo: "Base de conhecimento",
   lead: "Leads",
   campanha: "Campanhas",
   usuario: "Usuários",
@@ -174,6 +178,8 @@ interface Loaded {
   contracts: Contract[];
   projects: ImplementationProject[];
   tickets: SupportTicket[];
+  plans: SuccessPlan[];
+  articles: KnowledgeArticle[];
   leads: Lead[];
   campaigns: Campaign[];
   users: User[];
@@ -190,7 +196,7 @@ async function recent<T extends BaseEntity>(name: CollectionName, where?: [strin
 
 async function loadAll(): Promise<Loaded> {
   if (cache && Date.now() - cache.loadedAt < CACHE_TTL_MS) return cache.data;
-  const [clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, leads, campaigns, users] = await Promise.all([
+  const [clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, plans, articles, leads, campaigns, users] = await Promise.all([
     recent<Client>(COLLECTIONS.clients),
     recent<Contact>(COLLECTIONS.contacts),
     recent<Task>(COLLECTIONS.tasks),
@@ -199,11 +205,13 @@ async function loadAll(): Promise<Loaded> {
     recent<Contract>(COLLECTIONS.contracts),
     recent<ImplementationProject>(COLLECTIONS.implementationProjects),
     recent<SupportTicket>(COLLECTIONS.supportTickets),
+    recent<SuccessPlan>(COLLECTIONS.successPlans),
+    recent<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, ["published", "==", true]),
     recent<Lead>(COLLECTIONS.leads),
     recent<Campaign>(COLLECTIONS.campaigns),
     recent<User>(COLLECTIONS.users, ["active", "==", true]),
   ]);
-  const data = { clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, leads, campaigns, users };
+  const data = { clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, plans, articles, leads, campaigns, users };
   cache = { loadedAt: Date.now(), data };
   return data;
 }
@@ -256,11 +264,19 @@ export async function searchGlobalQuery(rawTerm: string): Promise<SearchResponse
   }
   for (const p of data.projects) {
     const score = matchScore(term, termDigits, [p.name, clientById.get(p.clientId)?.tradeName]);
-    add("implantacao", p, score, p.name, `/implantacao?projeto=${p.id}`, `${PROJECT_STATUS_LABELS[p.status]} · ${p.progress}%`);
+    add("implantacao", p, score, p.name, `/implantacao/${p.id}`, `${PROJECT_STATUS_LABELS[p.status]} · ${p.progress}%`);
   }
   for (const t of data.tickets) {
     const score = matchScore(term, termDigits, [t.number, t.subject, clientById.get(t.clientId)?.tradeName], [t.number]);
-    add("chamado", t, score, `${t.number} · ${t.subject}`, `/suporte/chamados?chamado=${t.id}`, TICKET_STATUS_LABELS[t.status]);
+    add("chamado", t, score, `${t.number} · ${t.subject}`, `/suporte/chamados/${t.id}`, TICKET_STATUS_LABELS[t.status]);
+  }
+  for (const p of data.plans) {
+    const score = matchScore(term, termDigits, [p.objective, clientById.get(p.clientId)?.tradeName]);
+    add("plano", p, score, p.objective, `/cs/planos?plano=${p.id}`, `${p.status === "ativo" ? "Ativo" : p.status === "concluido" ? "Concluído" : "Cancelado"} · ${p.actions.filter((a) => a.done).length}/${p.actions.length} ações`);
+  }
+  for (const a of data.articles) {
+    const score = matchScore(term, termDigits, [a.title, a.category, ...(a.tags ?? [])]);
+    add("artigo", a, score, a.title, `/suporte/base-de-conhecimento/${a.id}`, [a.category, `${a.views} visualizações`].filter(Boolean).join(" · "));
   }
   for (const l of data.leads) {
     const score = matchScore(term, termDigits, [l.name, l.company, l.email, l.city], [l.phone]);
@@ -283,7 +299,7 @@ export async function searchGlobalQuery(rawTerm: string): Promise<SearchResponse
     const items = results.filter((r) => r.kind === kind).slice(0, PER_GROUP);
     if (items.length > 0) groups.push({ kind, label: SEARCH_KIND_LABELS[kind], items });
   }
-  const needClient = groups.flatMap((g) => (g.kind === "contato" || g.kind === "oportunidade" || g.kind === "proposta" || g.kind === "contrato" || g.kind === "implantacao" || g.kind === "chamado" ? g.items : [])) as (SearchResult & { clientId?: string })[];
+  const needClient = groups.flatMap((g) => (g.kind === "contato" || g.kind === "oportunidade" || g.kind === "proposta" || g.kind === "contrato" || g.kind === "implantacao" || g.kind === "plano" || g.kind === "chamado" ? g.items : [])) as (SearchResult & { clientId?: string })[];
   const missing = needClient.map((r) => r.clientId ?? "").filter((id) => id && !clientById.has(id));
   const fetched = await getManyByIds<Client>(COLLECTIONS.clients, missing);
   for (const [id, c] of fetched) clientById.set(id, c);

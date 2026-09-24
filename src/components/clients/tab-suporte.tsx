@@ -15,13 +15,14 @@ import { TICKET_PRIORITY_LABELS, TICKET_PRIORITY_VARIANT, TICKET_STATUS_LABELS, 
 const CHANNEL_LABELS: Record<string, string> = { whatsapp: "WhatsApp", telefone: "Telefone", email: "E-mail", portal: "Portal", interno: "Interno" };
 
 /** Aba Suporte: chamados com SLA calculado, reincidência (reabertos/total) e CSAT médio. */
-export function TabSuporte({ data }: { data: Client360 }) {
+export function TabSuporte({ data, action }: { data: Client360; action?: React.ReactNode }) {
   const { tickets, support, users } = data;
   const reopenTone = support.total === 0 ? "neutral" : support.reopenRate > 0.1 ? "danger" : support.reopenRate > 0 ? "warning" : "success";
   const csatTone = support.csatAverage === undefined ? "neutral" : support.csatAverage >= 8.5 ? "success" : support.csatAverage >= 7 ? "warning" : "danger";
 
   return (
     <div className="flex flex-col gap-5">
+      {action ? <div className="flex flex-wrap items-center justify-end gap-2">{action}</div> : null}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Chamados abertos" value={formatNumber(support.open)} icon={<Ticket />} tone={support.open > 0 ? "info" : "neutral"} hint={`${formatNumber(support.total)} no total`} compact />
         <StatCard label="Reincidência" value={support.total > 0 ? formatPercent(support.reopenRate) : "—"} icon={<Repeat />} tone={reopenTone} hint={`${support.reopened} reaberto${support.reopened === 1 ? "" : "s"} · meta ≤ 10%`} compact />
@@ -89,7 +90,7 @@ export function TabSuporte({ data }: { data: Client360 }) {
                     <TableCell>{t.sla ? <SlaBadge state={t.sla.state} remainingMs={t.sla.remainingMs} /> : <span className="text-muted-light">—</span>}</TableCell>
                     <TableCell className="text-right tabular-nums">{t.csatScore !== undefined ? t.csatScore : <span className="text-muted-light">—</span>}</TableCell>
                     <TableCell>
-                      <Link href={`/suporte/chamados?chamado=${t.id}`} className="inline-flex size-8 items-center justify-center rounded-md text-muted hover:bg-surface-hover hover:text-foreground" aria-label={`Abrir chamado ${t.number}`}>
+                      <Link href={`/suporte/chamados/${t.id}`} className="inline-flex size-8 items-center justify-center rounded-md text-muted hover:bg-surface-hover hover:text-foreground" aria-label={`Abrir chamado ${t.number}`}>
                         <ExternalLink className="size-4" />
                       </Link>
                     </TableCell>

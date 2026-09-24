@@ -33,7 +33,17 @@ export function entityHref(entityType: string | undefined, entityId: string | un
     case "contract":
       return `/financeiro/contratos?contrato=${entityId}`;
     case "project":
-      return `/implantacao?projeto=${entityId}`;
+      return `/implantacao/${entityId}`;
+    case "training":
+      return `/implantacao/treinamentos`;
+    case "success_plan":
+      return `/cs/planos?plano=${entityId}`;
+    case "renewal":
+      return `/cs/renovacoes`;
+    case "cs_account":
+      return entityId.startsWith("csacc_") ? `/cs/saude?cliente=${entityId.slice("csacc_".length)}` : `/cs`;
+    case "churn_record":
+      return `/cs/churn`;
     case "lead":
       return `/marketing/leads?lead=${entityId}`;
     case "visit":
