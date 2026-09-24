@@ -51,6 +51,7 @@ import {
   Users,
   Wallet,
   Workflow,
+  Zap,
   type LucideIcon,
   type LucideProps,
 } from "lucide-react";
@@ -65,6 +66,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   Megaphone,
   UserPlus,
   UserMinus,
+  Zap,
   Flag,
   Inbox,
   Crosshair,

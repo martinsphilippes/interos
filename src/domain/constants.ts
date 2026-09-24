@@ -204,6 +204,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Configurações", href: "/admin/configuracoes", icon: "Settings", wave: 1 },
       { label: "Workflows", href: "/admin/workflows", icon: "Workflow", wave: 1 },
       { label: "Indicadores", href: "/admin/indicadores", icon: "Activity", wave: 4 },
+      { label: "Automações", href: "/admin/automacoes", icon: "Zap", wave: 5 },
     ],
   },
 ];
@@ -421,6 +422,34 @@ export const EVENT_TYPES = [
   "gamification.points_awarded",
   "achievement.unlocked",
   "automation.executed",
+  // gestão, performance e auditoria (Ondas 4 e 5)
+  "goal.created",
+  "goal.updated",
+  "bonus.block_registered",
+  "bonus.block_revoked",
+  "campaign.progress",
+  "report.exported",
+  "automation.rule_updated",
+  "insight.detected",
+  "ai.suggestion_generated",
+  // tipos específicos (substituem reusos genéricos nos módulos já existentes)
+  "workflow.step.updated",
+  "workflow.step.reassigned",
+  "workflow.template.published",
+  "implementation.phase_changed",
+  "implementation.updated",
+  "support.ticket.reclassified",
+  "success_plan.updated",
+  "customer.escalated",
+  "campaign.updated",
+  "prospect_list.updated",
+  "visit.cancelled",
+  "commission.released",
+  "contract.updated",
+  "billing.cancelled",
+  "user.deleted",
+  "department.updated",
+  "product.updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

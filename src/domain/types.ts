@@ -70,6 +70,7 @@ export const COLLECTIONS = {
   commissionRules: "commission_rules",
   commissions: "commissions",
   gamificationPoints: "gamification_points",
+  gamificationCampaigns: "gamification_campaigns",
   achievements: "achievements",
   workflowTemplates: "workflow_templates",
   workflowInstances: "workflow_instances",
@@ -142,6 +143,8 @@ export interface User extends BaseEntity {
   phone?: string;
   avatarUrl?: string;
   active: boolean;
+  /** Salário base mensal (R$), usado na projeção de bônus. Visível só para o próprio usuário, gestor e admin. */
+  baseSalary?: number;
   /** Metas padrão do colaborador (usadas no Meu Desempenho até haver `goals`). */
   monthlyGoals?: Record<string, number>;
 }
@@ -992,6 +995,21 @@ export interface GamificationPoints extends BaseEntity {
   sourceType?: string;
   sourceId?: string;
   period: string;
+}
+
+export interface GamificationCampaign extends BaseEntity {
+  name: string;
+  description?: string;
+  startDate: string;
+  endDate: string;
+  departments: DepartmentKey[];
+  /** Métrica: chave do registro de KPIs ou contagem de eventos de um tipo. */
+  metric: { kind: "kpi"; kpiKey: string } | { kind: "evento"; eventType: EventType };
+  target: number;
+  prize?: string;
+  participantIds: string[];
+  status: "planejada" | "ativa" | "encerrada";
+  ownerId: string;
 }
 
 export interface Achievement extends BaseEntity {
