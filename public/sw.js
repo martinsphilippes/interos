@@ -1,5 +1,5 @@
 /* Service worker do INTEROS. Altere CACHE_VERSION para invalidar caches antigos. */
-const CACHE_VERSION = "interos-v1";
+const CACHE_VERSION = "interos-v2";
 const PRECACHE = [
   "/offline",
   "/icons/icon-192.png",

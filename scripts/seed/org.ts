@@ -54,7 +54,7 @@ const DEPARTMENTS: { key: DepartmentKey; name: string; manager: UserKey; color: 
   { key: "cs", name: "Customer Success", manager: "felipe", color: "#16A34A", description: "Ativação, saúde, renovação e expansão da base." },
   { key: "suporte", name: "Suporte", manager: "lando", color: "#DC2626", description: "Atendimento e resolução de chamados com SLA." },
   { key: "administrativo", name: "Administrativo", manager: "karem", color: "#6B7280", description: "Rotinas administrativas e RH." },
-  { key: "diretoria", name: "Diretoria", manager: "hercules", color: "#0B1F3A", description: "Direção executiva e cockpit." },
+  { key: "diretoria", name: "Diretoria", manager: "hercules", color: "#94A3BA", description: "Direção executiva e cockpit." },
 ];
 
 /** Presença inicial dos usuários operacionais (Online/Ausente/Ocupado da top bar). */
