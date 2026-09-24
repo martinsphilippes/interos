@@ -6,7 +6,7 @@ import { getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { COLLECTIONS, type Client, type SlaInstance, type SlaView, type Task, type User } from "@/domain/types";
 import type { DepartmentKey, RoleKey } from "@/domain/constants";
-import { parseProcessTaskId, type ProcessDefinition, type ProcessDefinitionStatus, type ProcessRun, type ProcessRunStatus } from "@/domain/workflow-graph";
+import { parseProcessTaskId, type ProcessDefinition, type ProcessTaskContext, type ProcessDefinitionStatus, type ProcessRun, type ProcessRunStatus } from "@/domain/workflow-graph";
 import { getDefinition, getRun, listDefinitions, listRuns } from "./store";
 
 export interface ProcessSummary {
@@ -182,18 +182,7 @@ export async function getRunsPageData(definitionId: string, runId?: string): Pro
   };
 }
 
-export interface ProcessTaskContext {
-  runId: string;
-  nodeId: string;
-  definitionName: string;
-  /** A conclusão pede Sim/Não (tarefa com resultado ou aprovação). */
-  needsOutcome: boolean;
-  isApproval: boolean;
-  /** Pergunta a exibir ("Cliente homologou?"). */
-  question?: string;
-  /** Rota da execução (admin). */
-  runHref: string;
-}
+export type { ProcessTaskContext };
 
 /**
  * Contexto de processo de uma tarefa (para o drawer de tarefas pedir Sim/Não e chamar completeProcessTask).

@@ -5,22 +5,8 @@
  */
 import type { KnowledgeArticle } from "@/domain/types";
 
-/**
- * Campos gravados além do tipo `KnowledgeArticle` (aditivos; ver "needs" do relatório):
- * - module: módulo do produto (ex.: "PDV", "Fiscal", "Financeiro");
- * - problem: descrição do problema/sintoma que o artigo resolve (o que o cliente relata);
- * - keywords: palavras-chave de busca (termos que o cliente ou o atendente digitam);
- * - helpful / notHelpful: contadores do "Este artigo foi útil?";
- * - sourceTicketId: chamado que originou o artigo.
- */
-export type KnowledgeArticleExtra = KnowledgeArticle & {
-  module?: string;
-  problem?: string;
-  keywords?: string[];
-  helpful?: number;
-  notHelpful?: number;
-  sourceTicketId?: string;
-};
+/** @deprecated Os campos module/problem/keywords/helpful/notHelpful/sourceTicketId estão em `KnowledgeArticle`. */
+export type KnowledgeArticleExtra = KnowledgeArticle;
 
 /** Texto normalizado (minúsculas, sem acentos) para comparação. */
 export function normalizeText(value: string | undefined | null): string {

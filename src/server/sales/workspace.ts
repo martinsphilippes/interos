@@ -84,9 +84,8 @@ export async function sendOrRegisterMessage(input: { opportunityId: string; chan
     delivery === "manual" ? { ...base, ...MANUAL } : { ...base, status: delivery, provider: whatsapp ? "meta" : "resend" },
   );
   const suffix = delivery === "manual" ? " (registro manual)" : delivery === "falha" ? " (falha no envio)" : "";
-  // Não há tipo "email.sent": o e-mail entra na timeline como nota (payload.channel = "email").
   const event = await emitEvent({
-    type: whatsapp ? "whatsapp.message.sent" : "note.added",
+    type: whatsapp ? "whatsapp.message.sent" : "email.sent",
     actor,
     clientId: opp.clientId,
     entity: { type: "opportunity", id: opp.id },
@@ -215,9 +214,8 @@ export async function transferOpportunity(input: { opportunityId: string; ownerI
   }
 
   const moved = [movedTasks.length > 0 ? `${movedTasks.length} tarefa(s)` : null, movedVisits.length > 0 ? `${movedVisits.length} visita(s)` : null].filter(Boolean).join(" e ");
-  // Não há tipo "opportunity.reassigned": a transferência entra na timeline como nota (payload.transfer).
   const event = await emitEvent({
-    type: "note.added",
+    type: "opportunity.reassigned",
     actor,
     clientId: opp.clientId,
     entity: { type: "opportunity", id: opp.id },

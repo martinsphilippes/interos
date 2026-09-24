@@ -102,6 +102,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Tarefas", href: "/tarefas", icon: "CheckSquare", wave: 1 },
       { label: "Workflow", href: "/workflow", icon: "GitBranch", wave: 1 },
       { label: "Clientes 360º", href: "/clientes", icon: "Building2", wave: 1 },
+      { label: "SLA", href: "/sla", icon: "Timer", wave: 5 },
     ],
   },
   {
@@ -168,9 +169,8 @@ export const NAVIGATION: NavSection[] = [
     key: "suporte",
     label: "Suporte",
     items: [
-      { label: "Central de Atendimento", href: "/suporte", icon: "Headset", wave: 3 },
+      { label: "Central de Suporte", href: "/suporte", icon: "Headset", wave: 3 },
       { label: "Chamados", href: "/suporte/chamados", icon: "Ticket", wave: 3 },
-      { label: "SLA", href: "/suporte/sla", icon: "Timer", wave: 3 },
       { label: "Base de Conhecimento", href: "/suporte/base-de-conhecimento", icon: "BookOpen", wave: 3 },
     ],
   },
@@ -205,6 +205,7 @@ export const NAVIGATION: NavSection[] = [
       { label: "Workflows", href: "/admin/workflows", icon: "Workflow", wave: 1 },
       { label: "Indicadores", href: "/admin/indicadores", icon: "Activity", wave: 4 },
       { label: "Automações", href: "/admin/automacoes", icon: "Zap", wave: 5 },
+      { label: "Integrações", href: "/admin/integracoes", icon: "Plug", wave: 5 },
     ],
   },
 ];
@@ -484,6 +485,13 @@ export const EVENT_TYPES = [
   "user.deleted",
   "department.updated",
   "product.updated",
+  // consolidação das telas conceituais
+  "support.ticket.transferred",
+  "knowledge.article.created",
+  "knowledge.article.voted",
+  "opportunity.reassigned",
+  "email.sent",
+  "settings.updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

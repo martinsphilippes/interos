@@ -6,6 +6,7 @@
  */
 import { PRIORITIES, PRIORITY_WEIGHT, DEPARTMENT_KEYS, TASK_STATUS, type DepartmentKey, type Priority, type TaskStatus } from "@/domain/constants";
 import type { Comment, SlaView, Task, TaskProcessType } from "@/domain/types";
+import { parseProcessTaskId, type ProcessTaskContext } from "@/domain/workflow-graph";
 
 // ---------------------------------------------------------------------------
 // Views
@@ -76,6 +77,8 @@ export interface TaskDetail {
   events: TaskEventView[];
   creatorName?: string;
   processHref?: string;
+  /** Tarefa que é etapa pendente de um processo do construtor visual (conclusão pelo motor de processos). */
+  processContext?: ProcessTaskContext;
 }
 
 export interface AssignableUser {
@@ -266,10 +269,19 @@ export function clientHref(clientId: string): string {
   return `/clientes/${clientId}`;
 }
 
-/** Link "Abrir processo" de uma tarefa vinculada a workflow, projeto, chamado, oportunidade ou lead. */
-export function processHrefFor(task: Pick<Task, "processType" | "processId" | "clientId">): string | undefined {
+/**
+ * Link "Abrir processo" de uma tarefa vinculada a workflow, projeto, chamado, oportunidade ou lead.
+ * Tarefas do construtor de processos têm processId "<runId>#<nodeId>": a tela de execuções é do admin
+ * (`canOpenRuns`); os demais vão ao Cliente 360º.
+ */
+export function processHrefFor(task: Pick<Task, "processType" | "processId" | "clientId">, opts: { canOpenRuns?: boolean } = {}): string | undefined {
   if (!task.processType || !task.processId) return undefined;
-  if (task.processType === "workflow") return `/workflow?etapa=${task.processId}`;
+  if (task.processType === "workflow") {
+    const run = parseProcessTaskId(task.processId);
+    if (!run) return `/workflow?etapa=${task.processId}`;
+    if (opts.canOpenRuns) return `/admin/workflows/execucoes/${run.runId}`;
+    return task.clientId ? clientHref(task.clientId) : undefined;
+  }
   // Os demais módulos ainda não têm rota própria: cai no Cliente 360º por enquanto.
   return task.clientId ? clientHref(task.clientId) : undefined;
 }

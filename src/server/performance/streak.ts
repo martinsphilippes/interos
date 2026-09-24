@@ -16,23 +16,9 @@ import { getHolidays } from "@/server/sla";
 import { COLLECTIONS, type GamificationPoints, type Settings, type Task } from "@/domain/types";
 import { localDayKey } from "@/server/kpis/period";
 
-export const STREAK_SETTING = "gamificacao.sequencia";
-export const STREAK_CRITERIA = ["pontos_sem_atraso", "pontos", "sem_atraso"] as const;
-export type StreakCriterion = (typeof STREAK_CRITERIA)[number];
+import { DEFAULT_STREAK, STREAK_CRITERIA, STREAK_RULE_TEXT, STREAK_SETTING, type StreakCriterion, type StreakSettings } from "./streak-rules";
 
-export interface StreakSettings {
-  criterio: StreakCriterion;
-  /** Limite de dias úteis olhados para trás (o cálculo para no primeiro dia que falha). */
-  maxDias: number;
-}
-
-export const DEFAULT_STREAK: StreakSettings = { criterio: "pontos_sem_atraso", maxDias: 120 };
-
-export const STREAK_RULE_TEXT: Record<StreakCriterion, string> = {
-  pontos_sem_atraso: "Dias úteis seguidos em que você ganhou pontos e não entregou nenhuma tarefa fora do prazo.",
-  pontos: "Dias úteis seguidos em que você ganhou pontos.",
-  sem_atraso: "Dias úteis seguidos em que você concluiu tarefas e nenhuma fora do prazo.",
-};
+export { DEFAULT_STREAK, STREAK_CRITERIA, STREAK_RULE_TEXT, STREAK_SETTING, type StreakCriterion, type StreakSettings };
 
 export async function getStreakSettings(): Promise<StreakSettings> {
   const docs = await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", STREAK_SETTING]] });

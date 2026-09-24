@@ -3,6 +3,8 @@ import { Suspense } from "react";
 import { PRODUCT_CATEGORIES } from "@/domain/constants";
 import { requireRole } from "@/server/auth/session";
 import { listLeadSourceKeys, loadSettingsForAdmin } from "@/server/admin/queries";
+import { getOperationHealthConfig, getPerformanceIndexConfig } from "@/server/kpis/operation-health";
+import { listFormulas } from "@/server/kpis/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -22,19 +24,22 @@ export default async function ConfiguracoesPage({ searchParams }: { searchParams
   await requireRole("admin");
   const sp = await searchParams;
   const tab = parseSettingsTab(first(sp.aba));
-  const [settings, originKeys] = await Promise.all([loadSettingsForAdmin(), listLeadSourceKeys()]);
+  const [settings, originKeys, operationHealth, performanceIndex] = await Promise.all([loadSettingsForAdmin(), listLeadSourceKeys(), getOperationHealthConfig(), getPerformanceIndexConfig()]);
+  const kpiOptions = listFormulas()
+    .map((f) => ({ key: f.key, name: f.label }))
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   const missing = settings.stored.length < 6 ? 6 - settings.stored.length : 0;
 
   return (
     <PageContainer>
       <PageHeader
         title="Configurações"
-        description="Parâmetros que os módulos leem em tempo real: SLA, metas, pontuação de leads, saúde do cliente e funil."
+        description="Parâmetros que os módulos leem em tempo real: SLA, metas, pontuação de leads, saúde do cliente, funil, gamificação e índices de gestão."
         breadcrumbs={[{ label: "Administração", href: "/admin" }, { label: "Configurações" }]}
         badge={missing > 0 ? <Badge variant="warning">{missing} com valor padrão</Badge> : <Badge variant="success">Tudo gravado</Badge>}
       />
       <Suspense fallback={null}>
-        <SettingsTabs key={tab} tab={tab} values={settings.values} stored={settings.stored} slaRules={settings.slaRules} originKeys={originKeys} interestKeys={[...PRODUCT_CATEGORIES]} />
+        <SettingsTabs key={tab} tab={tab} values={settings.values} stored={settings.stored} slaRules={settings.slaRules} originKeys={originKeys} interestKeys={[...PRODUCT_CATEGORIES]} operationHealth={operationHealth} performanceIndex={performanceIndex} kpiOptions={kpiOptions} />
       </Suspense>
     </PageContainer>
   );

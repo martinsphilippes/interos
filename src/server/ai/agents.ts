@@ -143,7 +143,7 @@ export function executiveRules(d: ExecutiveData): AgentSuggestion[] {
     const mrr = d.riskClients.reduce((s, c) => s + c.mrr, 0);
     out.push(suggestion("risco", `${plural(d.riskClients.length, "cliente em risco", "clientes em risco")} (${formatCurrency(mrr)} de MRR): revisar os planos com o CS`, "alta", { detail: names(d.riskClients.map((c) => ({ name: c.tradeName }))), href: "/cs/riscos" }));
   }
-  if (d.breachedSlas > 0) out.push(suggestion("slas", `${plural(d.breachedSlas, "SLA violado", "SLAs violados")} no período: cobrar os gestores das áreas`, "alta", { href: "/suporte/sla" }));
+  if (d.breachedSlas > 0) out.push(suggestion("slas", `${plural(d.breachedSlas, "SLA violado", "SLAs violados")} no período: cobrar os gestores das áreas`, "alta", { href: "/sla?tipo=chamado" }));
   for (const k of d.kpisCritical.slice(0, 3)) out.push(suggestion(`kpi-${k.kpiKey}`, `Indicador "${k.name}" em nível crítico (${k.value.toLocaleString("pt-BR")}${k.target !== undefined ? ` · meta ${k.target.toLocaleString("pt-BR")}` : ""})`, "alta", { href: "/gestao/cockpit" }));
   if (d.overdueTasks > 10) out.push(suggestion("tarefas", `${d.overdueTasks} tarefas atrasadas na operação: verificar gargalos por área`, "media", { href: "/tarefas?view=atrasadas" }));
   if (d.stalledOpportunities > 0) out.push(suggestion("pipeline", `${plural(d.stalledOpportunities, "oportunidade parada", "oportunidades paradas")} há mais de 7 dias no pipeline`, "media", { detail: `Pipeline aberto: ${formatCurrency(d.openPipelineMonthly)}/mês`, href: "/vendas/pipeline" }));

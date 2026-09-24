@@ -20,6 +20,7 @@
  * - KPIs: eventos que mudam números invalidam o cache do motor de indicadores, emitem `kpi.updated` (1x/min) e
  *   verificam as metas pessoais (`goal.achieved`).
  * - Gamificação: credita pontos (idempotente por gp_<eventId>_<userId>) e avalia medalhas.
+ * - Processos (construtor visual): handler "*" que inicia/avança execuções de process_definitions publicadas.
  * - Automações: handler "*" registrado por ÚLTIMO, para que as regras vejam o estado já atualizado pelos módulos.
  */
 import { registerHandler } from "../emit";
@@ -34,6 +35,7 @@ import { registerCsHandlers } from "./cs";
 import { registerSupportHandlers } from "./support";
 import { registerKpiHandlers } from "./kpis";
 import { registerGamificationHandlers } from "./gamification";
+import { registerProcessEngineHandlers } from "./process-engine";
 import { registerAutomationHandlers } from "./automations";
 
 let registered = false;
@@ -52,5 +54,6 @@ export function ensureHandlersRegistered(): void {
   registerSupportHandlers(registerHandler);
   registerKpiHandlers(registerHandler);
   registerGamificationHandlers(registerHandler);
+  registerProcessEngineHandlers(registerHandler);
   registerAutomationHandlers(registerHandler);
 }

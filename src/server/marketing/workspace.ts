@@ -8,7 +8,6 @@ import "server-only";
 import { list } from "@/server/db";
 import { canAccessModule } from "@/server/auth/session";
 import { COLLECTIONS, type AutomationRule, type Campaign, type Communication, type CurrentUser, type DomainEvent, type LeadSource, type Product, type Prospect, type ProspectList, type User } from "@/domain/types";
-import type { ProspectListExtended } from "@/domain/marketing-extra";
 import { dateKey, formatDateKey } from "@/lib/format";
 import { inPeriod, leadsHref, periodRange, type PeriodKey, type UserOption } from "@/components/marketing/marketing-model";
 import type { CaptureAutomation, InboxLead, LastInteraction, MarketingWorkspace, ProspectHighlight, SourcePerformance } from "@/components/marketing/workspace-model";
@@ -169,7 +168,7 @@ export async function getMarketingWorkspace(user: CurrentUser, period: PeriodKey
   // -------------------------------------------------------------------------
   // Prospecção ativa em destaque: a lista ativa com mais contatos.
   // -------------------------------------------------------------------------
-  const active = (lists as ProspectListExtended[]).filter((l) => l.status === "ativa");
+  const active = lists.filter((l) => l.status === "ativa");
   const byList = new Map<string, Prospect[]>();
   for (const p of prospects) byList.set(p.listId, [...(byList.get(p.listId) ?? []), p]);
   const main = [...active].sort((a, b) => (byList.get(b.id)?.length ?? 0) - (byList.get(a.id)?.length ?? 0))[0];

@@ -25,11 +25,12 @@ import {
   type SlaView,
   type SupportTicket,
   type User,
+  type KnowledgeArticle,
 } from "@/domain/types";
 import type { SlaState } from "@/domain/constants";
 import { csatPath, getSupportTeam, isOpenTicket, type SlaInstanceExtra, type SupportTicketExtra, type TicketInteractionExtra } from "./service";
 import { TICKET_PRIORITIES, canOperateSupport, type TicketPriority } from "./schemas";
-import { normalizeText, plainText, rankArticles, type KnowledgeArticleExtra } from "./knowledge-search";
+import { normalizeText, plainText, rankArticles } from "./knowledge-search";
 
 // ---------------------------------------------------------------------------
 // Tipos compartilhados com os componentes
@@ -293,7 +294,7 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketRo
 }
 
 // ---------------------------------------------------------------------------
-// Central de Atendimento
+// Central de Suporte
 // ---------------------------------------------------------------------------
 
 export type OverviewScope = "minha" | "equipe";
@@ -451,7 +452,7 @@ export async function getTicket(id: string, user?: CurrentUser): Promise<TicketD
     list<CsatResponse>(COLLECTIONS.csatResponses, { where: [["ticketId", "==", ticket.id]] }),
     list<Product>(COLLECTIONS.products),
     getSupportTeam(),
-    list<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles),
+    list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles),
   ]);
   const opportunity = ticket.originatedOpportunityId ? await getById<Opportunity>(COLLECTIONS.opportunities, ticket.originatedOpportunityId) : null;
 
@@ -797,9 +798,9 @@ export interface ArticleSuggestion {
 /** Texto normalizado (minúsculas, sem acentos) para busca. */
 export const normalize = normalizeText;
 
-type RankableArticle = KnowledgeArticleExtra & { productName?: string };
+type RankableArticle = KnowledgeArticle & { productName?: string };
 
-function rankable(articles: KnowledgeArticleExtra[], products: Map<string, Product>): RankableArticle[] {
+function rankable(articles: KnowledgeArticle[], products: Map<string, Product>): RankableArticle[] {
   return articles.map((a) => ({ ...a, productName: a.productId ? products.get(a.productId)?.name : undefined }));
 }
 
@@ -807,7 +808,7 @@ function rankable(articles: KnowledgeArticleExtra[], products: Map<string, Produ
  * Sugestões para um texto livre (assunto do chamado, problema de um artigo): busca ponderada em qualquer termo
  * (título e problema pesam mais, depois palavras-chave, tags, módulo/categoria e corpo); mesmo produto soma 3.
  */
-export function suggestArticles(articles: KnowledgeArticleExtra[], text: string, productId: string | undefined, products: Map<string, Product>, limit = 3): ArticleSuggestion[] {
+export function suggestArticles(articles: KnowledgeArticle[], text: string, productId: string | undefined, products: Map<string, Product>, limit = 3): ArticleSuggestion[] {
   const ranked = rankArticles(
     rankable(
       articles.filter((a) => a.published),
@@ -835,7 +836,7 @@ export interface ArticleListData {
 }
 
 export async function listArticles(options: { includeDrafts?: boolean } = {}): Promise<ArticleListData> {
-  const [articles, products] = await Promise.all([list<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles), list<Product>(COLLECTIONS.products)]);
+  const [articles, products] = await Promise.all([list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles), list<Product>(COLLECTIONS.products)]);
   const visible = options.includeDrafts ? articles : articles.filter((a) => a.published);
   const authors = await getManyByIds<User>(COLLECTIONS.users, visible.map((a) => a.authorId));
   const productNames = new Map(products.map((p) => [p.id, p.name]));
@@ -872,7 +873,7 @@ export async function listArticles(options: { includeDrafts?: boolean } = {}): P
 }
 
 export interface ArticleDetail {
-  article: KnowledgeArticleExtra;
+  article: KnowledgeArticle;
   productName?: string;
   author?: SupportUser;
   related: ArticleSuggestion[];
@@ -880,12 +881,12 @@ export interface ArticleDetail {
 }
 
 export async function getArticle(id: string): Promise<ArticleDetail | null> {
-  const article = await getById<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, id);
+  const article = await getById<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, id);
   if (!article) return null;
   const [author, products, articles, source] = await Promise.all([
     getById<User>(COLLECTIONS.users, article.authorId),
     list<Product>(COLLECTIONS.products),
-    list<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles),
+    list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles),
     article.sourceTicketId ? getById<SupportTicket>(COLLECTIONS.supportTickets, article.sourceTicketId) : null,
   ]);
   const productMap = new Map(products.map((p) => [p.id, p]));

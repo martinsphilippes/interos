@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import { DEFAULT_GAMIFICATION, DEFAULT_SALES_PRIZES } from "@/server/performance/schemas";
+import { DEFAULT_STREAK, STREAK_CRITERIA } from "@/server/performance/streak-rules";
 import { DEPARTMENT_KEYS, PRODUCT_CATEGORIES, ROLE_KEYS } from "@/domain/constants";
 
 export function zodMessage(error: z.ZodError): string {
@@ -143,7 +144,7 @@ export const setProductActiveSchema = z.object({ id: idSchema, active: z.boolean
 // Configurações do sistema (coleção settings, um documento por key)
 // ---------------------------------------------------------------------------
 
-export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas"] as const;
+export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const fraction = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(1, `${label} deve ser uma fração entre 0 e 1`);
@@ -252,6 +253,13 @@ export const premiosVendasSchema = z.object({
 });
 export type PremiosVendasConfig = z.infer<typeof premiosVendasSchema>;
 
+/** Regra da sequência em dias (lida por src/server/performance/streak.ts → getStreakSettings). */
+export const sequenciaSchema = z.object({
+  criterio: z.enum(STREAK_CRITERIA, { message: "Critério da sequência inválido" }),
+  maxDias: z.number("Janela inválida").int("Use dias inteiros").min(5, "Mínimo 5 dias úteis").max(365, "Máximo 365 dias úteis"),
+});
+export type SequenciaConfig = z.infer<typeof sequenciaSchema>;
+
 export const SETTING_SCHEMAS = {
   horario_comercial: horarioComercialSchema,
   feriados: feriadosSchema,
@@ -264,6 +272,7 @@ export const SETTING_SCHEMAS = {
   cs_ativacao: csAtivacaoSchema,
   gamificacao: gamificacaoSchema,
   premios_vendas: premiosVendasSchema,
+  "gamificacao.sequencia": sequenciaSchema,
 } as const;
 
 export interface SettingValues {
@@ -278,6 +287,7 @@ export interface SettingValues {
   cs_ativacao: CsAtivacaoConfig;
   gamificacao: GamificacaoConfig;
   premios_vendas: PremiosVendasConfig;
+  "gamificacao.sequencia": SequenciaConfig;
 }
 
 /** Valores usados quando o documento ainda não existe no banco (iguais ao seed). */
@@ -293,6 +303,7 @@ export const SETTING_DEFAULTS: SettingValues = {
   cs_ativacao: { adocaoMinimaPct: 30, exigePlano: true },
   gamificacao: { pontos: { ...DEFAULT_GAMIFICATION.pontos }, multiplicadores: { ...DEFAULT_GAMIFICATION.multiplicadores }, niveis: DEFAULT_GAMIFICATION.niveis.map((n) => ({ ...n })) },
   premios_vendas: { ...DEFAULT_SALES_PRIZES },
+  "gamificacao.sequencia": { ...DEFAULT_STREAK },
 };
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
@@ -307,6 +318,7 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   cs_ativacao: "Critérios do gate de ativação do cliente pelo Customer Success.",
   gamificacao: "Pontos por evento, multiplicadores de equivalência entre funções e níveis da gamificação.",
   premios_vendas: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.",
+  "gamificacao.sequencia": "Regra da sequência em dias da gamificação (critério e janela máxima em dias úteis).",
 };
 
 export const upsertSettingSchema = z.object({

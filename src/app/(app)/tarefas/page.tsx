@@ -39,7 +39,7 @@ export default async function TarefasPage({ searchParams }: { searchParams: Sear
     countTaskSummary(user),
     listAssignableUsers(),
     listClientsForSelect(),
-    taskId ? getTaskDetail(taskId) : Promise.resolve(null),
+    taskId ? getTaskDetail(taskId, user) : Promise.resolve(null),
   ]);
 
   const canDelete = detail ? user.isManager || detail.task.creatorId === user.id : false;

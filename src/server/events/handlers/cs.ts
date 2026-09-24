@@ -16,6 +16,7 @@ import type { DomainEvent } from "@/domain/types";
  * - renewal.due                  → tarefa antecipada de renovação para o CS e notificação.
  * - call.completed,
  *   whatsapp.message.sent,
+ *   email.sent,
  *   visit.completed              → atualiza a última interação da conta de CS.
  *
  * O serviço é importado dinamicamente para evitar ciclo de módulos (src/server/cs/service.ts registra
@@ -81,5 +82,6 @@ export function registerCsHandlers(registerHandler: typeof RegisterFn): void {
   };
   registerHandler("call.completed", touch);
   registerHandler("whatsapp.message.sent", touch);
+  registerHandler("email.sent", touch);
   registerHandler("visit.completed", touch);
 }

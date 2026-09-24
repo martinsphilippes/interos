@@ -478,6 +478,8 @@ export async function setProductActive(input: unknown): Promise<ActionResult<{ a
 function revalidateSettings() {
   revalidatePath("/admin");
   revalidatePath("/admin/configuracoes");
+  // Gamificação, prêmios e sequência aparecem em Meu Desempenho, Ranking e Bônus.
+  revalidatePath("/performance", "layout");
 }
 
 /** Cria ou atualiza o documento `settings` da chave, validando o valor com o esquema da chave. */
@@ -492,7 +494,7 @@ export async function upsertSetting(input: unknown): Promise<ActionResult<{ key:
       // `create` sem merge substitui o valor inteiro (chaves removidas pelo usuário somem de fato).
       await replaceDoc<Settings>(COLLECTIONS.settings, existing[0], { value, description: existing[0].description ?? SETTING_DESCRIPTIONS[key] });
     } else {
-      await create<Settings>(COLLECTIONS.settings, { key, value, description: SETTING_DESCRIPTIONS[key], createdBy: user.id }, `setting_${key}`);
+      await create<Settings>(COLLECTIONS.settings, { key, value, description: SETTING_DESCRIPTIONS[key], createdBy: user.id }, `setting_${key.replace(/\./g, "_")}`);
     }
 
     revalidateSettings();

@@ -132,14 +132,6 @@ const adapter: SupportChannelAdapter = {
   },
 };
 
-/**
- * @deprecated Não há gravação sem provedor VoIP. Mantido apenas pela assinatura pública; não use para
- * exibir links de gravação (a URL não existe).
- */
-export function mockRecordingUrl(key: string): string {
-  return `https://mock.intercert.com.br/gravacoes/${encodeURIComponent(key)}.mp3`;
-}
-
 export function getSupportChannels(): SupportChannelAdapter {
   return adapter;
 }

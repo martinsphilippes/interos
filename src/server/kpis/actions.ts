@@ -266,7 +266,7 @@ async function saveIndexSetting(key: string, value: Record<string, unknown>, des
     await create<Settings>(COLLECTIONS.settings, { key, value, description, createdBy: user.id }, `setting_${key}`);
   }
   await emitEvent({
-    type: "kpi.updated",
+    type: "settings.updated",
     actor: actor(user),
     entity: { type: "setting", id: key },
     title,

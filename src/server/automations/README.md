@@ -35,7 +35,7 @@ Formas de execução:
    basta trocar o schedule (ex.: `0 * * * *`) para cumprir as frequências horárias.
 2. **Botão "Executar varreduras agora"** em `/admin/automacoes` (força todas ou uma a uma).
 3. **De forma preguiçosa ao abrir as telas**, como os módulos já fazem: Central de Vendas (follow-up, 1x/h),
-   `/cs/saude` e `/cs/renovacoes` (1x/dia), Central de Atendimento (SLA de chamados, a cada 10 min). As
+   `/cs/saude` e `/cs/renovacoes` (1x/dia), Central de Suporte (SLA de chamados, a cada 10 min). As
    varreduras daqui gravam também esses campos de controle, então nada roda em dobro.
 
 Sem `CRON_SECRET`, a rota só aceita chamadas locais fora de produção (`curl localhost:3000/api/cron/sweep?force=1`).

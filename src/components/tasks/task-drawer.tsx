@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink, History, MessageSquare, Plus, RotateCcw, Trash2, X, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, GitBranch, History, MessageSquare, Plus, RotateCcw, ThumbsDown, ThumbsUp, Trash2, X, XCircle } from "lucide-react";
 import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, PRIORITIES, PRIORITY_LABELS, TASK_STATUS, TASK_STATUS_LABELS, type Priority, type TaskStatus, type DepartmentKey } from "@/domain/constants";
 import type { ActionResult } from "@/domain/types";
 import { Avatar } from "@/components/ui/avatar";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DateInput, dateValueToIso, isoToDateTimeLocal } from "@/components/ui/date-input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerBody, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,6 +36,7 @@ import {
   toggleChecklistItem,
   updateTask,
 } from "@/server/tasks/actions";
+import { completeProcessTask } from "@/server/process-engine/actions";
 import { ClientCombobox } from "./client-combobox";
 import { ChecklistIndicator, DueLabel, RecurrenceHint, TaskStatusBadge } from "./task-bits";
 import { ORIGIN_LABELS, PROCESS_TYPE_LABELS, clientHref, type AssignableUser, type ClientOption, type TaskDetail } from "./task-model";
@@ -75,6 +77,8 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
   const [newItem, setNewItem] = React.useState("");
   const [comment, setComment] = React.useState("");
   const [confirm, setConfirm] = React.useState<"cancel" | "delete" | null>(null);
+  const [askOutcome, setAskOutcome] = React.useState(false);
+  const processContext = detail.processContext;
 
   // Quando o servidor devolve a tarefa atualizada, os rascunhos locais são realinhados.
   if (task.updatedAt !== prevUpdatedAt) {
@@ -160,6 +164,11 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
           ) : null}
           <DueLabel task={task} />
           <ChecklistIndicator done={task.checklistDone} total={task.checklistTotal} />
+          {processContext ? (
+            <Badge variant="info" size="sm">
+              <GitBranch className="size-3" /> Processo: {processContext.definitionName}
+            </Badge>
+          ) : null}
           {detail.processHref && task.processType ? (
             <Link href={detail.processHref} className="inline-flex items-center gap-1 text-brand hover:underline">
               <ExternalLink className="size-3.5" /> Abrir processo ({PROCESS_TYPE_LABELS[task.processType]})
@@ -364,7 +373,15 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
           ) : null}
         </div>
         {isOpen ? (
-          <Button loading={pending} onClick={() => run(() => completeTask({ id: task.id }), "Tarefa concluída")}>
+          <Button
+            loading={pending}
+            onClick={() => {
+              // Etapa de processo: a conclusão passa pelo motor de processos (valida obrigatórios e segue o fluxo).
+              if (processContext?.needsOutcome) setAskOutcome(true);
+              else if (processContext) run(() => completeProcessTask(task.id), "Etapa do processo concluída");
+              else run(() => completeTask({ id: task.id }), "Tarefa concluída");
+            }}
+          >
             <CheckCircle2 /> Concluir
           </Button>
         ) : (
@@ -373,6 +390,35 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
           </Button>
         )}
       </DrawerFooter>
+
+      {processContext?.needsOutcome ? (
+        <Dialog open={askOutcome} onOpenChange={setAskOutcome}>
+          <DialogContent size="sm">
+            <DialogHeader>
+              <DialogTitle>{processContext.question ?? (processContext.isApproval ? "Aprovar esta etapa?" : "Qual o resultado desta etapa?")}</DialogTitle>
+              <DialogDescription>
+                Processo {processContext.definitionName}. A resposta define o próximo passo do fluxo.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={pending}
+                onClick={() => run(() => completeProcessTask(task.id, "nao"), processContext.isApproval ? "Etapa reprovada" : "Resposta registrada: Não", () => setAskOutcome(false))}
+              >
+                <ThumbsDown /> {processContext.isApproval ? "Reprovar" : "Não"}
+              </Button>
+              <Button
+                variant="success"
+                loading={pending}
+                onClick={() => run(() => completeProcessTask(task.id, "sim"), processContext.isApproval ? "Etapa aprovada" : "Resposta registrada: Sim", () => setAskOutcome(false))}
+              >
+                <ThumbsUp /> {processContext.isApproval ? "Aprovar" : "Sim"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       <ConfirmDialog
         open={confirm === "cancel"}

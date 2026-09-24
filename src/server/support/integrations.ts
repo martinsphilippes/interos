@@ -1,16 +1,14 @@
 import "server-only";
 /**
- * Estado real das integrações de comunicação usadas pelo Suporte.
+ * Estado real das integrações de comunicação usadas pelo Suporte, lido do registro central
+ * (src/server/integrations/status.ts: credencial no servidor + adaptador implementado).
  *
- * Nenhum provedor (WhatsApp Business API, VoIP/PABX com gravação, e-mail transacional) está conectado hoje:
- * todas as respostas e ligações são REGISTROS MANUAIS do que o atendente fez fora do sistema (wa.me, discador,
- * cliente de e-mail). Quando um adapter real for ligado em `channels.ts`, este módulo passa a devolver `true`
- * para o canal e o serviço envia de fato (ver `replyToTicket`, `registerCall` e `resolveTicket`).
- *
- * INTEGRAÇÃO: o estado central fica em `src/server/integrations/status.ts` (`isConnected(key)`), mas o adapter do
- * Suporte (`channels.ts`) ainda é só o mock. Credencial presente sem adapter real NÃO pode virar "conectado"
- * aqui; quando `channels.ts` enviar de verdade, troque os `false` por `isConnected("whatsapp" | "voip" | "email")`.
+ * Com o canal conectado, o adapter do Suporte (`channels.ts`) envia de fato pelos provedores de
+ * src/server/integrations/providers.ts (Meta Cloud API, Resend). Sem integração (situação padrão), respostas e
+ * ligações são REGISTROS MANUAIS do que o atendente fez fora do sistema (wa.me, discador, cliente de e-mail).
+ * VoIP não tem adaptador implementado: `voip` só fica true quando houver um.
  */
+import { getCommunicationChannelStatus } from "@/server/integrations/status";
 
 export interface SupportChannelStatus {
   whatsapp: boolean;
@@ -19,5 +17,6 @@ export interface SupportChannelStatus {
 }
 
 export async function getSupportChannelStatus(): Promise<SupportChannelStatus> {
-  return { whatsapp: false, voip: false, email: false };
+  const { whatsapp, voip, email } = getCommunicationChannelStatus();
+  return { whatsapp, voip, email };
 }

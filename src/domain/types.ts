@@ -80,6 +80,10 @@ export const COLLECTIONS = {
   visits: "visits",
   communications: "communications",
   settings: "settings",
+  /** Definições do construtor visual de processos (grafo de blocos). Ver `src/domain/workflow-graph.ts`. */
+  processDefinitions: "process_definitions",
+  /** Execuções das definições de processo (uma por gatilho disparado). */
+  processRuns: "process_runs",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -266,7 +270,20 @@ export type LeadStatus = "novo" | "em_contato" | "qualificado" | "desqualificado
 export interface LeadSource extends BaseEntity {
   key: string;
   name: string;
-  channel: "instagram" | "tiktok" | "site" | "whatsapp" | "telegram" | "anuncio" | "indicacao" | "contador" | "evento" | "lista" | "manual";
+  channel:
+    | "instagram"
+    | "tiktok"
+    | "site"
+    | "whatsapp"
+    | "telegram"
+    | "anuncio"
+    | "google_ads"
+    | "indicacao"
+    | "parceiro"
+    | "contador"
+    | "evento"
+    | "lista"
+    | "manual";
   active: boolean;
 }
 
@@ -317,6 +334,13 @@ export interface ProspectList extends BaseEntity {
   campaignId?: string;
   status: "ativa" | "pausada" | "encerrada";
   totals: { contacts: number; attempts: number; responses: number; opportunities: number };
+  /** Objetivo da ação (ex.: "Gerar reuniões qualificadas para apresentação de soluções"). */
+  objective?: string;
+  /** Período da ação (AAAA-MM-DD). */
+  startDate?: string;
+  endDate?: string;
+  /** A lista respeita opt-out: contatos que pediram para não ser abordados ficam de fora. */
+  optOut?: boolean;
 }
 
 export interface Prospect extends BaseEntity {
@@ -395,6 +419,8 @@ export interface Visit extends BaseEntity {
   notes?: string;
   result?: string;
   status: "agendada" | "realizada" | "cancelada" | "remarcada";
+  /** Visita comercial (vendas) ou técnica (instalação, suporte presencial). Sem valor = comercial. */
+  kind?: "comercial" | "tecnica";
 }
 
 export type ProposalStatus = "rascunho" | "enviada" | "visualizada" | "negociacao" | "aceita" | "recusada" | "vencida";
@@ -444,6 +470,23 @@ export type ContractStatus =
   | "liberado"
   | "cancelado";
 
+/** Signatário do contrato, com a evidência quando a assinatura é registrada manualmente. */
+export interface ContractSignerEntry {
+  name: string;
+  email: string;
+  role: string;
+  signedAt?: string;
+  status: "pendente" | "assinado" | "recusado";
+  /** "manual": registrada pelo Financeiro com evidência; "provedor": confirmada pelo provedor de assinatura. */
+  method?: "manual" | "provedor";
+  /** Descrição da evidência (papel digitalizado, e-mail de aceite etc.). */
+  evidence?: string;
+  /** Link do documento assinado. */
+  evidenceUrl?: string;
+  registeredBy?: string;
+  registeredAt?: string;
+}
+
 export interface Contract extends BaseEntity {
   clientId: string;
   opportunityId?: string;
@@ -461,7 +504,7 @@ export interface Contract extends BaseEntity {
   termMonths: number;
   startDate?: string;
   endDate?: string;
-  signers: { name: string; email: string; role: string; signedAt?: string; status: "pendente" | "assinado" | "recusado" }[];
+  signers: ContractSignerEntry[];
   signatureProvider?: string;
   signatureEnvelopeId?: string;
   signedAt?: string;
@@ -697,6 +740,8 @@ export interface TicketInteraction extends BaseEntity {
   durationSeconds?: number;
   recordingUrl?: string;
   channel?: "whatsapp" | "email" | "portal";
+  /** Contato feito fora do sistema (canal não conectado) e registrado à mão pelo atendente. */
+  manual?: boolean;
 }
 
 export interface CsatResponse extends BaseEntity {
@@ -718,6 +763,17 @@ export interface KnowledgeArticle extends BaseEntity {
   authorId: string;
   views: number;
   published: boolean;
+  /** Módulo do produto (ex.: "PDV", "Fiscal", "Financeiro"). */
+  module?: string;
+  /** Problema/sintoma que o artigo resolve, como o cliente relata. */
+  problem?: string;
+  /** Palavras-chave de busca (termos que o cliente ou o atendente digitam). */
+  keywords?: string[];
+  /** Contadores do "Este artigo foi útil?". */
+  helpful?: number;
+  notHelpful?: number;
+  /** Chamado que originou o artigo. */
+  sourceTicketId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,11 +1234,16 @@ export interface Communication extends BaseEntity {
   entityId?: string;
   body?: string;
   templateKey?: string;
-  status: "enviada" | "entregue" | "lida" | "falha" | "simulada" | "recebida";
+  /**
+   * "manual": contato feito fora do sistema (canal não conectado) e registrado à mão.
+   * "simulada": legado de registros antigos; não é mais gravado.
+   */
+  status: "enviada" | "entregue" | "lida" | "falha" | "simulada" | "recebida" | "manual";
   durationSeconds?: number;
   recordingUrl?: string;
   externalId?: string;
-  provider: "mock" | "meta" | "twilio" | "outro";
+  /** "manual" = sem provedor (registro manual); "resend" = e-mail transacional; "mock" = legado. */
+  provider: "mock" | "meta" | "twilio" | "outro" | "manual" | "resend";
 }
 
 export interface Settings extends BaseEntity {

@@ -309,9 +309,9 @@ export async function saveArticleAction(input: unknown): Promise<ActionResult<{ 
 /** "Este artigo foi útil?" — qualquer usuário com acesso ao suporte pode votar. */
 export async function voteArticleAction(input: unknown): Promise<ActionResult> {
   try {
-    await requireUser();
+    const user = await requireUser();
     const data = articleVoteSchema.parse(input);
-    await voteArticle(data.articleId, data.helpful);
+    await voteArticle(data.articleId, data.helpful, actor(user));
     revalidatePath(`/suporte/base-de-conhecimento/${data.articleId}`);
     return { ok: true, data: undefined };
   } catch (error) {

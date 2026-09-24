@@ -4,7 +4,6 @@
  */
 import type { Campaign, Communication, Lead, LeadStatus, LeadTemperature, Prospect, ProspectList } from "@/domain/types";
 import type { DepartmentKey } from "@/domain/constants";
-import type { ProspectListExtended } from "@/domain/marketing-extra";
 import { dateKey } from "@/lib/format";
 import type { LeadScoreResult, MqlGateResult } from "@/server/marketing/scoring";
 
@@ -30,7 +29,8 @@ export const TEMPERATURE_COLORS: Record<LeadTemperature, string> = { quente: "va
 
 export const CAMPAIGN_STATUS_LABELS: Record<Campaign["status"], string> = { planejada: "Planejada", ativa: "Ativa", pausada: "Pausada", encerrada: "Encerrada" };
 export const CAMPAIGN_CHANNELS: { value: string; label: string }[] = [
-  { value: "anuncio", label: "Anúncios (Meta/Google)" },
+  { value: "anuncio", label: "Anúncios (Meta)" },
+  { value: "google_ads", label: "Google Ads" },
   { value: "instagram", label: "Instagram" },
   { value: "tiktok", label: "TikTok" },
   { value: "site", label: "Site" },
@@ -38,6 +38,7 @@ export const CAMPAIGN_CHANNELS: { value: string; label: string }[] = [
   { value: "email", label: "E-mail marketing" },
   { value: "indicacao", label: "Indicação" },
   { value: "contador", label: "Contadores parceiros" },
+  { value: "parceiro", label: "Parceiros" },
   { value: "evento", label: "Evento / feira" },
   { value: "outro", label: "Outro" },
 ];
@@ -272,7 +273,7 @@ export interface CampaignRow extends Campaign {
   conversion: number | null;
 }
 
-export interface ProspectListRow extends ProspectListExtended {
+export interface ProspectListRow extends ProspectList {
   ownerName?: string;
   campaignName?: string;
   /** worked = contatos com ao menos uma tentativa; meetings = interessados com ação agendada ou oportunidade. */

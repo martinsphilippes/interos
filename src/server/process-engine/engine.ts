@@ -19,8 +19,6 @@ import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getById, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
-import { registerHandler } from "@/server/events/emit";
-import { registerProcessEngineHandlers } from "@/server/events/handlers/process-engine";
 import { notify } from "@/server/notifications";
 import { addBusinessHours, businessDaysToHours, getHolidays, startSla } from "@/server/sla";
 import { cancelTaskInternal, completeTaskInternal, createTaskInternal } from "@/server/tasks/service";
@@ -44,9 +42,6 @@ import {
 } from "@/domain/workflow-graph";
 import { approvalTitle, approverDepartment, buildEvalContext, evaluateCondition, resolveAssignee, resolveNotifyRecipients } from "./resolve";
 import { createRunIfAbsent, getDefinition, getRun, listDefinitions, listRuns, persistRun } from "./store";
-
-// Registro idempotente do handler de eventos (o integrador também o chama em handlers/index.ts).
-registerProcessEngineHandlers(registerHandler);
 
 export const PROCESS_ACTOR: UserRef = { id: "system", name: "INTEROS (processos)" };
 const MAX_AUTOMATIC_STEPS = 60;

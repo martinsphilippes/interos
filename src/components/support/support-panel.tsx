@@ -30,7 +30,7 @@ export function SupportPanel({ overview, options, currentUserId, filters }: { ov
           value={stats.csatAverage !== undefined ? stats.csatAverage.toFixed(1).replace(".", ",") : "—"}
           icon={<Smile />}
           tone={csatTone(stats.csatAverage, stats.csatTarget)}
-          href="/suporte/sla#csat"
+          href="/sla?tipo=chamado#csat"
           hint={stats.csatCount > 0 ? `${stats.csatCount} avaliações · meta ${stats.csatTarget.toFixed(1).replace(".", ",")}` : "sem avaliações no mês"}
         />
         <StatCard

@@ -1406,7 +1406,7 @@ const LIST: KpiFormula[] = [
     source: COLLECTIONS.supportTickets,
     numeratorLabel: "Chamados reabertos no período",
     denominatorLabel: "Chamados resolvidos no período",
-    description: "Chamados de reabertura criados no período ÷ chamados resolvidos no período (mesma regra da Central de Atendimento).",
+    description: "Chamados de reabertura criados no período ÷ chamados resolvidos no período (mesma regra da Central de Suporte).",
     attribution: "Atendente responsável (assigneeId).",
     compute(ctx) {
       const inScope = scopeFilter(ctx, "suporte", ticketAttr);

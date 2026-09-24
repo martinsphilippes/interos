@@ -46,10 +46,10 @@ import {
   type TicketInteraction,
   type User,
   type UserRef,
+  type KnowledgeArticle,
 } from "@/domain/types";
 import { getSupportChannels, type SupportMessageChannel } from "./channels";
 import { getSupportChannelStatus } from "./integrations";
-import type { KnowledgeArticleExtra } from "./knowledge-search";
 import {
   OPEN_TICKET_STATUSES,
   ROOT_CAUSE_LABELS,
@@ -349,7 +349,7 @@ export async function assignTicket(ticketId: string, assigneeId: string, actor: 
 
 /**
  * Transferência para outro atendente e/ou outra fila, com nota obrigatória. Vira interação de status na
- * conversa, evento `support.ticket.status_changed` (kind "transferencia") na timeline do cliente e notificação
+ * conversa, evento `support.ticket.transferred` (payload.kind "transferencia") na timeline do cliente e notificação
  * para quem recebe. Transferir só de fila, sem atendente, devolve o chamado à fila (sem atendente) e avisa a equipe.
  */
 export async function transferTicket(ticketId: string, data: { assigneeId?: string; queue: TicketQueue; note: string }, actor: UserRef): Promise<SupportTicket> {
@@ -373,7 +373,7 @@ export async function transferTicket(ticketId: string, data: { assigneeId?: stri
   const from = [previous?.name ?? "sem atendente", `fila ${(TICKET_QUEUE_LABELS[ticket.queue as TicketQueue] ?? ticket.queue).split(" ")[0]}`].join(" · ");
   await addInteraction(ticket, { kind: "status", body: `Transferido de ${from} para ${target}: ${data.note}`, authorId: actor.id });
   const event = await emitEvent({
-    type: "support.ticket.status_changed",
+    type: "support.ticket.transferred",
     actor,
     clientId: ticket.clientId,
     entity: { type: "ticket", id: ticket.id },
@@ -960,7 +960,7 @@ export async function createOpportunityFromTicket(ticketId: string, data: { prod
 // Base de conhecimento
 // ---------------------------------------------------------------------------
 
-export async function saveArticle(data: ArticleData, actor: UserRef): Promise<KnowledgeArticleExtra> {
+export async function saveArticle(data: ArticleData, actor: UserRef): Promise<KnowledgeArticle> {
   const keywords = Array.from(new Set(data.keywords.map((k) => k.trim().toLowerCase()).filter(Boolean)));
   const payload = {
     title: data.title,
@@ -974,9 +974,9 @@ export async function saveArticle(data: ArticleData, actor: UserRef): Promise<Kn
     published: data.published,
   };
   if (data.id) {
-    const current = await getById<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, data.id);
+    const current = await getById<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, data.id);
     if (!current) throw new SupportError("Artigo não encontrado");
-    await update<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, current.id, payload);
+    await update<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, current.id, payload);
     // Campos opcionais esvaziados no formulário são removidos do documento (o update ignora undefined).
     const optional = ["productId", "module", "category", "problem"] as const;
     const cleared = optional.filter((f) => !data[f] && current[f]);
@@ -988,7 +988,7 @@ export async function saveArticle(data: ArticleData, actor: UserRef): Promise<Kn
     return { ...current, ...payload };
   }
   const source = data.sourceTicketId ? await getById<SupportTicket>(COLLECTIONS.supportTickets, data.sourceTicketId) : null;
-  const article = await create<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, {
+  const article = await create<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, {
     ...payload,
     authorId: actor.id,
     views: 0,
@@ -999,18 +999,18 @@ export async function saveArticle(data: ArticleData, actor: UserRef): Promise<Kn
   });
   if (source) {
     await addInteraction(source, { kind: "nota_interna", body: `Artigo da base de conhecimento criado a partir deste chamado: ${article.title}`, authorId: actor.id });
-    // Nota interna: registra no histórico do cliente sem ir para a timeline pública.
-    await emitEvent({
-      type: "note.added",
-      actor,
-      clientId: source.clientId,
-      entity: { type: "ticket", id: source.id },
-      title: `Artigo da base criado a partir do chamado ${source.number}: ${article.title}`,
-      department: "suporte",
-      payload: { ticketId: source.id, articleId: article.id, internal: true },
-      timeline: false,
-    });
   }
+  // Fica no histórico do cliente (quando nasce de um chamado) sem ir para a timeline pública.
+  await emitEvent({
+    type: "knowledge.article.created",
+    actor,
+    clientId: source?.clientId,
+    entity: { type: "knowledge_article", id: article.id },
+    title: source ? `Artigo da base criado a partir do chamado ${source.number}: ${article.title}` : `Artigo da base criado: ${article.title}`,
+    department: "suporte",
+    payload: { ticketId: source?.id, articleId: article.id, internal: true },
+    timeline: false,
+  });
   return article;
 }
 
@@ -1019,12 +1019,23 @@ export async function incrementArticleViews(id: string): Promise<void> {
 }
 
 /** "Este artigo foi útil?": incrementa helpful ou notHelpful. */
-export async function voteArticle(id: string, helpful: boolean): Promise<void> {
-  const article = await getById<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, id);
+export async function voteArticle(id: string, helpful: boolean, actor?: UserRef): Promise<void> {
+  const article = await getById<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, id);
   if (!article) throw new SupportError("Artigo não encontrado");
   await col(COLLECTIONS.knowledgeArticles)
     .doc(id)
     .update({ [helpful ? "helpful" : "notHelpful"]: FieldValue.increment(1) });
+  if (actor) {
+    await emitEvent({
+      type: "knowledge.article.voted",
+      actor,
+      entity: { type: "knowledge_article", id },
+      title: `${helpful ? "Artigo útil" : "Artigo não resolveu"}: ${article.title}`,
+      department: "suporte",
+      payload: { articleId: id, helpful },
+      timeline: false,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1170,7 +1181,7 @@ export async function checkSlaAlerts(now: Date = new Date()): Promise<SlaAlertRe
   return { ranAt, scanned: running.length, atRisk, breached };
 }
 
-/** Roda `checkSlaAlerts` no máximo a cada 10 minutos (chamado ao abrir a Central de Atendimento). */
+/** Roda `checkSlaAlerts` no máximo a cada 10 minutos (chamado ao abrir a Central de Suporte). */
 export async function maybeRunSlaAlerts(): Promise<SlaAlertResult | null> {
   const doc = await readSettingDoc("sweeps");
   const last = doc?.value?.supportSlaLastRunAt;

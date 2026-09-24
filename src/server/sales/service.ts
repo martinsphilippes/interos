@@ -38,7 +38,7 @@ import {
   type Visit,
 } from "@/domain/types";
 import { CLIENT_STATUS_LABELS, type Priority } from "@/domain/constants";
-import { VISIT_KIND_LABELS, type VisitKind, type VisitRecord } from "@/domain/sales-extra";
+import { VISIT_KIND_LABELS, type VisitKind } from "@/domain/sales-extra";
 import { MANUAL, recordCommunication } from "@/server/integrations/communications";
 import { OPPORTUNITY_STAGE_LABELS, effectiveProposalStatus, netItem, productTotals, proposalTotals } from "@/components/sales/model";
 import { calculateCommissionsForOpportunity, SYSTEM_ACTOR } from "./commissions";
@@ -862,7 +862,7 @@ export async function createVisit(data: CreateVisitData, actor: UserRef): Promis
   }
   const scheduledAt = new Date(data.scheduledAt).toISOString();
   const kind: VisitKind = data.kind ?? "comercial";
-  const visit = await create<VisitRecord>(COLLECTIONS.visits, {
+  const visit = await create<Visit>(COLLECTIONS.visits, {
     clientId: client.id,
     opportunityId: data.opportunityId,
     sellerId: seller.id,

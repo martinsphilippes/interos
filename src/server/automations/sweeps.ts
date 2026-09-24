@@ -401,6 +401,17 @@ async function kpiSnapshots(now: Date): Promise<SweepOutcome> {
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// processos_esperas: etapas "espera por horas" do construtor de processos
+// ---------------------------------------------------------------------------
+
+async function processosEsperas(now: Date): Promise<SweepOutcome> {
+  const { sweepProcessWaits } = await import("@/server/process-engine/engine");
+  const result = await sweepProcessWaits(now);
+  const summary = `${result.advanced} espera(s) liberada(s) em ${result.checked} execução(ões) em andamento${result.errors.length ? ` · ${result.errors.length} erro(s)` : ""}`;
+  return { summary, data: { ...result } };
+}
+
 export const SWEEPS: Record<SweepKey, SweepFn> = {
   sla_alerts: slaAlerts,
   followup_vendas: followupVendas,
@@ -411,6 +422,7 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   implantacoes_atrasadas: implantacoesAtrasadas,
   tarefas_recorrentes: tarefasRecorrentes,
   kpi_snapshots: kpiSnapshots,
+  processos_esperas: processosEsperas,
 };
 
 /** Campos antigos (dos módulos) que também contam como "última execução" da varredura. */

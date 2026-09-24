@@ -5,8 +5,8 @@ import "server-only";
  * valida o acesso).
  */
 import { getById, getManyByIds, list } from "@/server/db";
-import { COLLECTIONS, type Product, type User } from "@/domain/types";
-import { plainText, rankArticles, type KnowledgeArticleExtra } from "./knowledge-search";
+import { COLLECTIONS, type KnowledgeArticle, type Product, type User } from "@/domain/types";
+import { plainText, rankArticles } from "./knowledge-search";
 
 export interface ArticleSearchOptions {
   productId?: string;
@@ -58,7 +58,7 @@ const same = (a: string | undefined, b: string | undefined) =>
  * Filtros por produto, módulo e categoria são de igualdade. Sem texto, devolve os filtrados por relevância de uso.
  */
 export async function searchArticles(query: string, options: ArticleSearchOptions = {}): Promise<ArticleSearchResult[]> {
-  const [articles, products] = await Promise.all([list<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles), list<Product>(COLLECTIONS.products)]);
+  const [articles, products] = await Promise.all([list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles), list<Product>(COLLECTIONS.products)]);
   const productNames = new Map(products.map((p) => [p.id, p.name]));
   const filtered = articles
     .filter((a) => options.includeDrafts || a.published)
@@ -118,7 +118,7 @@ export interface ArticleContextForAI {
 
 /** Texto limpo + metadados de um artigo para o agente de IA do suporte. */
 export async function getArticleContextForAI(articleId: string): Promise<ArticleContextForAI | null> {
-  const article = await getById<KnowledgeArticleExtra>(COLLECTIONS.knowledgeArticles, articleId);
+  const article = await getById<KnowledgeArticle>(COLLECTIONS.knowledgeArticles, articleId);
   if (!article) return null;
   const [product, authors] = await Promise.all([
     article.productId ? getById<Product>(COLLECTIONS.products, article.productId) : null,

@@ -1,16 +1,13 @@
 import "server-only";
 /**
  * Acesso às coleções dos processos (process_definitions, process_runs).
- *
- * Os nomes ainda não estão em COLLECTIONS (src/domain/types.ts é de outro escopo nesta fase): o cast abaixo
- * é local e some quando o integrador incluir as duas chaves em COLLECTIONS.
  */
 import { col, getById, list, stripUndefined } from "@/server/db";
-import type { CollectionName } from "@/domain/types";
-import { PROCESS_COLLECTIONS, type ProcessDefinition, type ProcessRun } from "@/domain/workflow-graph";
+import { COLLECTIONS } from "@/domain/types";
+import type { ProcessDefinition, ProcessRun } from "@/domain/workflow-graph";
 
-export const DEFINITIONS = PROCESS_COLLECTIONS.processDefinitions as string as CollectionName;
-export const RUNS = PROCESS_COLLECTIONS.processRuns as string as CollectionName;
+export const DEFINITIONS = COLLECTIONS.processDefinitions;
+export const RUNS = COLLECTIONS.processRuns;
 
 export function getDefinition(id: string): Promise<ProcessDefinition | null> {
   return getById<ProcessDefinition>(DEFINITIONS, id);

@@ -31,7 +31,6 @@ import {
   type Visit,
 } from "@/domain/types";
 import type { DepartmentKey } from "@/domain/constants";
-import type { VisitRecord } from "@/domain/sales-extra";
 import { effectiveProposalStatus, isOpenStage, opportunityCode, type CommissionRuleView } from "@/components/sales/model";
 import { competenceOf, getCommissionSummary, listActiveCommissionRules, type CommissionSummary } from "./commissions";
 import { HEADQUARTERS, formatAddressLine, geocode, googleMapsSearchUrl, route } from "./maps";
@@ -571,7 +570,7 @@ export async function listOpenOpportunityOptions(user: CurrentUser): Promise<{ i
 // Visitas
 // ---------------------------------------------------------------------------
 
-export interface VisitRow extends VisitRecord {
+export interface VisitRow extends Visit {
   clientName: string;
   sellerName: string;
   sellerAvatarUrl?: string;

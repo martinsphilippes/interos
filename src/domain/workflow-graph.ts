@@ -5,16 +5,11 @@
  * grafos de nós (início, tarefa, aprovação, condição, espera, notificação, integração, fim) executados pelo
  * motor em src/server/process-engine, que usa as MESMAS tarefas, SLAs, notificações e eventos do sistema.
  *
- * Coleções (a incluir em COLLECTIONS pelo integrador): process_definitions e process_runs.
+ * Coleções: COLLECTIONS.processDefinitions (process_definitions) e COLLECTIONS.processRuns (process_runs).
  * Sem dependências de servidor: pode ser importado por Client Components.
  */
 import type { BaseEntity, UserRef } from "./types";
 import type { DepartmentKey, EventType, NotificationKind, Priority, RoleKey } from "./constants";
-
-export const PROCESS_COLLECTIONS = {
-  processDefinitions: "process_definitions",
-  processRuns: "process_runs",
-} as const;
 
 // ---------------------------------------------------------------------------
 // Nós
@@ -449,6 +444,20 @@ export function processTaskId(runId: string, nodeId: string): string {
   return `${runId}#${nodeId}`;
 }
 
+
+/** Contexto de processo de uma tarefa: o drawer de tarefas usa para pedir Sim/Não na conclusão. */
+export interface ProcessTaskContext {
+  runId: string;
+  nodeId: string;
+  definitionName: string;
+  /** A conclusão pede Sim/Não (tarefa com resultado ou aprovação). */
+  needsOutcome: boolean;
+  isApproval: boolean;
+  /** Pergunta a exibir ("Cliente homologou?"). */
+  question?: string;
+  /** Rota da execução (admin). */
+  runHref: string;
+}
 export function parseProcessTaskId(processId: string | undefined): { runId: string; nodeId: string } | null {
   if (!processId) return null;
   const i = processId.indexOf("#");

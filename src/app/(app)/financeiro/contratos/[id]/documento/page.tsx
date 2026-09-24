@@ -7,7 +7,6 @@ import { getById, ORG_ID } from "@/server/db";
 import { getContract } from "@/server/finance/queries";
 import { RECURRENCE_LABELS } from "@/server/finance/schemas";
 import { contractDocumentHash } from "@/server/finance/signature";
-import type { ContractSigner } from "@/server/integrations/types";
 import { HEADQUARTERS, formatAddressLine } from "@/server/sales/maps";
 import { COLLECTIONS, type Organization } from "@/domain/types";
 import { formatCurrency, formatDate, formatDateTime, formatDocument } from "@/lib/format";
@@ -61,7 +60,7 @@ export default async function ContractDocumentPage({ params }: { params: Params 
   const currentHash = contractDocumentHash(contract);
   const generated = Boolean(contract.signatureEnvelopeId);
   const hashMatches = contract.documentHash === currentHash;
-  const signers = contract.signers as ContractSigner[];
+  const signers = contract.signers;
   const firstYear = contract.setupTotal + contract.hardwareTotal + (contract.recurrence === "unico" ? 0 : contract.monthlyTotal * Math.min(12, contract.termMonths));
   const address = formatAddressLine(billingData.address);
 

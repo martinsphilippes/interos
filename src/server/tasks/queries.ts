@@ -185,15 +185,16 @@ export async function listTasksForUser(user: CurrentUser, view: TaskView, option
 // Detalhe
 // ---------------------------------------------------------------------------
 
-export async function getTaskDetail(id: string): Promise<TaskDetail | null> {
+export async function getTaskDetail(id: string, viewer?: { isAdmin?: boolean }): Promise<TaskDetail | null> {
   const task = await getById<Task>(COLLECTIONS.tasks, id);
   if (!task) return null;
   const today = todayKey();
-  const [[item], comments, events, creator] = await Promise.all([
+  const [[item], comments, events, creator, processContext] = await Promise.all([
     enrichTasks([task]),
     list<Comment>(COLLECTIONS.comments, { where: [["entityType", "==", "task"], ["entityId", "==", id]] }),
     list<DomainEvent>(COLLECTIONS.events, { where: [["entityType", "==", "task"], ["entityId", "==", id]] }),
     getById<User>(COLLECTIONS.users, task.creatorId),
+    task.processType === "workflow" ? import("@/server/process-engine/queries").then((m) => m.getProcessTaskContext(task)) : Promise.resolve(null),
   ]);
   const commentViews: TaskCommentView[] = comments
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
@@ -201,7 +202,7 @@ export async function getTaskDetail(id: string): Promise<TaskDetail | null> {
   const eventViews: TaskEventView[] = events
     .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1))
     .map((e) => ({ id: e.id, type: e.type, title: e.title, description: e.description, actorName: e.actorName, occurredAt: e.occurredAt, occurredAtLabel: dateLabel(e.occurredAt, today) }));
-  return { task: item, comments: commentViews, events: eventViews, creatorName: creator?.name, processHref: processHrefFor(task) };
+  return { task: item, comments: commentViews, events: eventViews, creatorName: creator?.name, processHref: processHrefFor(task, { canOpenRuns: viewer?.isAdmin }), processContext: processContext ?? undefined };
 }
 
 // ---------------------------------------------------------------------------

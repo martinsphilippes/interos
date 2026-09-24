@@ -38,6 +38,7 @@ import {
   type Task,
   type UserRef,
   type WorkflowInstance,
+  type ContractSignerEntry,
 } from "@/domain/types";
 import type { RoleKey } from "@/domain/constants";
 import { allSigned, buildBillingPlan, defaultFirstDueDate, deriveContractStatus, dueIso, evaluateReleaseGate, listBillingsSwept, round2, SYSTEM_ACTOR } from "./billing";
@@ -45,7 +46,6 @@ import { contractDocumentHash, getSignatureProvider } from "./signature";
 import { MANUAL, recordCommunication } from "@/server/integrations/communications";
 import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
 import { isConnected } from "@/server/integrations/status";
-import type { ContractSigner } from "@/server/integrations/types";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
 import { DEFAULT_GATE_SETTINGS, GATE_SETTING_KEY, PAYMENT_REQUIREMENTS, type BillingDataInput, type ContractItemInput, type FinanceGateSettings, type ManualSignatureInput, type RegisterPaymentInput, type UpdateConditionsInput } from "./schemas";
 
@@ -504,7 +504,7 @@ export async function registerManualSignature(input: ManualSignatureInput, actor
   if (dateKey(signedAt) > dateKey(new Date())) throw new Error("A data da assinatura não pode ser futura");
   const now = nowIso();
   const evidence = [description, evidenceUrl].filter(Boolean).join(" · ");
-  const signers: ContractSigner[] = contract.signers.map((s) =>
+  const signers: ContractSignerEntry[] = contract.signers.map((s) =>
     s === signer ? { ...s, status: "assinado" as const, signedAt, method: "manual" as const, evidence, evidenceUrl, registeredBy: actor.id, registeredAt: now } : s,
   );
   const done = signers.every((s) => s.status === "assinado");

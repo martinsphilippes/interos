@@ -1,4 +1,4 @@
-import { CalendarDays, Calculator, Camera, Globe, List, Megaphone, MessageCircle, Music2, PenLine, Send, Users, type LucideIcon } from "lucide-react";
+import { CalendarDays, Calculator, Camera, Globe, Handshake, List, Megaphone, MessageCircle, Music2, PenLine, Search, Send, Users, type LucideIcon } from "lucide-react";
 import type { LeadSource } from "@/domain/types";
 import { IconTile } from "@/components/ui/icon-tile";
 import type { Tone } from "@/components/ui/tone";
@@ -11,7 +11,9 @@ export const CHANNEL_VISUAL: Record<LeadSource["channel"], { icon: LucideIcon; t
   whatsapp: { icon: MessageCircle, tone: "success" },
   telegram: { icon: Send, tone: "secondary" },
   anuncio: { icon: Megaphone, tone: "warning" },
+  google_ads: { icon: Search, tone: "info" },
   indicacao: { icon: Users, tone: "brand" },
+  parceiro: { icon: Handshake, tone: "success" },
   contador: { icon: Calculator, tone: "secondary" },
   evento: { icon: CalendarDays, tone: "purple" },
   lista: { icon: List, tone: "info" },

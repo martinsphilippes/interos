@@ -187,7 +187,7 @@ const optionalDateKey = z
   .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), "Data inválida")
   .transform((v) => (v ? v : undefined));
 
-/** Planejamento da lista (campos aditivos de ProspectList: ver src/domain/marketing-extra.ts). */
+/** Planejamento da lista (campos opcionais de ProspectList). */
 const prospectListPlanning = {
   objective: optionalText(300),
   startDate: optionalDateKey,

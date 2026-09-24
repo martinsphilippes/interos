@@ -20,7 +20,7 @@ import {
   type Visit,
 } from "@/domain/types";
 import type { EventType } from "@/domain/constants";
-import type { CommunicationRecord, VisitRecord } from "@/domain/sales-extra";
+import type { CommunicationRecord } from "@/domain/sales-extra";
 import { effectiveProposalStatus, isOpenStage, opportunityCode } from "@/components/sales/model";
 import { getSalesChannelStatus, type SalesChannelStatus } from "./channels";
 import { HEADQUARTERS, formatAddressLine, geocode, googleMapsDirectionsUrl, googleMapsEmbedUrl, googleMapsSearchUrl, route } from "./maps";
@@ -303,7 +303,7 @@ export interface WorkspaceDetail extends OpportunityDetail {
   canEdit: boolean;
 }
 
-const CONTACT_EVENT_TYPES = new Set<EventType>(["whatsapp.message.sent", "whatsapp.message.received", "call.completed"]);
+const CONTACT_EVENT_TYPES = new Set<EventType>(["whatsapp.message.sent", "whatsapp.message.received", "call.completed", "email.sent"]);
 
 function isRelevantEvent(e: DomainEvent, ctx: { oppId: string; leadId?: string; proposalIds: Set<string>; visitIds: Set<string> }): boolean {
   const payloadOpp = typeof e.payload?.opportunityId === "string" ? e.payload.opportunityId : undefined;
@@ -346,7 +346,7 @@ function buildConversation(events: DomainEvent[], comms: CommunicationRecord[], 
     if (commId && commIds.has(commId)) continue;
     if (CONTACT_EVENT_TYPES.has(e.type)) {
       // Registros antigos sem communicationId: descarta o evento se houver a comunicação equivalente (±10s).
-      const channel = e.type === "call.completed" ? "voip" : "whatsapp";
+      const channel = e.type === "call.completed" ? "voip" : e.type === "email.sent" ? "email" : "whatsapp";
       const t = new Date(e.occurredAt).getTime();
       if (commTimes.some((c) => c.channel === channel && Math.abs(c.at - t) < 10_000)) continue;
     }
@@ -369,7 +369,7 @@ export async function getWorkspaceOpportunity(user: CurrentUser, id: string): Pr
     list<DomainEvent>(COLLECTIONS.events, { where: [["clientId", "==", client.id]] }),
     list<CommunicationRecord>(COLLECTIONS.communications, { where: [["clientId", "==", client.id]] }),
     opp.leadId ? getById<Lead>(COLLECTIONS.leads, opp.leadId) : Promise.resolve(null),
-    list<VisitRecord>(COLLECTIONS.visits, { where: [["clientId", "==", client.id]] }),
+    list<Visit>(COLLECTIONS.visits, { where: [["clientId", "==", client.id]] }),
     getSalesChannelStatus(),
     listSalesUsers(),
     getById<Client>(COLLECTIONS.clients, client.id),
@@ -491,7 +491,7 @@ export async function getWorkspaceOpportunity(user: CurrentUser, id: string): Pr
  */
 export async function getClientVisits(user: Pick<CurrentUser, "id" | "isManager">, clientId: string): Promise<VisitRow[]> {
   const [visits, opps] = await Promise.all([
-    list<VisitRecord>(COLLECTIONS.visits, { where: [["clientId", "==", clientId]] }),
+    list<Visit>(COLLECTIONS.visits, { where: [["clientId", "==", clientId]] }),
     list<Opportunity>(COLLECTIONS.opportunities, { where: [["clientId", "==", clientId]] }),
   ]);
   const oppById = new Map(opps.map((o) => [o.id, o]));

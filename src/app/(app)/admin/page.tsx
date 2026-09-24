@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ChevronRight, Network, Package, Settings, Users, Workflow } from "lucide-react";
+import { ChevronRight, Network, Package, Plug, Settings, Users, Workflow, Zap } from "lucide-react";
 import { requireRole } from "@/server/auth/session";
 import { getAdminOverview } from "@/server/admin/queries";
+import { getIntegrationStatus } from "@/server/integrations/status";
 import { formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -24,6 +25,9 @@ interface AreaCard {
 export default async function AdminPage() {
   await requireRole("admin");
   const o = await getAdminOverview();
+  const integrations = getIntegrationStatus();
+  const connected = integrations.filter((i) => i.state === "conectado").length;
+  const toCheck = integrations.filter((i) => i.state === "verificar").length;
 
   const areas: AreaCard[] = [
     {
@@ -79,6 +83,24 @@ export default async function AdminPage() {
         { label: "templates", value: formatNumber(o.workflows.templates) },
         { label: "publicados", value: formatNumber(o.workflows.published) },
       ],
+    },
+    {
+      href: "/admin/automacoes",
+      title: "Automações",
+      description: "Regras por evento ou agendadas, varreduras nativas e histórico de execuções.",
+      icon: <Zap />,
+      stats: [],
+    },
+    {
+      href: "/admin/integracoes",
+      title: "Integrações",
+      description: "WhatsApp, telefonia, e-mail, assinatura, cobrança, mapas, SSO e IA: estado real e fallback manual.",
+      icon: <Plug />,
+      stats: [
+        { label: "conectadas", value: `${formatNumber(connected)}/${formatNumber(integrations.length)}` },
+        { label: "a verificar", value: formatNumber(toCheck) },
+      ],
+      warning: connected === 0 ? "Nenhuma integração externa conectada: canais em registro manual" : undefined,
     },
   ];
 

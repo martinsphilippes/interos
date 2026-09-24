@@ -6,10 +6,10 @@ import "server-only";
  */
 import { getManyByIds, list } from "@/server/db";
 import { dateKey } from "@/lib/format";
-import { COLLECTIONS, type Billing, type Client, type Communication, type Contact, type Contract, type DomainEvent, type Opportunity, type User } from "@/domain/types";
+import { COLLECTIONS, type Billing, type Client, type Communication, type Contact, type Contract, type ContractSignerEntry, type DomainEvent, type Opportunity, type User } from "@/domain/types";
 import { communicationStatusLabel } from "@/server/integrations/communications";
 import { getIntegrationFlags } from "@/server/integrations/status";
-import type { ContractSigner, IntegrationFlags } from "@/server/integrations/types";
+import type { IntegrationFlags } from "@/server/integrations/types";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
 import { allSigned, listBillingsSwept, todayKey } from "./billing";
 import { listContracts, type ContractFilters } from "./queries";
@@ -106,7 +106,7 @@ export interface ContractPanel {
   hardwareTotal: number;
   nextDueDate?: string;
   billingDay: number;
-  signers: ContractSigner[];
+  signers: ContractSignerEntry[];
   signatureProvider?: string;
   documentId?: string;
   documentHash?: string;
@@ -376,7 +376,7 @@ async function buildPanel(contract: Contract, client: Client | undefined, billin
     hardwareTotal: contract.hardwareTotal,
     nextDueDate: nextDue(contract, billings),
     billingDay: contract.billingDay,
-    signers: contract.signers as ContractSigner[],
+    signers: contract.signers,
     signatureProvider: contract.signatureProvider,
     documentId: contract.signatureEnvelopeId,
     documentHash: contract.documentHash,

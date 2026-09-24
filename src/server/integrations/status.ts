@@ -224,3 +224,15 @@ export function getIntegrationFlags(): IntegrationFlags {
   for (const key of INTEGRATION_KEYS) out[key] ??= "nao_conectado";
   return out;
 }
+
+/** Canais de comunicação com o cliente (Vendas, Suporte, Cliente 360º): true = envio real pelo INTEROS. */
+export interface CommunicationChannelStatus {
+  whatsapp: boolean;
+  voip: boolean;
+  email: boolean;
+  maps: boolean;
+}
+
+export function getCommunicationChannelStatus(): CommunicationChannelStatus {
+  return { whatsapp: isConnected("whatsapp"), voip: isConnected("voip"), email: isConnected("email"), maps: isConnected("mapas") };
+}

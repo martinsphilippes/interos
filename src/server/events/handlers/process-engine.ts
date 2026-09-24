@@ -8,9 +8,8 @@ import type { registerHandler as RegisterFn } from "../emit";
  *
  * O motor é importado dinamicamente para evitar ciclo (engine → tasks/service → events/index → handlers).
  *
- * INTEGRAÇÃO: chamar `registerProcessEngineHandlers(registerHandler)` em src/server/events/handlers/index.ts,
- * dentro de `ensureHandlersRegistered()`, logo ANTES de `registerAutomationHandlers` (os módulos já atualizaram o
- * estado; as automações continuam por último). Até lá, o motor se registra ao ser importado (idempotente).
+ * Registrado em handlers/index.ts logo ANTES das automações: os módulos já atualizaram o estado e as
+ * automações continuam por último.
  */
 let registered = false;
 

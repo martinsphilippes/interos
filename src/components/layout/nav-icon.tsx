@@ -30,6 +30,7 @@ import {
   MapPin,
   Megaphone,
   Menu,
+  Plug,
   Network,
   Package,
   Plus,
@@ -114,6 +115,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   Workflow,
   Activity,
   Menu,
+  Plug,
 };
 
 export interface NavIconProps extends LucideProps {

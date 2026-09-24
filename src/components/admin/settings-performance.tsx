@@ -2,8 +2,10 @@
 
 import * as React from "react";
 import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
-import type { GamificacaoConfig, PremiosVendasConfig } from "@/server/admin/schemas";
+import type { GamificacaoConfig, PremiosVendasConfig, SequenciaConfig } from "@/server/admin/schemas";
 import { POINT_RULES } from "@/server/performance/schemas";
+import { STREAK_CRITERIA, STREAK_CRITERION_LABELS, STREAK_RULE_TEXT, type StreakCriterion } from "@/server/performance/streak-rules";
+import { Select } from "@/components/ui/select";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { numberToInput, parseNumber } from "./admin-model";
@@ -116,6 +118,45 @@ export function SettingsSalesPrizes({ value, stored }: { value: PremiosVendasCon
             <Input id={`pv-${f.key}`} value={form[f.key]} onChange={(e) => setForm((s) => ({ ...s, [f.key]: e.target.value }))} required />
           </FormField>
         ))}
+      </div>
+    </SettingsSection>
+  );
+}
+
+/** Regra da sequência em dias exibida no Ranking e em Meu Desempenho (setting "gamificacao.sequencia"). */
+export function SettingsStreak({ value, stored }: { value: SequenciaConfig; stored: boolean }) {
+  const { pending, error, setError, save } = useSaveSetting("gamificacao.sequencia");
+  const [criterio, setCriterio] = React.useState<StreakCriterion>(value.criterio);
+  const [maxDias, setMaxDias] = React.useState(numberToInput(value.maxDias));
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const n = parseNumber(maxDias);
+    if (!Number.isInteger(n) || n < 5 || n > 365) return setError("Informe a janela em dias úteis (5 a 365)");
+    save({ criterio, maxDias: n }, "Regra da sequência salva");
+  };
+
+  return (
+    <SettingsSection
+      title="Sequência em dias"
+      description="Critério para um dia útil contar na sequência do Ranking e de Meu Desempenho. A sequência para no primeiro dia útil que não cumpre a regra."
+      stored={stored}
+      pending={pending}
+      error={error}
+      onSubmit={submit}
+    >
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <FormField label="Regra da sequência" htmlFor="seq-criterio" hint={STREAK_RULE_TEXT[criterio]} required>
+          <Select
+            id="seq-criterio"
+            value={criterio}
+            onChange={(e) => setCriterio(e.target.value as StreakCriterion)}
+            options={STREAK_CRITERIA.map((c) => ({ value: c, label: STREAK_CRITERION_LABELS[c] }))}
+          />
+        </FormField>
+        <FormField label="Janela máxima (dias úteis)" htmlFor="seq-max" hint="Quantos dias úteis para trás o cálculo olha." required>
+          <Input id="seq-max" type="number" inputMode="numeric" min={5} max={365} step="1" value={maxDias} onChange={(e) => setMaxDias(e.target.value)} required className="tabular-nums" />
+        </FormField>
       </div>
     </SettingsSection>
   );

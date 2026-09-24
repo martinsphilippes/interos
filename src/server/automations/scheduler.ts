@@ -7,7 +7,7 @@ import "server-only";
  *
  * Chamado pela rota /api/cron/sweep (Vercel Cron, 1x por dia no plano Hobby), pelo botão
  * "Executar varreduras agora" em /admin/automacoes e, de forma preguiçosa, pelas telas dos módulos
- * (Central de Vendas, Saúde e Renovações do CS, Central de Atendimento), que já rodam as suas.
+ * (Central de Vendas, Saúde e Renovações do CS, Central de Suporte), que já rodam as suas.
  */
 import { col, list, nowIso } from "@/server/db";
 import { COLLECTIONS, type AutomationRule } from "@/domain/types";

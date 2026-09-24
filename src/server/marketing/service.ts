@@ -39,7 +39,6 @@ import {
   type WorkflowInstance,
   type WorkflowStep,
 } from "@/domain/types";
-import type { ProspectListExtended, ProspectListPlanning } from "@/domain/marketing-extra";
 import { getChannelAdapter } from "./channels";
 import { DEFAULT_SCORING_RULES, computeLeadScore, evaluateMqlGate, normalize, type LeadScoreResult, type LeadScoringRules } from "./scoring";
 import {
@@ -1024,11 +1023,11 @@ async function loadProspect(id: string): Promise<Prospect> {
 }
 
 export async function createProspectList(
-  input: { name: string; description?: string; segment?: string; ownerId?: string; campaignId?: string } & ProspectListPlanning,
+  input: { name: string; description?: string; segment?: string; ownerId?: string; campaignId?: string } & Pick<ProspectList, "objective" | "startDate" | "endDate" | "optOut">,
   actor: MarketingActor,
 ): Promise<ProspectList> {
   if (input.ownerId) await loadActiveUser(input.ownerId);
-  return create<ProspectListExtended>(COLLECTIONS.prospectLists, {
+  return create<ProspectList>(COLLECTIONS.prospectLists, {
     name: input.name,
     description: input.description,
     segment: input.segment,
@@ -1046,11 +1045,11 @@ export async function createProspectList(
 
 /** Atualiza nome, segmento e o planejamento da lista (objetivo, período, opt-out). Campos vazios são limpos. */
 export async function updateProspectList(
-  input: { listId: string; name?: string; description?: string; segment?: string } & ProspectListPlanning,
+  input: { listId: string; name?: string; description?: string; segment?: string } & Pick<ProspectList, "objective" | "startDate" | "endDate" | "optOut">,
   actor: MarketingActor,
 ): Promise<ProspectList> {
-  const current = (await loadProspectList(input.listId)) as ProspectListExtended;
-  const patch: Partial<ProspectListExtended> = {
+  const current = (await loadProspectList(input.listId)) as ProspectList;
+  const patch: Partial<ProspectList> = {
     name: input.name ?? current.name,
     description: input.description,
     segment: input.segment,
@@ -1059,7 +1058,7 @@ export async function updateProspectList(
     endDate: input.endDate,
     optOut: input.optOut ?? current.optOut,
   };
-  const saved = await patchDoc<ProspectListExtended>(COLLECTIONS.prospectLists, current, patch);
+  const saved = await patchDoc<ProspectList>(COLLECTIONS.prospectLists, current, patch);
   await emitEvent({
     type: "prospect_list.updated",
     actor,

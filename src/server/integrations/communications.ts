@@ -10,11 +10,10 @@ import "server-only";
  */
 import { create } from "@/server/db";
 import { COLLECTIONS, type Communication } from "@/domain/types";
-import type { CommunicationProviderExtended, CommunicationStatusExtended } from "./types";
 
 export type CommunicationInput = Omit<Communication, "id" | "organizationId" | "createdAt" | "updatedAt" | "status" | "provider"> & {
-  status: CommunicationStatusExtended;
-  provider: CommunicationProviderExtended;
+  status: Communication["status"];
+  provider: Communication["provider"];
 };
 
 export async function recordCommunication(input: CommunicationInput): Promise<Communication> {
@@ -22,7 +21,7 @@ export async function recordCommunication(input: CommunicationInput): Promise<Co
 }
 
 /** Status/provider de uma comunicação feita fora do sistema. */
-export const MANUAL = { status: "manual", provider: "manual" } as const satisfies { status: CommunicationStatusExtended; provider: CommunicationProviderExtended };
+export const MANUAL = { status: "manual", provider: "manual" } as const satisfies { status: Communication["status"]; provider: Communication["provider"] };
 
 /** Rótulo de exibição do status (inclui os valores estendidos). */
 export function communicationStatusLabel(status: string | undefined): string {

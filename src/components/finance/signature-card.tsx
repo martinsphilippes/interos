@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { BellRing, CheckCircle2, FileText, Mail, PenLine, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
 import type { Contract } from "@/domain/types";
-import type { ContractSigner, IntegrationFlags } from "@/server/integrations/types";
+import type { IntegrationFlags } from "@/server/integrations/types";
 import { addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
 import { formatDateTime } from "@/lib/format";
@@ -109,7 +109,7 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
 
         <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
           {contract.signers.length === 0 ? <li className="px-3 py-4 text-center text-sm text-muted">Nenhum signatário. Adicione quem assina pelo cliente.</li> : null}
-          {(contract.signers as ContractSigner[]).map((s) => {
+          {contract.signers.map((s) => {
             const r = reminders[s.email.toLowerCase()];
             return (
               <li key={s.email} className="flex flex-col gap-2 px-3 py-3">

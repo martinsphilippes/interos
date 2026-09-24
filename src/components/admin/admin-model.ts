@@ -67,7 +67,7 @@ export function normalizeText(value: string | undefined | null): string {
 // Abas de /admin/configuracoes (puro: usado pelo Server Component e pelo componente de abas)
 // ---------------------------------------------------------------------------
 
-export const SETTINGS_TABS = ["horario", "feriados", "metas", "lead-scoring", "health-score", "oportunidades", "gate-financeiro", "entrega", "performance", "sla"] as const;
+export const SETTINGS_TABS = ["horario", "feriados", "metas", "lead-scoring", "health-score", "oportunidades", "gate-financeiro", "entrega", "performance", "saude-indice", "sla"] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 export function parseSettingsTab(value: string | undefined | null): SettingsTab {
