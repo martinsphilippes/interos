@@ -156,6 +156,8 @@ interface NotificationSpec {
   href: string;
   entity?: { type: string; id: string };
   at: string;
+  /** Garante que a notificação fique não lida (diretoria sempre abre o sistema com alertas pendentes). */
+  unread?: boolean;
 }
 
 function seedNotifications(ctx: SeedContext): void {
@@ -203,12 +205,20 @@ function seedNotifications(ctx: SeedContext): void {
   }
   pool.push({ userId: users.philippe.id, kind: "informativa", title: "Cockpit atualizado com os indicadores do mês", href: "/gestao/cockpit", at: hoursAgo(6) });
   pool.push({ userId: users.hercules.id, kind: "informativa", title: "Relatório semanal de vendas disponível", href: "/gestao/relatorios", at: hoursAgo(30) });
+  // Alertas executivos recentes e não lidos para a diretoria, independentes da data em que o seed roda.
+  const violatedSteps = slas.filter((s) => s.entityType === "workflow_step" && s.breachedAt).length;
+  const riskClients = ctx.clients.filter((c) => c.doc.healthLevel === "risco").length;
+  for (const director of [users.hercules, users.philippe]) {
+    pool.push({ userId: director.id, kind: "critica", title: `${violatedSteps} etapas da jornada com SLA violado`, body: "Veja onde está o gargalo no Cockpit.", href: "/gestao/cockpit", at: hoursAgo(2), unread: true });
+    pool.push({ userId: director.id, kind: "atencao", title: `${riskClients} clientes em risco de churn`, body: "Carteira de Customer Success com saúde abaixo do limite.", href: "/cs/riscos", at: hoursAgo(3), unread: true });
+    pool.push({ userId: director.id, kind: "informativa", title: "Novas vendas do mês atualizadas no Cockpit", href: "/gestao/indicadores/novas_vendas", at: hoursAgo(4), unread: true });
+  }
   pool.push({ userId: users.mateus.id, kind: "informativa", title: "Campanha 'ERP + TEF para supermercados' atingiu 64% do orçamento", href: "/marketing/campanhas", at: hoursAgo(12) });
 
   pool.sort((a, b) => (a.at < b.at ? 1 : -1));
-  const selected = pool.slice(0, 60);
+  const selected = [...pool.filter((n) => n.unread), ...pool.filter((n) => !n.unread)].slice(0, 66).sort((a, b) => (a.at < b.at ? 1 : -1));
   selected.forEach((n, i) => {
-    const read = i % 10 >= 7; // 30% lidas
+    const read = !n.unread && i % 10 >= 7; // 30% lidas
     store.add(COLLECTIONS.notifications, id("notif", i + 1), {
       userId: n.userId,
       kind: n.kind,
