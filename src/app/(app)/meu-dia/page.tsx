@@ -43,7 +43,7 @@ export default async function MeuDiaPage({ searchParams }: { searchParams: Searc
 
       <PrioritiesList items={data.priorities} filter={filter} scope={data.scope} />
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 [&>*]:min-w-0">
         {team ? <TeamBlock members={data.team} /> : null}
         <AgendaBlock items={data.agenda} />
         <FollowupsBlock items={data.followups} />

@@ -6,7 +6,8 @@ import { listLeadSourceKeys, loadSettingsForAdmin } from "@/server/admin/queries
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { Badge } from "@/components/ui/badge";
-import { parseSettingsTab, SettingsTabs } from "@/components/admin/settings-tabs";
+import { SettingsTabs } from "@/components/admin/settings-tabs";
+import { parseSettingsTab } from "@/components/admin/admin-model";
 
 export const metadata: Metadata = { title: "Configurações" };
 

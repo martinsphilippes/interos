@@ -16,7 +16,12 @@ import { COLLECTIONS, type Client, type DomainEvent, type WorkflowInstance, type
  * INTEGRAÇÃO: chamar `registerWorkflowHandlers(registerHandler)` em src/server/events/handlers/index.ts
  * dentro de `ensureHandlersRegistered()`. O serviço também se registra sozinho (idempotente) ao ser importado.
  */
+let registered = false;
+
+/** Idempotente: pode ser chamado por handlers/index.ts e pelo serviço de workflow sem duplicar handlers. */
 export function registerWorkflowHandlers(registerHandler: typeof RegisterFn): void {
+  if (registered) return;
+  registered = true;
   registerHandler("opportunity.won", (event) => advanceStage(event, "vendas", "Negócio ganho (oportunidade marcada como ganha)", "opportunityId"));
   registerHandler("financial.released", (event) => advanceStage(event, "financeiro", "Liberação financeira registrada", "contractId"));
   registerHandler("implementation.go_live", (event) => advanceStage(event, "implantacao", "Go-live registrado pela implantação", "projectId"));

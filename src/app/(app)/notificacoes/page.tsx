@@ -5,7 +5,8 @@ import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { NotificationsList } from "@/components/notifications/notifications-list";
-import { NotificationsToolbar, parseKindFilter, parseReadFilter } from "@/components/notifications/notifications-toolbar";
+import { NotificationsToolbar } from "@/components/notifications/notifications-toolbar";
+import { parseKindFilter, parseReadFilter } from "@/components/notifications/model";
 import { toNotificationItem } from "@/components/notifications/model";
 
 export const metadata: Metadata = { title: "Notificações" };

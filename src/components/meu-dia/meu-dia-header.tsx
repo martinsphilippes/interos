@@ -66,7 +66,7 @@ export function MeuDiaHeader({ data, filter }: { data: MeuDiaData; filter: Prior
         }
         actions={data.canToggleScope ? <ScopeToggle scope={scope} teamSize={data.teamSize} /> : undefined}
       />
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
         <StatCard label="Tarefas hoje" value={stats.tasksToday} icon={<CalendarCheck />} tone={stats.tasksToday > 0 ? "info" : "neutral"} href={team ? "/tarefas?view=equipe&prazo=hoje" : "/tarefas?view=minha&prazo=hoje"} compact />
         <StatCard label="Atrasadas" value={stats.overdueTasks} icon={<AlertTriangle />} tone={stats.overdueTasks > 0 ? "danger" : "success"} href={team ? "/tarefas?view=atrasadas" : "/tarefas?view=atrasadas&mine=1"} compact />
         <StatCard label="Follow-ups vencidos" value={stats.followupsOverdue} icon={<PhoneOutgoing />} tone={stats.followupsOverdue > 0 ? "warning" : "neutral"} href={meuDiaHref(scope, "followups")} compact className={cn(filter === "followups" && "border-brand")} />

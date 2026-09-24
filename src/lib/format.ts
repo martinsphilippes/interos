@@ -1,4 +1,4 @@
-import { format, formatDistanceToNowStrict, isToday, isTomorrow, isYesterday, parseISO } from "date-fns";
+import { format, formatDistanceToNowStrict, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 const currency = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -28,9 +28,46 @@ function toDate(value: string | Date | undefined | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** Fuso da operação. Datas são sempre exibidas neste fuso, no servidor (UTC) e no navegador, evitando divergência de hidratação. */
+export const APP_TIME_ZONE = "America/Sao_Paulo";
+
+const zonedParts = new Intl.DateTimeFormat("en-US", {
+  timeZone: APP_TIME_ZONE,
+  hourCycle: "h23",
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+});
+
+/** Date cujos campos locais (getHours, getDate…) correspondem ao horário de São Paulo, para uso com `format` do date-fns. */
+export function toZonedDate(value: Date): Date {
+  const p: Record<string, number> = {};
+  for (const part of zonedParts.formatToParts(value)) if (part.type !== "literal") p[part.type] = Number(part.value);
+  return new Date(p.year, p.month - 1, p.day, p.hour, p.minute, p.second, value.getMilliseconds());
+}
+
+/** Chave AAAA-MM-DD do instante no fuso da operação. */
+export function dateKey(value: string | Date | undefined | null): string {
+  const d = toDate(value);
+  if (!d) return "";
+  const z = toZonedDate(d);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${z.getFullYear()}-${pad(z.getMonth() + 1)}-${pad(z.getDate())}`;
+}
+
+/** Formata uma chave AAAA-MM-DD (sem hora) sem conversão de fuso. */
+export function formatDateKey(key: string, pattern = "dd/MM/yyyy"): string {
+  const [y, m, d] = key.split("-").map(Number);
+  if (!y || !m || !d) return "—";
+  return format(new Date(y, m - 1, d), pattern, { locale: ptBR });
+}
+
 export function formatDate(value: string | Date | undefined | null, pattern = "dd/MM/yyyy"): string {
   const d = toDate(value);
-  return d ? format(d, pattern, { locale: ptBR }) : "—";
+  return d ? format(toZonedDate(d), pattern, { locale: ptBR }) : "—";
 }
 
 export function formatDateTime(value: string | Date | undefined | null): string {
@@ -45,10 +82,13 @@ export function formatTime(value: string | Date | undefined | null): string {
 export function formatDay(value: string | Date | undefined | null): string {
   const d = toDate(value);
   if (!d) return "—";
-  if (isToday(d)) return "Hoje";
-  if (isTomorrow(d)) return "Amanhã";
-  if (isYesterday(d)) return "Ontem";
-  return format(d, "dd MMM", { locale: ptBR });
+  const z = toZonedDate(d);
+  const now = toZonedDate(new Date());
+  const diff = Math.round((Date.UTC(z.getFullYear(), z.getMonth(), z.getDate()) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86_400_000);
+  if (diff === 0) return "Hoje";
+  if (diff === 1) return "Amanhã";
+  if (diff === -1) return "Ontem";
+  return format(z, "dd MMM", { locale: ptBR });
 }
 
 /** "há 3 horas", "em 2 dias". */

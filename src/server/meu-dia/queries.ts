@@ -195,7 +195,7 @@ function slaEntityHref(sla: SlaInstance): string {
     case "chamado":
       return `/suporte/chamados?chamado=${sla.entityId}`;
     case "projeto":
-      return `/implantacao/${sla.entityId}`;
+      return `/implantacao?projeto=${sla.entityId}`;
     case "oportunidade":
       return `/vendas/oportunidades?oportunidade=${sla.entityId}`;
     default:
@@ -602,7 +602,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
       sla,
       impactLabel: `${p.progress}% concluído`,
       score: urgencyScore(p.dueDate, nowMs) + bonus + slaScore(sla) + impactScore(clientMrr(p.clientId), maxMrr),
-      href: `/implantacao/${p.id}`,
+      href: `/implantacao?projeto=${p.id}`,
       canComplete: false,
       assigneeId: p.ownerId,
       assigneeName: isTeam ? nameOf(p.ownerId) : undefined,
@@ -787,7 +787,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   }
   for (const tr of trainings) {
     if (tr.status === "cancelado" || dayKey(tr.scheduledAt) !== today) continue;
-    agenda.push({ id: `treinamento:${tr.id}`, kind: "treinamento", at: tr.scheduledAt, timeLabel: timeLabel(tr.scheduledAt), title: `Treinamento · ${tr.subject}`, clientId: tr.clientId, clientName: clientName(tr.clientId), href: tr.projectId ? `/implantacao/${tr.projectId}` : "/implantacao/treinamentos", done: tr.status === "realizado", assigneeName: isTeam ? nameOf(tr.instructorId) : undefined });
+    agenda.push({ id: `treinamento:${tr.id}`, kind: "treinamento", at: tr.scheduledAt, timeLabel: timeLabel(tr.scheduledAt), title: `Treinamento · ${tr.subject}`, clientId: tr.clientId, clientName: clientName(tr.clientId), href: tr.projectId ? `/implantacao?projeto=${tr.projectId}` : "/implantacao/treinamentos", done: tr.status === "realizado", assigneeName: isTeam ? nameOf(tr.instructorId) : undefined });
   }
   agenda.sort((a, b) => a.at.localeCompare(b.at));
 
@@ -832,7 +832,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
       const mine = openTasks.filter((t) => t.assigneeId === u.id);
       const overdue = mine.filter((t) => t.dueAt && dayKey(t.dueAt) < today).length;
       const slaRisk = riskSlas.filter((x) => x.sla.ownerId === u.id).length;
-      return { id: u.id, name: u.name, avatarUrl: u.avatarUrl, jobTitle: u.jobTitle, openTasks: mine.length, overdueTasks: overdue, slaRisk, load: 0, href: `/tarefas?view=equipe&responsavel=${u.id}` };
+      return { id: u.id, name: u.name, avatarUrl: u.avatarUrl, jobTitle: u.jobTitle, openTasks: mine.length, overdueTasks: overdue, slaRisk, load: 0, href: `/tarefas?view=equipe&resp=${u.id}` };
     });
     const avg = rows.length ? rows.reduce((s, r) => s + r.openTasks, 0) / rows.length : 0;
     team = rows.map((r) => ({ ...r, load: avg > 0 ? Number((r.openTasks / avg).toFixed(2)) : 0 })).sort((a, b) => b.overdueTasks - a.overdueTasks || b.slaRisk - a.slaRisk || b.openTasks - a.openTasks || a.name.localeCompare(b.name, "pt-BR"));

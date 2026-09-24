@@ -36,8 +36,7 @@ import {
   upsellSchema,
   zodMessage,
 } from "./schemas";
-// TODO(workflow): trocar pelo serviço oficial `@/server/workflow/service` quando existir.
-import { createWorkflowInstanceForClient } from "./workflow-fallback";
+import { createWorkflowInstanceForClient } from "@/server/workflow/service";
 
 /**
  * Server Actions do módulo Clientes 360º.
@@ -159,12 +158,10 @@ export async function createClient(input: unknown): Promise<ActionResult<{ id: s
       payload: { status: client.status, origin: client.origin, segment: client.segment },
     });
 
-    // Jornada do cliente (template "jornada-cliente"). Falha aqui não impede o cadastro.
+    // Jornada do cliente (template "jornada-cliente"). O serviço grava workflowInstanceId/currentStage
+    // no cliente. Falha aqui não impede o cadastro.
     try {
-      const workflow = await createWorkflowInstanceForClient(client, actor(user));
-      if (workflow) {
-        await update<Client>(COLLECTIONS.clients, client.id, { workflowInstanceId: workflow.instance.id, currentStage: workflow.instance.currentStageKey as Client["currentStage"] });
-      }
+      await createWorkflowInstanceForClient({ clientId: client.id, clientName: client.tradeName, actor: { ...actor(user), role: user.role } });
     } catch (error) {
       console.error("[clients] falha ao iniciar a jornada do cliente", error);
     }

@@ -62,3 +62,14 @@ export function normalizeText(value: string | undefined | null): string {
     .toLowerCase()
     .trim();
 }
+
+// ---------------------------------------------------------------------------
+// Abas de /admin/configuracoes (puro: usado pelo Server Component e pelo componente de abas)
+// ---------------------------------------------------------------------------
+
+export const SETTINGS_TABS = ["horario", "feriados", "metas", "lead-scoring", "health-score", "oportunidades", "sla"] as const;
+export type SettingsTab = (typeof SETTINGS_TABS)[number];
+
+export function parseSettingsTab(value: string | undefined | null): SettingsTab {
+  return value && (SETTINGS_TABS as readonly string[]).includes(value) ? (value as SettingsTab) : "horario";
+}

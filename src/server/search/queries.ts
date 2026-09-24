@@ -229,7 +229,7 @@ export async function searchGlobalQuery(rawTerm: string): Promise<SearchResponse
   }
   for (const p of data.projects) {
     const score = matchScore(term, termDigits, [p.name, clientById.get(p.clientId)?.tradeName]);
-    add("implantacao", p, score, p.name, `/implantacao/${p.id}`, `${PROJECT_STATUS_LABELS[p.status]} · ${p.progress}%`);
+    add("implantacao", p, score, p.name, `/implantacao?projeto=${p.id}`, `${PROJECT_STATUS_LABELS[p.status]} · ${p.progress}%`);
   }
   for (const t of data.tickets) {
     const score = matchScore(term, termDigits, [t.number, t.subject, clientById.get(t.clientId)?.tradeName], [t.number]);

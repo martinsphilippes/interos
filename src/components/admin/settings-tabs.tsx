@@ -12,14 +12,10 @@ import { SettingsHolidays } from "./settings-holidays";
 import { SettingsLeadScoring } from "./settings-lead-scoring";
 import { SettingsOpportunity } from "./settings-opportunity";
 import { SettingsSlaRules } from "./settings-sla-rules";
+import { parseSettingsTab, type SettingsTab } from "./admin-model";
 import { useAdminUrl } from "./use-admin-url";
 
-export const SETTINGS_TABS = ["horario", "feriados", "metas", "lead-scoring", "health-score", "oportunidades", "sla"] as const;
-export type SettingsTab = (typeof SETTINGS_TABS)[number];
-
-export function parseSettingsTab(value: string | undefined | null): SettingsTab {
-  return value && (SETTINGS_TABS as readonly string[]).includes(value) ? (value as SettingsTab) : "horario";
-}
+export type { SettingsTab } from "./admin-model";
 
 const TAB_ITEMS: { value: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { value: "horario", label: "Horário comercial", icon: <Clock /> },

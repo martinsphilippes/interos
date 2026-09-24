@@ -54,24 +54,28 @@ export function OpenNewTaskButton({ children = "Nova tarefa", variant = "primary
 export function NewTaskDialog({ users, clients, currentUser }: NewTaskDialogProps) {
   const { searchParams, setLocal } = useTaskUrl();
   const open = searchParams.get("novo") === "1";
+  // /tarefas?novo=1&cliente=<id> abre o formulário com o cliente pré-selecionado (contrato usado pela ficha do cliente).
+  const initialClientId = searchParams.get("cliente") || undefined;
   return (
     <>
       <OpenNewTaskButton />
       <Dialog open={open} onOpenChange={(next) => !next && setLocal({ novo: null })}>
-        <DialogContent size="lg">{open ? <NewTaskForm users={users} clients={clients} currentUser={currentUser} onClose={() => setLocal({ novo: null })} /> : null}</DialogContent>
+        <DialogContent size="lg">
+          {open ? <NewTaskForm users={users} clients={clients} currentUser={currentUser} initialClientId={initialClientId} onClose={() => setLocal({ novo: null })} /> : null}
+        </DialogContent>
       </Dialog>
     </>
   );
 }
 
-function NewTaskForm({ users, clients, currentUser, onClose }: NewTaskDialogProps & { onClose: () => void }) {
+function NewTaskForm({ users, clients, currentUser, initialClientId, onClose }: NewTaskDialogProps & { initialClientId?: string; onClose: () => void }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<FormState>({
     title: "",
     description: "",
-    clientId: undefined,
+    clientId: initialClientId && clients.some((c) => c.id === initialClientId) ? initialClientId : undefined,
     assigneeId: currentUser.id,
     departmentId: currentUser.departmentId,
     priority: "media",

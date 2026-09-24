@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ExternalLink, History } from "lucide-react";
 import type { TimelineEvent } from "@/domain/types";
 import { DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
-import { formatDate, formatDateTime, formatTime } from "@/lib/format";
+import { dateKey, formatDateKey, formatDateTime, formatTime } from "@/lib/format";
 import { Select } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
@@ -41,10 +41,9 @@ export function entityHref(entityType: string | undefined, entityId: string | un
   }
 }
 
+/** Dia (AAAA-MM-DD) em America/Sao_Paulo — igual no servidor e no navegador. */
 function dayKey(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return dateKey(iso);
 }
 
 function dayLabel(key: string): string {
@@ -52,8 +51,7 @@ function dayLabel(key: string): string {
   const yesterday = dayKey(new Date(Date.now() - 86_400_000).toISOString());
   if (key === today) return "Hoje";
   if (key === yesterday) return "Ontem";
-  const [y, m, d] = key.split("-").map(Number);
-  return formatDate(new Date(y, m - 1, d), "EEEE, dd 'de' MMMM 'de' yyyy");
+  return formatDateKey(key, "EEEE, dd 'de' MMMM 'de' yyyy");
 }
 
 export interface TimelineProps {

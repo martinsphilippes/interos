@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { ClientActions } from "./client-actions";
 import { ClientStatusBadge, HealthIndicator, UserCell } from "./client-badges";
 import { JourneyProgress } from "./journey-progress";
-import { telHref, whatsappHref } from "./contact-event-dialog";
+import { telHref, whatsappHref } from "./contact-links";
 
 export interface ClientHeaderProps {
   data: Client360;

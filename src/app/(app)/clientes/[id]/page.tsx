@@ -63,12 +63,12 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
   return (
     <PageContainer size="full">
       <ClientHeader data={data} options={options} />
-      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0">
           <ClientTabs clientId={data.client.id} active={tab} counts={counts} />
           <div className="mt-4">{content[tab]}</div>
         </div>
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-[calc(var(--spacing-topbar)+16px)] lg:self-start">
+        <aside className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-[calc(var(--spacing-topbar)+16px)] lg:self-start">
           <ContactsCard clientId={data.client.id} contacts={data.contacts} />
         </aside>
       </div>

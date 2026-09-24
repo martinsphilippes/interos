@@ -3,7 +3,7 @@
  * de servidor). Rótulos de data são calculados no servidor, em America/Sao_Paulo, para não divergir
  * na hidratação.
  */
-import type { NotificationKind } from "@/domain/constants";
+import { NOTIFICATION_KINDS, type NotificationKind } from "@/domain/constants";
 import type { Notification } from "@/domain/types";
 
 export interface NotificationItem {
@@ -100,4 +100,18 @@ export function groupByDay(items: NotificationItem[]): NotificationDayGroup[] {
     else groups.push({ dayKey: item.dayKey, dayLabel: item.dayLabel, items: [item] });
   }
   return groups;
+}
+
+// ---------------------------------------------------------------------------
+// Filtros da página /notificacoes (puros: usados pelo Server Component e pela toolbar)
+// ---------------------------------------------------------------------------
+
+export type ReadFilter = "todas" | "nao-lidas";
+
+export function parseReadFilter(value: string | undefined): ReadFilter {
+  return value === "nao-lidas" ? "nao-lidas" : "todas";
+}
+
+export function parseKindFilter(value: string | undefined): NotificationKind | undefined {
+  return (NOTIFICATION_KINDS as readonly string[]).includes(value ?? "") ? (value as NotificationKind) : undefined;
 }

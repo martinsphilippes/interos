@@ -9,17 +9,9 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { markAllRead } from "@/server/notifications/actions";
-import { NOTIFICATION_KIND_LABELS } from "./model";
+import { NOTIFICATION_KIND_LABELS, type ReadFilter } from "./model";
 
-export type ReadFilter = "todas" | "nao-lidas";
-
-export function parseReadFilter(value: string | undefined): ReadFilter {
-  return value === "nao-lidas" ? "nao-lidas" : "todas";
-}
-
-export function parseKindFilter(value: string | undefined): NotificationKind | undefined {
-  return (NOTIFICATION_KINDS as readonly string[]).includes(value ?? "") ? (value as NotificationKind) : undefined;
-}
+export type { ReadFilter } from "./model";
 
 export interface NotificationsToolbarProps {
   readFilter: ReadFilter;

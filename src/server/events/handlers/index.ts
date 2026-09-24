@@ -7,6 +7,7 @@
 import { registerHandler } from "../emit";
 import { registerNotificationHandlers } from "./notifications";
 import { registerClientHandlers } from "./client";
+import { registerWorkflowHandlers } from "./workflow";
 
 let registered = false;
 
@@ -15,4 +16,5 @@ export function ensureHandlersRegistered(): void {
   registered = true;
   registerNotificationHandlers(registerHandler);
   registerClientHandlers(registerHandler);
+  registerWorkflowHandlers(registerHandler);
 }

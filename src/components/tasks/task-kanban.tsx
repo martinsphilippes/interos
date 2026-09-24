@@ -69,6 +69,8 @@ export interface TaskKanbanProps {
  */
 export function TaskKanban({ items, onOpen }: TaskKanbanProps) {
   const router = useRouter();
+  // Id estável para os atributos aria do @dnd-kit (evita divergência de hidratação "DndDescribedBy-N").
+  const dndId = React.useId();
   const [columns, setColumns] = React.useState<Columns>(() => buildColumns(items));
   const [prevItems, setPrevItems] = React.useState(items);
   const [activeId, setActiveId] = React.useState<string | null>(null);
@@ -137,7 +139,7 @@ export function TaskKanban({ items, onOpen }: TaskKanbanProps) {
   }
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
+    <DndContext id={dndId} sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
       <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 scrollbar-thin md:mx-0 md:grid md:grid-cols-4 md:overflow-visible md:px-0">
         {KANBAN_COLUMNS.map((status) => (
           <KanbanColumn key={status} status={status} tasks={columns[status]} onOpen={onOpen} />
