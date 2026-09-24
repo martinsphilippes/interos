@@ -180,7 +180,8 @@ export async function seedSupport(ctx: SeedContext): Promise<void> {
         kind: it.kind,
         body: it.body,
         durationSeconds: it.durationSeconds,
-        recordingUrl: it.kind === "ligacao" ? `https://mock.intercert.com.br/gravacoes/${ticketId}.mp3` : undefined,
+        // Sem VoIP/WhatsApp conectados: contatos da equipe são registros manuais (sem gravação).
+        manual: it.authorId && (it.kind === "ligacao" || it.kind === "mensagem" || it.kind === "whatsapp" || it.kind === "email") ? true : undefined,
         createdAt: pastOnly(it.at),
       } satisfies SeedDoc<TicketInteraction>);
     }

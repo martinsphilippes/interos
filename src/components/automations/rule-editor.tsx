@@ -267,7 +267,7 @@ function ActionParams({ action, options, onChange }: { action: DraftAction; opti
     case "webhook":
       return (
         <div className="grid gap-3 md:grid-cols-[1fr_140px]">
-          {text("url", "URL", "Só é chamada com AUTOMATION_WEBHOOKS_ENABLED=true; senão fica registrada como simulada", "https://")}
+          {text("url", "URL", "Só é chamada com AUTOMATION_WEBHOOKS_ENABLED=true; senão a chamada não é feita e fica registrada como não executada", "https://")}
           <Field label="Método">
             <Select value={p.method ?? "POST"} onChange={(e) => set("method", e.target.value)} options={["POST", "PUT", "PATCH", "GET"].map((m) => ({ value: m, label: m }))} />
           </Field>

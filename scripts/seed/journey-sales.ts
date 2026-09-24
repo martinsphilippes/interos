@@ -1,6 +1,6 @@
 /**
  * Aquisição e receita: leads, oportunidades, propostas, contratos, cobranças, visitas,
- * listas de prospecção e comunicações simuladas.
+ * listas de prospecção e comunicações registradas manualmente (nenhum canal conectado).
  */
 import {
   COLLECTIONS,
@@ -18,7 +18,7 @@ import {
 } from "../../src/domain/types";
 import { CITIES, NOW, addDays, businessTime, cnpj, competence, dayInCompetence, daysAgo, daysFromNow, emailFor, hoursAgo, id, isPast, minIso, pad, pastOnly, personName, phone, pickCity, rng, type SeedDoc } from "./lib";
 import { clientById, type SeedContext, type SeededClient } from "./context";
-import { LEAD_SCORING, LEAD_SOURCE_KEYS, PRODUCT_IDS } from "./catalog";
+import { LEAD_SCORING, LEAD_SOURCE_KEYS, PRODUCT_IDS, splitOrigin } from "./catalog";
 
 const INTERESTS: Record<string, string> = {
   erp: "Sistema de gestão (ERP) com PDV e fiscal",
@@ -77,7 +77,8 @@ function seedLeads(ctx: SeedContext): void {
     const n = idx + 1;
     const linked = linkedClient[n] ? clientById(ctx, id("client", linkedClient[n])) : undefined;
     const city = linked?.city ?? pickCity();
-    const origin = linked?.doc.origin ?? rng.pick(LEAD_SOURCE_KEYS);
+    const pickedOrigin = linked?.doc.origin ?? rng.pick(LEAD_SOURCE_KEYS);
+    const origin = linked ? pickedOrigin : splitOrigin(pickedOrigin, n);
     const interestKey = rng.pick(Object.keys(INTERESTS));
     const interest = INTERESTS[interestKey];
     let score = scoreFor(origin, interestKey, city.name);
@@ -103,7 +104,7 @@ function seedLeads(ctx: SeedContext): void {
       city: city.name,
       state: city.state,
       origin,
-      campaignId: linked?.doc.campaignId ?? (["anuncio", "instagram", "tiktok"].includes(origin) ? rng.pick(["camp_001", "camp_002"]) : undefined),
+      campaignId: linked?.doc.campaignId ?? (["anuncio", "instagram", "tiktok"].includes(pickedOrigin) ? rng.pick(["camp_001", "camp_002"]) : undefined),
       interest,
       productInterestIds: [INTEREST_PRODUCT[interestKey]],
       ownerId,
@@ -395,12 +396,14 @@ function seedContracts(ctx: SeedContext): void {
       termMonths: 12,
       startDate,
       endDate,
+      // Sem provedor de assinatura conectado: documento gerado pelo INTEROS e assinatura registrada pelo
+      // Financeiro com evidência (modo manual, o mesmo de registerManualSignature).
       signers: [
-        { name: primary.name, email: primary.email ?? client.doc.email!, role: "Contratante", signedAt, status: signed ? "assinado" : "pendente" },
-        { name: users.hercules.name, email: users.hercules.email, role: "Contratada", signedAt, status: signed ? "assinado" : "pendente" },
+        { name: primary.name, email: primary.email ?? client.doc.email!, role: "Contratante", signedAt, status: signed ? "assinado" : "pendente", ...(signed ? manualEvidence(signedAt!, "Contrato assinado pelo cliente (PDF devolvido por e-mail)", users.karem.id) : {}) },
+        { name: users.hercules.name, email: users.hercules.email, role: "Contratada", signedAt, status: signed ? "assinado" : "pendente", ...(signed ? manualEvidence(signedAt!, "Assinado pela diretoria", users.karem.id) : {}) },
       ],
-      signatureProvider: "mock",
-      signatureEnvelopeId: `env_${pad(n, 4)}`,
+      signatureProvider: cStatus === "aguardando_contrato" ? undefined : "manual",
+      signatureEnvelopeId: cStatus === "aguardando_contrato" ? undefined : `DOC-CT-${j.contractAt!.slice(0, 4)}-${pad(n, 4)}-v1`,
       signedAt,
       documentHash: signed ? `sha256:${cnpj()}${pad(n, 4)}` : undefined,
       paymentCondition: "Adesão à vista; mensalidade por boleto/PIX",
@@ -510,7 +513,30 @@ function seedVisits(ctx: SeedContext): void {
       objective: v.objective,
       result: v.result,
       status: v.status,
+      kind: "comercial",
       createdAt: pastOnly(addDays(v.when, -rng.int(2, 6))),
+    } satisfies SeedDoc<Visit>);
+  });
+  // Visitas técnicas (suporte/implantação) e uma comercial futura: valores fixos, sem consumir o rng.
+  const extra: { client: number; seller: string; when: string; status: Visit["status"]; kind: NonNullable<Visit["kind"]>; objective: string; result?: string; minutes: number }[] = [
+    { client: 21, seller: users.rafael.id, when: daysAgo(8, 14), status: "realizada", kind: "tecnica", objective: "Visita técnica: lentidão do PDV no caixa 2", result: "Rede do caixa 2 com cabo danificado; trocado e PDV normalizado.", minutes: 90 },
+    { client: 28, seller: users.marcos.id, when: daysFromNow(1, 9), status: "agendada", kind: "tecnica", objective: "Visita técnica: instalação do TEF e teste no caixa", minutes: 120 },
+    { client: 5, seller: users.larissa.id, when: daysFromNow(3, 14), status: "agendada", kind: "tecnica", objective: "Visita técnica: revisão das impressoras fiscais", minutes: 60 },
+    { client: 36, seller: users.vinicius.id, when: daysFromNow(4, 10), status: "agendada", kind: "comercial", objective: "Apresentação da proposta revisada ao sócio", minutes: 60 },
+  ];
+  extra.forEach((v, i) => {
+    const client = clientById(ctx, id("client", v.client));
+    store.add(COLLECTIONS.visits, id("visit", plan.length + i + 1), {
+      clientId: client.doc.id,
+      sellerId: v.seller,
+      address: client.doc.address,
+      scheduledAt: v.when,
+      durationMinutes: v.minutes,
+      objective: v.objective,
+      result: v.result,
+      status: v.status,
+      kind: v.kind,
+      createdAt: pastOnly(addDays(v.when, -3)),
     } satisfies SeedDoc<Visit>);
   });
 }
@@ -518,8 +544,34 @@ function seedVisits(ctx: SeedContext): void {
 function seedProspecting(ctx: SeedContext): void {
   const { store, users } = ctx;
   const lists: (SeedDoc<ProspectList> & { id: string })[] = [
-    { id: "plist_001", name: "Supermercados do Cariri sem TEF", description: "Base levantada com contadores parceiros.", segment: "supermercado", ownerId: users.luciano.id, campaignId: "camp_001", status: "ativa", totals: { contacts: 12, attempts: 0, responses: 0, opportunities: 0 } },
-    { id: "plist_002", name: "Farmácias de Fortaleza e Sobral", description: "Lista comprada para campanha de Internotas.", segment: "farmacia", ownerId: users.mateus.id, campaignId: "camp_002", status: "ativa", totals: { contacts: 8, attempts: 0, responses: 0, opportunities: 0 } },
+    {
+      id: "plist_001",
+      name: "Supermercados do Cariri sem TEF",
+      description: "Base levantada com contadores parceiros.",
+      segment: "supermercado",
+      ownerId: users.luciano.id,
+      campaignId: "camp_001",
+      status: "ativa",
+      totals: { contacts: 12, attempts: 0, responses: 0, opportunities: 0 },
+      objective: "Gerar reuniões qualificadas para apresentar ERP + TEF a supermercados sem integração de cartão.",
+      startDate: daysAgo(20).slice(0, 10),
+      endDate: daysFromNow(25).slice(0, 10),
+      optOut: true,
+    },
+    {
+      id: "plist_002",
+      name: "Farmácias de Fortaleza e Sobral",
+      description: "Lista comprada para campanha de Internotas.",
+      segment: "farmacia",
+      ownerId: users.mateus.id,
+      campaignId: "camp_002",
+      status: "ativa",
+      totals: { contacts: 8, attempts: 0, responses: 0, opportunities: 0 },
+      objective: "Apresentar Internotas e certificado digital para farmácias com emissão manual de notas.",
+      startDate: daysAgo(20).slice(0, 10),
+      endDate: daysFromNow(10).slice(0, 10),
+      optOut: true,
+    },
   ];
   const statuses: Prospect["status"][] = ["novo", "novo", "novo", "tentativa", "tentativa", "tentativa", "contatado", "contatado", "respondeu", "descartado"];
   let seq = 0;
@@ -560,16 +612,16 @@ function seedCommunications(ctx: SeedContext): void {
     { client: 33, channel: "whatsapp", direction: "entrada", body: "Recebi, vou olhar com meu sócio e retorno.", status: "recebida", hoursAgo: 48 },
     { client: 34, channel: "voip", direction: "saida", user: users.igor.id, status: "entregue", hoursAgo: 30, duration: 412, entity: { type: "opportunity", id: "opp_002" } },
     { client: 35, channel: "email", direction: "saida", user: users.vinicius.id, body: "Proposta comercial PR-2026-0002 — Modas Juazeiro", status: "enviada", hoursAgo: 72, entity: { type: "proposal", id: "prop_002" } },
-    { client: 36, channel: "email", direction: "saida", user: users.karem.id, body: "Contrato enviado para assinatura digital.", status: "entregue", hoursAgo: 20, entity: { type: "contract", id: "ctr_036" } },
+    { client: 36, channel: "email", direction: "saida", user: users.karem.id, body: "Documento do contrato enviado para assinatura (e-mail do Financeiro).", status: "entregue", hoursAgo: 20, entity: { type: "contract", id: "ctr_036" } },
     { client: 3, channel: "whatsapp", direction: "entrada", body: "O PDV travou de novo, estamos sem vender!", status: "recebida", hoursAgo: 5 },
     { client: 3, channel: "whatsapp", direction: "saida", user: users.rafael.id, body: "Já estou acessando remotamente, um minuto.", status: "lida", hoursAgo: 4.8 },
     { client: 21, channel: "voip", direction: "entrada", status: "recebida", hoursAgo: 26, duration: 615 },
     { client: 29, channel: "whatsapp", direction: "saida", user: users.marcos.id, body: "Bom dia! Ainda aguardamos o certificado digital para seguir com a configuração fiscal.", status: "entregue", hoursAgo: 28, entity: { type: "project", id: "proj_003" } },
     { client: 14, channel: "whatsapp", direction: "saida", user: users.camila.id, body: "Oi! Notei que a equipe está usando pouco o módulo de estoque. Posso agendar um reforço de treinamento?", status: "lida", hoursAgo: 60 },
-    { client: 38, channel: "whatsapp", direction: "saida", user: users.luciano.id, body: "Olá! Vi que você pediu contato pelo nosso site. Qual o melhor horário para conversarmos?", status: "simulada", hoursAgo: 8, entity: { type: "lead", id: "lead_004" } },
+    { client: 38, channel: "whatsapp", direction: "saida", user: users.luciano.id, body: "Olá! Vi que você pediu contato pelo nosso site. Qual o melhor horário para conversarmos?", status: "manual", hoursAgo: 8, entity: { type: "lead", id: "lead_004" } },
     { client: 39, channel: "whatsapp", direction: "entrada", body: "Quero saber o valor do sistema para ótica.", status: "recebida", hoursAgo: 12, entity: { type: "lead", id: "lead_005" } },
     { client: 25, channel: "email", direction: "saida", user: users.felipe.id, body: "Bem-vindo à Intercert! Seus canais de suporte e sua analista de sucesso.", status: "enviada", hoursAgo: 240 },
-    { client: 1, channel: "interno", direction: "saida", user: users.igor.id, body: "Cliente pediu orçamento de PABX durante ligação de follow-up.", status: "simulada", hoursAgo: 100, entity: { type: "opportunity", id: "opp_010" } },
+    { client: 1, channel: "interno", direction: "saida", user: users.igor.id, body: "Cliente pediu orçamento de PABX durante ligação de follow-up.", status: "manual", hoursAgo: 100, entity: { type: "opportunity", id: "opp_010" } },
     { client: 31, channel: "whatsapp", direction: "saida", user: users.bruno.id, body: "Treinamento concluído! Amanhã acompanhamos o primeiro dia de operação.", status: "lida", hoursAgo: 18, entity: { type: "project", id: "proj_005" } },
   ];
   plan.forEach((c, i) => {
@@ -583,14 +635,20 @@ function seedCommunications(ctx: SeedContext): void {
       entityType: c.entity?.type,
       entityId: c.entity?.id,
       body: c.body,
-      status: c.status,
+      // Nenhum canal conectado: envios da equipe são registro manual; mensagens de entrada foram
+      // registradas pela equipe a partir do app (sem provedor, sem gravação).
+      status: c.direction === "saida" ? "manual" : c.status,
       durationSeconds: c.duration,
-      recordingUrl: c.channel === "voip" ? `https://mock.intercert.com.br/gravacoes/${id("comm", i + 1)}.mp3` : undefined,
-      externalId: `mock_${pad(i + 1, 4)}`,
-      provider: "mock",
+      provider: "manual",
       createdAt: hoursAgo(c.hoursAgo),
     } satisfies SeedDoc<Communication>);
   });
+}
+
+
+/** Evidência de assinatura registrada manualmente pelo Financeiro (Karem), no formato de ContractSignerEntry. */
+function manualEvidence(signedAt: string, evidence: string, registeredBy: string) {
+  return { method: "manual" as const, evidence, registeredBy, registeredAt: signedAt };
 }
 
 export async function seedSales(ctx: SeedContext): Promise<void> {

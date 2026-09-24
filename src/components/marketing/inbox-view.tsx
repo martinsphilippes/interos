@@ -24,7 +24,13 @@ import { RelativeTime } from "@/components/ui/relative-time";
 type ReplyTarget = { communicationId?: string; leadId?: string; name: string; channel: "whatsapp" | "email"; quote?: string };
 
 /** Caixa de entrada unificada: mensagens recebidas (WhatsApp/e-mail) e leads novos sem responsável. */
-export function InboxView({ data, currentUserId }: { data: InboxData; currentUserId: string }) {
+/** Canais conectados de fato (registro de integrações); sem integração a resposta é registro manual. */
+export interface InboxChannels {
+  whatsapp: boolean;
+  email: boolean;
+}
+
+export function InboxView({ data, currentUserId, channels }: { data: InboxData; currentUserId: string; channels: InboxChannels }) {
   const router = useRouter();
   const [filter, setFilter] = React.useState<"pendentes" | "todas">("pendentes");
   const [reply, setReply] = React.useState<ReplyTarget | null>(null);
@@ -132,7 +138,7 @@ export function InboxView({ data, currentUserId }: { data: InboxData; currentUse
         )}
       </section>
 
-      <ReplyDialog target={reply} onClose={() => setReply(null)} />
+      <ReplyDialog target={reply} channels={channels} onClose={() => setReply(null)} />
     </div>
   );
 }
@@ -189,7 +195,7 @@ function MessageItem({ message: m, currentUserId, busy, onAssume, onReply }: { m
   );
 }
 
-function ReplyDialog({ target, onClose }: { target: ReplyTarget | null; onClose: () => void }) {
+function ReplyDialog({ target, channels, onClose }: { target: ReplyTarget | null; channels: InboxChannels; onClose: () => void }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [body, setBody] = React.useState("");
@@ -212,7 +218,9 @@ function ReplyDialog({ target, onClose }: { target: ReplyTarget | null; onClose:
         toast.error(result.error);
         return;
       }
-      toast.success("Resposta registrada (envio simulado)");
+      if (result.data.delivery === "manual") toast.success(`Resposta registrada (registro manual): envie pelo ${channel === "whatsapp" ? "WhatsApp" : "e-mail"} do seu aparelho`);
+      else if (result.data.delivery === "falha") toast.error("O provedor recusou o envio; a tentativa ficou registrada");
+      else toast.success("Resposta enviada");
       onClose();
       router.refresh();
     });
@@ -224,7 +232,11 @@ function ReplyDialog({ target, onClose }: { target: ReplyTarget | null; onClose:
         <form onSubmit={submit} className="flex min-h-0 flex-col">
           <DialogHeader>
             <DialogTitle>Responder {target?.name}</DialogTitle>
-            <DialogDescription>O envio é simulado até a integração real do WhatsApp; a mensagem fica registrada na timeline.</DialogDescription>
+            <DialogDescription>
+              {channels[channel]
+                ? `${channel === "whatsapp" ? "WhatsApp" : "E-mail"} conectado: a resposta é enviada pelo INTEROS e fica na timeline.`
+                : `${channel === "whatsapp" ? "WhatsApp" : "E-mail"} não conectado: envie pelo seu aparelho; aqui a resposta fica registrada (registro manual) na timeline.`}
+            </DialogDescription>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-3">
             {target?.quote ? <blockquote className="rounded-md border-l-2 border-border-strong bg-surface-muted px-3 py-2 text-sm text-muted">{target.quote}</blockquote> : null}
@@ -244,7 +256,7 @@ function ReplyDialog({ target, onClose }: { target: ReplyTarget | null; onClose:
               Cancelar
             </Button>
             <Button type="submit" loading={pending} disabled={!body.trim()}>
-              <Reply /> Enviar
+              <Reply /> {channels[channel] ? "Enviar" : "Registrar resposta"}
             </Button>
           </DialogFooter>
         </form>

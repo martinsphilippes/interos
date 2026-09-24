@@ -11,6 +11,7 @@ import { KpiStrip } from "@/components/ui/kpi-strip";
 import { StatCard, type StatCardProps } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
 import { PeriodSelect } from "@/components/marketing/period-select";
+import { getCommunicationChannelStatus } from "@/server/integrations/status";
 import { EvolutionChart, LeadsByCampaignChart } from "@/components/marketing/overview-charts";
 import { parsePeriod } from "@/components/marketing/marketing-model";
 import { NewLeadDialog } from "@/components/marketing/new-lead-dialog";
@@ -124,7 +125,7 @@ export default async function MarketingOverviewPage({ searchParams }: { searchPa
       </KpiStrip>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
-        <LeadCapture sources={data.sources} leads={data.inbox} sellers={data.sellers} />
+        <LeadCapture sources={data.sources} leads={data.inbox} sellers={data.sellers} channels={getCommunicationChannelStatus()} />
         <div className="flex min-w-0 flex-col gap-4">
           <ChannelPerformance sources={data.sources} reportHref="/gestao/relatorios" />
           <CaptureAutomations rules={data.automations} canToggle={data.canToggleAutomations} />

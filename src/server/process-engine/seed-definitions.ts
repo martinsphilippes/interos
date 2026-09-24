@@ -1,5 +1,5 @@
 /**
- * Definições de processo de demonstração (para o integrador aplicar em scripts/seed com IDs determinísticos).
+ * Definições de processo de demonstração, gravadas por scripts/seed/catalog.ts com IDs determinísticos.
  * Sem dependências de servidor: pode ser importado pelo seed.
  *
  * - "Implantação de novos clientes" v3 em RASCUNHO: reproduz o fluxo da referência sem disparar (o projeto de

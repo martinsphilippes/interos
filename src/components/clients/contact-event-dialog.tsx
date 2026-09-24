@@ -30,13 +30,16 @@ export interface ContactEventDialogProps {
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** O canal (VoIP/WhatsApp) está conectado de fato (registro de integrações). Sem integração: registro manual. */
+  connected?: boolean;
 }
 
 /**
  * Abre o discador (tel:) ou o WhatsApp (wa.me) e, ao confirmar, registra `call.completed` /
- * `whatsapp.message.sent` na timeline. A integração real (VoIP, WhatsApp API) entra depois.
+ * `whatsapp.message.sent` na timeline. O estado real do canal vem do registro de integrações (prop `connected`);
+ * sem integração o contato acontece no discador/app e fica como registro manual.
  */
-export function ContactEventDialog({ clientId, clientName, channel, contacts, clientPhone, clientWhatsapp, defaultContactId, trigger, open: openProp, onOpenChange }: ContactEventDialogProps) {
+export function ContactEventDialog({ clientId, clientName, channel, contacts, clientPhone, clientWhatsapp, defaultContactId, trigger, open: openProp, onOpenChange, connected = false }: ContactEventDialogProps) {
   const router = useRouter();
   const isCall = channel === "ligacao";
   const [innerOpen, setInnerOpen] = React.useState(false);
@@ -90,7 +93,10 @@ export function ContactEventDialog({ clientId, clientName, channel, contacts, cl
       <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>{isCall ? "Ligar para o cliente" : "Enviar WhatsApp"}</DialogTitle>
-          <DialogDescription>{isCall ? "Abra o discador e, ao terminar, registre o resultado." : "Abra a conversa no WhatsApp e registre o contato na timeline."}</DialogDescription>
+          <DialogDescription>
+            {isCall ? "Abra o discador e, ao terminar, registre o resultado." : "Abra a conversa no WhatsApp e registre o contato na timeline."}{" "}
+            <span className="text-muted-light">{isCall ? "VoIP" : "WhatsApp"} {connected ? "conectado." : "não conectado · registro manual."}</span>
+          </DialogDescription>
         </DialogHeader>
         <form
           className="contents"

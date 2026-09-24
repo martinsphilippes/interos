@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { contractDocumentPath, contractEmailHref } from "./contract-links";
 import { ManualSignatureButton } from "./manual-signature-dialog";
 import { useFinanceAction } from "./use-finance-action";
-import { useOrigin } from "./use-origin";
+import { useOrigin } from "@/components/ui/use-origin";
 
 const CHANNEL_LABEL: Record<PanelInteraction["channel"], string> = { whatsapp: "WhatsApp", voip: "Ligação", email: "E-mail", interno: "Interno" };
 

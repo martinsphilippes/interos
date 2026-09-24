@@ -55,7 +55,7 @@ export default async function MeuDiaPage({ searchParams }: { searchParams: Searc
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 [&>*]:min-w-0">
         {showInsights ? <InsightsBlock insights={insights} director={user.isDirector} /> : null}
         {team ? <TeamBlock members={data.team} /> : null}
-        <AgendaBlock items={data.agenda} />
+        <AgendaBlock items={data.agenda} upcomingVisits={data.upcomingVisits} />
         <AwaitingBlock items={data.awaiting} />
         <FollowupsBlock items={data.followups} />
         <ContractsBlock items={data.contracts} />

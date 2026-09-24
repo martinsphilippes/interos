@@ -17,7 +17,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { SectionTitle } from "@/components/ui/section-title";
 import { StatCard } from "@/components/ui/stat-card";
 import { PeriodSelect } from "@/components/kpis/period-select";
-import { UrlSelect } from "@/components/kpis/url-select";
+import { UrlSelect } from "@/components/ui/url-select";
 import { OperationHealthCard } from "@/components/kpis/operation-health-card";
 import { InsightList } from "@/components/insights/insight-list";
 import { AgentSuggestions } from "@/components/automations/agent-suggestions";

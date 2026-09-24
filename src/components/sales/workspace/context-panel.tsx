@@ -15,7 +15,8 @@ import { CLIENT_STATUS_LABELS, PRODUCT_CATEGORY_LABELS } from "@/domain/constant
 import { formatCurrency, formatDay, formatPhone, formatTime, initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { WorkspaceDetail, WorkspaceLocation, WorkspaceNextAction } from "@/server/sales/workspace-queries";
-import { formatCallDuration } from "../model";
+import { formatCallDuration } from "@/lib/format";
+import { MapEmbed } from "@/components/ui/map-embed";
 import { useSalesUrl } from "../use-sales-url";
 
 function travelLabel(minutes: number | undefined): string {
@@ -137,27 +138,6 @@ function ChannelsCard({ detail }: { detail: WorkspaceDetail }) {
   );
 }
 
-/**
- * Iframe do Google Maps (sem chave). Montado pouco depois da página carregar: o mapa pesa ~1 MB e não deve
- * competir com os dados da tela; até lá mostra um marcador.
- */
-function MapEmbed({ src, title, className }: { src: string; title: string; className?: string }) {
-  const [ready, setReady] = React.useState(false);
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setReady(true), 1500);
-    return () => window.clearTimeout(timer);
-  }, [src]);
-  const box = cn("w-full rounded-lg border border-border bg-surface-muted", className);
-  if (!ready) {
-    return (
-      <div className={cn(box, "flex items-center justify-center bg-dot-grid")} aria-hidden>
-        <MapPin className="size-7 text-brand" />
-      </div>
-    );
-  }
-  return <iframe title={title} src={src} loading="lazy" referrerPolicy="no-referrer-when-downgrade" className={box} />;
-}
-
 /** Mapa (iframe do Google Maps por endereço, sem chave), distância estimada da sede e links de rota. */
 export function LocationBlock({ location, compact }: { location: WorkspaceLocation; compact?: boolean }) {
   return (
@@ -169,7 +149,7 @@ export function LocationBlock({ location, compact }: { location: WorkspaceLocati
         {location.source === "visita" ? " (próxima visita)" : ""}
       </p>
       {location.distanceKm !== undefined ? (
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm tabular-nums" title={`Estimativa a partir da ${location.origin}${location.provider === "mock" ? " (linha reta × 1,25 a 60 km/h, sem Google Maps conectado)" : ""}`}>
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm tabular-nums" title={`Estimativa a partir da ${location.origin}${location.provider === "estimativa" ? " (linha reta × 1,25 a 60 km/h, sem Google Maps conectado)" : ""}`}>
           <span className="inline-flex items-center gap-1">
             <Car className="size-4 text-muted" aria-hidden /> {location.distanceKm.toLocaleString("pt-BR")} km
           </span>

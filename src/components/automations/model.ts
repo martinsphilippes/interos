@@ -3,7 +3,7 @@ import type { BadgeProps } from "@/components/ui/badge";
 
 type Variant = NonNullable<BadgeProps["variant"]>;
 
-export const RUN_STATUS_LABELS: Record<string, string> = { sucesso: "Sucesso", erro: "Erro", ignorada: "Ignorada", simulada: "Simulada" };
+export const RUN_STATUS_LABELS: Record<string, string> = { sucesso: "Sucesso", erro: "Erro", ignorada: "Ignorada", simulada: "Teste / não executada" };
 export const RUN_STATUS_VARIANT: Record<string, Variant> = { sucesso: "success", erro: "danger", ignorada: "muted", simulada: "info" };
 
 export const SWEEP_STATUS_LABELS: Record<string, string> = { executada: "Executada", pulada: "No prazo", erro: "Erro" };

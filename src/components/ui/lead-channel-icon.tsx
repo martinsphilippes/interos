@@ -4,7 +4,7 @@ import { IconTile } from "@/components/ui/icon-tile";
 import type { Tone } from "@/components/ui/tone";
 
 /** Ícone e tom por canal de origem de lead (sem logos de marca: ícones genéricos do lucide). */
-export const CHANNEL_VISUAL: Record<LeadSource["channel"], { icon: LucideIcon; tone: Tone }> = {
+export const LEAD_CHANNEL_VISUAL: Record<LeadSource["channel"], { icon: LucideIcon; tone: Tone }> = {
   instagram: { icon: Camera, tone: "purple" },
   tiktok: { icon: Music2, tone: "neutral" },
   site: { icon: Globe, tone: "info" },
@@ -20,8 +20,8 @@ export const CHANNEL_VISUAL: Record<LeadSource["channel"], { icon: LucideIcon; t
   manual: { icon: PenLine, tone: "neutral" },
 };
 
-export function ChannelIcon({ channel, size = "sm" }: { channel: LeadSource["channel"]; size?: "xs" | "sm" | "md" }) {
-  const visual = CHANNEL_VISUAL[channel] ?? CHANNEL_VISUAL.manual;
+export function LeadChannelIcon({ channel, size = "sm" }: { channel: LeadSource["channel"]; size?: "xs" | "sm" | "md" }) {
+  const visual = LEAD_CHANNEL_VISUAL[channel] ?? LEAD_CHANNEL_VISUAL.manual;
   const Icon = visual.icon;
   return <IconTile icon={<Icon />} tone={visual.tone} size={size} />;
 }

@@ -412,8 +412,9 @@ export async function registerLeadContact(
     entityType: "lead",
     entityId: lead.id,
     body: input.note,
-    status: "simulada",
-    provider: "mock",
+    // Contato feito fora do sistema (app/discador) e registrado à mão.
+    status: "manual",
+    provider: "manual",
     createdBy: actor.id,
   });
   const patch: Partial<Lead> = { lastContactAt: now };
@@ -924,7 +925,10 @@ export async function assumeInboxItem(kind: "lead" | "message", id: string, acto
   }
 }
 
-/** Resposta simulada pelo adaptador de canal (provider mock). */
+/**
+ * Resposta pela Caixa de Entrada via adaptador de canal: envio real quando o canal está conectado; senão REGISTRO
+ * MANUAL (status/provider "manual") do que o usuário enviou pelo próprio app.
+ */
 export async function replyToInbox(input: { communicationId?: string; leadId?: string; channel: "whatsapp" | "email"; body: string }, actor: MarketingActor): Promise<Communication> {
   const original = input.communicationId ? await getById<Communication>(COLLECTIONS.communications, input.communicationId) : null;
   if (input.communicationId && !original) throw new MarketingError("Mensagem não encontrada");
@@ -945,6 +949,8 @@ export async function replyToInbox(input: { communicationId?: string; leadId?: s
     sender: actor,
   });
   if (original) await update<Communication>(COLLECTIONS.communications, original.id, { status: "lida", userId: original.userId ?? actor.id });
+  const manual = sent.status === "manual";
+  const suffix = manual ? " (registro manual)" : sent.status === "falha" ? " (falha no envio)" : "";
 
   if (lead) {
     const patch: Partial<Lead> = { lastContactAt: nowIso() };
@@ -956,23 +962,23 @@ export async function replyToInbox(input: { communicationId?: string; leadId?: s
       actor,
       clientId: lead.clientId,
       entity: { type: "lead", id: lead.id },
-      title: `${input.channel === "whatsapp" ? "WhatsApp" : "E-mail"} respondido para o lead ${lead.name} (simulado)`,
+      title: `${input.channel === "whatsapp" ? "WhatsApp" : "E-mail"} respondido para o lead ${lead.name}${suffix}`,
       description: input.body,
       department: "marketing",
-      payload: { channel: input.channel, communicationId: sent.id, simulated: true },
+      payload: { channel: input.channel, communicationId: sent.id, manual, delivery: sent.status },
       // O WhatsApp já entra na timeline pelo evento do adaptador.
       timeline: input.channel !== "whatsapp",
     });
   } else if (input.channel === "email" && client) {
     await emitEvent({
-      type: "note.added",
+      type: "email.sent",
       actor,
       clientId: client.id,
       entity: { type: "communication", id: sent.id },
-      title: `E-mail enviado para ${client.tradeName} (simulado)`,
+      title: `E-mail ${manual ? "registrado" : "enviado"} para ${client.tradeName}${suffix}`,
       description: input.body,
       department: "marketing",
-      payload: { channel: "email", communicationId: sent.id, simulated: true },
+      payload: { channel: "email", communicationId: sent.id, manual, delivery: sent.status },
     });
   }
   return sent;

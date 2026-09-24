@@ -6,6 +6,8 @@ import { listBillingsSwept } from "@/server/finance/billing";
 import { getClientFinancialSummary, type ClientFinancialSummary } from "@/server/finance/queries";
 import { getClientImplementation } from "@/server/implementation/queries";
 import { getClientSupport } from "@/server/support/queries";
+import { getClientVisits } from "@/server/sales/workspace-queries";
+import type { VisitRow } from "@/server/sales/queries";
 import {
   COLLECTIONS,
   type Billing,
@@ -36,7 +38,6 @@ import {
   type Training,
   type User,
   type UserRef,
-  type Visit,
   type WorkflowInstance,
   type WorkflowStep,
 } from "@/domain/types";
@@ -455,7 +456,8 @@ export interface Client360 {
   tasks: Task[];
   workflow: { instance: WorkflowInstance | null; steps: WorkflowStep[] };
   /** Visitas do cliente (agendadas, realizadas, canceladas), mais recentes primeiro. */
-  visits: Visit[];
+  /** Visitas comerciais e técnicas (mesma leitura do workspace de Vendas): pendentes primeiro. */
+  visits: VisitRow[];
   /** Estado de SLA calculado na leitura para tarefas e etapas de workflow do cliente (chave: id da entidade). */
   slaByEntity: Record<string, SlaView>;
   users: Record<string, UserSummary>;
@@ -520,7 +522,7 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     client.workflowInstanceId ? getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId) : Promise.resolve(null),
     list<WorkflowStep>(COLLECTIONS.workflowSteps, byClient()),
     list<SlaInstance>(COLLECTIONS.slaInstances, byClient()),
-    list<Visit>(COLLECTIONS.visits, byClient()),
+    getClientVisits(null, id),
   ]);
 
   const { projects, tasks: implementationTasks, trainings } = implementation;
@@ -574,7 +576,6 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     const sla = item.slaInstanceId ? slaById.get(item.slaInstanceId) : undefined;
     if (sla) slaByEntity[item.id] = computeSlaState(sla, now);
   }
-  visits.sort(byIsoDesc((v) => v.scheduledAt));
 
   // Resumo financeiro (fonte: módulo Financeiro).
   const financeSummary = await getClientFinancialSummary(id);

@@ -229,7 +229,7 @@ export function TabComercial({ data, options }: { data: Client360; options: Clie
           count={data.visits.length}
           actions={
             <Button asChild size="sm" variant="outline">
-              <Link href="/vendas/visitas?nova=1">
+              <Link href={`/vendas/visitas?nova=1&cliente=${data.client.id}`}>
                 <MapPin /> Registrar visita
               </Link>
             </Button>
@@ -237,7 +237,7 @@ export function TabComercial({ data, options }: { data: Client360; options: Clie
         />
         <Card className="overflow-hidden">
           {data.visits.length === 0 ? (
-            <EmptyState size="sm" icon={<MapPin />} title="Nenhuma visita" description="Visitas agendadas e realizadas pelo comercial aparecem aqui e na linha do tempo." />
+            <EmptyState size="sm" icon={<MapPin />} title="Nenhuma visita" description="Visitas comerciais e técnicas, agendadas e realizadas, aparecem aqui, no Meu Dia e na linha do tempo." />
           ) : (
             <Table className="min-w-[720px]">
               <TableHeader>
@@ -252,18 +252,28 @@ export function TabComercial({ data, options }: { data: Client360; options: Clie
               </TableHeader>
               <TableBody>
                 {data.visits.map((v) => {
-                  const address = [[v.address?.street, v.address?.number].filter(Boolean).join(", "), v.address?.district, v.address?.city, v.address?.state].filter(Boolean).join(", ");
+                  const address = v.addressLine;
                   return (
                     <TableRow key={v.id}>
                       <TableCell className="whitespace-nowrap tabular-nums">{formatDate(v.scheduledAt, "dd/MM/yyyy HH:mm")}</TableCell>
                       <TableCell className="max-w-[260px]">
-                        <Link href={`/vendas/visitas?visita=${v.id}`} className="block truncate font-medium hover:text-brand-fg hover:underline">
-                          {v.objective}
-                        </Link>
+                        <span className="flex items-center gap-1.5">
+                          <Badge variant={v.kind === "tecnica" ? "secondary" : "outline"} size="sm" className="shrink-0">
+                            {v.kind === "tecnica" ? "Técnica" : "Comercial"}
+                          </Badge>
+                          <Link href={`/vendas/visitas?visita=${v.id}`} className="block truncate font-medium hover:text-brand-fg hover:underline">
+                            {v.objective}
+                          </Link>
+                        </span>
                         {address ? (
-                          <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`} target="_blank" rel="noreferrer" className="block truncate text-xs text-secondary-fg hover:underline">
-                            {address}
-                          </a>
+                          v.mapsUrl ? (
+                            <a href={v.mapsUrl} target="_blank" rel="noreferrer" className="block truncate text-xs text-secondary-fg hover:underline">
+                              {address}
+                              {v.distanceKm !== undefined ? ` · ~${Math.round(v.distanceKm)} km` : ""}
+                            </a>
+                          ) : (
+                            <span className="block truncate text-xs text-muted">{address}</span>
+                          )
                         ) : null}
                       </TableCell>
                       <TableCell>

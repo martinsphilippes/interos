@@ -22,6 +22,8 @@ export interface ClientActionsProps {
   options: ClientFormOptions;
   /** Opções do NewTicketDialog; null quando o usuário não acessa o Suporte. */
   ticketOptions: NewTicketOptions | null;
+  /** Canais conectados de fato (registro de integrações). */
+  channels?: { whatsapp: boolean; voip: boolean };
 }
 
 type MenuDialog = "nota" | "oportunidade" | "ligar" | "whatsapp" | "status" | null;
@@ -31,7 +33,7 @@ type MenuDialog = "nota" | "oportunidade" | "ligar" | "whatsapp" | "status" | nu
  * implantação/ativo: "Novo atendimento"; demais: "Nova tarefa") e o menu com as demais ações.
  * Tudo que o usuário faz aqui vira evento na timeline.
  */
-export function ClientActions({ client, contacts, availableProducts, ownedCategories, options, ticketOptions }: ClientActionsProps) {
+export function ClientActions({ client, contacts, availableProducts, ownedCategories, options, ticketOptions, channels }: ClientActionsProps) {
   const [dialog, setDialog] = React.useState<MenuDialog>(null);
   const control = (key: Exclude<MenuDialog, null>) => ({ open: dialog === key, onOpenChange: (open: boolean) => setDialog(open ? key : null) });
   const serviceStage = client.status === "ativo" || client.status === "em_implantacao" || client.status === "inativo";
@@ -108,8 +110,8 @@ export function ClientActions({ client, contacts, availableProducts, ownedCatego
 
       <NoteDialog clientId={client.id} clientName={client.tradeName} {...control("nota")} />
       <UpsellDialog clientId={client.id} clientName={client.tradeName} products={availableProducts} ownedCategories={ownedCategories} {...control("oportunidade")} />
-      <ContactEventDialog clientId={client.id} clientName={client.tradeName} channel="ligacao" contacts={contacts} clientPhone={client.phone} clientWhatsapp={client.whatsapp} {...control("ligar")} />
-      <ContactEventDialog clientId={client.id} clientName={client.tradeName} channel="whatsapp" contacts={contacts} clientPhone={client.phone} clientWhatsapp={client.whatsapp} {...control("whatsapp")} />
+      <ContactEventDialog clientId={client.id} clientName={client.tradeName} channel="ligacao" contacts={contacts} clientPhone={client.phone} clientWhatsapp={client.whatsapp} connected={channels?.voip} {...control("ligar")} />
+      <ContactEventDialog clientId={client.id} clientName={client.tradeName} channel="whatsapp" contacts={contacts} clientPhone={client.phone} clientWhatsapp={client.whatsapp} connected={channels?.whatsapp} {...control("whatsapp")} />
       <StatusDialog clientId={client.id} currentStatus={client.status} open={dialog === "status"} onOpenChange={(open) => setDialog(open ? "status" : null)} />
     </div>
   );

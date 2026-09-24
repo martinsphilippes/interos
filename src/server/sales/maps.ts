@@ -8,7 +8,7 @@ import { isConnected } from "@/server/integrations/status";
  * Com o Google Maps conectado (GOOGLE_MAPS_API_KEY, ver src/server/integrations/status.ts) `geocode` usa a
  * Geocoding API e `route` a Distance Matrix API (provider "google"). Sem a chave, ou se o Google falhar,
  * cai na ESTIMATIVA local: coordenada aproximada da cidade (tabela de cidades do Nordeste) e distância em
- * linha reta (haversine) × fator de estrada a 60 km/h — `provider: "mock"` significa "estimativa", e a tela
+ * linha reta (haversine) × fator de estrada a 60 km/h — `provider: "estimativa"`, e a tela
  * deve apresentá-la assim. Mapas sem chave: iframe/links do Google Maps por URL (funções abaixo).
  */
 
@@ -20,8 +20,8 @@ export interface LatLng {
 export interface RouteEstimate {
   distanceKm: number;
   durationMinutes: number;
-  /** "mock" enquanto não houver chave do Google Maps. */
-  provider: "mock" | "google";
+  /** "estimativa" enquanto não houver chave do Google Maps (linha reta × fator de estrada). */
+  provider: "estimativa" | "google";
 }
 
 /** Sede da Intercert: Juazeiro do Norte (CE). */
@@ -101,7 +101,7 @@ export async function route(from: LatLng, to: LatLng): Promise<RouteEstimate> {
     if (real) return { ...real, provider: "google" };
   }
   const distanceKm = Math.round(haversineKm(from, to) * 1.25 * 10) / 10;
-  return { distanceKm, durationMinutes: Math.round((distanceKm / 60) * 60), provider: "mock" };
+  return { distanceKm, durationMinutes: Math.round((distanceKm / 60) * 60), provider: "estimativa" };
 }
 
 /** Texto de endereço em uma linha (para exibição e para o link do Google Maps). */

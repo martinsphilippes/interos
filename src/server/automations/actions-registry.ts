@@ -614,8 +614,8 @@ const webhook: ActionHandler = async (raw, ctx, rt) => {
     return {
       type: "webhook",
       status: "simulada",
-      effect: "webhook simulado",
-      detail: `${rt.simulate ? "Chamaria" : "Webhook simulado (AUTOMATION_WEBHOOKS_ENABLED desligado):"} ${p.method} ${p.url}`,
+      effect: "webhook não enviado",
+      detail: `${rt.simulate ? "Chamaria" : "Webhook não enviado (AUTOMATION_WEBHOOKS_ENABLED desligado):"} ${p.method} ${p.url}`,
     };
   }
   const body = {

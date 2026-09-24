@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { ChannelIcon } from "./channel-visual";
+import { LeadChannelIcon } from "@/components/ui/lead-channel-icon";
 import { PROSPECT_LIST_STATUS_LABELS } from "./marketing-model";
 import type { CaptureAutomation, ProspectHighlight, SourcePerformance } from "./workspace-model";
 
@@ -57,7 +57,7 @@ export function ChannelPerformance({ sources, reportHref }: { sources: SourcePer
                     className="grid grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,1.1fr)_4.5rem] items-center gap-3 border-b border-border/60 py-2 text-sm last:border-0 hover:bg-surface-hover/50"
                   >
                     <span className="flex min-w-0 items-center gap-2">
-                      <ChannelIcon channel={s.channel} size="xs" />
+                      <LeadChannelIcon channel={s.channel} size="xs" />
                       <span className="truncate" title={s.name}>
                         {s.name}
                       </span>

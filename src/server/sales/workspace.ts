@@ -17,7 +17,7 @@ import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
 import { notify } from "@/server/notifications";
 import { assignTaskInternal } from "@/server/tasks/service";
 import { COLLECTIONS, type Client, type Contact, type DomainEvent, type Document, type Opportunity, type Task, type User, type UserRef, type Visit } from "@/domain/types";
-import { formatCallDuration } from "@/components/sales/model";
+import { formatCallDuration } from "@/lib/format";
 import { getSalesChannelStatus } from "./channels";
 import { isClosed, loadOpportunity } from "./service";
 import type { WorkspaceMessageChannel } from "./schemas";

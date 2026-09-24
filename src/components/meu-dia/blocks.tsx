@@ -33,7 +33,7 @@ function ClientLink({ id, name, className }: { id?: string; name?: string; class
 
 // ---------------------------------------------------------------------------
 
-export function AgendaBlock({ items }: { items: AgendaItem[] }) {
+export function AgendaBlock({ items, upcomingVisits = [] }: { items: AgendaItem[]; upcomingVisits?: AgendaItem[] }) {
   return (
     <CollapsibleBlock title="Agenda de hoje" count={items.length} action={<Link href="/tarefas?view=calendario" className="font-medium text-brand hover:underline">Calendário</Link>}>
       {items.length === 0 ? (
@@ -59,6 +59,30 @@ export function AgendaBlock({ items }: { items: AgendaItem[] }) {
           ))}
         </ul>
       )}
+      {upcomingVisits.length > 0 ? (
+        <div className="mt-4 border-t border-border pt-3" data-testid="proximas-visitas">
+          <p className="label-caps mb-2">Próximas visitas</p>
+          <ul className="flex flex-col gap-2">
+            {upcomingVisits.map((v) => (
+              <li key={v.id} className="flex items-start gap-3">
+                <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-hover text-muted">
+                  <AgendaIcon kind={v.kind} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <Link href={v.href} className="block truncate text-sm font-medium text-foreground hover:text-brand hover:underline">
+                    {v.title}
+                  </Link>
+                  <div className="flex flex-wrap items-center gap-x-2">
+                    <span className="text-xs tabular-nums text-muted">{v.timeLabel}</span>
+                    <ClientLink id={v.clientId} name={v.clientName} />
+                    {v.assigneeName ? <span className="text-xs text-muted">· {v.assigneeName}</span> : null}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </CollapsibleBlock>
   );
 }
@@ -67,7 +91,7 @@ export function AgendaBlock({ items }: { items: AgendaItem[] }) {
 
 export function FollowupsBlock({ items }: { items: FollowupItem[] }) {
   return (
-    <CollapsibleBlock title="Follow-ups" count={items.length} description="Próxima ação nos próximos 3 dias" action={<Link href="/vendas/oportunidades" className="font-medium text-brand hover:underline">Oportunidades</Link>}>
+    <CollapsibleBlock title="Follow-ups" count={items.length} description="Próxima ação nos próximos 3 dias" action={<Link href="/vendas" className="font-medium text-brand hover:underline">Central de Vendas</Link>}>
       {items.length === 0 ? (
         <Empty>Nenhum follow-up nos próximos 3 dias.</Empty>
       ) : (

@@ -19,6 +19,8 @@ export interface ClientHeaderProps {
   data: Client360;
   options: ClientFormOptions;
   ticketOptions: NewTicketOptions | null;
+  /** Canais conectados de fato (registro de integrações). */
+  channels?: { whatsapp: boolean; voip: boolean };
 }
 
 const STATUS_VARIANT: Record<ClientStatus, NonNullable<BadgeProps["variant"]>> = {
@@ -46,7 +48,7 @@ function HeaderFact({ icon, label, children, className }: { icon: React.ReactNod
 }
 
 /** Cabeçalho da Ficha 360º (padrão 12): identificação, gestor da conta, desde, cidade, ações e jornada. */
-export function ClientHeader({ data, options, ticketOptions }: ClientHeaderProps) {
+export function ClientHeader({ data, options, ticketOptions, channels }: ClientHeaderProps) {
   const { client, contacts, workflow, users, availableProducts, ownedCategories } = data;
   const manager = accountManager(client, users);
   const city = [client.address?.city, client.address?.state].filter(Boolean).join(" — ");
@@ -84,7 +86,7 @@ export function ClientHeader({ data, options, ticketOptions }: ClientHeaderProps
               </div>
             </div>
           </div>
-          <ClientActions client={client} contacts={contacts} availableProducts={availableProducts} ownedCategories={ownedCategories} options={options} ticketOptions={ticketOptions} />
+          <ClientActions client={client} contacts={contacts} availableProducts={availableProducts} ownedCategories={ownedCategories} options={options} ticketOptions={ticketOptions} channels={channels} />
         </div>
 
         <div className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3 sm:divide-x sm:divide-border lg:grid-cols-[repeat(3,minmax(0,16rem))] [&>*]:sm:pl-4 [&>*:first-child]:sm:pl-0">

@@ -17,7 +17,7 @@ import { ProgressList } from "@/components/ui/progress-list";
 import { SectionTitle } from "@/components/ui/section-title";
 import { StatCard } from "@/components/ui/stat-card";
 import { PeriodSelect } from "@/components/kpis/period-select";
-import { UrlSelect } from "@/components/kpis/url-select";
+import { UrlSelect } from "@/components/ui/url-select";
 import { InsightList } from "@/components/insights/insight-list";
 import { DepartmentKpis } from "@/components/management/department-kpis";
 import { FocusPanel } from "@/components/management/focus-panel";

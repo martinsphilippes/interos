@@ -13,7 +13,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import type { Tone } from "@/components/ui/tone";
 import { CONTRACT_STATUS_LABELS } from "@/components/clients/labels";
-import { ContractPanelShell } from "@/components/finance/contract-panel-shell";
+import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import { ContractSidePanel } from "@/components/finance/contract-side-panel";
 import { ContractMilestonesCard, FinanceFlowCard } from "@/components/finance/contract-workspace-cards";
 import { ContractsWorkspaceTable } from "@/components/finance/contracts-workspace-table";
@@ -126,9 +126,9 @@ export default async function ContractsPage({ searchParams }: { searchParams: Se
         </div>
 
         {selected ? (
-          <ContractPanelShell explicit={Boolean(requested)} title={`${selected.clientName} · ${selected.number}`}>
+          <SidePanelShell explicit={Boolean(requested)} param="contrato" ariaLabel="Contrato selecionado" title={`${selected.clientName} · ${selected.number}`}>
             <ContractSidePanel key={selected.id} panel={selected} integrations={ws.integrations} canOperate={canOperate} />
-          </ContractPanelShell>
+          </SidePanelShell>
         ) : null}
       </div>
     </PageContainer>

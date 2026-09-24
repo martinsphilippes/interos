@@ -25,7 +25,7 @@ export interface UrlSelectProps {
 
 /**
  * Seletor que grava a escolha na URL (preservando os demais parâmetros): filtros de departamento, responsável,
- * cliente, prioridade e tipo nas telas de gestão. Genérico (candidato ao kit de UI).
+ * cliente, prioridade e tipo nas telas de gestão e de SLA.
  */
 export function UrlSelect({ param, value, options, label, allLabel, resetValue, clear = [], icon, disabled, className }: UrlSelectProps) {
   const router = useRouter();

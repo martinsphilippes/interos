@@ -364,7 +364,7 @@ export async function removeContact(input: unknown): Promise<ActionResult<{ id: 
 }
 
 // ---------------------------------------------------------------------------
-// Notas, documentos e contatos simulados
+// Notas, documentos e contatos registrados manualmente
 // ---------------------------------------------------------------------------
 
 export async function addNote(input: unknown): Promise<ActionResult<{ eventId: string }>> {
@@ -445,9 +445,10 @@ export async function registerContactEvent(input: unknown): Promise<ActionResult
       entityType: "client",
       entityId: client.id,
       body: data.notes,
-      status: "simulada",
+      // Registro manual: a ligação/mensagem aconteceu no discador ou no app do usuário.
+      status: "manual",
       durationSeconds: data.durationMinutes !== undefined ? data.durationMinutes * 60 : undefined,
-      provider: "mock",
+      provider: "manual",
       createdBy: user.id,
     });
 

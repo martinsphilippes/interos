@@ -526,7 +526,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
       dueLabel: o.nextActionAt ? dateLabel(o.nextActionAt, today) : undefined,
       impactLabel: o.monthlyTotal > 0 ? `${formatCurrency(o.monthlyTotal)}/mês` : o.setupTotal > 0 ? `${formatCurrency(o.setupTotal)} adesão` : undefined,
       score: urgencyScore(o.nextActionAt, nowMs) + (noNext ? 15 : 0) + (stalled ? 20 : 0) + impactScore(o.monthlyTotal, maxMonthly) + (o.probability / 100) * 5,
-      href: `/vendas/oportunidades?oportunidade=${o.id}`,
+      href: `/vendas?oportunidade=${o.id}`,
       canComplete: false,
       assigneeId: o.ownerId,
       assigneeName: isTeam ? nameOf(o.ownerId) : undefined,
@@ -752,7 +752,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     const opp = isOpp ? openOpps.find((o) => o.id === c.entityId) : undefined;
     const kind: AwaitingItem["kind"] = lead ? "lead" : opp ? "oportunidade" : "cliente";
     const title = lead ? `${lead.name}${lead.company ? ` · ${lead.company}` : ""}` : opp ? opp.title : (clientName(c.clientId) ?? "Cliente");
-    const href = lead ? `/marketing/leads?lead=${lead.id}` : opp ? `/vendas/oportunidades?oportunidade=${opp.id}` : `/clientes/${c.clientId}?aba=timeline`;
+    const href = lead ? `/marketing/leads?lead=${lead.id}` : opp ? `/vendas?oportunidade=${opp.id}` : `/clientes/${c.clientId}?aba=timeline`;
     const ownerId = lead?.ownerId ?? opp?.ownerId ?? clientById.get(c.clientId ?? "")?.ownerCsId;
     awaiting.push({ id: `${kind}:${c.id}`, kind, title, clientId: c.clientId, clientName: clientName(c.clientId), excerpt: c.body, channel: CHANNEL_TEXT[c.channel], receivedAt: c.createdAt, receivedLabel: dateLabel(c.createdAt, today), href, assigneeName: isTeam ? nameOf(ownerId) : undefined });
   }
@@ -881,7 +881,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   }
   for (const v of visits) {
     if (v.status === "cancelada" || v.status === "remarcada" || dayKey(v.scheduledAt) !== today) continue;
-    agenda.push({ id: `visita:${v.id}`, kind: "visita", at: v.scheduledAt, timeLabel: timeLabel(v.scheduledAt), title: `Visita · ${v.objective}`, clientId: v.clientId, clientName: clientName(v.clientId), href: `/vendas/visitas?visita=${v.id}`, done: v.status === "realizada", assigneeName: isTeam ? nameOf(v.sellerId) : undefined });
+    agenda.push({ id: `visita:${v.id}`, kind: "visita", at: v.scheduledAt, timeLabel: timeLabel(v.scheduledAt), title: `${v.kind === "tecnica" ? "Visita técnica" : "Visita"} · ${v.objective}`, clientId: v.clientId, clientName: clientName(v.clientId), href: `/vendas/visitas?visita=${v.id}`, done: v.status === "realizada", assigneeName: isTeam ? nameOf(v.sellerId) : undefined });
   }
   for (const tr of trainings) {
     if (tr.status === "cancelado" || dayKey(tr.scheduledAt) !== today) continue;
@@ -897,6 +897,24 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     agenda.push({ id: `plano:${sp.id}`, kind: "checkpoint", at: sp.checkpointAt, timeLabel: timeLabel(sp.checkpointAt), title: `Checkpoint do plano · ${sp.objective}`, clientId: sp.clientId, clientName: clientName(sp.clientId), href: `/clientes/${sp.clientId}?aba=cs`, done: false, assigneeName: isTeam ? nameOf(sp.ownerId) : undefined });
   }
   agenda.sort((a, b) => a.at.localeCompare(b.at));
+  // Próximas visitas (comerciais e técnicas) dos próximos 7 dias, depois de hoje.
+  const visitHorizon = addDaysToKey(today, 7);
+  const upcomingVisits: AgendaItem[] = visits
+    .filter((v) => v.status === "agendada" && dayKey(v.scheduledAt) > today && dayKey(v.scheduledAt) <= visitHorizon)
+    .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
+    .slice(0, 6)
+    .map((v) => ({
+      id: `visita:${v.id}`,
+      kind: "visita",
+      at: v.scheduledAt,
+      timeLabel: dateLabel(v.scheduledAt, today),
+      title: `${v.kind === "tecnica" ? "Visita técnica" : "Visita"} · ${v.objective}`,
+      clientId: v.clientId,
+      clientName: clientName(v.clientId),
+      href: `/vendas/visitas?visita=${v.id}`,
+      done: false,
+      assigneeName: isTeam ? nameOf(v.sellerId) : undefined,
+    }));
 
   // -------------------------------------------------------------------------
   // Follow-ups dos próximos 3 dias (inclui vencidos, marcados).
@@ -909,7 +927,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   }
   for (const o of openOpps) {
     if (!o.nextActionAt || o.nextActionAt > horizon) continue;
-    followups.push({ id: `oportunidade:${o.id}`, kind: "oportunidade", title: o.title, clientId: o.clientId, clientName: clientName(o.clientId), nextAction: o.nextAction, nextActionAt: o.nextActionAt, nextActionLabel: dateLabel(o.nextActionAt, today), overdue: o.nextActionAt < nowIso, href: `/vendas/oportunidades?oportunidade=${o.id}`, valueLabel: o.monthlyTotal > 0 ? `${formatCurrency(o.monthlyTotal)}/mês` : undefined, assigneeName: isTeam ? nameOf(o.ownerId) : undefined });
+    followups.push({ id: `oportunidade:${o.id}`, kind: "oportunidade", title: o.title, clientId: o.clientId, clientName: clientName(o.clientId), nextAction: o.nextAction, nextActionAt: o.nextActionAt, nextActionLabel: dateLabel(o.nextActionAt, today), overdue: o.nextActionAt < nowIso, href: `/vendas?oportunidade=${o.id}`, valueLabel: o.monthlyTotal > 0 ? `${formatCurrency(o.monthlyTotal)}/mês` : undefined, assigneeName: isTeam ? nameOf(o.ownerId) : undefined });
   }
   followups.sort((a, b) => a.nextActionAt.localeCompare(b.nextActionAt));
 
@@ -956,6 +974,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     stats,
     priorities: cappedPriorities,
     agenda,
+    upcomingVisits,
     followups,
     steps: stepItems,
     attentionClients: attentionClients.slice(0, 8),

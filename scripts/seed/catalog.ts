@@ -23,6 +23,7 @@ import type { Priority, RoleKey } from "../../src/domain/constants";
 import { daysAgo, daysFromNow, type SeedDoc } from "./lib";
 import type { SeedContext } from "./context";
 import { seedKpiDefinitions } from "./kpis";
+import { PROCESS_SEED_DEFINITIONS } from "../../src/server/process-engine/seed-definitions";
 import { DEFAULT_GAMIFICATION, DEFAULT_SALES_PRIZES } from "../../src/server/performance/schemas";
 
 const createdAt = daysAgo(400);
@@ -217,14 +218,27 @@ const LEAD_SOURCES: (SeedDoc<LeadSource> & { id: string })[] = [
   { id: "src_site", key: "site", name: "Site (formulário)", channel: "site", active: true },
   { id: "src_whatsapp", key: "whatsapp", name: "WhatsApp", channel: "whatsapp", active: true },
   { id: "src_telegram", key: "telegram", name: "Telegram", channel: "telegram", active: true },
-  { id: "src_anuncio", key: "anuncio", name: "Anúncios (Meta/Google)", channel: "anuncio", active: true },
+  { id: "src_anuncio", key: "anuncio", name: "Anúncios (Meta)", channel: "anuncio", active: true },
   { id: "src_indicacao", key: "indicacao", name: "Indicação de cliente", channel: "indicacao", active: true },
   { id: "src_contador", key: "contador", name: "Contador parceiro", channel: "contador", active: true },
   { id: "src_evento", key: "evento", name: "Evento / feira", channel: "evento", active: true },
   { id: "src_lista", key: "lista", name: "Lista de prospecção", channel: "lista", active: true },
   { id: "src_manual", key: "manual", name: "Cadastro manual", channel: "manual", active: true },
+  { id: "src_google_ads", key: "google_ads", name: "Google Ads", channel: "google_ads", active: true },
+  { id: "src_parceiro", key: "parceiro", name: "Parceiros (revendas e integradores)", channel: "parceiro", active: true },
 ];
-export const LEAD_SOURCE_KEYS = LEAD_SOURCES.map((s) => s.key);
+/** Origens sorteadas pelo gerador (as 11 originais: manter a sequência do rng estável). */
+export const LEAD_SOURCE_KEYS = LEAD_SOURCES.slice(0, 11).map((s) => s.key);
+
+/**
+ * Divide origens sorteadas sem consumir o rng: metade dos anúncios vira Google Ads e metade dos contadores
+ * vira Parceiros (a pontuação é a mesma de cada par).
+ */
+export function splitOrigin(origin: string, seq: number): string {
+  if (origin === "anuncio" && seq % 2 === 0) return "google_ads";
+  if (origin === "contador" && seq % 2 === 0) return "parceiro";
+  return origin;
+}
 
 export const CAMPAIGN_IDS = ["camp_001", "camp_002", "camp_003", "camp_004", "camp_005", "camp_006"];
 const CAMPAIGNS: (SeedDoc<Campaign> & { id: string })[] = [
@@ -246,7 +260,7 @@ export const HOLIDAYS = [
 ];
 
 export const LEAD_SCORING = {
-  origem: { indicacao: 30, contador: 25, site: 20, whatsapp: 20, evento: 18, anuncio: 15, instagram: 12, tiktok: 8, telegram: 8, lista: 5, manual: 10 } as Record<string, number>,
+  origem: { indicacao: 30, contador: 25, parceiro: 25, site: 20, whatsapp: 20, evento: 18, anuncio: 15, google_ads: 15, instagram: 12, tiktok: 8, telegram: 8, lista: 5, manual: 10 } as Record<string, number>,
   interesse: { erp: 30, tef: 20, omnichannel: 18, pabx: 15, telefonia: 12, maquininha: 10, ponto: 10, notas: 10, certificado: 5, consultoria: 15 } as Record<string, number>,
   cidade: { "Juazeiro do Norte": 20, Crato: 18, Barbalha: 18, Fortaleza: 12, Sobral: 10, Iguatu: 10, Petrolina: 8, "Campina Grande": 8, Mossoró: 8 } as Record<string, number>,
   limiares: { quente: 70, morno: 40 },
@@ -562,22 +576,64 @@ const AUTOMATION_RULES: (SeedDoc<AutomationRule> & { id: string })[] = [
   {
     id: "auto_lead_quente",
     name: "Lead quente cria tarefa imediata",
-    description: "Lead com score de quente gera tarefa imediata de contato para vendas.",
+    description: "Lead quente → distribuir para vendas: score de quente gera tarefa imediata de contato para o time de vendas.",
     trigger: { type: "evento", eventType: "lead.created" },
     conditions: [{ path: "payload.temperature", operator: "==", value: "quente" }],
     actions: [{ type: "criar_tarefa", params: { title: "Contato imediato com lead quente", priority: "critica", dueInHours: 1, department: "vendas" } }, { type: "notificar", params: { kind: "acao", to: "department.vendas.managerId" } }],
     active: true,
     runCount: 0,
   },
+  // Captação (tela de Marketing e Captação): ações reais do registro de automações. Nenhuma envia mensagem
+  // ao lead: sem WhatsApp/e-mail conectados, a automação cria a tarefa e a pessoa faz o contato pelo app.
+  {
+    id: "auto_captacao_instagram",
+    name: "Instagram Lead Ads → qualificação automática",
+    description: "Lead vindo do Instagram entra na fila de qualificação do Marketing com prazo de 4h.",
+    trigger: { type: "evento", eventType: "lead.created" },
+    conditions: [{ path: "payload.origin", operator: "==", value: "instagram" }],
+    actions: [{ type: "criar_tarefa", params: { title: "Qualificar lead do Instagram", description: "Confirmar interesse, produto e cidade; atualizar a pontuação.", priority: "alta", dueInHours: 4, department: "marketing" } }],
+    active: true,
+    runCount: 0,
+  },
+  {
+    id: "auto_captacao_site_whatsapp",
+    name: "Formulário do site → WhatsApp imediato",
+    description: "Lead do formulário do site gera tarefa de contato por WhatsApp em até 1h (envio pelo app enquanto o WhatsApp não estiver conectado).",
+    trigger: { type: "evento", eventType: "lead.created" },
+    conditions: [{ path: "payload.origin", operator: "==", value: "site" }],
+    actions: [{ type: "criar_tarefa", params: { title: "Chamar lead do site no WhatsApp", priority: "alta", dueInHours: 1, department: "marketing" } }, { type: "notificar", params: { kind: "acao", to: "department.marketing.managerId" } }],
+    active: true,
+    runCount: 0,
+  },
+  {
+    id: "auto_captacao_tiktok",
+    name: "TikTok → CRM",
+    description: "Lead do TikTok registrado no CRM avisa o gestor de Marketing para acompanhar a campanha.",
+    trigger: { type: "evento", eventType: "lead.created" },
+    conditions: [{ path: "payload.origin", operator: "==", value: "tiktok" }],
+    actions: [{ type: "notificar", params: { kind: "informativa", to: "department.marketing.managerId", title: "Novo lead do TikTok no CRM" } }],
+    active: true,
+    runCount: 0,
+  },
+  {
+    id: "auto_captacao_telegram",
+    name: "Telegram → caixa de entrada",
+    description: "Lead do Telegram gera tarefa para responder pela Caixa de Entrada do Marketing.",
+    trigger: { type: "evento", eventType: "lead.created" },
+    conditions: [{ path: "payload.origin", operator: "==", value: "telegram" }],
+    actions: [{ type: "criar_tarefa", params: { title: "Responder lead do Telegram pela Caixa de Entrada", priority: "media", dueInHours: 8, department: "marketing" } }],
+    active: true,
+    runCount: 0,
+  },
 ];
 
 const ARTICLES: (SeedDoc<KnowledgeArticle> & { id: string })[] = [
-  { id: "kb_001", title: "NFC-e rejeitada: 'Certificado digital expirado'", productId: PRODUCT_IDS.erpIntersys, category: "Fiscal", body: "Quando a SEFAZ rejeita a NFC-e com a mensagem de certificado expirado, verifique a validade do certificado A1 em Configurações > Fiscal. Renove o certificado e importe o novo arquivo .pfx. Após a importação, reinicie o PDV e emita a nota novamente.", tags: ["nfc-e", "certificado", "sefaz"], authorId: "user_larissa", views: 312, published: true },
-  { id: "kb_002", title: "TEF não conecta: como reiniciar o cliente TEF", productId: PRODUCT_IDS.tef, category: "TEF", body: "1. Feche o PDV. 2. Encerre o processo do cliente TEF na bandeja. 3. Verifique a conexão com a internet. 4. Abra o cliente TEF e aguarde o status 'Conectado'. 5. Abra o PDV e faça uma transação de teste de R$ 1,00.", tags: ["tef", "pdv", "conexao"], authorId: "user_rafael", views: 458, published: true },
-  { id: "kb_003", title: "Como cadastrar um novo colaborador no Intercert Ponto", productId: PRODUCT_IDS.ponto, category: "Cadastros", body: "Acesse Colaboradores > Novo. Preencha nome, CPF, jornada e a filial. Envie o convite para o app. O colaborador precisa aceitar o convite e permitir a geolocalização para registrar o ponto.", tags: ["ponto", "cadastro"], authorId: "user_marcos", views: 127, published: true },
-  { id: "kb_004", title: "Fechamento de caixa: diferença entre valor apurado e informado", productId: PRODUCT_IDS.erpIntersys, category: "PDV", body: "Diferenças no fechamento normalmente vêm de sangrias não registradas ou de vendas em cartão lançadas como dinheiro. Use o relatório 'Movimento do caixa' para comparar por forma de pagamento e corrija o lançamento antes de reabrir o caixa.", tags: ["pdv", "caixa", "financeiro"], authorId: "user_larissa", views: 289, published: true },
-  { id: "kb_005", title: "Omnichannel: WhatsApp desconectado após troca de número", productId: PRODUCT_IDS.omnichannel, category: "Omnichannel", body: "Ao trocar o número da conta comercial, é necessário refazer a conexão em Canais > WhatsApp > Reconectar e revalidar o número no Gerenciador de Negócios da Meta. As conversas antigas são mantidas.", tags: ["omnichannel", "whatsapp"], authorId: "user_bruno", views: 95, published: true },
-  { id: "kb_006", title: "Roteiro de treinamento de PDV (checklist para implantação)", productId: PRODUCT_IDS.erpIntersys, category: "Implantação", body: "Roteiro padrão: abertura de caixa, venda com múltiplas formas de pagamento, cancelamento de item, sangria e suprimento, fechamento e emissão de NFC-e. Registre presença e dúvidas no treinamento.", tags: ["treinamento", "pdv", "implantacao"], authorId: "user_lando", views: 64, published: false },
+  { id: "kb_001", title: "NFC-e rejeitada: 'Certificado digital expirado'", productId: PRODUCT_IDS.erpIntersys, category: "Fiscal", body: "Quando a SEFAZ rejeita a NFC-e com a mensagem de certificado expirado, verifique a validade do certificado A1 em Configurações > Fiscal. Renove o certificado e importe o novo arquivo .pfx. Após a importação, reinicie o PDV e emita a nota novamente.", tags: ["nfc-e", "certificado", "sefaz"], authorId: "user_larissa", views: 312, published: true, module: "Fiscal / NFC-e", problem: "A nota fiscal do PDV é rejeitada pela SEFAZ com a mensagem de certificado expirado.", keywords: ["certificado vencido", "rejeição sefaz", "nfce", "nota não sai"], helpful: 41, notHelpful: 3 },
+  { id: "kb_002", title: "TEF não conecta: como reiniciar o cliente TEF", productId: PRODUCT_IDS.tef, category: "TEF", body: "1. Feche o PDV. 2. Encerre o processo do cliente TEF na bandeja. 3. Verifique a conexão com a internet. 4. Abra o cliente TEF e aguarde o status 'Conectado'. 5. Abra o PDV e faça uma transação de teste de R$ 1,00.", tags: ["tef", "pdv", "conexao"], authorId: "user_rafael", views: 458, published: true, module: "TEF", problem: "O cartão não passa no caixa: o TEF fica desconectado ou sem comunicação.", keywords: ["cartão não passa", "tef offline", "sitef", "maquininha pdv"], helpful: 57, notHelpful: 6 },
+  { id: "kb_003", title: "Como cadastrar um novo colaborador no Intercert Ponto", productId: PRODUCT_IDS.ponto, category: "Cadastros", body: "Acesse Colaboradores > Novo. Preencha nome, CPF, jornada e a filial. Envie o convite para o app. O colaborador precisa aceitar o convite e permitir a geolocalização para registrar o ponto.", tags: ["ponto", "cadastro"], authorId: "user_marcos", views: 127, published: true, module: "Cadastros", problem: "Não sei como incluir um novo funcionário para bater o ponto pelo app.", keywords: ["novo funcionário", "convite app", "geolocalização"], helpful: 18, notHelpful: 1 },
+  { id: "kb_004", title: "Fechamento de caixa: diferença entre valor apurado e informado", productId: PRODUCT_IDS.erpIntersys, category: "PDV", body: "Diferenças no fechamento normalmente vêm de sangrias não registradas ou de vendas em cartão lançadas como dinheiro. Use o relatório 'Movimento do caixa' para comparar por forma de pagamento e corrija o lançamento antes de reabrir o caixa.", tags: ["pdv", "caixa", "financeiro"], authorId: "user_larissa", views: 289, published: true, module: "PDV / Caixa", problem: "O fechamento do caixa mostra diferença entre o valor apurado e o informado.", keywords: ["sangria", "quebra de caixa", "diferença caixa", "movimento do caixa"], helpful: 33, notHelpful: 4 },
+  { id: "kb_005", title: "Omnichannel: WhatsApp desconectado após troca de número", productId: PRODUCT_IDS.omnichannel, category: "Omnichannel", body: "Ao trocar o número da conta comercial, é necessário refazer a conexão em Canais > WhatsApp > Reconectar e revalidar o número no Gerenciador de Negócios da Meta. As conversas antigas são mantidas.", tags: ["omnichannel", "whatsapp"], authorId: "user_bruno", views: 95, published: true, module: "Canais", problem: "O WhatsApp do omnichannel parou de receber mensagens depois que trocamos o número.", keywords: ["whatsapp desconectado", "troca de número", "reconectar"], helpful: 12, notHelpful: 2 },
+  { id: "kb_006", title: "Roteiro de treinamento de PDV (checklist para implantação)", productId: PRODUCT_IDS.erpIntersys, category: "Implantação", body: "Roteiro padrão: abertura de caixa, venda com múltiplas formas de pagamento, cancelamento de item, sangria e suprimento, fechamento e emissão de NFC-e. Registre presença e dúvidas no treinamento.", tags: ["treinamento", "pdv", "implantacao"], authorId: "user_lando", views: 64, published: false, module: "PDV", problem: "Roteiro para treinar a equipe da loja no PDV durante a implantação.", keywords: ["treinamento", "roteiro", "abertura de caixa"], helpful: 7, notHelpful: 0 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -613,4 +669,14 @@ export async function seedCatalog(ctx: SeedContext): Promise<void> {
   for (const { id, ...r } of BONUS_RULES) store.add(COLLECTIONS.bonusRules, id, { ...r, createdAt });
   for (const { id, ...r } of AUTOMATION_RULES) store.add(COLLECTIONS.automationRules, id, { ...r, createdAt });
   for (const { id, ...a } of ARTICLES) store.add(COLLECTIONS.knowledgeArticles, id, { ...a, createdAt: daysAgo(120) });
+  // Construtor visual de processos: as três definições de demonstração (IDs determinísticos).
+  const processCreatedAt = daysAgo(45);
+  for (const { id, ...def } of PROCESS_SEED_DEFINITIONS) {
+    store.add(COLLECTIONS.processDefinitions, id, {
+      ...def,
+      publishedAt: def.status === "publicado" ? daysAgo(30) : undefined,
+      createdAt: processCreatedAt,
+      updatedAt: def.status === "publicado" ? daysAgo(30) : daysAgo(2),
+    });
+  }
 }

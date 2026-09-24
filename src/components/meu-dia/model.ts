@@ -218,6 +218,8 @@ export interface MeuDiaData {
   stats: MeuDiaStats;
   priorities: PriorityItem[];
   agenda: AgendaItem[];
+  /** Visitas agendadas nos próximos 7 dias (depois de hoje). */
+  upcomingVisits: AgendaItem[];
   followups: FollowupItem[];
   steps: StepItem[];
   attentionClients: AttentionClient[];

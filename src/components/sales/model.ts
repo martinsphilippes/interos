@@ -47,12 +47,6 @@ export function opportunityCode(opp: Pick<Opportunity, "id" | "createdAt">): str
 }
 
 /** Duração legível de uma ligação: "6min 18s", "45s" (vazio sem duração). */
-export function formatCallDuration(seconds: number | undefined): string {
-  if (!seconds || seconds <= 0) return "";
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return m > 0 ? `${m}min ${String(s).padStart(2, "0")}s` : `${s}s`;
-}
 
 // ---------------------------------------------------------------------------
 // Totais

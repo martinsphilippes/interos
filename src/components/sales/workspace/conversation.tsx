@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, Info, Lock, Mail, MessageCircle, Paperclip, Phone, PhoneMissed, Send, StickyNote, X } from "lucide-react";
-import { Avatar } from "@/components/ui/avatar";
+import { ExternalLink, Info, Mail, MessageCircle, Paperclip, Phone, Send, StickyNote, X } from "lucide-react";
+import { ConversationThread as Thread, type ThreadItem } from "@/components/ui/conversation-thread";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
@@ -15,157 +15,55 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { EventIcon } from "@/components/timeline/timeline";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
-import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { attachOpportunityDocumentAction, registerCallAction, registerInternalNoteAction, registerWorkspaceMessageAction } from "@/server/sales/actions";
 import type { ConversationItem, WorkspaceDetail } from "@/server/sales/workspace-queries";
-import { formatCallDuration } from "../model";
 
 // ---------------------------------------------------------------------------
-// Linha do tempo em formato de conversa
+// Linha do tempo em formato de conversa (componente único: @/components/ui/conversation-thread)
 // ---------------------------------------------------------------------------
 
-function Time({ at }: { at: string }) {
-  return <span className="shrink-0 text-[11px] tabular-nums text-muted-light">{formatTime(at)}</span>;
+const CHANNEL_LABEL = { whatsapp: "WhatsApp", email: "E-mail", interno: "Interno" } as const;
+
+function toThreadItem(item: ConversationItem, currentUserName: string, contactLabel: string): ThreadItem {
+  switch (item.kind) {
+    case "system":
+      return { kind: "system", id: item.id, at: item.at, title: item.title, description: item.description, actorName: item.actorName, icon: <EventIcon type={item.type} size="sm" /> };
+    case "note":
+      return { kind: "note", id: item.id, at: item.at, authorName: item.authorName, body: item.body };
+    case "call":
+      return { kind: "call", id: item.id, at: item.at, direction: item.direction, answered: item.answered, durationSeconds: item.durationSeconds, body: item.body, authorName: item.authorName, manual: item.manual };
+    default: {
+      const outgoing = item.direction === "saida";
+      return {
+        kind: "message",
+        id: item.id,
+        at: item.at,
+        direction: item.direction,
+        authorName: item.authorName,
+        authorRole: outgoing ? (item.authorName === currentUserName ? "Você" : undefined) : contactLabel,
+        body: item.body,
+        channel: item.channel,
+        channelLabel: item.channel === "interno" ? undefined : CHANNEL_LABEL[item.channel],
+        manual: item.manual,
+        delivered: outgoing && !item.manual && (item.status === "enviada" || item.status === "entregue" || item.status === "lida"),
+      };
+    }
+  }
 }
 
-function ManualTag() {
-  return (
-    <span className="rounded-sm border border-border-strong px-1 text-[10px] font-medium uppercase tracking-wide text-muted" title="Nenhum canal conectado: registrado à mão pelo usuário">
-      registro manual
-    </span>
-  );
-}
-
-function Item({ item, currentUserName, contactLabel }: { item: ConversationItem; currentUserName: string; contactLabel: string }) {
-  if (item.kind === "system") {
-    return (
-      <li className="flex items-start justify-center gap-2 px-2 text-center">
-        <EventIcon type={item.type} size="sm" className="mt-0.5" />
-        <span className="min-w-0 text-xs text-muted">
-          <span className="text-foreground/85">{item.title}</span>
-          {item.description ? <span className="block truncate">{item.description}</span> : null}
-          <span className="block text-[11px] text-muted-light">
-            {item.actorName} · {formatTime(item.at)}
-          </span>
-        </span>
-      </li>
-    );
-  }
-  if (item.kind === "note") {
-    return (
-      <li className="mx-auto w-full max-w-[560px]">
-        <div className="rounded-lg border border-warning/35 bg-warning-soft px-3 py-2">
-          <p className="flex items-center gap-1.5 text-xs font-semibold text-warning-fg">
-            <Lock className="size-3.5" aria-hidden /> Nota interna · {item.authorName}
-            <span className="ml-auto font-normal">
-              <Time at={item.at} />
-            </span>
-          </p>
-          <p className="mt-1 whitespace-pre-line text-sm text-foreground">{item.body}</p>
-        </div>
-      </li>
-    );
-  }
-  if (item.kind === "call") {
-    const duration = formatCallDuration(item.durationSeconds);
-    return (
-      <li className="mx-auto w-full max-w-[560px]">
-        <div className="flex items-start gap-3 rounded-lg border border-border-strong bg-surface-muted px-3 py-2.5">
-          <span className={cn("mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full [&_svg]:size-4", item.answered ? "bg-info-soft text-info-fg" : "bg-danger-soft text-danger-fg")} aria-hidden>
-            {item.answered ? <Phone /> : <PhoneMissed />}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-              <span className="font-medium">
-                {item.direction === "entrada" ? "Ligação recebida" : item.answered ? "Ligação realizada" : "Ligação sem resposta"}
-                {duration ? ` — ${duration}` : ""}
-              </span>
-              {item.manual ? <ManualTag /> : null}
-            </p>
-            {item.body ? <p className="mt-0.5 whitespace-pre-line text-sm text-muted">{item.body}</p> : null}
-            <p className="text-[11px] text-muted-light">{item.authorName}</p>
-          </div>
-          <Time at={item.at} />
-        </div>
-      </li>
-    );
-  }
-  const outgoing = item.direction === "saida";
-  const ChannelIcon = item.channel === "email" ? Mail : MessageCircle;
-  const mine = item.authorName === currentUserName;
-  return (
-    <li className={cn("flex items-end gap-2", outgoing ? "justify-end" : "justify-start")}>
-      {!outgoing ? <Avatar name={item.authorName} size="md" className="mb-4" /> : null}
-      <div
-        className={cn(
-          "max-w-[82%] rounded-xl border px-3 py-2 sm:max-w-[70%]",
-          outgoing ? (item.channel === "email" ? "rounded-br-sm border-secondary/30 bg-secondary-soft" : "rounded-br-sm border-success/30 bg-success-soft") : "rounded-bl-sm border-border-strong bg-surface-hover",
-        )}
-      >
-        <p className="flex items-center gap-1.5 text-xs text-muted">
-          <ChannelIcon className={cn("size-3.5", item.channel === "email" ? "text-secondary-fg" : "text-success-fg")} aria-hidden />
-          <span className="font-medium text-foreground/90">{item.authorName}</span>
-          <span>{outgoing ? (mine ? "(Você)" : "") : `(${contactLabel})`}</span>
-        </p>
-        <p className="mt-1 whitespace-pre-line break-words text-sm text-foreground">{item.body || <span className="italic text-muted">Sem texto</span>}</p>
-        <p className="mt-1 flex items-center justify-end gap-2">
-          {item.manual ? <ManualTag /> : null}
-          <Time at={item.at} />
-        </p>
-      </div>
-    </li>
-  );
-}
-
-/** Conversa: mensagens em balões, ligações em linha, notas internas em âmbar e eventos do sistema discretos. */
+/** Conversa da oportunidade: mensagens em balões, ligações em linha, notas internas em âmbar e eventos do sistema discretos. */
 export function ConversationThread({ items, currentUserName, contactLabel, className }: { items: ConversationItem[]; currentUserName: string; contactLabel: string; className?: string }) {
-  const ref = React.useRef<HTMLDivElement>(null);
-  const lastId = items[items.length - 1]?.id;
-  // Abre (e atualiza) sempre no fim da conversa, como um chat.
-  React.useEffect(() => {
-    const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [lastId]);
-  // No celular a conversa começa oculta (pilha): ao ficar visível, desce para a última interação.
-  React.useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    let lastHeight = el.clientHeight;
-    const observer = new ResizeObserver(() => {
-      if (lastHeight === 0 && el.clientHeight > 0) el.scrollTop = el.scrollHeight;
-      lastHeight = el.clientHeight;
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  const days = items.map((item) => formatDay(item.at));
   return (
-    <div ref={ref} className={cn("min-h-0 flex-1 overflow-y-auto px-3 py-4 scrollbar-thin md:px-5", className)} data-testid="conversa">
-      {items.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted">Nenhuma interação registrada ainda. Registre a primeira mensagem, ligação ou nota abaixo.</p>
-      ) : (
-        <ol className="flex flex-col gap-3">
-          {items.map((item, i) => {
-            const day = days[i];
-            const separator = i === 0 || day !== days[i - 1];
-            return (
-              <React.Fragment key={item.id}>
-                {separator ? (
-                  <li className="flex items-center gap-3 py-1" aria-hidden>
-                    <span className="h-px flex-1 bg-border" />
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-light">{day}</span>
-                    <span className="h-px flex-1 bg-border" />
-                  </li>
-                ) : null}
-                <Item item={item} currentUserName={currentUserName} contactLabel={contactLabel} />
-              </React.Fragment>
-            );
-          })}
-        </ol>
-      )}
-    </div>
+    <Thread
+      autoScroll
+      aria-label="Conversa da oportunidade"
+      data-testid="conversa"
+      className={cn("px-3 py-4 md:px-5", className)}
+      items={items.map((item) => toThreadItem(item, currentUserName, contactLabel))}
+      emptyText="Nenhuma interação registrada ainda. Registre a primeira mensagem, ligação ou nota abaixo."
+      noRecordingText="sem gravação"
+    />
   );
 }
 

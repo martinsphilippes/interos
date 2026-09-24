@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getClient, getClient360, getClientFormOptions } from "@/server/clients/queries";
+import { getCommunicationChannelStatus } from "@/server/integrations/status";
 import { PageContainer } from "@/components/layout/page-container";
 import { ClientHeader, ClientKpis } from "@/components/clients/client-header";
 import { ClientTabs, parseClientTab, type ClientTab } from "@/components/clients/client-tabs";
@@ -86,7 +87,7 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
 
   return (
     <PageContainer size="full">
-      <ClientHeader data={data} options={options} ticketOptions={ticketOptions} />
+      <ClientHeader data={data} options={options} ticketOptions={ticketOptions} channels={getCommunicationChannelStatus()} />
       <ClientKpis data={data} />
       <ClientTabs clientId={data.client.id} active={tab} counts={counts} />
       <div className="mt-4 min-w-0">{content[tab]}</div>

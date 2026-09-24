@@ -5,7 +5,7 @@ import { COLLECTIONS, type Department, type Organization, type User } from "../.
 import type { DepartmentKey, RoleKey } from "../../src/domain/constants";
 import { adminAuth } from "../../src/server/firebase-admin";
 import { ORG_ID } from "../../src/server/db";
-import { daysAgo, type SeedDoc } from "./lib";
+import { NOW, daysAgo, type SeedDoc } from "./lib";
 import type { SeedContext, UserKey } from "./context";
 
 export const SEED_PASSWORD = "interos123";
@@ -57,6 +57,19 @@ const DEPARTMENTS: { key: DepartmentKey; name: string; manager: UserKey; color: 
   { key: "diretoria", name: "Diretoria", manager: "hercules", color: "#0B1F3A", description: "Direção executiva e cockpit." },
 ];
 
+/** Presença inicial dos usuários operacionais (Online/Ausente/Ocupado da top bar). */
+const PRESENCE: Partial<Record<UserKey, User["presence"]>> = {
+  vinicius: "online",
+  igor: "online",
+  rafael: "online",
+  larissa: "ocupado",
+  marcos: "online",
+  bruno: "ausente",
+  camila: "online",
+  anapaula: "ausente",
+  karem: "online",
+};
+
 export async function seedOrg(ctx: SeedContext): Promise<void> {
   const { store } = ctx;
   const createdAt = daysAgo(1100);
@@ -95,6 +108,9 @@ export async function seedOrg(ctx: SeedContext): Promise<void> {
       active: true,
       monthlyGoals: spec.goals,
       baseSalary: spec.baseSalary,
+      // Presença informada na top bar (telas operacionais).
+      presence: PRESENCE[spec.key],
+      presenceUpdatedAt: PRESENCE[spec.key] ? NOW.toISOString() : undefined,
       createdAt,
     } satisfies SeedDoc<User>);
     users[spec.key] = doc;

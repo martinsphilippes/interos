@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
 import { ContactDialog, QualifyDialog } from "./lead-dialogs";
 import { LeadStatusBadge } from "./lead-badges";
-import { ChannelIcon } from "./channel-visual";
+import { LeadChannelIcon } from "@/components/ui/lead-channel-icon";
 import { TEMPERATURE_LABELS, leadsHref, type ContactChannel, type UserOption } from "./marketing-model";
 import { INBOX_TABS, type InboxLead, type InboxTab, type SourcePerformance } from "./workspace-model";
 
@@ -28,13 +28,15 @@ export interface LeadCaptureProps {
   sources: SourcePerformance[];
   leads: InboxLead[];
   sellers: UserOption[];
+  /** Canais conectados de fato (registro de integrações; passado pela página). */
+  channels?: { whatsapp: boolean; voip: boolean };
 }
 
 /**
  * Origem dos leads (chips que filtram), caixa de entrada com abas por status e o painel do lead
  * selecionado com as ações de contato (registro manual + wa.me/tel:) e distribuição para vendas.
  */
-export function LeadCapture({ sources, leads, sellers }: LeadCaptureProps) {
+export function LeadCapture({ sources, leads, sellers, channels = { whatsapp: false, voip: false } }: LeadCaptureProps) {
   const [origin, setOrigin] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState<InboxTab>("todos");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -78,7 +80,7 @@ export function LeadCapture({ sources, leads, sellers }: LeadCaptureProps) {
                     active ? "border-brand bg-brand-soft" : "border-border bg-surface-muted hover:border-border-strong hover:bg-surface-hover",
                   )}
                 >
-                  <ChannelIcon channel={s.channel} size="sm" />
+                  <LeadChannelIcon channel={s.channel} size="sm" />
                   <span className="leading-tight">
                     <span className="block max-w-[9rem] truncate text-xs text-muted">{s.name}</span>
                     <span className="block text-base font-semibold tabular-nums">{s.leads}</span>
@@ -152,7 +154,7 @@ export function LeadCapture({ sources, leads, sellers }: LeadCaptureProps) {
                       </TableCell>
                       <TableCell className="hidden 2xl:table-cell">
                         <span className="flex items-center gap-2 text-sm" title={l.originName}>
-                          <ChannelIcon channel={l.originChannel} size="xs" />
+                          <LeadChannelIcon channel={l.originChannel} size="xs" />
                           <span className="hidden max-w-[110px] truncate 2xl:inline">{l.originName}</span>
                         </span>
                       </TableCell>
@@ -211,7 +213,7 @@ export function LeadCapture({ sources, leads, sellers }: LeadCaptureProps) {
         </div>
       </Card>
 
-      {selected ? <LeadPanel key={selected.id} lead={selected} onClose={() => setSelectedId(null)} onContact={openContact} onQualify={() => setDialog({ kind: "qualificar" })} /> : null}
+      {selected ? <LeadPanel key={selected.id} lead={selected} onClose={() => setSelectedId(null)} onContact={openContact} onQualify={() => setDialog({ kind: "qualificar" })} channels={channels} /> : null}
 
       {selected && dialog?.kind === "contato" ? (
         <ContactDialog
@@ -221,7 +223,7 @@ export function LeadCapture({ sources, leads, sellers }: LeadCaptureProps) {
           leadId={selected.id}
           leadName={selected.name}
           defaultChannel={dialog.channel}
-          description={`Com ${selected.name}. ${dialog.channel === "ligacao" ? "VoIP" : "WhatsApp"} não conectado: a conversa acontece no app/discador e aqui fica o registro manual do que foi tratado.`}
+          description={`Com ${selected.name}. ${dialog.channel === "ligacao" ? (channels.voip ? "VoIP conectado" : "VoIP não conectado") : channels.whatsapp ? "WhatsApp conectado" : "WhatsApp não conectado"}: a conversa acontece no app/discador e aqui fica o registro do que foi tratado.`}
         />
       ) : null}
       {selected ? <QualifyDialog open={dialog?.kind === "qualificar"} onOpenChange={(open) => setDialog(open ? { kind: "qualificar" } : null)} leadId={selected.id} leadName={selected.name} sellers={sellers} /> : null}
@@ -291,7 +293,7 @@ function PanelRow({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-function LeadPanel({ lead, onClose, onContact, onQualify }: { lead: InboxLead; onClose: () => void; onContact: (lead: InboxLead, channel: ContactChannel) => void; onQualify: () => void }) {
+function LeadPanel({ lead, onClose, onContact, onQualify, channels }: { lead: InboxLead; onClose: () => void; onContact: (lead: InboxLead, channel: ContactChannel) => void; onQualify: () => void; channels: { whatsapp: boolean; voip: boolean } }) {
   const wa = whatsappHref(lead.phone);
   const tel = telHref(lead.phone);
   const last = lead.lastInteraction;
@@ -380,7 +382,7 @@ function LeadPanel({ lead, onClose, onContact, onQualify }: { lead: InboxLead; o
           </PanelRow>
           <PanelRow label="Origem">
             <span className="inline-flex items-center gap-2">
-              <ChannelIcon channel={lead.originChannel} size="xs" /> {lead.originName}
+              <LeadChannelIcon channel={lead.originChannel} size="xs" /> {lead.originName}
             </span>
             {lead.campaignName ? <span className="mt-0.5 block text-xs text-muted">Campanha: {lead.campaignName}</span> : null}
           </PanelRow>
@@ -396,7 +398,9 @@ function LeadPanel({ lead, onClose, onContact, onQualify }: { lead: InboxLead; o
       </div>
 
       <p className="mt-3 text-xs text-muted">
-        WhatsApp e VoIP não conectados: as ações abrem o app/discador e o contato fica como registro manual.
+        {channels.whatsapp && channels.voip
+          ? "WhatsApp e VoIP conectados."
+          : `${[!channels.whatsapp ? "WhatsApp" : null, !channels.voip ? "VoIP" : null].filter(Boolean).join(" e ")} não ${!channels.whatsapp && !channels.voip ? "conectados" : "conectado"}: as ações abrem o app/discador e o contato fica como registro manual.`}
       </p>
 
       <div className="mt-4 grid gap-2 sm:grid-cols-[auto_auto_minmax(0,1fr)]">

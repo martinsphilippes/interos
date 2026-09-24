@@ -281,8 +281,8 @@ export interface WorkspaceLocation {
   directionsUrl: string | null;
   distanceKm?: number;
   travelMinutes?: number;
-  /** "mock" enquanto não houver Google Maps Platform: distância estimada, não rota real. */
-  provider?: "mock" | "google";
+  /** "estimativa" enquanto não houver Google Maps Platform: distância estimada, não rota real. */
+  provider?: "estimativa" | "google";
   origin: string;
 }
 
@@ -489,13 +489,18 @@ export async function getWorkspaceOpportunity(user: CurrentUser, id: string): Pr
  * Visitas de um cliente (todas as oportunidades), pendentes primeiro, para a ficha do Cliente 360.
  * INTEGRAÇÃO: o agente do Cliente 360 liga esta leitura na aba Comercial.
  */
-export async function getClientVisits(user: Pick<CurrentUser, "id" | "isManager">, clientId: string): Promise<VisitRow[]> {
+/**
+ * Visitas (comerciais e técnicas) de um cliente: a ÚNICA leitura de visitas por cliente, usada pelo workspace de
+ * Vendas (com `user`, filtrada pela carteira do vendedor) e pelo Cliente 360º (`user` null: quem vê o cliente vê
+ * todas as visitas). Pendentes primeiro (mais próxima antes), depois as encerradas (mais recente antes).
+ */
+export async function getClientVisits(user: Pick<CurrentUser, "id" | "isManager"> | null, clientId: string): Promise<VisitRow[]> {
   const [visits, opps] = await Promise.all([
     list<Visit>(COLLECTIONS.visits, { where: [["clientId", "==", clientId]] }),
     list<Opportunity>(COLLECTIONS.opportunities, { where: [["clientId", "==", clientId]] }),
   ]);
   const oppById = new Map(opps.map((o) => [o.id, o]));
-  const visible = user.isManager
+  const visible = !user || user.isManager
     ? visits
     : visits.filter((v) => {
         const opp = v.opportunityId ? oppById.get(v.opportunityId) : undefined;

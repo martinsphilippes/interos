@@ -5,13 +5,12 @@ import Link from "next/link";
 import { BookOpen, Building2, Mail, MessageCircle, Package, Phone, Repeat, User } from "lucide-react";
 import type { TicketDetail } from "@/server/support/queries";
 import { CLIENT_STATUS_LABELS } from "@/domain/constants";
-import { formatDate, formatDateTime, formatPhone } from "@/lib/format";
+import { formatCallDuration, formatDate, formatDateTime, formatPhone } from "@/lib/format";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardLink, CardTitle } from "@/components/ui/card";
 import { ChannelCard } from "@/components/ui/channel-card";
 import { cn } from "@/lib/utils";
-import { formatCallDuration } from "./format";
 import { slaStateAt } from "./sla-live";
 import { ChannelIcon, TicketStatusBadge } from "./ticket-badges";
 import type { ChannelStatus } from "./ticket-composer";
@@ -194,7 +193,7 @@ export function TicketContextPanel({ detail, channels, now, className }: TicketC
               <p className="text-muted">Última ligação</p>
               <p className="mt-0.5 flex items-center justify-between gap-2 text-foreground">
                 <span>{formatDateTime(lastCall.createdAt)}</span>
-                <span className="tabular-nums">{formatCallDuration(lastCall.durationSeconds)}</span>
+                <span className="tabular-nums">{formatCallDuration(lastCall.durationSeconds) || "—"}</span>
               </p>
               <p className="mt-0.5 text-muted">
                 {isRealRecording(lastCall.recordingUrl) ? (

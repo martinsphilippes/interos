@@ -44,7 +44,7 @@ import { cn } from "@/lib/utils";
 import { ContactsCard } from "./contacts-card";
 import { CLIENT_PRODUCT_STATUS_LABELS, TICKET_STATUS_LABELS, TICKET_STATUS_VARIANT } from "./labels";
 import { buildPendencies, buildUpcoming, productRenewalDate, type Pendency, type UpcomingItem } from "./overview-model";
-import { productVisual } from "./product-visual";
+import { productVisual } from "@/components/ui/product-visual";
 
 const OPEN_TASK = new Set<TaskStatus>(["aberta", "em_andamento", "aguardando"]);
 const TASK_STATUS_VARIANT: Record<TaskStatus, NonNullable<BadgeProps["variant"]>> = { aberta: "warning", em_andamento: "info", aguardando: "purple", concluida: "success", cancelada: "muted" };

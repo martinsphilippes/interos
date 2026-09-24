@@ -48,7 +48,7 @@ const RESULT_META: Record<string, { label: string; tone: Tone }> = {
   sim: { label: "Sim", tone: "success" },
   nao: { label: "Não", tone: "danger" },
   notificado: { label: "Notificação enviada", tone: "secondary" },
-  simulada: { label: "Webhook registrado (simulado)", tone: "secondary" },
+  simulada: { label: "Webhook não enviado (webhooks desligados)", tone: "secondary" },
   sucesso: { label: "Webhook chamado", tone: "secondary" },
   ignorado: { label: "Ignorado", tone: "neutral" },
   erro: { label: "Erro", tone: "danger" },

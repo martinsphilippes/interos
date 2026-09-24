@@ -28,13 +28,6 @@ export function formatHoursShort(hours: number | undefined): string {
   return `${Math.floor(hours / 24)}d ${Math.round(hours % 24)}h`;
 }
 
-/** Duração de ligação em segundos: "6 min 20 s". */
-export function formatCallDuration(seconds: number | undefined): string {
-  if (!seconds) return "—";
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return m > 0 ? `${m} min${s ? ` ${s} s` : ""}` : `${s} s`;
-}
 
 /** Tom semântico de um percentual de cumprimento frente à meta (≥ meta verde; ≥ 90% da meta âmbar). */
 export function complianceTone(value: number | undefined, target: number): "success" | "warning" | "danger" | "neutral" {

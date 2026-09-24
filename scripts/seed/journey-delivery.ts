@@ -164,7 +164,7 @@ function seedTrainings(ctx: SeedContext): void {
       scheduledAt: t.when,
       completedAt: t.status === "realizado" ? t.when : undefined,
       participants: client.contacts.map((c) => c.name),
-      materialUrl: "https://mock.intercert.com.br/materiais/roteiro-pdv.pdf",
+      materialUrl: "/suporte/base-de-conhecimento/kb_006",
       evidence: t.status === "realizado" ? "Lista de presença assinada." : undefined,
       notes: t.status === "realizado" ? "Equipe participativa; dúvidas sobre cancelamento de item." : undefined,
       status: t.status,

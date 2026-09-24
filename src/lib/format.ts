@@ -145,3 +145,11 @@ export function formatRemaining(ms: number): string {
   if (hours > 0) return `${sign}${hours}h ${minutes}m`;
   return `${sign}${minutes}m`;
 }
+
+/** Duração de ligação: "6min 18s" ou "45s"; vazio quando não há duração. */
+export function formatCallDuration(seconds: number | undefined | null): string {
+  if (!seconds || seconds <= 0) return "";
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return m > 0 ? `${m}min ${String(s).padStart(2, "0")}s` : `${s}s`;
+}

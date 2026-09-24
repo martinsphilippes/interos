@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { contractDocumentPath, contractEmailHref, reminderEmailHref } from "./contract-links";
 import { ManualSignatureButton } from "./manual-signature-dialog";
 import { useFinanceAction } from "./use-finance-action";
-import { useOrigin } from "./use-origin";
+import { useOrigin } from "@/components/ui/use-origin";
 import { RelativeTime } from "@/components/ui/relative-time";
 
 export interface SignatureCardProps {

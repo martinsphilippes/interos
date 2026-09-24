@@ -6,7 +6,7 @@ import { COLLECTIONS, type Client, type ClientProduct, type Contact } from "../.
 import type { HealthLevel, JourneyStage } from "../../src/domain/constants";
 import { CITIES, addDays, address, businessTime, cnpj, daysAgo, daysFromNow, emailFor, id, landline, personName, phone, rng, type SeedDoc, type Segment } from "./lib";
 import type { Journey, SeedContext, SeededClient } from "./context";
-import { LEAD_SOURCE_KEYS, PRODUCT_IDS } from "./catalog";
+import { LEAD_SOURCE_KEYS, PRODUCT_IDS, splitOrigin } from "./catalog";
 
 type Status = Client["status"];
 
@@ -211,8 +211,9 @@ export async function seedClients(ctx: SeedContext): Promise<void> {
     const city = CITIES[spec.city];
     const isCustomer = status === "ativo" || status === "inativo" || status === "cancelado";
     const health = status === "ativo" ? healthFor(n) : undefined;
-    const origin = rng.pick(LEAD_SOURCE_KEYS);
-    const campaignId = ["anuncio", "instagram", "tiktok", "evento"].includes(origin) ? rng.pick(["camp_001", "camp_002", "camp_004", "camp_005"]) : undefined;
+    const pickedOrigin = rng.pick(LEAD_SOURCE_KEYS);
+    const campaignId = ["anuncio", "instagram", "tiktok", "evento"].includes(pickedOrigin) ? rng.pick(["camp_001", "camp_002", "camp_004", "camp_005"]) : undefined;
+    const origin = splitOrigin(pickedOrigin, n);
     let lastInteraction =
       status === "ativo"
         ? health?.level === "risco"

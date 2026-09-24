@@ -18,7 +18,7 @@ import { ScoreRing } from "@/components/ui/score-ring";
 import { StatCard } from "@/components/ui/stat-card";
 import { toneForPercent } from "@/components/ui/tone";
 import { PeriodSelect } from "@/components/kpis/period-select";
-import { UrlSelect } from "@/components/kpis/url-select";
+import { UrlSelect } from "@/components/ui/url-select";
 import { SlaItemsTable } from "@/components/sla/sla-items-table";
 import { SlaSearch } from "@/components/sla/sla-search";
 import { SupportSlaSection } from "@/components/sla/support-sla-section";

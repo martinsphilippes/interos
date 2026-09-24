@@ -269,13 +269,13 @@ export async function assumeInboxItemAction(input: unknown): Promise<ActionResul
   }
 }
 
-export async function replyInboxAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+export async function replyInboxAction(input: unknown): Promise<ActionResult<{ id: string; delivery: string }>> {
   try {
     const user = await requireUser();
     const data = replySchema.parse(input);
     const sent = await replyToInbox(data, actor(user));
     revalidateMarketing(sent.clientId);
-    return { ok: true, data: { id: sent.id } };
+    return { ok: true, data: { id: sent.id, delivery: sent.status } };
   } catch (error) {
     return fail(error, "Não foi possível enviar a resposta");
   }
