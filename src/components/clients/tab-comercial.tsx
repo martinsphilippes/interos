@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ExternalLink, Target, TrendingUp } from "lucide-react";
+import { ExternalLink, MapPin, Target, TrendingUp } from "lucide-react";
 import type { Client360, ClientFormOptions } from "@/server/clients/queries";
 import { formatCurrency, formatDate, formatRelative } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { UserCell } from "./client-badges";
 import { OPPORTUNITY_KIND_LABELS, OPPORTUNITY_STAGE_LABELS, OPPORTUNITY_STAGE_VARIANT, PROPOSAL_STATUS_LABELS, PROPOSAL_STATUS_VARIANT, TEMPERATURE_LABELS } from "./labels";
 import { UpsellDialog } from "./upsell-dialog";
 
+const VISIT_STATUS_LABELS: Record<Client360["visits"][number]["status"], string> = { agendada: "Agendada", realizada: "Realizada", cancelada: "Cancelada", remarcada: "Remarcada" };
 const LEAD_STATUS_LABELS: Record<string, string> = { novo: "Novo", em_contato: "Em contato", qualificado: "Qualificado (MQL)", desqualificado: "Desqualificado", convertido: "Convertido" };
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -216,6 +217,72 @@ export function TabComercial({ data, options }: { data: Client360; options: Clie
                     </TableCell>
                   </TableRow>
                 ))}
+              </TableBody>
+            </Table>
+          )}
+        </Card>
+      </section>
+
+      <section>
+        <SectionTitle
+          title="Visitas"
+          count={data.visits.length}
+          actions={
+            <Button asChild size="sm" variant="outline">
+              <Link href="/vendas/visitas?nova=1">
+                <MapPin /> Registrar visita
+              </Link>
+            </Button>
+          }
+        />
+        <Card className="overflow-hidden">
+          {data.visits.length === 0 ? (
+            <EmptyState size="sm" icon={<MapPin />} title="Nenhuma visita" description="Visitas agendadas e realizadas pelo comercial aparecem aqui e na linha do tempo." />
+          ) : (
+            <Table className="min-w-[720px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Data</TableHead>
+                  <TableHead>Motivo</TableHead>
+                  <TableHead>Responsável</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Resultado</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.visits.map((v) => {
+                  const address = [[v.address?.street, v.address?.number].filter(Boolean).join(", "), v.address?.district, v.address?.city, v.address?.state].filter(Boolean).join(", ");
+                  return (
+                    <TableRow key={v.id}>
+                      <TableCell className="whitespace-nowrap tabular-nums">{formatDate(v.scheduledAt, "dd/MM/yyyy HH:mm")}</TableCell>
+                      <TableCell className="max-w-[260px]">
+                        <Link href={`/vendas/visitas?visita=${v.id}`} className="block truncate font-medium hover:text-brand-fg hover:underline">
+                          {v.objective}
+                        </Link>
+                        {address ? (
+                          <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`} target="_blank" rel="noreferrer" className="block truncate text-xs text-secondary-fg hover:underline">
+                            {address}
+                          </a>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>
+                        <UserCell users={users} id={v.sellerId} />
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={v.status === "realizada" ? "success" : v.status === "agendada" ? "info" : v.status === "remarcada" ? "warning" : "muted"} size="sm">
+                          {VISIT_STATUS_LABELS[v.status]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="max-w-[220px] truncate text-sm text-muted">{v.result ?? v.notes ?? "—"}</TableCell>
+                      <TableCell>
+                        <Link href={`/vendas/visitas?visita=${v.id}`} className="inline-flex size-8 items-center justify-center rounded-md text-muted hover:bg-surface-hover hover:text-foreground" aria-label="Abrir visita">
+                          <ExternalLink className="size-4" />
+                        </Link>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

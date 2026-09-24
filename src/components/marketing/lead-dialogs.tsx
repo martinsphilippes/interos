@@ -33,10 +33,11 @@ const CHANNEL_OPTIONS: { value: ContactChannel; label: string; icon: React.React
 // Registrar contato
 // ---------------------------------------------------------------------------
 
-export function ContactDialog({ open, onOpenChange, leadId, leadName }: BaseProps) {
+export function ContactDialog({ open, onOpenChange, leadId, leadName, defaultChannel = "whatsapp", description }: BaseProps & { defaultChannel?: ContactChannel; description?: string }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
-  const [channel, setChannel] = React.useState<ContactChannel>("whatsapp");
+  // Canal sugerido só na montagem: quem troca o canal (WhatsApp x Ligar) remonta o diálogo com `key`.
+  const [channel, setChannel] = React.useState<ContactChannel>(defaultChannel);
   const [note, setNote] = React.useState("");
   const [nextAction, setNextAction] = React.useState("");
   const [nextActionAt, setNextActionAt] = React.useState("");
@@ -64,7 +65,7 @@ export function ContactDialog({ open, onOpenChange, leadId, leadName }: BaseProp
         <form onSubmit={submit} className="flex min-h-0 flex-col">
           <DialogHeader>
             <DialogTitle>Registrar contato</DialogTitle>
-            <DialogDescription>Com {leadName}. Fica no histórico do lead e atualiza o último contato.</DialogDescription>
+            <DialogDescription>{description ?? `Com ${leadName}. Fica no histórico do lead e atualiza o último contato.`}</DialogDescription>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-4">
             <SegmentedControl aria-label="Canal" options={CHANNEL_OPTIONS} value={channel} onChange={setChannel} />

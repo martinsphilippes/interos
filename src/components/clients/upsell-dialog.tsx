@@ -23,13 +23,18 @@ export interface UpsellDialogProps {
   /** Categorias já contratadas (define o padrão upsell x cross-sell). */
   ownedCategories: string[];
   defaultProductId?: string;
-  trigger: React.ReactNode;
+  /** Sem trigger, o diálogo é controlado por `open`/`onOpenChange` (ex.: item de menu). */
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /** Cria uma oportunidade de upsell/cross-sell para o cliente a partir de um produto do catálogo. */
-export function UpsellDialog({ clientId, clientName, products, ownedCategories, defaultProductId, trigger }: UpsellDialogProps) {
+export function UpsellDialog({ clientId, clientName, products, ownedCategories, defaultProductId, trigger, open: openProp, onOpenChange }: UpsellDialogProps) {
   const router = useRouter();
-  const [open, setOpen] = React.useState(false);
+  const [innerOpen, setInnerOpen] = React.useState(false);
+  const open = openProp ?? innerOpen;
+  const setOpen = onOpenChange ?? setInnerOpen;
   const [productId, setProductId] = React.useState(defaultProductId ?? products[0]?.id ?? "");
   const [kind, setKind] = React.useState<"upsell" | "cross_sell" | "">("");
   const [quantity, setQuantity] = React.useState("1");
@@ -76,7 +81,7 @@ export function UpsellDialog({ clientId, clientName, products, ownedCategories, 
         if (next) setProductId(defaultProductId ?? products[0]?.id ?? "");
       }}
     >
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>Gerar oportunidade</DialogTitle>

@@ -3,7 +3,7 @@
  * pronta de MeuDiaData e renderiza dentro de um CollapsibleBlock (colapsável no celular).
  */
 import Link from "next/link";
-import { Check } from "lucide-react";
+import { Check, FileSignature, MessageSquareReply, Ticket } from "lucide-react";
 import { WORKFLOW_STEP_STATUS_LABELS, type WorkflowStepStatus } from "@/domain/constants";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +14,7 @@ import { NotificationsList } from "@/components/notifications/notifications-list
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import { AgendaIcon, KindIcon } from "./kind-icon";
 import { CollapsibleBlock } from "./collapsible-block";
-import type { AgendaItem, AttentionClient, FollowupItem, GoalItem, NotificationItem, StepItem, TeamMember } from "./model";
+import type { AgendaItem, AttentionClient, AwaitingItem, FollowupItem, GoalItem, NotificationItem, PendingContractItem, StepItem, TeamMember } from "./model";
 import { cn } from "@/lib/utils";
 
 function Empty({ children }: { children: React.ReactNode }) {
@@ -318,6 +318,74 @@ export function TeamBlock({ members }: { members: TeamMember[] }) {
           </ul>
         </>
       )}
+    </CollapsibleBlock>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const AWAITING_KIND_LABEL: Record<AwaitingItem["kind"], string> = { lead: "Lead", oportunidade: "Oportunidade", cliente: "Cliente", chamado: "Chamado" };
+
+/** Clientes/leads esperando resposta: mensagem recebida sem retorno ou chamado com a última fala do cliente. */
+export function AwaitingBlock({ items }: { items: AwaitingItem[] }) {
+  return (
+    <CollapsibleBlock title="Aguardando seu retorno" count={items.length} description="Mensagens recebidas sem resposta e chamados com retorno do cliente" action={<Link href="/marketing/caixa-de-entrada" className="font-medium text-brand hover:underline">Caixa de entrada</Link>}>
+      {items.length === 0 ? (
+        <Empty>Ninguém aguardando retorno. Tudo respondido.</Empty>
+      ) : (
+        <ul className="flex flex-col divide-y divide-border">
+          {items.slice(0, 8).map((a) => (
+            <li key={a.id} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
+              <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-warning-soft text-warning-fg [&_svg]:size-3.5" aria-hidden>
+                {a.kind === "chamado" ? <Ticket /> : <MessageSquareReply />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <Link href={a.href} className="block truncate text-sm font-medium text-foreground hover:text-brand hover:underline">
+                  {a.title}
+                </Link>
+                <p className="truncate text-xs text-muted">
+                  {AWAITING_KIND_LABEL[a.kind]} · {a.channel}
+                  {a.excerpt ? ` · “${a.excerpt}”` : ""}
+                  {a.assigneeName ? ` · ${a.assigneeName}` : ""}
+                </p>
+              </div>
+              <span className="shrink-0 text-xs tabular-nums text-warning-fg">{a.receivedLabel}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </CollapsibleBlock>
+  );
+}
+
+/** Contratos parados no Financeiro sob responsabilidade do usuário (ou da equipe). */
+export function ContractsBlock({ items }: { items: PendingContractItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <CollapsibleBlock title="Contratos pendentes" count={items.length} description="Aguardando contrato, assinatura, pagamento ou com pendência" action={<Link href="/financeiro/contratos" className="font-medium text-brand hover:underline">Contratos</Link>}>
+      <ul className="flex flex-col divide-y divide-border">
+        {items.map((c) => (
+          <li key={c.id} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
+            <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-accent-purple-soft text-accent-purple-fg [&_svg]:size-3.5" aria-hidden>
+              <FileSignature />
+            </span>
+            <div className="min-w-0 flex-1">
+              <Link href={c.href} className="block truncate text-sm font-medium text-foreground hover:text-brand hover:underline">
+                {c.number}
+                {c.clientName ? <span className="font-normal text-muted"> · {c.clientName}</span> : null}
+              </Link>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+                <Badge variant={c.status === "pendencia" ? "danger" : "warning"} size="sm">
+                  {c.statusLabel}
+                </Badge>
+                {c.detail ? <span className="truncate">{c.detail}</span> : null}
+                {c.monthlyTotal > 0 ? <span>· {formatCurrency(c.monthlyTotal)}/mês</span> : null}
+              </div>
+            </div>
+            <span className="shrink-0 text-xs text-muted">{c.sinceLabel}</span>
+          </li>
+        ))}
+      </ul>
     </CollapsibleBlock>
   );
 }

@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { SectionTitle } from "@/components/ui/section-title";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ProspectListDetailView } from "@/components/marketing/prospect-list-detail";
+import { ProspectPlanningCard } from "@/components/marketing/prospect-planning";
 
 type Params = Promise<{ listId: string }>;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -46,6 +47,8 @@ export default async function ProspectListPage({ params, searchParams }: { param
         <StatCard label="Oportunidades" value={formatNumber(dashboard.opportunities)} icon={<Target />} tone="success" compact />
         <StatCard label="Conversão" value={formatPercent(dashboard.conversion)} icon={<TrendingUp />} tone="success" hint="Convertidos / contatos" compact />
       </div>
+
+      <ProspectPlanningCard list={list} />
 
       {byOwner.length > 0 ? (
         <section className="mb-6">

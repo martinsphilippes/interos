@@ -29,6 +29,7 @@ import {
   setLeadNextAction as setLeadNextActionService,
   setProspectListStatus as setProspectListStatusService,
   updateLeadData,
+  updateProspectList,
   type ImportReport,
   type LeadDuplicate,
 } from "./service";
@@ -55,6 +56,7 @@ import {
   replySchema,
   scheduleProspectSchema,
   updateLeadSchema,
+  updateProspectListSchema,
   zodMessage,
 } from "./schemas";
 
@@ -309,6 +311,18 @@ export async function createProspectListAction(input: unknown): Promise<ActionRe
     return { ok: true, data: { id: created.id } };
   } catch (error) {
     return fail(error, "Não foi possível criar a lista");
+  }
+}
+
+export async function updateProspectListAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const user = await requireUser();
+    const data = updateProspectListSchema.parse(input);
+    const saved = await updateProspectList(data, actor(user));
+    revalidateMarketing();
+    return { ok: true, data: { id: saved.id } };
+  } catch (error) {
+    return fail(error, "Não foi possível atualizar a lista");
   }
 }
 

@@ -36,6 +36,7 @@ import {
   type Training,
   type User,
   type UserRef,
+  type Visit,
   type WorkflowInstance,
   type WorkflowStep,
 } from "@/domain/types";
@@ -453,6 +454,10 @@ export interface Client360 {
   documents: Document[];
   tasks: Task[];
   workflow: { instance: WorkflowInstance | null; steps: WorkflowStep[] };
+  /** Visitas do cliente (agendadas, realizadas, canceladas), mais recentes primeiro. */
+  visits: Visit[];
+  /** Estado de SLA calculado na leitura para tarefas e etapas de workflow do cliente (chave: id da entidade). */
+  slaByEntity: Record<string, SlaView>;
   users: Record<string, UserSummary>;
   financial: FinancialSummary;
   support: SupportSummary;
@@ -490,6 +495,7 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     instance,
     steps,
     slas,
+    visits,
   ] = await Promise.all([
     list<Contact>(COLLECTIONS.contacts, byClient()),
     list<ClientProduct>(COLLECTIONS.clientProducts, byClient()),
@@ -514,6 +520,7 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     client.workflowInstanceId ? getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId) : Promise.resolve(null),
     list<WorkflowStep>(COLLECTIONS.workflowSteps, byClient()),
     list<SlaInstance>(COLLECTIONS.slaInstances, byClient()),
+    list<Visit>(COLLECTIONS.visits, byClient()),
   ]);
 
   const { projects, tasks: implementationTasks, trainings } = implementation;
@@ -553,11 +560,21 @@ export async function getClient360(id: string): Promise<Client360 | null> {
   });
 
   // SLA dos chamados calculado na leitura.
-  const slaByEntity = new Map(slas.filter((s) => s.entityType === "chamado").map((s) => [s.entityId, s]));
+  const ticketSlaByEntity = new Map(slas.filter((s) => s.entityType === "chamado").map((s) => [s.entityId, s]));
   const ticketsWithSla: TicketWithSla[] = tickets.map((t) => {
-    const sla = (t.slaInstanceId ? slas.find((s) => s.id === t.slaInstanceId) : undefined) ?? slaByEntity.get(t.id);
+    const sla = (t.slaInstanceId ? slas.find((s) => s.id === t.slaInstanceId) : undefined) ?? ticketSlaByEntity.get(t.id);
     return sla ? { ...t, sla: computeSlaState(sla) } : t;
   });
+
+  // SLA de tarefas e etapas (Visão geral e aba Tarefas).
+  const now = new Date();
+  const slaById = new Map(slas.map((s) => [s.id, s]));
+  const slaByEntity: Record<string, SlaView> = {};
+  for (const item of [...tasks, ...instanceSteps]) {
+    const sla = item.slaInstanceId ? slaById.get(item.slaInstanceId) : undefined;
+    if (sla) slaByEntity[item.id] = computeSlaState(sla, now);
+  }
+  visits.sort(byIsoDesc((v) => v.scheduledAt));
 
   // Resumo financeiro (fonte: módulo Financeiro).
   const financeSummary = await getClientFinancialSummary(id);
@@ -601,6 +618,7 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     ...tasks.flatMap((t) => [t.assigneeId, t.creatorId]),
     ...instanceSteps.map((s) => s.assigneeId),
     ...timeline.map((e) => e.actorId),
+    ...visits.map((v) => v.sellerId),
   ]);
 
   return {
@@ -629,6 +647,8 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     documents,
     tasks,
     workflow: { instance, steps: instanceSteps },
+    visits,
+    slaByEntity,
     users,
     financial,
     support,

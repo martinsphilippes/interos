@@ -16,6 +16,10 @@ import {
   type BaseEntity,
   type Client,
   type CollectionName,
+  type Communication,
+  type Contract,
+  type SuccessPlan,
+  type TicketInteraction,
   type CsAccount,
   type CurrentUser,
   type Goal,
@@ -36,9 +40,12 @@ import {
 import { DEPARTMENT_LABELS, PRIORITY_WEIGHT, type DepartmentKey, type Priority } from "@/domain/constants";
 import { formatCurrency } from "@/lib/format";
 import { computeKpiBatch, kpiHref, monthPeriod, type KpiResult } from "@/server/kpis/queries";
+import { CONTRACT_STATUS_LABELS } from "@/components/clients/labels";
 import type {
   AgendaItem,
   AttentionClient,
+  AwaitingItem,
+  PendingContractItem,
   FollowupItem,
   GoalItem,
   MeuDiaData,
@@ -324,7 +331,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   const nameOf = (id: string | undefined) => (id ? userById.get(id)?.name : undefined);
   const isTeam = scope === "equipe";
 
-  const [tasks, steps, leads, opps, projects, tickets, csClients, csAccounts, renewals, ownedSlas, visits, trainings, unread, oppSettings, goals] = await Promise.all([
+  const [tasks, steps, leads, opps, projects, tickets, csClients, csAccounts, renewals, ownedSlas, visits, trainings, unread, oppSettings, goals, ownedContracts, successPlans, communications] = await Promise.all([
     byOwner<Task>(COLLECTIONS.tasks, "assigneeId", ids),
     byOwner<WorkflowStep>(COLLECTIONS.workflowSteps, "assigneeId", ids),
     byOwner<Lead>(COLLECTIONS.leads, "ownerId", ids),
@@ -340,11 +347,17 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     listNotifications(user.id, { unreadOnly: true }),
     list<Settings>(COLLECTIONS.settings, { where: [["key", "==", "oportunidade"]] }),
     computeGoals(user, scopeInfo, month),
+    byOwner<Contract>(COLLECTIONS.contracts, "ownerId", ids),
+    byOwner<SuccessPlan>(COLLECTIONS.successPlans, "ownerId", ids),
+    // Mensagens recebidas/enviadas (coleção pequena): base de "clientes aguardando retorno".
+    list<Communication>(COLLECTIONS.communications),
   ]);
+  // Contratos ainda no Financeiro (não liberados nem cancelados) de que o usuário é responsável.
+  const pendingContracts = ownedContracts.filter((c) => c.status !== "liberado" && c.status !== "cancelado");
 
   // Clientes referenciados (nomes e MRR para o impacto), resolvidos em lote.
   const clientIds = new Set<string>();
-  for (const x of [...tasks, ...leads, ...opps, ...projects, ...tickets, ...renewals, ...ownedSlas, ...visits, ...trainings]) if (x.clientId) clientIds.add(x.clientId);
+  for (const x of [...tasks, ...leads, ...opps, ...projects, ...tickets, ...renewals, ...ownedSlas, ...visits, ...trainings, ...pendingContracts, ...successPlans]) if (x.clientId) clientIds.add(x.clientId);
   for (const s of steps) clientIds.add(s.clientId);
   const clientById = new Map<string, Client>(csClients.map((c) => [c.id, c]));
   const missingClients = Array.from(clientIds).filter((id) => !clientById.has(id));
@@ -709,8 +722,128 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     });
   }
 
+  // Clientes aguardando retorno: mensagens recebidas (lead, oportunidade ou cliente da carteira) sem
+  // resposta posterior e chamados abertos cuja última interação veio do cliente.
+  const awaiting: AwaitingItem[] = [];
+  const myLeadIds = new Set(leads.map((l) => l.id));
+  const myOppIds = new Set(openOpps.map((o) => o.id));
+  const myClientIds = new Set([...csClients.map((c) => c.id), ...openOpps.map((o) => o.clientId)]);
+  const lastOutgoing = new Map<string, string>();
+  for (const c of communications) {
+    if (c.direction !== "saida") continue;
+    for (const key of [c.entityId ? `e:${c.entityId}` : null, c.clientId ? `c:${c.clientId}` : null]) {
+      if (key && (lastOutgoing.get(key) ?? "") < c.createdAt) lastOutgoing.set(key, c.createdAt);
+    }
+  }
+  const CHANNEL_TEXT: Record<Communication["channel"], string> = { whatsapp: "WhatsApp", voip: "Ligação", email: "E-mail", interno: "Interno" };
+  const incoming = communications.filter((c) => c.direction === "entrada" && c.status !== "lida").sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const awaitingSeen = new Set<string>();
+  for (const c of incoming) {
+    const isLead = c.entityType === "lead" && c.entityId && myLeadIds.has(c.entityId);
+    const isOpp = c.entityType === "opportunity" && c.entityId && myOppIds.has(c.entityId);
+    const isClient = !isLead && !isOpp && c.clientId && myClientIds.has(c.clientId);
+    if (!isLead && !isOpp && !isClient) continue;
+    const key = isClient ? `c:${c.clientId}` : `e:${c.entityId}`;
+    if (awaitingSeen.has(key)) continue;
+    awaitingSeen.add(key);
+    const answeredAt = [lastOutgoing.get(key), c.clientId ? lastOutgoing.get(`c:${c.clientId}`) : undefined].filter(Boolean).sort().pop();
+    if (answeredAt && answeredAt > c.createdAt) continue;
+    const lead = isLead ? leads.find((l) => l.id === c.entityId) : undefined;
+    const opp = isOpp ? openOpps.find((o) => o.id === c.entityId) : undefined;
+    const kind: AwaitingItem["kind"] = lead ? "lead" : opp ? "oportunidade" : "cliente";
+    const title = lead ? `${lead.name}${lead.company ? ` · ${lead.company}` : ""}` : opp ? opp.title : (clientName(c.clientId) ?? "Cliente");
+    const href = lead ? `/marketing/leads?lead=${lead.id}` : opp ? `/vendas/oportunidades?oportunidade=${opp.id}` : `/clientes/${c.clientId}?aba=timeline`;
+    const ownerId = lead?.ownerId ?? opp?.ownerId ?? clientById.get(c.clientId ?? "")?.ownerCsId;
+    awaiting.push({ id: `${kind}:${c.id}`, kind, title, clientId: c.clientId, clientName: clientName(c.clientId), excerpt: c.body, channel: CHANNEL_TEXT[c.channel], receivedAt: c.createdAt, receivedLabel: dateLabel(c.createdAt, today), href, assigneeName: isTeam ? nameOf(ownerId) : undefined });
+  }
+  const openTicketIds = tickets.filter((t) => OPEN_TICKET_STATUS.has(t.status) && t.status !== "aguardando_cliente").map((t) => t.id);
+  const interactions = openTicketIds.length ? await list<TicketInteraction>(COLLECTIONS.ticketInteractions, { where: [["ticketId", "in", openTicketIds]] }) : [];
+  const lastByTicket = new Map<string, TicketInteraction>();
+  for (const i of interactions) {
+    if (i.kind === "nota_interna" || i.kind === "status") continue;
+    const cur = lastByTicket.get(i.ticketId);
+    if (!cur || cur.createdAt < i.createdAt) lastByTicket.set(i.ticketId, i);
+  }
+  for (const t of tickets) {
+    const last = lastByTicket.get(t.id);
+    if (!last || last.authorId) continue; // última mensagem foi do atendente
+    awaiting.push({ id: `chamado:${t.id}`, kind: "chamado", title: `${t.number} · ${t.subject}`, clientId: t.clientId, clientName: clientName(t.clientId), excerpt: last.body, channel: last.kind === "ligacao" ? "Ligação" : last.kind === "whatsapp" ? "WhatsApp" : "Mensagem", receivedAt: last.createdAt, receivedLabel: dateLabel(last.createdAt, today), href: `/suporte/chamados/${t.id}`, assigneeName: isTeam ? nameOf(t.assigneeId) : undefined });
+  }
+  awaiting.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+  for (const a of awaiting) {
+    if (a.kind === "chamado") {
+      // O chamado já está nas prioridades (fonte de chamados): só marca que o cliente aguarda retorno.
+      const existing = priorities.find((p) => p.id === a.id);
+      if (existing) {
+        existing.pending = true;
+        existing.reason = `Cliente aguardando retorno ${ago(a.receivedAt, nowMs)} · ${existing.reason}`;
+        existing.reasonTone = existing.reasonTone === "danger" ? "danger" : "warning";
+      }
+      continue;
+    }
+    const waitingHours = (nowMs - new Date(a.receivedAt).getTime()) / HOUR_MS;
+    push({
+      kind: "retorno",
+      entityId: a.id,
+      title: a.title,
+      clientId: a.clientId,
+      clientName: a.clientName,
+      reason: `Aguardando seu retorno ${ago(a.receivedAt, nowMs)} · ${a.channel}`,
+      reasonTone: waitingHours >= 4 ? "danger" : "warning",
+      dueAt: a.receivedAt,
+      dueLabel: a.receivedLabel,
+      impactLabel: a.excerpt ? `“${a.excerpt.slice(0, 60)}${a.excerpt.length > 60 ? "…" : ""}”` : undefined,
+      score: 20 + 20 * Math.min(waitingHours / 24, 1) + impactScore(clientMrr(a.clientId), maxMrr),
+      href: a.href,
+      canComplete: false,
+      assigneeName: a.assigneeName,
+      overdue: waitingHours >= 24,
+    });
+  }
+
+  // Contratos pendentes no Financeiro (aguardando contrato, assinatura, pagamento ou com pendência).
+  const contractItems: PendingContractItem[] = pendingContracts
+    .map((c) => {
+      const pendingSigners = c.signers?.filter((sg) => sg.status === "pendente").length ?? 0;
+      const detail = c.status === "pendencia" ? c.pendingReason : c.status === "pago" ? "aguardando liberação" : c.status === "aguardando_assinatura" && pendingSigners ? `${pendingSigners} assinatura${pendingSigners === 1 ? "" : "s"} pendente${pendingSigners === 1 ? "" : "s"}` : undefined;
+      return { id: c.id, number: c.number, clientId: c.clientId, clientName: clientName(c.clientId), status: c.status, statusLabel: CONTRACT_STATUS_LABELS[c.status], detail, monthlyTotal: c.monthlyTotal, sinceLabel: ago(c.updatedAt, nowMs), href: `/financeiro/contratos/${c.id}`, updatedAt: c.updatedAt };
+    })
+    .sort((a, b) => (a.status === "pendencia" ? -1 : b.status === "pendencia" ? 1 : a.updatedAt.localeCompare(b.updatedAt)))
+    .map(({ updatedAt: _u, ...rest }) => {
+      void _u;
+      return rest;
+    });
+  for (const c of pendingContracts) {
+    const idleDays = (nowMs - new Date(c.updatedAt).getTime()) / DAY_MS;
+    const item = contractItems.find((x) => x.id === c.id)!;
+    push({
+      kind: "contrato",
+      entityId: c.id,
+      title: `Contrato ${c.number}`,
+      clientId: c.clientId,
+      clientName: clientName(c.clientId),
+      reason: `${item.statusLabel}${item.detail ? ` · ${item.detail}` : ""} · parado ${ago(c.updatedAt, nowMs)}`,
+      reasonTone: c.status === "pendencia" || idleDays >= 3 ? "danger" : "warning",
+      dueAt: c.updatedAt,
+      dueLabel: dateLabel(c.updatedAt, today),
+      impactLabel: c.monthlyTotal > 0 ? `${formatCurrency(c.monthlyTotal)}/mês` : undefined,
+      score: (c.status === "pendencia" ? 30 : 18) + 20 * Math.min(idleDays / 7, 1) + impactScore(c.monthlyTotal, Math.max(1, ...pendingContracts.map((x) => x.monthlyTotal))),
+      href: item.href,
+      canComplete: false,
+      assigneeId: c.ownerId,
+      assigneeName: isTeam ? nameOf(c.ownerId) : undefined,
+      overdue: idleDays >= 3,
+    });
+  }
+
   priorities.sort((a, b) => b.score - a.score || (a.dueAt ?? "9").localeCompare(b.dueAt ?? "9"));
-  const cappedPriorities = priorities.slice(0, 100).map((p) => ({ ...p, score: Math.round(p.score * 10) / 10 }));
+  // Horário à direita da lista: hora quando é hoje; senão o dia ("Ontem", "3 out").
+  const shortWhen = (iso: string | undefined) => {
+    if (!iso) return undefined;
+    const label = dateLabel(iso, today);
+    return dayKey(iso) === today ? timeLabel(iso) : label.split(",")[0];
+  };
+  const cappedPriorities = priorities.slice(0, 100).map((p) => ({ ...p, score: Math.round(p.score * 10) / 10, timeLabel: shortWhen(p.dueAt) }));
 
   // -------------------------------------------------------------------------
   // Indicadores do cabeçalho
@@ -718,7 +851,14 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   const tasksToday = openTasks.filter((t) => t.dueAt && dayKey(t.dueAt) === today).length;
   const overdueTasks = openTasks.filter((t) => t.dueAt && dayKey(t.dueAt) < today).length;
   const followupsOverdue = openLeads.filter((l) => l.nextActionAt && l.nextActionAt < nowIso).length + openOpps.filter((o) => o.nextActionAt && o.nextActionAt < nowIso).length;
+  // Meta: atingimento médio das metas pessoais do mês (ou das metas visíveis, sem metas pessoais).
+  const personalGoals = goals.filter((g) => g.scopeLabel !== "Empresa" && g.attainment !== null);
+  const goalBase = (personalGoals.length ? personalGoals : goals).filter((g) => g.attainment !== null);
+  const goalAttainment = goalBase.length ? goalBase.reduce((sum, g) => sum + Math.min(g.attainment as number, 1.5), 0) / goalBase.length : null;
   const stats: MeuDiaStats = {
+    tasksInProgress: openTasks.length,
+    pendingOnYou: openSteps.filter((st) => st.status !== "aguardando_cliente").length + awaiting.length + pendingContracts.length,
+    goalAttainment: goalAttainment === null ? null : Number(goalAttainment.toFixed(3)),
     tasksToday,
     overdueTasks,
     followupsOverdue,
@@ -746,6 +886,15 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   for (const tr of trainings) {
     if (tr.status === "cancelado" || dayKey(tr.scheduledAt) !== today) continue;
     agenda.push({ id: `treinamento:${tr.id}`, kind: "treinamento", at: tr.scheduledAt, timeLabel: timeLabel(tr.scheduledAt), title: `Treinamento · ${tr.subject}`, clientId: tr.clientId, clientName: clientName(tr.clientId), href: tr.projectId ? `/implantacao/${tr.projectId}?aba=treinamentos` : "/implantacao/treinamentos", done: tr.status === "realizado", assigneeName: isTeam ? nameOf(tr.instructorId) : undefined });
+  }
+  // Checkpoints de CS do dia (próxima interação da carteira e checkpoints dos planos de sucesso).
+  for (const c of csClients) {
+    if (!c.nextInteractionAt || dayKey(c.nextInteractionAt) !== today) continue;
+    agenda.push({ id: `checkpoint:${c.id}`, kind: "checkpoint", at: c.nextInteractionAt, timeLabel: timeLabel(c.nextInteractionAt), title: `Checkpoint · ${c.tradeName}`, clientId: c.id, clientName: c.tradeName, href: `/clientes/${c.id}?aba=cs`, done: false, assigneeName: isTeam ? nameOf(c.ownerCsId) : undefined });
+  }
+  for (const sp of successPlans) {
+    if (sp.status !== "ativo" || !sp.checkpointAt || dayKey(sp.checkpointAt) !== today) continue;
+    agenda.push({ id: `plano:${sp.id}`, kind: "checkpoint", at: sp.checkpointAt, timeLabel: timeLabel(sp.checkpointAt), title: `Checkpoint do plano · ${sp.objective}`, clientId: sp.clientId, clientName: clientName(sp.clientId), href: `/clientes/${sp.clientId}?aba=cs`, done: false, assigneeName: isTeam ? nameOf(sp.ownerId) : undefined });
   }
   agenda.sort((a, b) => a.at.localeCompare(b.at));
 
@@ -813,5 +962,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     goals,
     notifications,
     team,
+    awaiting,
+    contracts: contractItems,
   };
 }

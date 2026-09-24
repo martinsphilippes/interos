@@ -8,6 +8,7 @@ import { formatCurrency, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
+import { KpiStrip } from "@/components/ui/kpi-strip";
 import { Button } from "@/components/ui/button";
 import { ClientsFilters } from "@/components/clients/clients-filters";
 import { ClientsTable } from "@/components/clients/clients-table";
@@ -36,13 +37,13 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
         }
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <KpiStrip columns={5} mobileColumns={2}>
         <StatCard label="Ativos" value={formatNumber(stats.active)} icon={<Building2 />} tone="success" href="/clientes?status=ativo" hint={`${formatNumber(stats.total)} no total`} compact />
         <StatCard label="Em implantação" value={formatNumber(stats.implementing)} icon={<Rocket />} tone="info" href="/clientes?status=em_implantacao" compact />
         <StatCard label="Prospects e leads" value={formatNumber(stats.pipeline)} icon={<UserPlus />} tone="neutral" href="/clientes?status=prospect,lead" compact />
         <StatCard label="MRR total" value={formatCurrency(stats.mrr)} icon={<Wallet />} tone="success" href="/clientes?status=ativo&ordenar=mrr" hint="soma dos clientes ativos" compact />
         <StatCard label="Clientes em risco" value={formatNumber(stats.atRisk)} icon={<AlertTriangle />} tone={stats.atRisk > 0 ? "danger" : "neutral"} href="/clientes?saude=risco&status=ativo" compact />
-      </div>
+      </KpiStrip>
 
       <div className="flex flex-col gap-4">
         <Suspense fallback={null}>

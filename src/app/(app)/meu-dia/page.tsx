@@ -5,7 +5,7 @@ import { getMeuDia } from "@/server/meu-dia/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { MeuDiaHeader } from "@/components/meu-dia/meu-dia-header";
 import { PrioritiesList } from "@/components/meu-dia/priorities-list";
-import { AgendaBlock, AttentionClientsBlock, FollowupsBlock, GoalsBlock, NotificationsBlock, StepsBlock, TeamBlock } from "@/components/meu-dia/blocks";
+import { AgendaBlock, AttentionClientsBlock, AwaitingBlock, ContractsBlock, FollowupsBlock, GoalsBlock, NotificationsBlock, StepsBlock, TeamBlock } from "@/components/meu-dia/blocks";
 import { parsePriorityFilter } from "@/components/meu-dia/model";
 import { InsightsBlock } from "@/components/meu-dia/insights-block";
 import { getTopInsightsForUser } from "@/server/insights/engine";
@@ -56,7 +56,9 @@ export default async function MeuDiaPage({ searchParams }: { searchParams: Searc
         {showInsights ? <InsightsBlock insights={insights} director={user.isDirector} /> : null}
         {team ? <TeamBlock members={data.team} /> : null}
         <AgendaBlock items={data.agenda} />
+        <AwaitingBlock items={data.awaiting} />
         <FollowupsBlock items={data.followups} />
+        <ContractsBlock items={data.contracts} />
         <StepsBlock items={data.steps} team={team} />
         <AttentionClientsBlock items={data.attentionClients} total={data.stats.clientsAttention} />
         <GoalsBlock items={data.goals} />

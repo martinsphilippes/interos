@@ -11,11 +11,12 @@ export type { NotificationItem } from "@/components/notifications/model";
 export type MeuDiaScope = "eu" | "equipe";
 
 /** Filtro da lista de prioridades (vem de ?filtro= e dos StatCards). */
-export const PRIORITY_FILTERS = ["todas", "tarefas", "atrasadas", "followups", "sla", "clientes"] as const;
+export const PRIORITY_FILTERS = ["todas", "tarefas", "pendencias", "atrasadas", "followups", "sla", "clientes"] as const;
 export type PriorityFilter = (typeof PRIORITY_FILTERS)[number];
 export const PRIORITY_FILTER_LABELS: Record<PriorityFilter, string> = {
   todas: "Todas",
   tarefas: "Tarefas",
+  pendencias: "Pendências",
   atrasadas: "Atrasadas",
   followups: "Follow-ups",
   sla: "SLA",
@@ -26,7 +27,7 @@ export function parsePriorityFilter(value: string | undefined): PriorityFilter {
   return (PRIORITY_FILTERS as readonly string[]).includes(value ?? "") ? (value as PriorityFilter) : "todas";
 }
 
-export type PriorityKind = "tarefa" | "etapa" | "lead" | "oportunidade" | "projeto" | "chamado" | "cliente" | "renovacao" | "sla";
+export type PriorityKind = "tarefa" | "etapa" | "lead" | "oportunidade" | "projeto" | "chamado" | "cliente" | "renovacao" | "sla" | "retorno" | "contrato";
 
 export const PRIORITY_KIND_LABELS: Record<PriorityKind, string> = {
   tarefa: "Tarefa",
@@ -38,6 +39,8 @@ export const PRIORITY_KIND_LABELS: Record<PriorityKind, string> = {
   cliente: "Cliente",
   renovacao: "Renovação",
   sla: "SLA",
+  retorno: "Aguardando retorno",
+  contrato: "Contrato",
 };
 
 export type ReasonTone = "danger" | "warning" | "info" | "muted";
@@ -68,9 +71,19 @@ export interface PriorityItem {
   assigneeName?: string;
   /** Marca itens atrasados/vencidos (filtro "atrasadas"). */
   overdue: boolean;
+  /** Aguarda ação do usuário (entra no filtro "Pendências" mesmo sendo de outro tipo). */
+  pending?: boolean;
+  /** Horário exibido à direita ("15:00" hoje, "Ontem", "3 out"). */
+  timeLabel?: string;
 }
 
 export interface MeuDiaStats {
+  /** Tarefas abertas ou em andamento (card "Tarefas"). */
+  tasksInProgress: number;
+  /** Itens aguardando o usuário: etapas atribuídas, clientes aguardando retorno e contratos pendentes. */
+  pendingOnYou: number;
+  /** Atingimento médio das metas do mês (fração), null sem metas. */
+  goalAttainment: number | null;
   tasksToday: number;
   overdueTasks: number;
   followupsOverdue: number;
@@ -79,7 +92,7 @@ export interface MeuDiaStats {
   unreadNotifications: number;
 }
 
-export type AgendaKind = "tarefa" | "visita" | "treinamento";
+export type AgendaKind = "tarefa" | "visita" | "treinamento" | "checkpoint";
 export interface AgendaItem {
   id: string;
   kind: AgendaKind;
@@ -165,6 +178,35 @@ export interface TeamMember {
   href: string;
 }
 
+/** Cliente/lead esperando resposta: mensagem recebida sem retorno ou chamado com resposta do cliente. */
+export interface AwaitingItem {
+  id: string;
+  kind: "lead" | "oportunidade" | "cliente" | "chamado";
+  title: string;
+  clientId?: string;
+  clientName?: string;
+  /** Trecho da última mensagem recebida. */
+  excerpt?: string;
+  channel: string;
+  receivedAt: string;
+  receivedLabel: string;
+  href: string;
+  assigneeName?: string;
+}
+
+export interface PendingContractItem {
+  id: string;
+  number: string;
+  clientId: string;
+  clientName?: string;
+  status: string;
+  statusLabel: string;
+  detail?: string;
+  monthlyTotal: number;
+  sinceLabel: string;
+  href: string;
+}
+
 export interface MeuDiaData {
   user: { id: string; name: string; firstName: string };
   scope: MeuDiaScope;
@@ -182,6 +224,8 @@ export interface MeuDiaData {
   goals: GoalItem[];
   notifications: NotificationItem[];
   team: TeamMember[];
+  awaiting: AwaitingItem[];
+  contracts: PendingContractItem[];
 }
 
 /** Aplica o filtro dos StatCards à lista de prioridades. */
@@ -189,6 +233,8 @@ export function filterPriorities(items: PriorityItem[], filter: PriorityFilter):
   switch (filter) {
     case "tarefas":
       return items.filter((i) => i.kind === "tarefa");
+    case "pendencias":
+      return items.filter((i) => i.pending || i.kind === "etapa" || i.kind === "retorno" || i.kind === "contrato");
     case "atrasadas":
       return items.filter((i) => i.overdue);
     case "followups":

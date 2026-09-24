@@ -179,13 +179,36 @@ export const campaignSchema = z
 // Prospecção ativa
 // ---------------------------------------------------------------------------
 
-export const prospectListSchema = z.object({
-  name: z.string("Informe o nome").trim().min(3, "Informe o nome da lista").max(120, "Nome muito longo"),
-  description: optionalText(500),
-  segment: optionalText(60),
-  ownerId: optionalId,
-  campaignId: optionalId,
-});
+/** Data opcional sem hora (AAAA-MM-DD) para período de listas. */
+const optionalDateKey = z
+  .string()
+  .trim()
+  .nullish()
+  .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), "Data inválida")
+  .transform((v) => (v ? v : undefined));
+
+/** Planejamento da lista (campos aditivos de ProspectList: ver src/domain/marketing-extra.ts). */
+const prospectListPlanning = {
+  objective: optionalText(300),
+  startDate: optionalDateKey,
+  endDate: optionalDateKey,
+  optOut: z.boolean().optional(),
+};
+
+export const prospectListSchema = z
+  .object({
+    name: z.string("Informe o nome").trim().min(3, "Informe o nome da lista").max(120, "Nome muito longo"),
+    description: optionalText(500),
+    segment: optionalText(60),
+    ownerId: optionalId,
+    campaignId: optionalId,
+    ...prospectListPlanning,
+  })
+  .refine((v) => !v.startDate || !v.endDate || v.startDate <= v.endDate, { message: "O término deve ser depois do início", path: ["endDate"] });
+
+export const updateProspectListSchema = z
+  .object({ listId: id("Lista"), name: z.string().trim().min(3, "Informe o nome da lista").max(120, "Nome muito longo").optional(), description: optionalText(500), segment: optionalText(60), ...prospectListPlanning })
+  .refine((v) => !v.startDate || !v.endDate || v.startDate <= v.endDate, { message: "O término deve ser depois do início", path: ["endDate"] });
 
 export const prospectListStatusSchema = z.object({ listId: id("Lista"), status: z.enum(["ativa", "pausada", "encerrada"], "Status inválido") });
 

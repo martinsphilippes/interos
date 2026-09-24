@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { Building2, ChevronRight, Plus } from "lucide-react";
 import type { ClientListItem } from "@/server/clients/queries";
-import { formatCurrency, formatDocument, formatRelative } from "@/lib/format";
+import { formatCurrency, formatDocument, formatRelative, initials } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Avatar } from "@/components/ui/avatar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ClientStatusBadge, HealthIndicator, StageBadge } from "./client-badges";
+import { accountManager } from "./overview-model";
 
 export interface ClientsTableProps {
   items: ClientListItem[];
@@ -26,6 +27,22 @@ function Owners({ client }: { client: ClientListItem }) {
       {owners.map((o) => (
         <Avatar key={`${o.role}-${o.id}`} name={o.name} src={o.avatarUrl} size="sm" className="ring-2 ring-surface" title={`${o.role}: ${o.name}`} />
       ))}
+    </span>
+  );
+}
+
+/** Gestor da conta pela mesma regra da ficha (comercial → implantação → CS conforme o estágio). */
+function Manager({ client }: { client: ClientListItem }) {
+  const users = Object.fromEntries([client.ownerSales, client.ownerCs].filter((u): u is NonNullable<typeof u> => Boolean(u)).map((u) => [u.id, u]));
+  const manager = accountManager(client, users);
+  if (!manager.user) return <Owners client={client} />;
+  return (
+    <span className="flex min-w-0 items-center gap-2" title={`${manager.area}: ${manager.user.name}`}>
+      <Avatar name={manager.user.name} src={manager.user.avatarUrl} size="sm" />
+      <span className="min-w-0 leading-tight">
+        <span className="block truncate text-sm">{manager.user.name.split(" ")[0]}</span>
+        <span className="block truncate text-[11px] text-muted">{manager.area}</span>
+      </span>
     </span>
   );
 }
@@ -64,30 +81,33 @@ export function ClientsTable({ items, filtered }: ClientsTableProps) {
     <>
       {/* Desktop */}
       <Card className="hidden overflow-hidden md:block">
-        <Table className="min-w-[960px]">
+        <Table className="min-w-[900px]">
           <TableHeader>
             <TableRow>
               <TableHead>Cliente</TableHead>
-              <TableHead>CNPJ/CPF</TableHead>
               <TableHead>Cidade</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Etapa</TableHead>
               <TableHead className="text-right">MRR</TableHead>
               <TableHead>Saúde</TableHead>
-              <TableHead>Responsáveis</TableHead>
-              <TableHead>Última interação</TableHead>
+              <TableHead>Gestor da conta</TableHead>
+              <TableHead className="hidden xl:table-cell">Última interação</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {items.map((client) => (
               <TableRow key={client.id} className="relative">
-                <TableCell className="max-w-[280px]">
-                  <Link href={`/clientes/${client.id}`} className="block min-w-0 after:absolute after:inset-0 after:content-['']">
-                    <span className="block truncate font-medium text-foreground">{client.tradeName}</span>
-                    <span className="block truncate text-xs text-muted">{client.legalName}</span>
+                <TableCell className="max-w-[340px]">
+                  <Link href={`/clientes/${client.id}`} className="flex min-w-0 items-center gap-3 after:absolute after:inset-0 after:content-['']">
+                    <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-secondary/25 bg-gradient-to-br from-secondary/30 to-info/10 text-xs font-bold text-foreground">
+                      {initials(client.tradeName)}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-foreground">{client.tradeName}</span>
+                      <span className="block truncate text-xs text-muted">{client.document ? formatDocument(client.document) : client.legalName}</span>
+                    </span>
                   </Link>
                 </TableCell>
-                <TableCell className="whitespace-nowrap tabular-nums text-muted">{formatDocument(client.document)}</TableCell>
                 <TableCell className="whitespace-nowrap">{cityLabel(client)}</TableCell>
                 <TableCell>
                   <ClientStatusBadge status={client.status} />
@@ -99,10 +119,10 @@ export function ClientsTable({ items, filtered }: ClientsTableProps) {
                 <TableCell>
                   <HealthIndicator score={client.healthScore} level={client.healthLevel} />
                 </TableCell>
-                <TableCell>
-                  <Owners client={client} />
+                <TableCell className="max-w-[160px]">
+                  <Manager client={client} />
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-muted">{client.lastInteractionAt ? formatRelative(client.lastInteractionAt) : "—"}</TableCell>
+                <TableCell className="hidden whitespace-nowrap text-muted xl:table-cell">{client.lastInteractionAt ? formatRelative(client.lastInteractionAt) : "—"}</TableCell>
               </TableRow>
             ))}
           </TableBody>

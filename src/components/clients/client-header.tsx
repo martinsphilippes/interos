@@ -1,139 +1,182 @@
-import { CalendarClock, Globe, Mail, MapPin, MessageCircle, Phone, Tag } from "lucide-react";
+import { CalendarDays, CalendarClock, DollarSign, HeartPulse, MapPin, Receipt, UserRound } from "lucide-react";
 import type { Client360, ClientFormOptions } from "@/server/clients/queries";
-import { segmentLabel } from "@/server/clients/schemas";
-import { formatCurrency, formatDate, formatDocument, formatPhone, formatRelative } from "@/lib/format";
+import type { NewTicketOptions } from "@/components/support/new-ticket-dialog";
+import { CLIENT_STATUS_LABELS, type ClientStatus } from "@/domain/constants";
+import { formatCurrency, formatDate, formatDocument, initials } from "@/lib/format";
 import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { KpiStrip } from "@/components/ui/kpi-strip";
+import { StatCard } from "@/components/ui/stat-card";
+import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { ClientActions } from "./client-actions";
-import { ClientStatusBadge, HealthIndicator, UserCell } from "./client-badges";
+import { HEALTH_LABELS } from "./client-badges";
 import { JourneyProgress } from "./journey-progress";
-import { telHref, whatsappHref } from "./contact-links";
+import { accountManager, buildUpcoming } from "./overview-model";
 
 export interface ClientHeaderProps {
   data: Client360;
   options: ClientFormOptions;
+  ticketOptions: NewTicketOptions | null;
 }
 
-function Metric({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+const STATUS_VARIANT: Record<ClientStatus, NonNullable<BadgeProps["variant"]>> = {
+  lead: "muted",
+  prospect: "info",
+  em_implantacao: "warning",
+  ativo: "success",
+  inativo: "outline",
+  cancelado: "danger",
+};
+const STATUS_TEXT: Partial<Record<ClientStatus, string>> = { ativo: "Cliente ativo", inativo: "Cliente inativo", cancelado: "Cliente cancelado" };
+
+function HeaderFact({ icon, label, children, className }: { icon: React.ReactNode; label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("min-w-0", className)}>
-      <p className="label-caps truncate">{label}</p>
-      <div className="mt-1 text-sm font-medium text-foreground">{children}</div>
+    <div className={cn("flex min-w-0 items-center gap-2.5", className)}>
+      <span className="shrink-0 text-muted [&_svg]:size-5" aria-hidden>
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-xs text-muted">{label}</p>
+        <div className="truncate text-sm font-medium text-foreground">{children}</div>
+      </div>
     </div>
   );
 }
 
-/** Cabeçalho da Ficha 360º: identificação, jornada, indicadores-chave, responsáveis e ações. */
-export function ClientHeader({ data, options }: ClientHeaderProps) {
-  const { client, contacts, workflow, users, financial, availableProducts, ownedCategories } = data;
-  const now = new Date().toISOString();
-  const nextOverdue = Boolean(client.nextInteractionAt && client.nextInteractionAt < now);
-  const mrr = financial.mrr || client.mrr || 0;
-  const addressLine = [
-    [client.address?.street, client.address?.number].filter(Boolean).join(", "),
-    client.address?.district,
-    [client.address?.city, client.address?.state].filter(Boolean).join("/"),
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const wa = whatsappHref(client.whatsapp);
-  const tel = telHref(client.phone);
+/** Cabeçalho da Ficha 360º (padrão 12): identificação, gestor da conta, desde, cidade, ações e jornada. */
+export function ClientHeader({ data, options, ticketOptions }: ClientHeaderProps) {
+  const { client, contacts, workflow, users, availableProducts, ownedCategories } = data;
+  const manager = accountManager(client, users);
+  const city = [client.address?.city, client.address?.state].filter(Boolean).join(" — ");
 
   return (
     <>
       <PageHeader
         breadcrumbs={[{ label: "Operação" }, { label: "Clientes 360º", href: "/clientes" }, { label: client.tradeName }]}
-        title={client.tradeName}
-        badge={<ClientStatusBadge status={client.status} size="md" />}
-        description={[client.legalName, client.document ? formatDocument(client.document) : null, client.segment ? segmentLabel(client.segment) : null].filter(Boolean).join(" · ")}
-        actions={<ClientActions client={client} contacts={contacts} availableProducts={availableProducts} ownedCategories={ownedCategories} options={options} />}
+        title="Cliente 360º"
+        description="Visão completa do relacionamento com o cliente"
         className="mb-4"
       />
-
-      <Card>
-        <CardContent className="flex flex-col gap-5 py-4 md:py-5">
-          <div>
-            <p className="label-caps mb-2">Jornada do cliente</p>
-            <JourneyProgress currentStage={client.currentStage} instanceId={workflow.instance?.id ?? client.workflowInstanceId} steps={workflow.steps} />
-          </div>
-
-          <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-6">
-            <Metric label="MRR">
-              <span className="tabular-nums">{mrr > 0 ? formatCurrency(mrr) : "—"}</span>
-            </Metric>
-            <Metric label="Saúde">
-              <HealthIndicator score={client.healthScore} level={client.healthLevel} showLabel />
-            </Metric>
-            <Metric label="Última interação">
-              {client.lastInteractionAt ? <span title={formatDate(client.lastInteractionAt, "dd/MM/yyyy HH:mm")}>{formatRelative(client.lastInteractionAt)}</span> : "—"}
-            </Metric>
-            <Metric label="Próxima interação">
-              {client.nextInteractionAt ? (
-                <span className={cn("inline-flex items-center gap-1", nextOverdue && "text-danger-fg")} title={formatDate(client.nextInteractionAt, "dd/MM/yyyy HH:mm")}>
-                  <CalendarClock className="size-3.5" aria-hidden /> {formatRelative(client.nextInteractionAt)}
-                  {nextOverdue ? <span className="text-xs font-normal">(vencida)</span> : null}
-                </span>
-              ) : (
-                "—"
-              )}
-            </Metric>
-            <Metric label={client.activatedAt ? "Cliente desde" : "Cadastrado em"}>{formatDate(client.activatedAt ?? client.createdAt)}</Metric>
-            <Metric label="Origem">{client.origin ? (options.leadSources.find((s) => s.key === client.origin)?.name ?? client.origin) : "—"}</Metric>
-          </div>
-
-          <div className="grid gap-3 border-t border-border pt-4 sm:grid-cols-3">
-            <Metric label="Comercial">
-              <UserCell users={users} id={client.ownerSalesId} size="md" withSubtitle />
-            </Metric>
-            <Metric label="Customer Success">
-              <UserCell users={users} id={client.ownerCsId} size="md" withSubtitle />
-            </Metric>
-            <Metric label="Implantação">
-              <UserCell users={users} id={client.ownerImplementationId} size="md" withSubtitle />
-            </Metric>
-          </div>
-
-          <div className="flex flex-col gap-2 border-t border-border pt-4 text-sm text-muted md:flex-row md:flex-wrap md:items-center md:gap-x-5">
-            {client.phone ? (
-              <a href={tel ?? undefined} className="inline-flex min-h-[32px] items-center gap-1.5 hover:text-foreground md:min-h-0">
-                <Phone className="size-4 shrink-0" aria-hidden /> {formatPhone(client.phone)}
-              </a>
-            ) : null}
-            {client.whatsapp ? (
-              <a href={wa ?? undefined} target="_blank" rel="noreferrer" className="inline-flex min-h-[32px] items-center gap-1.5 hover:text-foreground md:min-h-0">
-                <MessageCircle className="size-4 shrink-0" aria-hidden /> {formatPhone(client.whatsapp)}
-              </a>
-            ) : null}
-            {client.email ? (
-              <a href={`mailto:${client.email}`} className="inline-flex min-h-[32px] min-w-0 items-center gap-1.5 hover:text-foreground md:min-h-0">
-                <Mail className="size-4 shrink-0" aria-hidden /> <span className="truncate">{client.email}</span>
-              </a>
-            ) : null}
-            {client.website ? (
-              <a href={client.website} target="_blank" rel="noreferrer" className="inline-flex min-h-[32px] min-w-0 items-center gap-1.5 hover:text-foreground md:min-h-0">
-                <Globe className="size-4 shrink-0" aria-hidden /> <span className="truncate">{client.website.replace(/^https?:\/\//, "")}</span>
-              </a>
-            ) : null}
-            {addressLine ? (
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <MapPin className="size-4 shrink-0" aria-hidden /> <span className="truncate">{addressLine}</span>
-              </span>
-            ) : null}
-            {client.tags?.length ? (
-              <span className="inline-flex flex-wrap items-center gap-1 md:ml-auto">
-                <Tag className="size-3.5 text-muted-light" aria-hidden />
-                {client.tags.map((tag) => (
+      <Card className="p-4 md:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <span
+              aria-hidden
+              className="flex size-16 shrink-0 items-center justify-center rounded-xl border border-secondary/30 bg-gradient-to-br from-secondary/35 to-info/15 text-xl font-bold tracking-tight text-foreground md:size-20 md:text-2xl"
+            >
+              {initials(client.tradeName)}
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-xl font-semibold leading-tight tracking-tight text-foreground md:text-2xl">{client.tradeName}</h2>
+              <p className="mt-0.5 truncate text-sm text-muted">{[client.legalName !== client.tradeName ? client.legalName : null, client.document ? formatDocument(client.document) : null].filter(Boolean).join(" · ")}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <Badge variant={STATUS_VARIANT[client.status]} size="md">
+                  <span className="size-1.5 rounded-full bg-current" aria-hidden />
+                  {STATUS_TEXT[client.status] ?? CLIENT_STATUS_LABELS[client.status]}
+                </Badge>
+                {client.tags?.slice(0, 4).map((tag) => (
                   <Badge key={tag} variant="muted" size="sm">
                     {tag}
                   </Badge>
                 ))}
-              </span>
-            ) : null}
+              </div>
+            </div>
           </div>
-        </CardContent>
+          <ClientActions client={client} contacts={contacts} availableProducts={availableProducts} ownedCategories={ownedCategories} options={options} ticketOptions={ticketOptions} />
+        </div>
+
+        <div className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3 sm:divide-x sm:divide-border lg:grid-cols-[repeat(3,minmax(0,16rem))] [&>*]:sm:pl-4 [&>*:first-child]:sm:pl-0">
+          <HeaderFact icon={<UserRound />} label={`Gestor da conta · ${manager.area}`}>
+            {manager.user ? (
+              <span className="inline-flex items-center gap-2">
+                <Avatar name={manager.user.name} src={manager.user.avatarUrl} size="xs" />
+                {manager.user.name}
+              </span>
+            ) : (
+              <span className="text-muted-light">Sem responsável</span>
+            )}
+          </HeaderFact>
+          <HeaderFact icon={<CalendarDays />} label={client.activatedAt ? "Cliente desde" : "Cadastrado em"}>
+            {formatDate(client.activatedAt ?? client.createdAt, "MMM yyyy")}
+          </HeaderFact>
+          <HeaderFact icon={<MapPin />} label="Cidade">
+            {city || <span className="text-muted-light">—</span>}
+          </HeaderFact>
+        </div>
+
+        <div className="mt-4 border-t border-border pt-4">
+          <p className="label-caps mb-2">Jornada do cliente</p>
+          <JourneyProgress currentStage={client.currentStage} instanceId={workflow.instance?.id ?? client.workflowInstanceId} steps={workflow.steps} />
+        </div>
       </Card>
+    </>
+  );
+}
+
+/** Indicadores do cliente (MRR, em aberto, próximo vencimento, saúde), cada um levando à aba de detalhe. */
+export function ClientKpis({ data }: { data: Client360 }) {
+  const { client, financial } = data;
+  const base = `/clientes/${client.id}`;
+  const mrr = financial.mrr || client.mrr || 0;
+  const openTotal = financial.openAmount + financial.overdueAmount;
+  const next = buildUpcoming(data)[0];
+  const health = data.healthScore?.score ?? client.healthScore;
+  const level = data.healthScore?.level ?? client.healthLevel;
+  const healthTone = level === "saudavel" ? "success" : level === "atencao" ? "warning" : level === "risco" ? "danger" : "neutral";
+
+  // Celular: grade 2x2 com cards compactos; a partir de md, cards completos (padrão 12).
+  const cards = (compact: boolean) => (
+    <>
+      <StatCard compact={compact} label="Receita mensal" value={mrr > 0 ? formatCurrency(mrr) : "—"} icon={<DollarSign />} tone="brand" href={`${base}?aba=financeiro`} hint="Ver detalhes" />
+      <StatCard
+        compact={compact}
+        label="Em aberto"
+        value={formatCurrency(openTotal)}
+        icon={<Receipt />}
+        tone={financial.overdueCount > 0 ? "danger" : "info"}
+        valueTone={financial.overdueCount > 0}
+        href={`${base}?aba=financeiro`}
+        hint={financial.overdueCount > 0 ? `${formatCurrency(financial.overdueAmount)} vencido` : `${financial.openCount} cobrança${financial.openCount === 1 ? "" : "s"} a vencer`}
+      />
+      <StatCard
+        compact={compact}
+        label="Próximo vencimento"
+        value={next ? formatDate(next.date) : "—"}
+        icon={<CalendarClock />}
+        tone="purple"
+        href={`${base}?aba=financeiro`}
+        hint={next ? `${next.title}${next.amount ? ` · ${formatCurrency(next.amount)}` : ""}` : "Nada a vencer"}
+      />
+      <StatCard
+        compact={compact}
+        label="Saúde do cliente"
+        value={
+          health !== undefined ? (
+            <span className="inline-flex items-baseline gap-2">
+              {health}
+              {level ? <span className={cn("rounded-md px-1.5 py-0.5 text-xs font-medium", healthTone === "success" ? "bg-success-soft text-success-fg" : healthTone === "warning" ? "bg-warning-soft text-warning-fg" : "bg-danger-soft text-danger-fg")}>{HEALTH_LABELS[level]}</span> : null}
+            </span>
+          ) : (
+            "—"
+          )
+        }
+        icon={<HeartPulse />}
+        tone={healthTone}
+        href={`${base}?aba=cs`}
+        hint={health !== undefined ? "Ver detalhes" : "Calculada após a ativação"}
+      />
+    </>
+  );
+  return (
+    <>
+      <KpiStrip columns={4} mobileColumns={2} className="mt-4 md:hidden">
+        {cards(true)}
+      </KpiStrip>
+      <KpiStrip columns={4} className="mt-4 hidden md:grid">
+        {cards(false)}
+      </KpiStrip>
     </>
   );
 }

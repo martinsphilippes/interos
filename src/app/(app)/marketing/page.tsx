@@ -1,82 +1,141 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AlertTriangle, BadgeCheck, CircleDollarSign, Percent, Target, UserPlus, UserX } from "lucide-react";
+import { CircleDollarSign, Megaphone, TrendingUp, UserCheck, Users } from "lucide-react";
 import { requireUser } from "@/server/auth/session";
-import { getMarketingOverview } from "@/server/marketing/queries";
+import { getMarketingOptions, getMarketingOverview } from "@/server/marketing/queries";
+import { getMarketingWorkspace } from "@/server/marketing/workspace";
 import { formatCurrency, formatDateKey, formatNumber, formatPercent } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
-import { StatCard } from "@/components/ui/stat-card";
+import { KpiStrip } from "@/components/ui/kpi-strip";
+import { StatCard, type StatCardProps } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
 import { PeriodSelect } from "@/components/marketing/period-select";
-import { EvolutionChart, LeadsByCampaignChart, LeadsByOriginChart, TemperatureDonut } from "@/components/marketing/overview-charts";
-import { NeedsActionList } from "@/components/marketing/needs-action-list";
+import { EvolutionChart, LeadsByCampaignChart } from "@/components/marketing/overview-charts";
 import { parsePeriod } from "@/components/marketing/marketing-model";
+import { NewLeadDialog } from "@/components/marketing/new-lead-dialog";
+import { ImportLeadsDialog } from "@/components/marketing/import-leads-dialog";
+import { LeadCapture } from "@/components/marketing/lead-capture";
+import { CaptureAutomations, ChannelPerformance, ProspectHighlightCard } from "@/components/marketing/capture-panels";
+import type { WorkspaceMetric } from "@/components/marketing/workspace-model";
 
-export const metadata: Metadata = { title: "Marketing — Visão Geral" };
+export const metadata: Metadata = { title: "Marketing e Captação" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Visão Geral do Marketing: indicadores do período com drill-down para a lista de leads. */
+/** Variação relativa (%) entre períodos; `lowerIsBetter` inverte a cor (ex.: custo por lead). */
+function relativeDelta(m: WorkspaceMetric, label: string, lowerIsBetter = false): StatCardProps["delta"] {
+  if (m.value === null || m.previous === null || m.previous === 0) return undefined;
+  const change = (m.value - m.previous) / m.previous;
+  const direction = Math.abs(change) < 0.0005 ? "flat" : change > 0 ? "up" : "down";
+  const good = lowerIsBetter ? change < 0 : change > 0;
+  return { value: `${change > 0 ? "+" : ""}${(change * 100).toFixed(1).replace(".", ",")}%`, direction, tone: direction === "flat" ? "neutral" : good ? "success" : "danger", label };
+}
+
+/** Variação em pontos percentuais para taxas (0–1). */
+function pointsDelta(m: WorkspaceMetric, label: string): StatCardProps["delta"] {
+  if (m.value === null || m.previous === null) return undefined;
+  const pp = (m.value - m.previous) * 100;
+  const direction = Math.abs(pp) < 0.05 ? "flat" : pp > 0 ? "up" : "down";
+  return { value: `${pp > 0 ? "+" : ""}${pp.toFixed(1).replace(".", ",")} p.p.`, direction, tone: direction === "flat" ? "neutral" : pp > 0 ? "success" : "danger", label };
+}
+
+/** Marketing e Captação (padrão 01): indicadores, origem, caixa de entrada, canais, automações e prospecção. */
 export default async function MarketingOverviewPage({ searchParams }: { searchParams: SearchParams }) {
-  await requireUser();
+  const user = await requireUser();
   const sp = await searchParams;
   const period = parsePeriod(Array.isArray(sp.periodo) ? sp.periodo[0] : sp.periodo);
-  const data = await getMarketingOverview(period);
+  const [data, overview, options] = await Promise.all([getMarketingWorkspace(user, period), getMarketingOverview(period), getMarketingOptions()]);
   const rangeLabel = `${formatDateKey(data.range.startKey)} a ${formatDateKey(data.range.endKey)}`;
+  const vsLabel = `vs. ${data.previousLabel}`;
+  const qualifiedPct = data.captured.value ? (data.qualified.value ?? 0) / data.captured.value : null;
+  const canEditCampaigns = user.isManager || user.role === "marketing";
+
+  const kpis = (compact: boolean) => (
+    <>
+        <StatCard compact={compact} label="Leads captados" value={formatNumber(data.captured.value)} icon={<Users />} tone="brand" href={data.hrefs.captured} delta={relativeDelta(data.captured, vsLabel)} hint="Nenhum no período anterior" />
+        <StatCard
+          compact={compact}
+          label="Leads qualificados"
+          value={
+            <span className="inline-flex items-baseline gap-2">
+              {formatNumber(data.qualified.value)}
+              {qualifiedPct !== null ? <span className="text-sm font-medium text-muted">{formatPercent(qualifiedPct)}</span> : null}
+            </span>
+          }
+          icon={<UserCheck />}
+          tone="success"
+          href={data.hrefs.qualified}
+          delta={relativeDelta(data.qualified, vsLabel)}
+          hint="dos captados no período"
+        />
+        <StatCard
+          compact={compact}
+          label="Custo por lead"
+          value={data.cpl.value === null ? "—" : formatCurrency(data.cpl.value)}
+          icon={<CircleDollarSign />}
+          tone="warning"
+          href="/marketing/campanhas"
+          delta={relativeDelta(data.cpl, vsLabel, true)}
+          hint={data.cpl.value === null ? "Sem investimento no período" : `Investimento ${formatCurrency(overview.investment)}`}
+        />
+        <StatCard
+          compact={compact}
+          label="Conversão para vendas"
+          value={data.conversion.value === null ? "—" : formatPercent(data.conversion.value)}
+          icon={<TrendingUp />}
+          tone="info"
+          href={data.hrefs.conversion}
+          delta={pointsDelta(data.conversion, vsLabel)}
+          hint="Leads do período que viraram oportunidade"
+        />
+    </>
+  );
 
   return (
-    <PageContainer>
+    <PageContainer size="full">
       <PageHeader
-        title="Marketing"
-        description={`Captação e qualificação de leads · ${rangeLabel}`}
+        title="Marketing e Captação de Leads"
+        description={`Capture, qualifique e distribua oportunidades de todos os canais · ${rangeLabel}`}
         breadcrumbs={[{ label: "Marketing" }, { label: "Visão Geral" }]}
         actions={
-          <Button asChild variant="outline">
-            <Link href="/marketing/leads">
-              <UserPlus /> Ver leads
-            </Link>
-          </Button>
+          <>
+            <NewLeadDialog options={options} currentUserId={user.id} />
+            <ImportLeadsDialog options={options} />
+            {canEditCampaigns ? (
+              <Button asChild variant="outline">
+                <Link href="/marketing/campanhas?campanha=nova">
+                  <Megaphone /> Criar campanha
+                </Link>
+              </Button>
+            ) : null}
+          </>
         }
       >
         <PeriodSelect value={period} />
       </PageHeader>
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Leads captados" value={formatNumber(data.leads.value)} icon={<UserPlus />} tone="info" href={data.leads.href} hint={data.range.label} compact />
-        <StatCard label="MQLs (qualificados)" value={formatNumber(data.mqls.value)} icon={<BadgeCheck />} tone="success" href={data.mqls.href} hint="Qualificados no período" compact />
-        <StatCard label="Desqualificados" value={formatNumber(data.disqualified.value)} icon={<UserX />} tone="neutral" href={data.disqualified.href} hint="Dos leads captados no período" compact />
-        <StatCard
-          label="Sem contato há +24h"
-          value={formatNumber(data.noContact24h.value)}
-          icon={<AlertTriangle />}
-          tone={data.noContact24h.value > 0 ? "danger" : "success"}
-          href={data.noContact24h.href}
-          hint="Leads abertos nunca contatados"
-          compact
-        />
-        <StatCard label="Conversão lead → MQL" value={formatPercent(data.leadToMql)} icon={<Percent />} tone="info" href={data.leadToMqlHref} hint="Leads do período que viraram MQL" compact />
-        <StatCard label="Conversão MQL → oportunidade" value={formatPercent(data.mqlToOpportunity)} icon={<Target />} tone="info" href={data.mqlToOpportunityHref} hint="MQLs com oportunidade em Vendas" compact />
-        <StatCard
-          label="CPL (custo por lead)"
-          value={data.cpl === null ? "—" : formatCurrency(data.cpl)}
-          icon={<CircleDollarSign />}
-          tone="neutral"
-          href="/marketing/campanhas"
-          hint={`Investimento no período: ${formatCurrency(data.investment)}`}
-          compact
-        />
-        <StatCard label="Investimento no período" value={formatCurrency(data.investment)} icon={<CircleDollarSign />} tone="neutral" href="/marketing/campanhas" hint="Gasto das campanhas, proporcional aos dias" compact />
+      {/* Celular: cards compactos em 2 colunas; a partir de md, cards completos. */}
+      <KpiStrip columns={4} mobileColumns={2} className="md:hidden">
+        {kpis(true)}
+      </KpiStrip>
+      <KpiStrip columns={4} className="hidden md:grid">
+        {kpis(false)}
+      </KpiStrip>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
+        <LeadCapture sources={data.sources} leads={data.inbox} sellers={data.sellers} />
+        <div className="flex min-w-0 flex-col gap-4">
+          <ChannelPerformance sources={data.sources} reportHref="/gestao/relatorios" />
+          <CaptureAutomations rules={data.automations} canToggle={data.canToggleAutomations} />
+          <ProspectHighlightCard list={data.prospect} otherActiveLists={data.otherActiveLists} />
+        </div>
       </div>
 
-      <div className="mb-5 grid gap-4 lg:grid-cols-2">
-        <EvolutionChart data={data.evolution} bucket={data.range.bucket} />
-        <TemperatureDonut data={data.byTemperature} />
-        <LeadsByOriginChart data={data.byOrigin} />
-        <LeadsByCampaignChart data={data.byCampaign} />
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <EvolutionChart data={overview.evolution} bucket={overview.range.bucket} />
+        <LeadsByCampaignChart data={overview.byCampaign} />
       </div>
-
-      <NeedsActionList items={data.needsAction} />
     </PageContainer>
   );
 }

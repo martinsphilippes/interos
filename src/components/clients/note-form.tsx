@@ -77,14 +77,19 @@ export function NoteForm({ clientId, onSaved, autoFocus, className }: NoteFormPr
 export interface NoteDialogProps {
   clientId: string;
   clientName: string;
-  trigger: React.ReactNode;
+  /** Sem trigger, o diálogo é controlado por `open`/`onOpenChange` (ex.: item de menu). */
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function NoteDialog({ clientId, clientName, trigger }: NoteDialogProps) {
-  const [open, setOpen] = React.useState(false);
+export function NoteDialog({ clientId, clientName, trigger, open: openProp, onOpenChange }: NoteDialogProps) {
+  const [innerOpen, setInnerOpen] = React.useState(false);
+  const open = openProp ?? innerOpen;
+  const setOpen = onOpenChange ?? setInnerOpen;
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>Registrar nota</DialogTitle>

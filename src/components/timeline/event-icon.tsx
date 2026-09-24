@@ -230,3 +230,8 @@ export function EventIcon({ type, size = "md", className }: EventIconProps) {
     </span>
   );
 }
+
+/** Componente de ícone do evento (para listas compactas como o TimelineList do design system). */
+export function eventIconComponent(type: EventType | string): LucideIcon {
+  return TYPE_ICON[type as EventType] ?? CATEGORY_ICON[eventCategory(type)];
+}

@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { AlertTriangle, Bell, Building2, CalendarCheck, PhoneOutgoing, Timer, Users, User } from "lucide-react";
+import { AlertTriangle, ClipboardCheck, Clock, Target, Users, User } from "lucide-react";
+import { KpiStrip } from "@/components/ui/kpi-strip";
+import { formatPercent } from "@/lib/format";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import type { MeuDiaData, PriorityFilter } from "./model";
@@ -66,14 +68,38 @@ export function MeuDiaHeader({ data, filter }: { data: MeuDiaData; filter: Prior
         }
         actions={data.canToggleScope ? <ScopeToggle scope={scope} teamSize={data.teamSize} /> : undefined}
       />
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
-        <StatCard label="Tarefas hoje" value={stats.tasksToday} icon={<CalendarCheck />} tone={stats.tasksToday > 0 ? "info" : "neutral"} href={team ? "/tarefas?view=equipe&prazo=hoje" : "/tarefas?view=minha&prazo=hoje"} compact />
-        <StatCard label="Atrasadas" value={stats.overdueTasks} icon={<AlertTriangle />} tone={stats.overdueTasks > 0 ? "danger" : "success"} href={team ? "/tarefas?view=atrasadas" : "/tarefas?view=atrasadas&mine=1"} compact />
-        <StatCard label="Follow-ups vencidos" value={stats.followupsOverdue} icon={<PhoneOutgoing />} tone={stats.followupsOverdue > 0 ? "warning" : "neutral"} href={meuDiaHref(scope, "followups")} compact className={cn(filter === "followups" && "border-brand")} />
-        <StatCard label="SLAs em risco" value={stats.slaAtRisk} icon={<Timer />} tone={stats.slaAtRisk > 0 ? "danger" : "success"} href={meuDiaHref(scope, "sla")} hint="Em risco ou violados" compact className={cn(filter === "sla" && "border-brand")} />
-        <StatCard label="Clientes em atenção" value={stats.clientsAttention} icon={<Building2 />} tone={stats.clientsAttention > 0 ? "warning" : "neutral"} href={meuDiaHref(scope, "clientes")} compact className={cn(filter === "clientes" && "border-brand")} />
-        <StatCard label="Não lidas" value={stats.unreadNotifications} icon={<Bell />} tone={stats.unreadNotifications > 0 ? "info" : "neutral"} href="/notificacoes?filtro=nao-lidas" hint="Notificações" compact />
-      </div>
+      <KpiStrip columns={4} mobileColumns={2} className="mb-6">
+        <StatCard
+          label="Tarefas"
+          value={stats.tasksInProgress}
+          icon={<ClipboardCheck />}
+          tone="info"
+          href={team ? "/tarefas?view=equipe" : "/tarefas?view=minha"}
+          hint={stats.overdueTasks > 0 ? `${stats.overdueTasks} atrasada${stats.overdueTasks === 1 ? "" : "s"}` : "Em andamento"}
+          compact
+        />
+        <StatCard
+          label="Pendências"
+          value={stats.pendingOnYou}
+          icon={<Clock />}
+          tone={stats.pendingOnYou > 0 ? "warning" : "neutral"}
+          href={meuDiaHref(scope, "pendencias")}
+          hint={team ? "Aguardando a equipe" : "Aguardando você"}
+          compact
+          className={cn(filter === "pendencias" && "border-brand")}
+        />
+        <StatCard label="SLA em risco" value={stats.slaAtRisk} icon={<AlertTriangle />} tone={stats.slaAtRisk > 0 ? "danger" : "success"} href={meuDiaHref(scope, "sla")} hint="Exigem atenção" compact className={cn(filter === "sla" && "border-brand")} />
+        <StatCard
+          label="Meta"
+          value={stats.goalAttainment === null ? "—" : formatPercent(stats.goalAttainment)}
+          icon={<Target />}
+          tone={stats.goalAttainment === null ? "neutral" : stats.goalAttainment >= 0.9 ? "success" : stats.goalAttainment >= 0.7 ? "warning" : "danger"}
+          href="/performance"
+          hint={stats.goalAttainment === null ? "Sem metas no mês" : "do objetivo"}
+          progress={stats.goalAttainment === null ? undefined : Math.min(100, stats.goalAttainment * 100)}
+          compact
+        />
+      </KpiStrip>
     </>
   );
 }

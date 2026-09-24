@@ -39,6 +39,7 @@ import {
   type WorkflowInstance,
   type WorkflowStep,
 } from "@/domain/types";
+import type { ProspectListExtended, ProspectListPlanning } from "@/domain/marketing-extra";
 import { getChannelAdapter } from "./channels";
 import { DEFAULT_SCORING_RULES, computeLeadScore, evaluateMqlGate, normalize, type LeadScoreResult, type LeadScoringRules } from "./scoring";
 import {
@@ -1022,9 +1023,12 @@ async function loadProspect(id: string): Promise<Prospect> {
   return item;
 }
 
-export async function createProspectList(input: { name: string; description?: string; segment?: string; ownerId?: string; campaignId?: string }, actor: MarketingActor): Promise<ProspectList> {
+export async function createProspectList(
+  input: { name: string; description?: string; segment?: string; ownerId?: string; campaignId?: string } & ProspectListPlanning,
+  actor: MarketingActor,
+): Promise<ProspectList> {
   if (input.ownerId) await loadActiveUser(input.ownerId);
-  return create<ProspectList>(COLLECTIONS.prospectLists, {
+  return create<ProspectListExtended>(COLLECTIONS.prospectLists, {
     name: input.name,
     description: input.description,
     segment: input.segment,
@@ -1032,8 +1036,40 @@ export async function createProspectList(input: { name: string; description?: st
     campaignId: input.campaignId,
     status: "ativa",
     totals: { contacts: 0, attempts: 0, responses: 0, opportunities: 0 },
+    objective: input.objective,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    optOut: input.optOut,
     createdBy: actor.id,
   });
+}
+
+/** Atualiza nome, segmento e o planejamento da lista (objetivo, período, opt-out). Campos vazios são limpos. */
+export async function updateProspectList(
+  input: { listId: string; name?: string; description?: string; segment?: string } & ProspectListPlanning,
+  actor: MarketingActor,
+): Promise<ProspectList> {
+  const current = (await loadProspectList(input.listId)) as ProspectListExtended;
+  const patch: Partial<ProspectListExtended> = {
+    name: input.name ?? current.name,
+    description: input.description,
+    segment: input.segment,
+    objective: input.objective,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    optOut: input.optOut ?? current.optOut,
+  };
+  const saved = await patchDoc<ProspectListExtended>(COLLECTIONS.prospectLists, current, patch);
+  await emitEvent({
+    type: "prospect_list.updated",
+    actor,
+    entity: { type: "prospect_list", id: current.id },
+    title: `Lista de prospecção "${saved.name}" atualizada`,
+    description: [saved.objective ? `Objetivo: ${saved.objective}` : null, saved.startDate || saved.endDate ? `Período: ${saved.startDate ?? "—"} a ${saved.endDate ?? "—"}` : null].filter(Boolean).join(" · ") || undefined,
+    department: "marketing",
+    payload: { listId: current.id, objective: saved.objective, startDate: saved.startDate, endDate: saved.endDate, optOut: saved.optOut },
+  });
+  return saved;
 }
 
 export async function setProspectListStatus(listId: string, status: ProspectList["status"]): Promise<void> {

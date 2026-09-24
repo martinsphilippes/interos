@@ -4,6 +4,7 @@
  */
 import type { Campaign, Communication, Lead, LeadStatus, LeadTemperature, Prospect, ProspectList } from "@/domain/types";
 import type { DepartmentKey } from "@/domain/constants";
+import type { ProspectListExtended } from "@/domain/marketing-extra";
 import { dateKey } from "@/lib/format";
 import type { LeadScoreResult, MqlGateResult } from "@/server/marketing/scoring";
 
@@ -271,10 +272,13 @@ export interface CampaignRow extends Campaign {
   conversion: number | null;
 }
 
-export interface ProspectListRow extends ProspectList {
+export interface ProspectListRow extends ProspectListExtended {
   ownerName?: string;
   campaignName?: string;
-  computed: ProspectList["totals"] & { pending: number; converted: number };
+  /** worked = contatos com ao menos uma tentativa; meetings = interessados com ação agendada ou oportunidade. */
+  computed: ProspectList["totals"] & { pending: number; converted: number; worked: number; interested: number; meetings: number };
+  /** Dono da lista + responsáveis pelos contatos. */
+  responsibleNames: string[];
 }
 
 export interface ProspectRowItem extends Prospect {

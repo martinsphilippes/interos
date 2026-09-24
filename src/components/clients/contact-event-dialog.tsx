@@ -26,17 +26,22 @@ export interface ContactEventDialogProps {
   clientWhatsapp?: string;
   /** Contato pré-selecionado. */
   defaultContactId?: string;
-  trigger: React.ReactNode;
+  /** Sem trigger, o diálogo é controlado por `open`/`onOpenChange` (ex.: item de menu). */
+  trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /**
  * Abre o discador (tel:) ou o WhatsApp (wa.me) e, ao confirmar, registra `call.completed` /
  * `whatsapp.message.sent` na timeline. A integração real (VoIP, WhatsApp API) entra depois.
  */
-export function ContactEventDialog({ clientId, clientName, channel, contacts, clientPhone, clientWhatsapp, defaultContactId, trigger }: ContactEventDialogProps) {
+export function ContactEventDialog({ clientId, clientName, channel, contacts, clientPhone, clientWhatsapp, defaultContactId, trigger, open: openProp, onOpenChange }: ContactEventDialogProps) {
   const router = useRouter();
   const isCall = channel === "ligacao";
-  const [open, setOpen] = React.useState(false);
+  const [innerOpen, setInnerOpen] = React.useState(false);
+  const open = openProp ?? innerOpen;
+  const setOpen = onOpenChange ?? setInnerOpen;
   const [contactId, setContactId] = React.useState(defaultContactId ?? "");
   const [outcome, setOutcome] = React.useState<"atendeu" | "nao_atendeu" | "mensagem_enviada">(isCall ? "atendeu" : "mensagem_enviada");
   const [duration, setDuration] = React.useState("");
@@ -81,7 +86,7 @@ export function ContactEventDialog({ clientId, clientName, channel, contacts, cl
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>{isCall ? "Ligar para o cliente" : "Enviar WhatsApp"}</DialogTitle>

@@ -74,7 +74,7 @@ export function PrioritiesList({ items, filter, scope }: PrioritiesListProps) {
       <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 id="prioridades-titulo" className="flex items-center gap-2 text-base font-semibold leading-tight tracking-tight text-foreground">
-            Prioridades de agora
+            Prioridades de hoje
             <span className="rounded-full bg-surface-hover px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{filtered.length}</span>
           </h2>
           <p className="mt-0.5 text-sm text-muted">Ordenadas por urgência, prazo, impacto e prioridade. Conclua tarefas direto daqui.</p>
@@ -120,6 +120,7 @@ export function PrioritiesList({ items, filter, scope }: PrioritiesListProps) {
                       <Link href={item.href} className="truncate text-sm font-medium text-foreground hover:text-brand hover:underline">
                         {item.title}
                       </Link>
+                      {item.timeLabel ? <span className={cn("ml-auto text-xs font-semibold tabular-nums md:hidden", item.overdue ? "text-danger-fg" : "text-brand-fg")}>{item.timeLabel}</span> : null}
                       {item.clientId && item.clientName && item.kind !== "cliente" ? (
                         <Link href={`/clientes/${item.clientId}`} className="truncate text-xs text-muted hover:text-foreground hover:underline">
                           {item.clientName}
@@ -138,6 +139,11 @@ export function PrioritiesList({ items, filter, scope }: PrioritiesListProps) {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2 md:justify-end">
+                  {item.timeLabel ? (
+                    <span className={cn("hidden w-16 text-right text-sm font-semibold tabular-nums md:block", item.overdue ? "text-danger-fg" : "text-brand-fg")} title={item.dueLabel}>
+                      {item.timeLabel}
+                    </span>
+                  ) : null}
                   {item.canComplete ? (
                     <Button variant="outline" size="lg" className="flex-1 md:h-9 md:flex-none md:px-3 md:text-sm" loading={busyId === item.id} onClick={() => complete(item)}>
                       <Check /> Concluir
@@ -154,6 +160,11 @@ export function PrioritiesList({ items, filter, scope }: PrioritiesListProps) {
             ))}
           </ul>
         )}
+        <div className="flex items-center justify-center border-t border-border px-4 py-3">
+          <Link href={scope === "equipe" ? "/tarefas?view=equipe" : "/tarefas?view=minha"} className="inline-flex items-center gap-1 text-sm font-medium text-brand-fg hover:text-brand-hover">
+            Ver todas as tarefas <ChevronRight className="size-4" aria-hidden />
+          </Link>
+        </div>
         {filtered.length > shown.length ? (
           <div className="border-t border-border px-4 py-3 text-center">
             <Button variant="ghost" onClick={() => setVisible((v) => v + PAGE)}>

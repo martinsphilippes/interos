@@ -129,7 +129,7 @@ function enrichLeads(leads: Lead[], users: Map<string, User>, campaigns: Map<str
   }));
 }
 
-async function loadEnrichedLeads(): Promise<LeadListItem[]> {
+export async function loadEnrichedLeads(): Promise<LeadListItem[]> {
   const [leads, users, campaigns, sources] = await Promise.all([list<Lead>(COLLECTIONS.leads), userMap(), list<Campaign>(COLLECTIONS.campaigns), list<LeadSource>(COLLECTIONS.leadSources)]);
   return enrichLeads(
     leads,
@@ -349,12 +349,22 @@ const RESPONDED = new Set<Prospect["status"]>(["contatado", "respondeu", "conver
 function computeTotals(prospects: Prospect[]): ProspectListRow["computed"] {
   return {
     contacts: prospects.length,
+    worked: prospects.filter((p) => (p.attempts ?? 0) > 0 || p.status !== "novo").length,
+    interested: prospects.filter((p) => p.status === "respondeu").length,
+    // Reunião = interessado com próxima ação agendada ou contato que virou oportunidade.
+    meetings: prospects.filter((p) => (p.status === "respondeu" && Boolean(p.nextActionAt)) || Boolean(p.opportunityId)).length,
     attempts: prospects.reduce((s, p) => s + (p.attempts ?? 0), 0),
     responses: prospects.filter((p) => RESPONDED.has(p.status)).length,
     opportunities: prospects.filter((p) => Boolean(p.opportunityId)).length,
     pending: prospects.filter((p) => p.status === "novo" || p.status === "tentativa").length,
     converted: prospects.filter((p) => p.status === "convertido").length,
   };
+}
+
+/** Responsáveis da lista: o dono e quem tem contatos atribuídos. */
+function responsibleNames(list: ProspectList, prospects: Prospect[], users: Map<string, User>): string[] {
+  const ids = Array.from(new Set([list.ownerId, ...prospects.map((p) => p.ownerId)].filter((id): id is string => Boolean(id))));
+  return ids.map((id) => users.get(id)?.name).filter((n): n is string => Boolean(n));
 }
 
 export async function listProspectLists(): Promise<ProspectListRow[]> {
@@ -369,6 +379,7 @@ export async function listProspectLists(): Promise<ProspectListRow[]> {
       ownerName: l.ownerId ? users.get(l.ownerId)?.name : undefined,
       campaignName: l.campaignId ? campaignNames.get(l.campaignId) : undefined,
       computed: computeTotals(byList.get(l.id) ?? []),
+      responsibleNames: responsibleNames(l, byList.get(l.id) ?? [], users),
     }))
     .sort((a, b) => order[a.status] - order[b.status] || (a.createdAt < b.createdAt ? 1 : -1));
 }
@@ -407,7 +418,7 @@ export async function getProspectListDetail(listId: string): Promise<ProspectLis
     .sort((a, b) => b.attempts - a.attempts);
 
   return {
-    list: { ...plist, ownerName: plist.ownerId ? users.get(plist.ownerId)?.name : undefined, campaignName: campaign?.name, computed: totals },
+    list: { ...plist, ownerName: plist.ownerId ? users.get(plist.ownerId)?.name : undefined, campaignName: campaign?.name, computed: totals, responsibleNames: responsibleNames(plist, prospects, users) },
     prospects: items,
     dashboard: {
       contacts: totals.contacts,

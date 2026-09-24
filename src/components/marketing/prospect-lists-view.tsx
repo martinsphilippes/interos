@@ -15,7 +15,8 @@ import { Progress } from "@/components/ui/progress";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
-import { formatNumber, formatPercent } from "@/lib/format";
+import { formatDateKey, formatNumber, formatPercent } from "@/lib/format";
+import { Switch } from "@/components/ui/switch";
 import { createProspectListAction, importProspects } from "@/server/marketing/actions";
 import type { ImportReport } from "@/server/marketing/service";
 import { CsvInput, ImportReportView } from "./csv-import-panel";
@@ -39,7 +40,7 @@ export function ProspectListsView({ lists, options }: { lists: ProspectListRow[]
       <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {lists.map((l) => {
           const t = l.computed;
-          const worked = t.contacts > 0 ? ((t.contacts - t.pending) / t.contacts) * 100 : 0;
+          const worked = t.contacts > 0 ? (t.worked / t.contacts) * 100 : 0;
           return (
             <li key={l.id} className="flex flex-col rounded-lg border border-border bg-surface p-4 shadow-card">
               <div className="flex items-start justify-between gap-2">
@@ -53,12 +54,19 @@ export function ProspectListsView({ lists, options }: { lists: ProspectListRow[]
                   {PROSPECT_LIST_STATUS_LABELS[l.status]}
                 </Badge>
               </div>
-              <dl className="mt-3 grid grid-cols-4 gap-2 text-center">
+              {l.objective || l.startDate || l.endDate ? (
+                <p className="mt-2 line-clamp-2 text-xs text-muted">
+                  {l.objective ? <span className="text-foreground">Objetivo: {l.objective}</span> : null}
+                  {l.startDate || l.endDate ? <span className="block">Período: {l.startDate ? formatDateKey(l.startDate) : "—"} a {l.endDate ? formatDateKey(l.endDate) : "—"}</span> : null}
+                </p>
+              ) : null}
+              <dl className="mt-3 grid grid-cols-5 gap-1 text-center">
                 {[
                   ["Contatos", t.contacts],
-                  ["Tentativas", t.attempts],
-                  ["Respostas", t.responses],
-                  ["Oportun.", t.opportunities],
+                  ["Trabalh.", t.worked],
+                  ["Interess.", t.interested],
+                  ["Reuniões", t.meetings],
+                  ["Convers.", t.converted],
                 ].map(([label, value]) => (
                   <div key={label as string}>
                     <dt className="text-[11px] text-muted">{label}</dt>
@@ -68,12 +76,18 @@ export function ProspectListsView({ lists, options }: { lists: ProspectListRow[]
               </dl>
               <div className="mt-3">
                 <div className="mb-1 flex justify-between text-xs text-muted">
-                  <span>Trabalhados</span>
+                  <span>Progresso</span>
                   <span className="tabular-nums">
-                    {t.contacts - t.pending} de {t.contacts} · conversão {formatPercent(t.contacts ? t.converted / t.contacts : null)}
+                    {t.worked} de {t.contacts} trabalhados · conversão {formatPercent(t.contacts ? t.converted / t.contacts : null)}
                   </span>
                 </div>
-                <Progress value={worked} size="sm" tone="secondary" />
+                <Progress value={worked} size="sm" tone="brand" />
+                {l.responsibleNames.length ? <p className="mt-2 truncate text-xs text-muted">Responsáveis: {l.responsibleNames.map((n) => n.split(" ")[0]).join(", ")}</p> : null}
+                {l.optOut ? (
+                  <Badge variant="outline" size="sm" className="mt-2">
+                    Opt-out ativo
+                  </Badge>
+                ) : null}
               </div>
               <div className="mt-4 flex gap-2">
                 <Button variant="outline" size="sm" className="h-11 flex-1 md:h-8" onClick={() => setImportFor(l)}>
@@ -98,7 +112,8 @@ export function NewProspectListDialog({ options }: { options: MarketingOptions }
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [pending, startTransition] = React.useTransition();
-  const [form, setForm] = React.useState({ name: "", description: "", segment: "", ownerId: "", campaignId: "" });
+  const EMPTY_FORM = { name: "", description: "", segment: "", ownerId: "", campaignId: "", objective: "", startDate: "", endDate: "", optOut: true };
+  const [form, setForm] = React.useState(EMPTY_FORM);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
 
   const submit = (e: React.FormEvent) => {
@@ -111,7 +126,7 @@ export function NewProspectListDialog({ options }: { options: MarketingOptions }
       }
       toast.success("Lista criada. Agora importe os contatos.");
       setOpen(false);
-      setForm({ name: "", description: "", segment: "", ownerId: "", campaignId: "" });
+      setForm(EMPTY_FORM);
       router.push(`/marketing/prospeccao/${result.data.id}?importar=1`);
     });
   };
@@ -157,6 +172,24 @@ export function NewProspectListDialog({ options }: { options: MarketingOptions }
                   ))}
                 </Select>
               </FormField>
+              <FormField label="Objetivo" htmlFor="pl-objective">
+                <Input id="pl-objective" value={form.objective} onChange={(e) => set({ objective: e.target.value })} placeholder="Ex.: Gerar reuniões qualificadas para apresentar o TEF" />
+              </FormField>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FormField label="Início" htmlFor="pl-start">
+                  <Input id="pl-start" type="date" value={form.startDate} onChange={(e) => set({ startDate: e.target.value })} />
+                </FormField>
+                <FormField label="Término" htmlFor="pl-end">
+                  <Input id="pl-end" type="date" value={form.endDate} onChange={(e) => set({ endDate: e.target.value })} />
+                </FormField>
+              </div>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-sm">
+                <span>
+                  Respeitar opt-out
+                  <span className="block text-xs text-muted">Contatos que pediram para não ser abordados ficam fora dos disparos.</span>
+                </span>
+                <Switch checked={form.optOut} onCheckedChange={(v) => set({ optOut: v })} aria-label="Respeitar opt-out" />
+              </label>
               <FormField label="Descrição" htmlFor="pl-desc">
                 <Textarea id="pl-desc" value={form.description} onChange={(e) => set({ description: e.target.value })} className="min-h-[64px]" placeholder="De onde veio a base, critérios, abordagem…" />
               </FormField>
