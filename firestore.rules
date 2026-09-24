@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// Ponto de partida seguro: nada é lido ou escrito sem regra explícita.
+// Adicione regras por coleção conforme o domínio do Interos for definido.
+// Teste localmente com `npm run firebase:emulators` antes de publicar.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Perfil do próprio usuário: cada pessoa só enxerga e edita o seu.
+    match /users/{userId} {
+      allow read, update: if isOwner(userId);
+      allow create: if isOwner(userId) && request.resource.data.keys().hasAll(['createdAt']);
+      allow delete: if false;
+    }
+
+    // Negação padrão para qualquer outro caminho.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
