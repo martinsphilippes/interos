@@ -56,7 +56,7 @@ export function FocusPanel({ focus, members, criticalClients, criticalKpis, clea
         {focus === "metas" && criticalKpis.length > 0 ? (
           <div>
             <p className="label-caps mb-2">Indicadores do departamento em crítico</p>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {criticalKpis.map((r) => (
                 <KpiCard key={`${r.key}-${r.scopeId ?? ""}`} result={r} compact />
               ))}

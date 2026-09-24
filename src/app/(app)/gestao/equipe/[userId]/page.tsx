@@ -85,8 +85,8 @@ export default async function TeamMemberPage({ params, searchParams }: { params:
         <StatCard compact label="Atingimento das metas" value={formatPercent(card?.overallAttainment)} icon={<Target />} tone={card?.overallAttainment === null || card?.overallAttainment === undefined ? "neutral" : card.overallAttainment >= 1 ? "success" : "warning"} href={`${back("metas")}#metas`} hint={card ? `${card.achieved} de ${card.withTarget} atingidas` : undefined} />
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div className="flex flex-col gap-5">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col gap-5">
           <FocusCard id="tarefas" active={focus === "atrasadas"} title="Tarefas" icon={<ListChecks />} description="Cada tarefa abre no drawer; cliente e processo levam à origem.">
             <div className="flex flex-col gap-4">
               <div>
@@ -121,7 +121,7 @@ export default async function TeamMemberPage({ params, searchParams }: { params:
           </FocusCard>
         </div>
 
-        <div className="flex flex-col gap-5">
+        <div className="flex min-w-0 flex-col gap-5">
           <FocusCard id="slas" active={focus === "sla"} title="SLAs ativos" icon={<Timer />} description="Mais urgentes primeiro.">
             <SlaList slas={view.slas} />
           </FocusCard>

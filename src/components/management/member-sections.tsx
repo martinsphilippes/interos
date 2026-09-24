@@ -157,7 +157,7 @@ export function ScorecardGrid({ scorecard, onlyCritical }: { scorecard: Scorecar
   const items = onlyCritical ? scorecard.items.filter((i) => i.status === "critico") : scorecard.items;
   if (items.length === 0) return <EmptyState size="sm" title={onlyCritical ? "Nenhuma meta crítica" : "Sem indicadores"} description={onlyCritical ? "Nenhum indicador do colaborador está em situação crítica." : "A função deste colaborador ainda não tem indicadores."} />;
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {items.map((r) => (
         <KpiCard key={r.key} result={r} compact />
       ))}

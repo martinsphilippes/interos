@@ -69,7 +69,7 @@ export default async function KpiDrilldownPage({ params, searchParams }: { param
     <PageContainer>
       <PageHeader
         title={kpi.name}
-        badge={<KpiStatusBadge status={result.status} size="md" />}
+        badge={<KpiStatusBadge status={result.status} size="md" noData={result.value === null && result.target !== null} />}
         description={`${departmentLabel(kpi.department)} · ${period.label}`}
         breadcrumbs={[{ label: "Gestão", href: user.isManager ? "/gestao" : undefined }, { label: "Indicadores" }, { label: kpi.name }]}
         actions={<PeriodSelect options={periodOptions()} value={period.key} />}
@@ -87,7 +87,7 @@ export default async function KpiDrilldownPage({ params, searchParams }: { param
         </div>
       </PageHeader>
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="p-4 md:p-5">
           <p className="label-caps">Valor</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight md:text-[28px] md:leading-9">{fmt(result.value)}</p>
@@ -103,10 +103,10 @@ export default async function KpiDrilldownPage({ params, searchParams }: { param
         <Card className="p-4 md:p-5">
           <p className="label-caps">Atingimento</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight md:text-[28px] md:leading-9">{formatPercent(result.attainment)}</p>
-          <AttainmentBar attainment={result.attainment} status={result.status} size="sm" showValue={false} className="mt-2" />
+          <AttainmentBar attainment={result.attainment} status={result.status} size="sm" showValue={false} noData={result.value === null && result.target !== null} className="mt-2" />
         </Card>
         <Card className="p-4 md:p-5">
-          <p className="label-caps">Tendência</p>
+          <p className="label-caps">Período anterior</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight md:text-[28px] md:leading-9">{fmt(result.trend?.value)}</p>
           <div className="mt-1">
             <KpiTrendText result={result} />
@@ -114,7 +114,7 @@ export default async function KpiDrilldownPage({ params, searchParams }: { param
         </Card>
       </div>
 
-      <div className="mb-5 grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div className="mb-5 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <Card>
           <CardHeader>
             <CardTitle>Histórico</CardTitle>
@@ -178,7 +178,7 @@ export default async function KpiDrilldownPage({ params, searchParams }: { param
       </Card>
 
       {user.isManager ? (
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

@@ -12,13 +12,15 @@ export interface AttainmentBarProps {
   size?: "sm" | "md";
   /** Mostra o percentual à direita (padrão: true). */
   showValue?: boolean;
+  /** Há meta, mas o indicador não tem valor no período (sem base de cálculo). */
+  noData?: boolean;
   className?: string;
 }
 
 /** Barra de atingimento da meta com a cor do status (verde atingida, âmbar atenção, vermelho crítico). */
-export function AttainmentBar({ attainment, status, size = "md", showValue = true, className }: AttainmentBarProps) {
+export function AttainmentBar({ attainment, status, size = "md", showValue = true, noData, className }: AttainmentBarProps) {
   if (attainment === null) {
-    return <p className={cn("text-xs text-muted", className)}>Sem meta para calcular atingimento</p>;
+    return <p className={cn("text-xs text-muted", className)}>{noData ? "Sem dados no período para calcular" : "Sem meta para calcular atingimento"}</p>;
   }
   const pct = Math.max(0, Math.min(100, attainment * 100));
   return (

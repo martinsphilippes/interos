@@ -79,7 +79,7 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   saude_clientes: { label: "Saúde dos clientes", description: "Serviço de CS: recalcula o health score de toda a carteira.", schedule: "diaria" },
   implantacoes_atrasadas: { label: "Implantações atrasadas", description: "Projetos com prazo vencido: avisa o responsável e o gestor de implantação uma vez por dia.", schedule: "diaria" },
   tarefas_recorrentes: { label: "Tarefas recorrentes", description: "Garante a próxima ocorrência das tarefas recorrentes concluídas que ficaram sem sucessora.", schedule: "diaria" },
-  kpi_snapshots: { label: "Fotografia dos indicadores", description: "Grava os snapshots do motor de KPIs (quando o módulo de indicadores estiver instalado).", schedule: "diaria" },
+  kpi_snapshots: { label: "Fotografia dos indicadores", description: "Grava os snapshots do motor de KPIs do mês corrente e, nos 3 primeiros dias do mês, o fechamento do mês anterior.", schedule: "diaria" },
 };
 
 /** Entidades que uma regra agendada pode varrer (só registros em aberto). */

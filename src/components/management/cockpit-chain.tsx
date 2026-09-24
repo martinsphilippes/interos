@@ -56,7 +56,7 @@ function StageCard({ stage }: { stage: CockpitStage }) {
           {stage.healthReason}
         </p>
       </header>
-      <div className="grid grid-cols-2 gap-0.5 p-1.5 xl:grid-cols-1">
+      <div className="grid grid-cols-2 gap-0.5 p-1.5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-1">
         {stage.metrics.map((m) => (
           <MetricRow key={m.kind === "kpi" ? m.result.key : m.metric.key} metric={m} />
         ))}
@@ -68,13 +68,13 @@ function StageCard({ stage }: { stage: CockpitStage }) {
 function Handoff({ handoff }: { handoff: CockpitHandoff }) {
   const rateText = handoff.rate === null ? "—" : formatPercent(handoff.rate);
   return (
-    <div className="flex items-center justify-center py-1 xl:w-[104px] xl:py-0">
-      <div className="flex w-full max-w-sm flex-row items-center gap-3 rounded-lg border border-dashed border-border-strong bg-surface-muted px-3 py-2 xl:flex-col xl:gap-1.5 xl:border-none xl:bg-transparent xl:p-0">
-        <ArrowDown className="size-5 shrink-0 text-muted xl:hidden" aria-hidden />
-        <ArrowRight className="hidden size-5 shrink-0 text-muted xl:block" aria-hidden />
-        <div className="flex min-w-0 flex-1 flex-col gap-1 xl:items-center xl:text-center">
+    <div className="flex items-center justify-center py-1 2xl:w-[104px] 2xl:py-0">
+      <div className="flex w-full max-w-sm flex-row items-center gap-3 rounded-lg border border-dashed border-border-strong bg-surface-muted px-3 py-2 2xl:flex-col 2xl:gap-1.5 2xl:border-none 2xl:bg-transparent 2xl:p-0">
+        <ArrowDown className="size-5 shrink-0 text-muted 2xl:hidden" aria-hidden />
+        <ArrowRight className="hidden size-5 shrink-0 text-muted 2xl:block" aria-hidden />
+        <div className="flex min-w-0 flex-1 flex-col gap-1 2xl:items-center 2xl:text-center">
           <span className="text-[11px] leading-tight text-muted">{handoff.label}</span>
-          <Link href={handoff.rateHref} className="inline-flex min-h-[32px] items-center text-sm font-semibold tabular-nums text-foreground hover:underline xl:justify-center" title={handoff.description}>
+          <Link href={handoff.rateHref} className="inline-flex min-h-[32px] items-center text-sm font-semibold tabular-nums text-foreground hover:underline 2xl:justify-center" title={handoff.description}>
             {rateText}
             <span className="ml-1 text-[11px] font-normal text-muted">
               ({formatNumber(handoff.numerator)}/{formatNumber(handoff.denominator)})
@@ -83,7 +83,7 @@ function Handoff({ handoff }: { handoff: CockpitHandoff }) {
           <Link
             href={handoff.stuckHref}
             className={cn(
-              "inline-flex min-h-[32px] items-center gap-1 rounded-full px-2 text-[11px] font-medium transition-colors xl:justify-center",
+              "inline-flex min-h-[32px] items-center gap-1 rounded-full px-2 text-[11px] font-medium transition-colors 2xl:justify-center",
               handoff.stuck > 0 ? "bg-danger-soft text-danger-fg hover:bg-danger-soft/70" : "bg-surface-hover text-muted hover:text-foreground",
             )}
             title="Etapas de workflow abertas deste estágio com SLA violado"
@@ -103,7 +103,7 @@ function Handoff({ handoff }: { handoff: CockpitHandoff }) {
  */
 export function CockpitChain({ stages, handoffs }: { stages: CockpitStage[]; handoffs: CockpitHandoff[] }) {
   return (
-    <div className="flex flex-col gap-2 xl:grid xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] xl:items-stretch xl:gap-1.5">
+    <div className="flex flex-col gap-2 2xl:grid 2xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] 2xl:items-stretch 2xl:gap-1.5">
       {stages.map((stage, i) => (
         <div key={stage.department} className="contents">
           <StageCard stage={stage} />

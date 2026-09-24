@@ -159,8 +159,8 @@ export function GoalsWorkspace({ board }: { board: GoalsBoard }) {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <AttainmentBar attainment={r.attainment} status={r.status} size="sm" className="flex-1" />
-                    <KpiStatusBadge status={r.status} />
+                    <AttainmentBar attainment={r.attainment} status={r.status} size="sm" noData={r.value === null} className="flex-1" />
+                    <KpiStatusBadge status={r.status} noData={r.value === null} />
                   </div>
                   <div className="flex justify-end gap-1">
                     {r.canEdit ? (

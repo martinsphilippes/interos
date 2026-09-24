@@ -263,7 +263,7 @@ export function CampaignsWorkspace({ items, options, canManage, today }: { items
           />
         </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {visible.map((item) => (
             <CampaignCard key={item.campaign.id} item={item} canManage={canManage} onEdit={() => setForm(toForm(item.campaign, today))} onDelete={() => setToDelete(item.campaign)} />
           ))}

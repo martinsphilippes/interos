@@ -19,7 +19,7 @@ export function SalesPerformanceBlock({ data, monthLabel }: { data: SalesPerform
   const { summary } = data;
   const maxHistory = Math.max(1, ...summary.history.map((h) => h.prevista + h.liberada + h.futura));
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

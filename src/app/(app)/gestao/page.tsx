@@ -86,7 +86,7 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
         }
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {cards.map((c) => (
           <StatCard
             key={c.key}
@@ -117,7 +117,7 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
         </Card>
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section>
           <SectionTitle title="Indicadores do departamento" description="Cada indicador abre o drill-down até os registros de origem." />
           <DepartmentKpis scorecards={data.scorecards} />

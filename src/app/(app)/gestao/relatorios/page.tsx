@@ -48,8 +48,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
     <PageContainer size="full" className="max-w-[1600px]">
       <PageHeader title="Relatórios" description="Os mesmos números dos dashboards, prontos para exportar." breadcrumbs={[{ label: "Gestão", href: user.isManager ? "/gestao" : undefined }, { label: "Relatórios" }]} />
 
-      <div className="grid gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
-        <aside>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="min-w-0">
           <ReportCatalog reports={reports} selected={selected} />
         </aside>
 

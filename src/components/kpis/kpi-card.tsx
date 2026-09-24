@@ -39,21 +39,21 @@ export function KpiCard({ result, href, eyebrow, compact, className }: KpiCardPr
   const link = href === null ? null : (href ?? result.href);
   const content = (
     <>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="label-caps truncate">{eyebrow ?? departmentLabel(result.kpi.department)}</p>
-          <h3 className="mt-0.5 line-clamp-2 text-sm font-semibold leading-tight text-foreground">{result.kpi.name}</h3>
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <p className="label-caps min-w-0 truncate">{eyebrow ?? departmentLabel(result.kpi.department)}</p>
+          <div className="flex shrink-0 items-center gap-1">
+            <KpiStatusBadge status={result.status} noData={result.value === null && result.target !== null} />
+            {link ? <ChevronRight className="size-4 text-muted-light" aria-hidden /> : null}
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <KpiStatusBadge status={result.status} />
-          {link ? <ChevronRight className="size-4 text-muted-light" aria-hidden /> : null}
-        </div>
+        <h3 className="mt-1 line-clamp-2 text-sm font-semibold leading-tight text-foreground">{result.kpi.name}</h3>
       </div>
       <p className={cn("font-semibold tabular-nums tracking-tight text-foreground", compact ? "text-xl" : "text-2xl md:text-[28px] md:leading-9")} title={result.note}>
         {formatKpiValue(result.value, result.kpi.unit, suffix)}
       </p>
       {result.value === null && result.note ? <p className="-mt-2 text-xs text-muted">{result.note}</p> : null}
-      <AttainmentBar attainment={result.attainment} status={result.status} size="sm" />
+      <AttainmentBar attainment={result.attainment} status={result.status} size="sm" noData={result.value === null && result.target !== null} />
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
         <span className="text-muted">
           Meta <span className="font-medium tabular-nums text-foreground">{result.target !== null ? formatKpiValue(result.target, result.kpi.unit, suffix) : result.targetMin !== undefined && result.targetMax !== undefined ? `${formatKpiValue(result.targetMin, result.kpi.unit, suffix)} a ${formatKpiValue(result.targetMax, result.kpi.unit, suffix)}` : "—"}</span>

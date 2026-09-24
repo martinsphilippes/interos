@@ -6,11 +6,11 @@ const VARIANT: Record<KpiStatus, "success" | "warning" | "danger"> = { atingida:
 const ICON: Record<KpiStatus, React.ReactNode> = { atingida: <CheckCircle2 aria-hidden />, atencao: <AlertTriangle aria-hidden />, critico: <XCircle aria-hidden /> };
 
 /** Status semântico do indicador (Atingida / Atenção / Crítico); sem meta mostra "Sem meta". */
-export function KpiStatusBadge({ status, size = "sm", className }: { status: KpiStatus | null; size?: "sm" | "md"; className?: string }) {
+export function KpiStatusBadge({ status, size = "sm", noData, className }: { status: KpiStatus | null; size?: "sm" | "md"; noData?: boolean; className?: string }) {
   if (!status) {
     return (
       <Badge variant="muted" size={size} className={className}>
-        <MinusCircle aria-hidden /> Sem meta
+        <MinusCircle aria-hidden /> {noData ? "Sem dados" : "Sem meta"}
       </Badge>
     );
   }

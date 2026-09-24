@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { BadgeCheck, CalendarOff, Clock, Gauge, HeartPulse, ShieldCheck, Target, Timer, TrendingUp } from "lucide-react";
+import { Award, BadgeCheck, CalendarOff, Clock, Gauge, HeartPulse, ShieldCheck, Target, Timer, TrendingUp } from "lucide-react";
 import type { SlaRule } from "@/domain/types";
 import type { SettingKey, SettingValues } from "@/server/admin/schemas";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,6 +14,7 @@ import { SettingsOpportunity } from "./settings-opportunity";
 import { SettingsFinanceGate } from "./settings-finance-gate";
 import { SettingsDeliveryGates } from "./settings-delivery-gates";
 import { SettingsSlaRules } from "./settings-sla-rules";
+import { SettingsGamification, SettingsSalesPrizes } from "./settings-performance";
 import { parseSettingsTab, type SettingsTab } from "./admin-model";
 import { useAdminUrl } from "./use-admin-url";
 
@@ -28,6 +29,7 @@ const TAB_ITEMS: { value: SettingsTab; label: string; icon: React.ReactNode }[] 
   { value: "oportunidades", label: "Oportunidades", icon: <Gauge /> },
   { value: "gate-financeiro", label: "Gate financeiro", icon: <ShieldCheck /> },
   { value: "entrega", label: "Go-live e ativação", icon: <BadgeCheck /> },
+  { value: "performance", label: "Gamificação e prêmios", icon: <Award /> },
   { value: "sla", label: "Regras de SLA", icon: <Timer /> },
 ];
 
@@ -85,6 +87,12 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
       </TabsContent>
       <TabsContent value="entrega">
         <SettingsDeliveryGates key={JSON.stringify([values.go_live, values.cs_ativacao])} goLive={values.go_live} activation={values.cs_ativacao} storedGoLive={has("go_live")} storedActivation={has("cs_ativacao")} />
+      </TabsContent>
+      <TabsContent value="performance">
+        <div className="flex flex-col gap-4">
+          <SettingsGamification key={JSON.stringify(values.gamificacao)} value={values.gamificacao} stored={has("gamificacao")} />
+          <SettingsSalesPrizes key={JSON.stringify(values.premios_vendas)} value={values.premios_vendas} stored={has("premios_vendas")} />
+        </div>
       </TabsContent>
       <TabsContent value="sla">
         <SettingsSlaRules rules={slaRules} />

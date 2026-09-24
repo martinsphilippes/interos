@@ -6,6 +6,7 @@
  * scripts/seed/catalog.ts: outros módulos leem esses documentos via getSetting().
  */
 import { z } from "zod";
+import { DEFAULT_GAMIFICATION, DEFAULT_SALES_PRIZES } from "@/server/performance/schemas";
 import { DEPARTMENT_KEYS, PRODUCT_CATEGORIES, ROLE_KEYS } from "@/domain/constants";
 
 export function zodMessage(error: z.ZodError): string {
@@ -142,7 +143,7 @@ export const setProductActiveSchema = z.object({ id: idSchema, active: z.boolean
 // Configurações do sistema (coleção settings, um documento por key)
 // ---------------------------------------------------------------------------
 
-export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao"] as const;
+export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const fraction = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(1, `${label} deve ser uma fração entre 0 e 1`);
@@ -232,6 +233,25 @@ export const csAtivacaoSchema = z.object({
 });
 export type CsAtivacaoConfig = z.infer<typeof csAtivacaoSchema>;
 
+/** Gamificação (lida por src/server/performance/gamification.ts → getGamificationSettings). */
+export const gamificacaoSchema = z.object({
+  pontos: z.record(z.string().trim().min(1).max(40), z.number("Pontos inválidos").int("Use pontos inteiros").min(0, "Mínimo 0").max(1000, "Máximo 1000")),
+  multiplicadores: z.record(z.enum(DEPARTMENT_KEYS), z.number("Multiplicador inválido").min(0.1, "Mínimo 0,1").max(10, "Máximo 10")),
+  niveis: z.array(z.object({ nome: z.string().trim().min(1).max(40), minimo: z.number().min(0) })).min(1, "Informe ao menos um nível"),
+});
+export type GamificacaoConfig = z.infer<typeof gamificacaoSchema>;
+
+/** "N_salario(s)" (salários mínimos) ou valor fixo em R$. */
+const prizeSpecSchema = z.union([z.string().trim().regex(/^\d+(?:[.,]\d+)?_salarios?$/, "Use N_salario (ex.: 1_salario) ou um valor em R$"), z.number().min(0, "Valor não pode ser negativo")]);
+/** Prêmios de meta batida em Vendas (lido por src/server/performance/queries.ts → getSalesPrizeSettings). */
+export const premiosVendasSchema = z.object({
+  salarioMinimo: z.number("Salário mínimo inválido").min(0).max(100_000),
+  adesao: prizeSpecSchema,
+  recorrencia: prizeSpecSchema,
+  hardware: prizeSpecSchema,
+});
+export type PremiosVendasConfig = z.infer<typeof premiosVendasSchema>;
+
 export const SETTING_SCHEMAS = {
   horario_comercial: horarioComercialSchema,
   feriados: feriadosSchema,
@@ -242,6 +262,8 @@ export const SETTING_SCHEMAS = {
   gate_financeiro: gateFinanceiroSchema,
   go_live: goLiveSchema,
   cs_ativacao: csAtivacaoSchema,
+  gamificacao: gamificacaoSchema,
+  premios_vendas: premiosVendasSchema,
 } as const;
 
 export interface SettingValues {
@@ -254,6 +276,8 @@ export interface SettingValues {
   gate_financeiro: GateFinanceiroConfig;
   go_live: GoLiveConfig;
   cs_ativacao: CsAtivacaoConfig;
+  gamificacao: GamificacaoConfig;
+  premios_vendas: PremiosVendasConfig;
 }
 
 /** Valores usados quando o documento ainda não existe no banco (iguais ao seed). */
@@ -267,6 +291,8 @@ export const SETTING_DEFAULTS: SettingValues = {
   gate_financeiro: { exigeContratoAssinado: true, exigePagamento: "setup", permiteExcecaoGestor: true },
   go_live: { exigeAprovacaoGestor: true },
   cs_ativacao: { adocaoMinimaPct: 30, exigePlano: true },
+  gamificacao: { pontos: { ...DEFAULT_GAMIFICATION.pontos }, multiplicadores: { ...DEFAULT_GAMIFICATION.multiplicadores }, niveis: DEFAULT_GAMIFICATION.niveis.map((n) => ({ ...n })) },
+  premios_vendas: { ...DEFAULT_SALES_PRIZES },
 };
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
@@ -279,6 +305,8 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   gate_financeiro: "Critérios do gate financeiro para liberar a implantação.",
   go_live: "Regras de aprovação do go-live da implantação.",
   cs_ativacao: "Critérios do gate de ativação do cliente pelo Customer Success.",
+  gamificacao: "Pontos por evento, multiplicadores de equivalência entre funções e níveis da gamificação.",
+  premios_vendas: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.",
 };
 
 export const upsertSettingSchema = z.object({

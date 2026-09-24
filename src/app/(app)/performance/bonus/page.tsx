@@ -110,7 +110,7 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
             </Card>
           ) : (
             <div className="flex flex-col gap-6">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <StatCard label="Bônus projetado" value={bonusTotalText(c)} icon={<CircleDollarSign />} tone={c.blocked ? "danger" : "success"} hint={c.maxAmount !== null ? `Máximo da faixa ${formatCurrency(c.maxAmount)} + extras` : "Salário base não cadastrado"} compact />
                 <StatCard label="Atingimento geral" value={formatPercent(c.overallAttainment)} icon={<Gauge />} tone="info" hint={`Individual ${formatPercent(c.individual.attainment)} · coletivo ${formatPercent(c.collective.attainment)}`} compact />
                 <StatCard label="Faixa" value={c.tier?.label ?? "—"} icon={<Layers />} tone="info" hint={c.nextTier ? `Faltam ${formatGap(c.nextTier.gap)} para ${c.nextTier.label}` : c.tier ? "Faixa máxima" : undefined} compact />

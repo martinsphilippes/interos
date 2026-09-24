@@ -28,7 +28,7 @@ export function DepartmentKpis({ scorecards, limitPerDepartment }: { scorecards:
               {items.length === 0 ? (
                 <EmptyState size="sm" title="Sem indicadores" description="Este departamento ainda não tem indicadores definidos." />
               ) : (
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {items.map((r) => (
                     <KpiCard key={r.key} result={r} compact eyebrow={card.subject.name} />
                   ))}

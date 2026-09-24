@@ -66,7 +66,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
         }
       />
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Atingimento geral" value={formatPercent(scorecard.overallAttainment)} icon={<Gauge />} tone={scorecard.overallAttainment === null ? "neutral" : scorecard.overallAttainment >= 1 ? "success" : scorecard.overallAttainment >= 0.85 ? "warning" : "danger"} hint="Média ponderada, cada meta limitada a 100%" compact />
         <StatCard label="Metas atingidas" value={`${formatNumber(scorecard.achieved)} de ${formatNumber(scorecard.withTarget)}`} icon={<Target />} tone="info" hint={`${formatNumber(withData)} de ${formatNumber(scorecard.items.length)} indicadores com dado`} compact />
         <StatCard
@@ -88,7 +88,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
             <EmptyState icon={<Target />} title="Sem indicadores para esta função" description="Peça ao administrador para associar indicadores ao departamento em Administração › Indicadores." />
           </Card>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {scorecard.items.map((r) => (
               <KpiCard key={r.key} result={r} />
             ))}
@@ -99,7 +99,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
       {data.highlights.length > 0 ? (
         <section className="mb-8">
           <SectionTitle title="Evolução dos principais indicadores" description="Últimos 6 meses: meses fechados vêm do snapshot gravado; o mês atual, do cálculo ao vivo." />
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             {data.highlights.map((h) => (
               <Card key={h.result.key}>
                 <CardHeader className="pb-1">
@@ -127,7 +127,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         {data.gamification ? <GamificationCard data={data.gamification} periodLabel={period.label} rankingHref={`/performance/ranking?${periodQuery}`} /> : null}
         <Card>
           <CardHeader>

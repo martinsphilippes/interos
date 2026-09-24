@@ -59,7 +59,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
 
       <section className="mb-6" aria-label="Empresa">
         <SectionTitle title="Empresa" description="Cada cartão abre o drill-down do indicador até os registros de origem." />
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           {cockpit.company.map((r) => (
             <KpiCard key={r.key} result={r} compact eyebrow="Empresa" />
           ))}
@@ -74,7 +74,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
         <CockpitChain stages={cockpit.stages} handoffs={cockpit.handoffs} />
       </section>
 
-      <div className="mb-6 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="mb-6 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -99,7 +99,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
 
       <AgentSuggestions kind="executivo" subjectId={/^\d{4}-\d{2}$/.test(period.key) ? period.key : currentMonthKey()} title="Sugestões do assistente executivo" className="mb-6" />
 
-      <div className="grid gap-5 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Evolução do MRR</CardTitle>
