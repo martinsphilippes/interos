@@ -38,7 +38,7 @@ export default async function OportunidadesPage({ searchParams }: { searchParams
                 <Kanban /> Pipeline
               </Link>
             </Button>
-            <NewOpportunityButton options={options} currentUserId={user.id} />
+            <NewOpportunityButton options={options} currentUserId={user.id} openOnUrlFlag />
           </>
         }
       />

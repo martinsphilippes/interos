@@ -90,7 +90,7 @@ export function PrioritiesList({ items, filter, scope }: PrioritiesListProps) {
                 aria-pressed={active}
                 className={cn(
                   "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors",
-                  active ? "border-transparent bg-navy-900 text-white" : "border-border bg-surface text-muted hover:border-border-strong hover:text-foreground",
+                  active ? "border-brand bg-brand text-white shadow-brand" : "border-border-strong bg-surface-muted text-muted hover:border-muted-light/60 hover:text-foreground",
                 )}
               >
                 {PRIORITY_FILTER_LABELS[f]}

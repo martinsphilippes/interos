@@ -32,17 +32,17 @@ export interface DrawerContentProps extends React.ComponentPropsWithoutRef<typeo
 export const DrawerContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Content>, DrawerContentProps>(
   ({ className, children, size = "md", side = "right", hideClose, ...props }, ref) => (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-navy-950/50 backdrop-blur-[2px] animate-fade-in" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay backdrop-blur-[3px] animate-fade-in" />
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          "fixed z-50 flex flex-col bg-surface shadow-drawer focus:outline-none",
+          "fixed z-50 flex flex-col border-border-strong bg-card-elevated text-foreground shadow-drawer focus:outline-none max-md:border-t",
           // mobile: folha inferior
           "inset-x-0 bottom-0 max-h-[92dvh] rounded-t-2xl animate-slide-in-bottom",
           // desktop: painel lateral
           "md:inset-y-0 md:bottom-auto md:max-h-none md:h-dvh md:w-full md:rounded-none",
           side === "right" ? "md:right-0 md:left-auto md:animate-slide-in-right md:border-l" : "md:left-0 md:right-auto md:animate-slide-in-left md:border-r",
-          "md:border-border",
+          "md:border-border-strong",
           sizeClass[size],
           className,
         )}
@@ -65,7 +65,7 @@ export const DrawerContent = React.forwardRef<React.ComponentRef<typeof DialogPr
 DrawerContent.displayName = "DrawerContent";
 
 export function DrawerHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex shrink-0 flex-col gap-1 border-b border-border px-5 py-4 pr-14", className)} {...props} />;
+  return <div className={cn("flex shrink-0 flex-col gap-1 border-b border-border-strong/70 px-5 py-4 pr-14", className)} {...props} />;
 }
 
 export function DrawerBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
@@ -73,7 +73,7 @@ export function DrawerBody({ className, ...props }: React.HTMLAttributes<HTMLDiv
 }
 
 export function DrawerFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex shrink-0 flex-col-reverse gap-2 border-t border-border px-5 py-3 safe-bottom sm:flex-row sm:justify-end", className)} {...props} />;
+  return <div className={cn("flex shrink-0 flex-col-reverse gap-2 border-t border-border-strong/70 px-5 py-3 safe-bottom sm:flex-row sm:justify-end", className)} {...props} />;
 }
 
 export const DrawerTitle = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Title>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>>(

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatCurrency, formatNumber } from "@/lib/format";
+import { chartAxisTick, chartCursor, chartTooltipClassName } from "@/lib/chart-theme";
 
 /**
  * Gráficos da Central de Vendas. Uma série por gráfico (sem legenda: o título nomeia a série),
@@ -10,7 +11,7 @@ import { formatCurrency, formatNumber } from "@/lib/format";
  * Cada gráfico tem uma tabela equivalente (details) para leitura sem cor/sem mouse.
  */
 
-const AXIS = { fontSize: 11, fill: "var(--color-muted)" } as const;
+const AXIS = chartAxisTick;
 
 interface TooltipRow {
   label: string;
@@ -20,7 +21,7 @@ interface TooltipRow {
 function ChartTooltip({ active, title, rows }: { active?: boolean; title?: string; rows: TooltipRow[] }) {
   if (!active || !title) return null;
   return (
-    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-pop">
+    <div className={chartTooltipClassName}>
       <p className="mb-1 font-semibold text-foreground">{title}</p>
       {rows.map((r) => (
         <p key={r.label} className="flex justify-between gap-4 text-muted">
@@ -49,11 +50,11 @@ export function FunnelChart({ data }: { data: FunnelDatum[] }) {
       <div className="h-[220px] w-full" role="img" aria-label="Funil de oportunidades abertas por etapa">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 4 }} barCategoryGap={6}>
-            <CartesianGrid horizontal={false} stroke="var(--color-border)" strokeDasharray="0" />
+            <CartesianGrid horizontal={false} stroke="var(--color-chart-grid)" strokeDasharray="0" />
             <XAxis type="number" allowDecimals={false} tick={AXIS} axisLine={false} tickLine={false} />
             <YAxis type="category" dataKey="label" width={96} tick={AXIS} axisLine={false} tickLine={false} />
             <Tooltip
-              cursor={{ fill: "var(--color-surface-hover)" }}
+              cursor={chartCursor}
               content={({ active, payload }) => {
                 const d = payload?.[0]?.payload as FunnelDatum | undefined;
                 return (
@@ -94,11 +95,11 @@ export function WonHistoryChart({ data }: { data: WonDatum[] }) {
       <div className="h-[220px] w-full" role="img" aria-label="Mensalidade vendida por mês nos últimos 6 meses">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 4 }} barCategoryGap="30%">
-            <CartesianGrid vertical={false} stroke="var(--color-border)" />
+            <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" />
             <XAxis dataKey="label" tick={AXIS} axisLine={false} tickLine={false} />
             <YAxis tick={AXIS} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => formatCurrency(v, true)} />
             <Tooltip
-              cursor={{ fill: "var(--color-surface-hover)" }}
+              cursor={chartCursor}
               content={({ active, payload }) => {
                 const d = payload?.[0]?.payload as WonDatum | undefined;
                 return (

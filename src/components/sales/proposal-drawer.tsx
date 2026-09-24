@@ -117,7 +117,7 @@ function Inner({ detail }: { detail: ProposalDetail }) {
           ) : null}
           {status === "enviada" || status === "visualizada" || status === "negociacao" ? (
             <>
-              <Button size="sm" className={`${touch} bg-success hover:bg-success-fg`} onClick={() => run("aceitar")} loading={pending}>
+              <Button size="sm" className={`${touch} bg-success-strong hover:bg-success-hover`} onClick={() => run("aceitar")} loading={pending}>
                 <CheckCircle2 /> Aceita
               </Button>
               <Button size="sm" variant="outline" className={touch} onClick={() => setDialog("recusar")}>
@@ -126,7 +126,7 @@ function Inner({ detail }: { detail: ProposalDetail }) {
             </>
           ) : null}
           {status === "aceita" && oppOpen ? (
-            <Button size="sm" className={`${touch} bg-success hover:bg-success-fg`} onClick={() => setDialog("ganho")}>
+            <Button size="sm" className={`${touch} bg-success-strong hover:bg-success-hover`} onClick={() => setDialog("ganho")}>
               <Trophy /> Marcar oportunidade como ganha
             </Button>
           ) : null}

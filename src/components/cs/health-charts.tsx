@@ -7,8 +7,9 @@ import type { HealthLevel } from "@/domain/constants";
 import { formatDate } from "@/lib/format";
 import { factorLevel, HEALTH_LEVEL_LABELS } from "@/server/cs/schemas";
 import { Progress } from "@/components/ui/progress";
+import { chartAxisTick, chartTooltipItemStyle, chartTooltipLabelStyle, chartTooltipStyle } from "@/lib/chart-theme";
 
-const AXIS = { fontSize: 11, fill: "var(--color-muted)" } as const;
+const AXIS = chartAxisTick;
 const LEVEL_COLOR: Record<HealthLevel, string> = { saudavel: "var(--color-success)", atencao: "var(--color-warning)", risco: "var(--color-danger)" };
 const LEVEL_TONE: Record<HealthLevel, "success" | "warning" | "danger"> = { saudavel: "success", atencao: "warning", risco: "danger" };
 
@@ -21,11 +22,11 @@ export function FactorRadar({ factors, level }: { factors: Factor[]; level: Heal
     <div className="h-64 w-full" role="img" aria-label={`Radar dos fatores: ${factors.map((f) => `${f.label} ${f.value}`).join(", ")}`}>
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart data={data} outerRadius="72%">
-          <PolarGrid stroke="var(--color-border)" />
-          <PolarAngleAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--color-muted)" }} />
+          <PolarGrid stroke="var(--color-chart-grid)" />
+          <PolarAngleAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }} />
           <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
           <Radar dataKey="value" stroke={LEVEL_COLOR[level]} fill={LEVEL_COLOR[level]} fillOpacity={0.25} strokeWidth={2} isAnimationActive={false} />
-          <Tooltip formatter={(v) => [`${v}/100`, "Valor"]} contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: "var(--color-border)" }} />
+          <Tooltip formatter={(v) => [`${v}/100`, "Valor"]} contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} />
         </RadarChart>
       </ResponsiveContainer>
     </div>
@@ -63,12 +64,12 @@ export function ScoreHistoryChart({ history, limiares }: { history: { computedAt
     <div className="h-44 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
-          <CartesianGrid vertical={false} stroke="var(--color-border)" strokeDasharray="3 3" />
+          <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" strokeDasharray="3 3" />
           <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={false} minTickGap={24} />
           <YAxis domain={[0, 100]} tick={AXIS} tickLine={false} axisLine={false} width={40} />
           <ReferenceLine y={limiares.saudavel} stroke="var(--color-success)" strokeDasharray="4 4" />
           <ReferenceLine y={limiares.atencao} stroke="var(--color-danger)" strokeDasharray="4 4" />
-          <Tooltip formatter={(v) => [v, "Score"]} contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: "var(--color-border)" }} />
+          <Tooltip formatter={(v) => [v, "Score"]} contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} />
           <Line type="monotone" dataKey="score" stroke="var(--color-secondary)" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>

@@ -36,7 +36,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
         actions={
           <>
             <ImportLeadsDialog options={options} />
-            <NewLeadDialog options={options} currentUserId={user.id} />
+            <NewLeadDialog options={options} currentUserId={user.id} openOnUrlFlag />
           </>
         }
       >

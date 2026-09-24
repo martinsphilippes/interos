@@ -2,9 +2,9 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 export const inputClassName =
-  "flex h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground shadow-xs transition-colors " +
-  "hover:border-border-strong focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 " +
-  "disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-70 " +
+  "flex h-9 w-full rounded-lg border border-border-strong bg-surface-muted px-3 text-sm text-foreground transition-colors " +
+  "hover:border-muted-light/60 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 " +
+  "disabled:cursor-not-allowed disabled:opacity-60 " +
   "aria-invalid:border-danger aria-invalid:focus:ring-danger/25 file:border-0 file:bg-transparent file:text-sm file:font-medium";
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {

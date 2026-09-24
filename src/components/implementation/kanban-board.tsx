@@ -147,7 +147,7 @@ function Column({ id, label, rows, canOperate }: { id: string; label: string; ro
         </div>
         {late > 0 ? <p className="mt-0.5 text-xs font-medium text-danger-fg">{late} atrasado(s)</p> : <p className="mt-0.5 text-xs text-muted">Sem atrasos</p>}
       </header>
-      <div className="flex min-h-[140px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-300px)] md:overflow-y-auto md:scrollbar-thin">
+      <div className="flex min-h-[140px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-300px)] md:overflow-y-auto md:scrollbar-thin [&>*]:shrink-0">
         {rows.map((r) => (canOperate ? <DraggableCard key={r.id} row={r} /> : <ProjectCard key={r.id} row={r} />))}
         {rows.length === 0 ? <p className="rounded-md border border-dashed border-border-strong px-3 py-6 text-center text-xs text-muted">{canOperate ? "Solte aqui" : "Vazio"}</p> : null}
       </div>

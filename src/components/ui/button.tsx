@@ -12,12 +12,17 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-brand text-white shadow-card hover:bg-brand-hover active:bg-brand-active",
-        secondary: "bg-navy-900 text-white shadow-card hover:bg-navy-800 active:bg-navy-950",
-        outline: "border border-border bg-surface text-foreground shadow-card hover:bg-surface-hover hover:border-border-strong",
+        /* Ação principal: laranja sólido com brilho suave. Uma por área. */
+        primary: "bg-brand text-white shadow-brand hover:bg-brand-hover active:bg-brand-active",
+        /* Ação neutra preenchida (superfície elevada). */
+        secondary: "border border-border-strong bg-surface-hover text-foreground shadow-card hover:bg-card-elevated hover:border-muted-light/50",
+        /* Ação secundária: contorno claro sobre o escuro. */
+        outline: "border border-border-strong bg-transparent text-foreground hover:bg-surface-hover hover:border-muted-light/60",
         ghost: "text-foreground hover:bg-surface-hover",
-        destructive: "bg-danger text-white shadow-card hover:bg-danger-fg",
-        link: "text-brand underline-offset-4 hover:underline h-auto px-0",
+        destructive: "bg-danger-strong text-white shadow-card hover:bg-danger-hover",
+        /* Confirmação positiva (ganho, aceite, pagamento). */
+        success: "bg-success-strong text-white shadow-card hover:bg-success-hover",
+        link: "text-brand-fg underline-offset-4 hover:underline h-auto px-0",
       },
       size: {
         sm: "h-8 px-3 text-[13px] [&_svg]:size-3.5",

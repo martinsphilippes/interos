@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 export const Tabs = TabsPrimitive.Root;
 
-/** Lista de abas. `variant="line"` (padrão, sublinhado laranja) ou `variant="pills"` (fundo cinza). */
+/** Lista de abas. `variant="line"` (padrão, sublinhado e texto laranja) ou `variant="pills"` (pílula laranja preenchida). */
 export const TabsList = React.forwardRef<
   React.ComponentRef<typeof TabsPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List> & { variant?: "line" | "pills" }
@@ -16,7 +16,7 @@ export const TabsList = React.forwardRef<
     data-variant={variant}
     className={cn(
       "group/tabs inline-flex max-w-full items-center overflow-x-auto scrollbar-none",
-      variant === "line" ? "gap-1 border-b border-border" : "gap-1 rounded-lg bg-surface-hover p-1",
+      variant === "line" ? "gap-1 border-b border-border" : "gap-1 rounded-lg border border-border bg-surface-muted p-1",
       className,
     )}
     {...props}
@@ -33,10 +33,10 @@ export const TabsTrigger = React.forwardRef<React.ComponentRef<typeof TabsPrimit
         "hover:text-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
         // line
         "group-data-[variant=line]/tabs:-mb-px group-data-[variant=line]/tabs:border-b-2 group-data-[variant=line]/tabs:border-transparent group-data-[variant=line]/tabs:px-3",
-        "group-data-[variant=line]/tabs:data-[state=active]:border-brand group-data-[variant=line]/tabs:data-[state=active]:text-foreground",
+        "group-data-[variant=line]/tabs:data-[state=active]:border-brand group-data-[variant=line]/tabs:data-[state=active]:text-brand-fg",
         // pills
         "group-data-[variant=pills]/tabs:min-h-8 group-data-[variant=pills]/tabs:rounded-md group-data-[variant=pills]/tabs:px-3",
-        "group-data-[variant=pills]/tabs:data-[state=active]:bg-surface group-data-[variant=pills]/tabs:data-[state=active]:text-foreground group-data-[variant=pills]/tabs:data-[state=active]:shadow-card",
+        "group-data-[variant=pills]/tabs:data-[state=active]:bg-brand group-data-[variant=pills]/tabs:data-[state=active]:text-white group-data-[variant=pills]/tabs:data-[state=active]:shadow-brand",
         className,
       )}
       {...props}

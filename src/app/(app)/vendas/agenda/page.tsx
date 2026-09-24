@@ -46,7 +46,7 @@ export default async function AgendaPage({ searchParams }: { searchParams: Searc
   const title = view === "semana" ? `${formatDateKey(data.start, "dd MMM")} – ${formatDateKey(data.end, "dd MMM yyyy")}` : formatDateKey(`${anchor.slice(0, 7)}-01`, "MMMM 'de' yyyy");
   const counts = { visita: 0, tarefa: 0, followup: 0 };
   for (const i of data.items) counts[i.kind] += 1;
-  const pill = (active: boolean) => cn("inline-flex h-10 items-center rounded-md px-3 text-[13px] font-medium md:h-8", active ? "bg-surface text-foreground shadow-card" : "text-muted hover:text-foreground");
+  const pill = (active: boolean) => cn("inline-flex h-10 items-center rounded-md px-3 text-[13px] font-medium md:h-8", active ? "bg-brand text-white shadow-brand" : "text-muted hover:bg-surface-hover hover:text-foreground");
 
   return (
     <PageContainer size="full">
@@ -57,7 +57,7 @@ export default async function AgendaPage({ searchParams }: { searchParams: Searc
         actions={<NewVisitButton options={{ clients: options.clients, sellers: options.sellers, addresses, opportunitiesByClient }} currentUserId={user.id} canChooseSeller={user.isManager} />}
       >
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-0.5 rounded-lg bg-surface-hover p-0.5" role="radiogroup" aria-label="Visão">
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-muted p-0.5" role="radiogroup" aria-label="Visão">
             <Link href={link({ visao: undefined })} role="radio" aria-checked={view === "semana"} className={pill(view === "semana")}>
               Semana
             </Link>
@@ -66,7 +66,7 @@ export default async function AgendaPage({ searchParams }: { searchParams: Searc
             </Link>
           </div>
           {user.isManager ? (
-            <div className="inline-flex items-center gap-0.5 rounded-lg bg-surface-hover p-0.5" role="radiogroup" aria-label="Escopo">
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-muted p-0.5" role="radiogroup" aria-label="Escopo">
               <Link href={link({ escopo: undefined })} role="radio" aria-checked={data.scope.kind === "meu"} className={pill(data.scope.kind === "meu")}>
                 Minha
               </Link>

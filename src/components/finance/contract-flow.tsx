@@ -37,10 +37,10 @@ export function buildFlow(contract: Contract, billings: Billing[], paymentOk: bo
 }
 
 const circle: Record<StepState, string> = {
-  done: "border-success bg-success text-white",
+  done: "border-success bg-success-strong text-white",
   current: "border-brand bg-brand-soft text-brand-fg",
   blocked: "border-danger bg-danger-soft text-danger-fg",
-  todo: "border-border-strong bg-surface text-muted-light",
+  todo: "border-border-strong bg-surface-muted text-muted-light",
 };
 
 export function ContractFlow({ steps, className }: { steps: FlowStep[]; className?: string }) {

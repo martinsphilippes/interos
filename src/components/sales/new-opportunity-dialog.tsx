@@ -17,9 +17,10 @@ import type { SalesFormOptions } from "@/server/sales/queries";
 import { OPPORTUNITY_KIND_LABELS } from "./model";
 import { ProductsEditor, toPayloadLines, type EditableLine } from "./products-editor";
 import { useSalesUrl } from "./use-sales-url";
+import { useUrlFlag } from "@/lib/use-url-flag";
 
 /** Botão + diálogo "Nova oportunidade" (entra em Qualificação com próxima ação obrigatória). */
-export function NewOpportunityButton({ options, currentUserId }: { options: SalesFormOptions; currentUserId: string }) {
+export function NewOpportunityButton({ options, currentUserId, openOnUrlFlag }: { options: SalesFormOptions; currentUserId: string; /** Abre com ?novo=1 (ações rápidas). */ openOnUrlFlag?: boolean }) {
   const router = useRouter();
   const { navigate } = useSalesUrl();
   const id = React.useId();
@@ -43,6 +44,19 @@ export function NewOpportunityButton({ options, currentUserId }: { options: Sale
     d.setHours(9, 0, 0, 0);
     setNextActionAt(isoToDateTimeLocal(d.toISOString()));
     setOpen(true);
+  };
+
+  // Ações rápidas: ?novo=1 abre o formulário (ajuste de estado durante a renderização, sem effect).
+  const flag = useUrlFlag("novo");
+  const urlOpen = Boolean(openOnUrlFlag) && flag.active;
+  const [urlSeen, setUrlSeen] = React.useState(false);
+  if (urlOpen !== urlSeen) {
+    setUrlSeen(urlOpen);
+    if (urlOpen) openDialog();
+  }
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    if (!next && urlOpen) flag.clear();
   };
 
   const submit = () => {
@@ -69,7 +83,7 @@ export function NewOpportunityButton({ options, currentUserId }: { options: Sale
       setTitle("");
       setLines([]);
       setNeed("");
-      navigate({ oportunidade: result.data.id });
+      navigate(urlOpen ? { oportunidade: result.data.id, novo: null } : { oportunidade: result.data.id });
       router.refresh();
     });
   };
@@ -79,7 +93,7 @@ export function NewOpportunityButton({ options, currentUserId }: { options: Sale
       <Button onClick={openDialog} className="min-h-[44px] md:min-h-0">
         <Plus /> Nova oportunidade
       </Button>
-      <Dialog open={open} onOpenChange={(v) => !pending && setOpen(v)}>
+      <Dialog open={open} onOpenChange={(v) => !pending && changeOpen(v)}>
         <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>Nova oportunidade</DialogTitle>

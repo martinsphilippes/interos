@@ -21,7 +21,7 @@ export const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "z-50 min-w-[200px] overflow-hidden rounded-lg border border-border bg-surface p-1 text-foreground shadow-pop animate-fade-in",
+        "z-50 min-w-[200px] overflow-hidden rounded-lg border border-border-strong bg-card-elevated p-1 text-foreground shadow-pop animate-fade-in",
         className,
       )}
       {...props}
@@ -51,7 +51,7 @@ export const DropdownMenuSubContent = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.SubContent
     ref={ref}
-    className={cn("z-50 min-w-[160px] overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-pop animate-fade-in", className)}
+    className={cn("z-50 min-w-[160px] overflow-hidden rounded-lg border border-border-strong bg-card-elevated p-1 text-foreground shadow-pop animate-fade-in", className)}
     {...props}
   />
 ));
@@ -66,7 +66,7 @@ export const DropdownMenuItem = React.forwardRef<
     className={cn(
       "relative flex min-h-[40px] cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none transition-colors md:min-h-[34px]",
       "focus:bg-surface-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4 [&_svg]:text-muted",
-      destructive && "text-danger focus:bg-danger-soft focus:text-danger-fg [&_svg]:text-danger",
+      destructive && "text-danger-fg focus:bg-danger-soft focus:text-danger-fg [&_svg]:text-danger-fg",
       inset && "pl-8",
       className,
     )}
@@ -123,7 +123,7 @@ DropdownMenuLabel.displayName = "DropdownMenuLabel";
 export const DropdownMenuSeparator = React.forwardRef<
   React.ComponentRef<typeof DropdownMenuPrimitive.Separator>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>
->(({ className, ...props }, ref) => <DropdownMenuPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />);
+>(({ className, ...props }, ref) => <DropdownMenuPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-border-strong/70", className)} {...props} />);
 DropdownMenuSeparator.displayName = "DropdownMenuSeparator";
 
 export function DropdownMenuShortcut({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {

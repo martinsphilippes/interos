@@ -5,13 +5,14 @@ import { Bar, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, Reference
 import type { ChurnMetrics } from "@/server/cs/queries";
 import { CHURN_REASON_LABELS } from "@/server/cs/schemas";
 import { formatCompetence, formatCurrency, formatPercent } from "@/lib/format";
+import { chartAxisTick, chartTooltipClassName } from "@/lib/chart-theme";
 
-const AXIS = { fontSize: 11, fill: "var(--color-muted)" } as const;
-const REASON_COLORS = ["var(--color-danger)", "var(--color-brand)", "var(--color-warning)", "var(--color-secondary)", "var(--color-info)", "var(--color-navy-500)", "var(--color-muted-light)"];
+const AXIS = chartAxisTick;
+const REASON_COLORS = ["var(--color-danger)", "var(--color-brand)", "var(--color-warning)", "var(--color-secondary)", "var(--color-info)", "var(--color-accent-purple)", "var(--color-muted-light)"];
 
 function TooltipBox({ title, rows }: { title: string; rows: { label: string; value: string; color?: string }[] }) {
   return (
-    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-pop">
+    <div className={chartTooltipClassName}>
       <p className="mb-1 font-semibold capitalize">{title}</p>
       {rows.map((r) => (
         <p key={r.label} className="flex items-center justify-between gap-4 text-muted">
@@ -34,7 +35,7 @@ export function ChurnTrendChart({ months, target }: { months: ChurnMetrics["mont
       <div className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: -8 }}>
-            <CartesianGrid vertical={false} stroke="var(--color-border)" strokeDasharray="3 3" />
+            <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" strokeDasharray="3 3" />
             <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={false} />
             <YAxis yAxisId="rate" tick={AXIS} tickLine={false} axisLine={false} width={44} tickFormatter={(v) => `${v}%`} />
             <YAxis yAxisId="lost" orientation="right" tick={AXIS} tickLine={false} axisLine={false} width={64} tickFormatter={(v) => formatCurrency(v, true)} />

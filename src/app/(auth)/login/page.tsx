@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/server/auth/session";
 import { LoginForm } from "@/components/auth/login-form";
+import { AuthHero } from "@/components/auth/auth-hero";
 
 export const metadata: Metadata = { title: "Entrar" };
 
@@ -18,5 +19,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
   const user = await getCurrentUser();
   if (user) redirect("/meu-dia");
   const { next } = await searchParams;
-  return <LoginForm next={safeNext(next)} />;
+  return (
+    <div className="mx-auto grid w-full max-w-6xl flex-1 items-center gap-10 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(0,1fr)_460px] lg:gap-16 lg:py-10">
+      <AuthHero className="hidden lg:flex" />
+      <LoginForm next={safeNext(next)} demoMode={process.env.NEXT_PUBLIC_DEMO_MODE === "true"} />
+    </div>
+  );
 }

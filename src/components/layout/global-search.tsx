@@ -136,7 +136,7 @@ export function GlobalSearch({ className }: { className?: string }) {
         aria-label="Buscar (Ctrl+K)"
         className={cn(
           "inline-flex size-10 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover hover:text-foreground",
-          "md:h-9 md:w-full md:max-w-md md:justify-start md:gap-2 md:border md:border-border md:bg-surface-muted md:px-3 md:hover:border-border-strong md:hover:bg-surface",
+          "md:h-10 md:w-full md:max-w-md md:justify-start md:gap-2.5 md:rounded-full md:border md:border-border-strong md:bg-surface-muted md:px-4 md:hover:border-muted-light/60 md:hover:bg-surface-muted",
           className,
         )}
       >

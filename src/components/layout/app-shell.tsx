@@ -3,7 +3,7 @@
 import * as React from "react";
 import { usePathname } from "next/navigation";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import type { NavSection } from "@/domain/constants";
+import type { NavSection, QuickAction } from "@/domain/constants";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
@@ -46,14 +46,18 @@ export interface AppShellProps {
   /** Seções de NAVIGATION já filtradas por permissão no servidor. */
   sections: NavSection[];
   unreadCount: number;
+  /** Ações rápidas do "+" mobile, filtradas por papel no servidor. */
+  quickActions?: QuickAction[];
+  /** Mostra o seletor de presença na top bar. */
+  showPresence?: boolean;
   children: React.ReactNode;
 }
 
 /**
- * Shell autenticado: sidebar fixa (desktop, colapsável), drawer de menu + barra inferior (mobile),
- * top bar com busca/notificações. O conteúdo da página usa PageContainer + PageHeader.
+ * Shell autenticado: sidebar fixa (desktop, colapsável), barra inferior com ações rápidas (mobile),
+ * top bar com busca/presença/ajuda/notificações/usuário. O conteúdo da página usa PageContainer + PageHeader.
  */
-export function AppShell({ user, sections, unreadCount, children }: AppShellProps) {
+export function AppShell({ user, sections, unreadCount, quickActions = [], showPresence = false, children }: AppShellProps) {
   const pathname = usePathname();
   // No servidor (e na hidratação) a sidebar começa expandida; o cliente aplica a preferência salva.
   const collapsed = React.useSyncExternalStore(subscribeCollapsed, readCollapsed, () => false);
@@ -76,7 +80,7 @@ export function AppShell({ user, sections, unreadCount, children }: AppShellProp
         {/* Menu mobile (drawer à esquerda) */}
         <DialogPrimitive.Root open={mobileOpen} onOpenChange={setMobileOpen}>
           <DialogPrimitive.Portal>
-            <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-navy-950/50 backdrop-blur-[2px] animate-fade-in md:hidden" />
+            <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay backdrop-blur-[3px] animate-fade-in md:hidden" />
             <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 w-sidebar max-w-[85vw] shadow-drawer animate-slide-in-left focus:outline-none md:hidden">
               <DialogPrimitive.Title className="sr-only">Menu</DialogPrimitive.Title>
               <DialogPrimitive.Description className="sr-only">Navegação principal do INTEROS.</DialogPrimitive.Description>
@@ -86,13 +90,13 @@ export function AppShell({ user, sections, unreadCount, children }: AppShellProp
         </DialogPrimitive.Root>
 
         <div className={cn("flex min-h-dvh flex-col transition-[padding] duration-200", collapsed ? "md:pl-sidebar-collapsed" : "md:pl-sidebar")}>
-          <TopBar user={user} unreadCount={unreadCount} onOpenMenu={() => setMobileOpen(true)} />
-          <main id="conteudo" className="flex flex-1 flex-col pb-[calc(var(--spacing-mobile-nav)+env(safe-area-inset-bottom))] md:pb-0">
+          <TopBar user={user} unreadCount={unreadCount} onOpenMenu={() => setMobileOpen(true)} sections={sections} showPresence={showPresence} />
+          <main id="conteudo" className="flex flex-1 flex-col pb-[calc(var(--spacing-mobile-nav)+env(safe-area-inset-bottom)+12px)] md:pb-0">
             {children}
           </main>
         </div>
 
-        <MobileNav />
+        <MobileNav quickActions={quickActions} />
       </div>
     </TooltipProvider>
   );

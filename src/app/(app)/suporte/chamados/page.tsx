@@ -37,7 +37,7 @@ export default async function TicketsPage({ searchParams }: { searchParams: Sear
                 <Headset /> Central
               </Link>
             </Button>
-            <NewTicketDialog options={options} />
+            <NewTicketDialog options={options} openOnUrlFlag />
           </>
         }
       />

@@ -96,7 +96,7 @@ export function WonDialog({ open, onOpenChange, opportunity, clientDefaults, pro
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             Cancelar
           </Button>
-          <Button onClick={submit} loading={pending} disabled={!complete} className="bg-success hover:bg-success-fg">
+          <Button onClick={submit} loading={pending} disabled={!complete} className="bg-success-strong hover:bg-success-hover">
             <Trophy /> Confirmar ganho
           </Button>
         </DialogFooter>

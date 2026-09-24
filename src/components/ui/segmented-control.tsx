@@ -24,7 +24,7 @@ export interface SegmentedControlProps<T extends string> {
 /** Alternador de visões (lista / kanban / calendário). */
 export function SegmentedControl<T extends string>({ options, value, onChange, size = "md", iconOnly, className, ...aria }: SegmentedControlProps<T>) {
   return (
-    <div role="radiogroup" aria-label={aria["aria-label"]} className={cn("inline-flex items-center gap-0.5 rounded-lg bg-surface-hover p-0.5", className)}>
+    <div role="radiogroup" aria-label={aria["aria-label"]} className={cn("inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-muted p-0.5", className)}>
       {options.map((opt) => {
         const active = opt.value === value;
         const labelText = typeof opt.label === "string" ? opt.label : undefined;
@@ -39,10 +39,10 @@ export function SegmentedControl<T extends string>({ options, value, onChange, s
             disabled={opt.disabled}
             onClick={() => onChange(opt.value)}
             className={cn(
-              "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:opacity-50 [&_svg]:size-4",
+              "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors disabled:opacity-50 [&_svg]:size-4",
               size === "sm" ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-[13px]",
               iconOnly && (size === "sm" ? "w-7 px-0" : "w-8 px-0"),
-              active ? "bg-surface text-foreground shadow-card" : "text-muted hover:text-foreground",
+              active ? "bg-brand text-white shadow-brand" : "text-muted hover:bg-surface-hover hover:text-foreground",
             )}
           >
             {opt.icon}

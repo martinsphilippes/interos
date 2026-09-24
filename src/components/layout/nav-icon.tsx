@@ -16,6 +16,7 @@ import {
   FileText,
   Flag,
   Gauge,
+  Home,
   GitBranch,
   Goal,
   GraduationCap,
@@ -31,6 +32,7 @@ import {
   Menu,
   Network,
   Package,
+  Plus,
   PenLine,
   Radar,
   Receipt,
@@ -56,9 +58,11 @@ import {
   type LucideProps,
 } from "lucide-react";
 
-/** Mapa explícito nome -> ícone lucide. Cobre todos os nomes usados em NAVIGATION e MOBILE_NAV. */
+/** Mapa explícito nome -> ícone lucide. Cobre todos os nomes usados em NAVIGATION, MOBILE_NAV e QUICK_ACTIONS. */
 export const NAV_ICONS: Record<string, LucideIcon> = {
   Sun,
+  Home,
+  Plus,
   Bell,
   CheckSquare,
   GitBranch,

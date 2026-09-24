@@ -21,7 +21,7 @@ export const Switch = React.forwardRef<React.ComponentRef<typeof SwitchPrimitive
         className={cn(
           "peer inline-flex shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors",
           "focus-visible:ring-2 focus-visible:ring-brand/25 disabled:cursor-not-allowed disabled:opacity-50",
-          "data-[state=checked]:bg-brand data-[state=unchecked]:bg-border-strong",
+          "data-[state=checked]:bg-brand data-[state=unchecked]:bg-track data-[state=unchecked]:ring-1 data-[state=unchecked]:ring-inset data-[state=unchecked]:ring-border-strong",
           size === "sm" ? "h-5 w-9" : "h-6 w-11",
           !label && className,
         )}

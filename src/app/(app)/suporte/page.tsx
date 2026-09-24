@@ -28,14 +28,14 @@ function ScopeToggle({ scope }: { scope: OverviewScope }) {
     { value: "equipe", label: "Equipe", icon: <Users />, href: "/suporte?escopo=equipe" },
   ];
   return (
-    <div role="radiogroup" aria-label="Escopo da Central" className="inline-flex items-center gap-0.5 rounded-lg bg-surface-hover p-0.5">
+    <div role="radiogroup" aria-label="Escopo da Central" className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-muted p-0.5">
       {options.map((o) => (
         <Link
           key={o.value}
           href={o.href}
           role="radio"
           aria-checked={o.value === scope}
-          className={cn("inline-flex h-10 items-center gap-1.5 rounded-md px-3 text-[13px] font-medium transition-colors md:h-8 [&_svg]:size-4", o.value === scope ? "bg-surface text-foreground shadow-card" : "text-muted hover:text-foreground")}
+          className={cn("inline-flex h-10 items-center gap-1.5 rounded-md px-3 text-[13px] font-medium transition-colors md:h-8 [&_svg]:size-4", o.value === scope ? "bg-brand text-white shadow-brand" : "text-muted hover:bg-surface-hover hover:text-foreground")}
         >
           {o.icon}
           {o.label}

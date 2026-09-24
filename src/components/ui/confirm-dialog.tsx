@@ -48,7 +48,7 @@ export function ConfirmDialog({
         <DialogHeader>
           <div className="flex items-start gap-3">
             {destructive ? (
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-danger-soft text-danger">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-danger-soft text-danger-fg">
                 <AlertTriangle className="size-4" />
               </span>
             ) : null}

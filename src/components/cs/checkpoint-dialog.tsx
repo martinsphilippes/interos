@@ -80,8 +80,8 @@ export function CheckpointDialog({ clientId, clientName, adoptionPct, satisfacti
   const openButton = trigger ? (
     React.cloneElement(trigger, { onClick: () => setOpen(true) })
   ) : (
-    <Button size={size} variant={variant} onClick={() => setOpen(true)} className="min-h-[44px] md:min-h-0">
-      <CalendarCheck /> Registrar checkpoint
+    <Button size={size} variant={variant} onClick={() => setOpen(true)} className="min-h-[44px] max-w-full md:min-h-0" title="Registrar checkpoint">
+      <CalendarCheck /> <span className="truncate">Registrar checkpoint</span>
     </Button>
   );
 

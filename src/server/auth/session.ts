@@ -9,8 +9,16 @@ import { MODULE_ACCESS, type RoleKey } from "@/domain/constants";
 export const SESSION_COOKIE = "interos_session";
 const SESSION_DAYS = 14;
 
+export interface CreateSessionOptions {
+  /**
+   * "Lembrar meu acesso" (padrão true): cookie persistente por SESSION_DAYS. Com false o cookie não tem
+   * maxAge e dura só a sessão do navegador (o session cookie do Firebase continua expirando em SESSION_DAYS).
+   */
+  remember?: boolean;
+}
+
 /** Cria o cookie de sessão a partir do ID token emitido pelo Firebase Auth no navegador. */
-export async function createSession(idToken: string): Promise<{ uid: string }> {
+export async function createSession(idToken: string, options: CreateSessionOptions = {}): Promise<{ uid: string }> {
   const decoded = await adminAuth.verifyIdToken(idToken);
   const expiresIn = SESSION_DAYS * 24 * 60 * 60 * 1000;
   const sessionCookie = await adminAuth.createSessionCookie(idToken, { expiresIn });
@@ -20,7 +28,7 @@ export async function createSession(idToken: string): Promise<{ uid: string }> {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: expiresIn / 1000,
+    ...(options.remember === false ? {} : { maxAge: expiresIn / 1000 }),
   });
   return { uid: decoded.uid };
 }

@@ -5,16 +5,17 @@ import { Bar, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Too
 import type { HistoryPoint } from "@/server/kpis/engine";
 import { STATUS_LABELS, formatKpiValue, type KpiStatus, type KpiUnit } from "@/server/kpis/schemas";
 import { formatPercent } from "@/lib/format";
+import { chartAxisTick, chartCursor, chartTooltipClassName } from "@/lib/chart-theme";
 
 /**
  * Histórico mensal do indicador: barras com o valor (cor pelo status do mês) e linha tracejada da meta.
  * Inclui a tabela equivalente (details) para leitura sem gráfico.
  */
 
-const AXIS = { fontSize: 11, fill: "var(--color-muted)" } as const;
+const AXIS = chartAxisTick;
 const STATUS_COLOR: Record<KpiStatus, string> = { atingida: "var(--color-success)", atencao: "var(--color-warning)", critico: "var(--color-danger)" };
 const NEUTRAL = "var(--color-secondary)";
-const TARGET = "var(--color-navy-500)";
+const TARGET = "var(--color-foreground)";
 
 export interface KpiTrendChartProps {
   points: HistoryPoint[];
@@ -54,16 +55,16 @@ export function KpiTrendChart({ points, unit, suffix, height = 240 }: KpiTrendCh
       <div style={{ height }} role="img" aria-label="Histórico mensal do indicador">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid vertical={false} stroke="var(--color-border)" />
+            <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" />
             <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={false} />
             <YAxis tick={AXIS} tickLine={false} axisLine={false} width={56} tickFormatter={(v: number) => compactValue(v, unit)} />
             <Tooltip
-              cursor={{ fill: "var(--color-surface-hover)" }}
+              cursor={chartCursor}
               content={({ active, payload }) => {
                 const p = payload?.[0]?.payload as (HistoryPoint & { hasValue: boolean }) | undefined;
                 if (!active || !p) return null;
                 return (
-                  <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-pop">
+                  <div className={chartTooltipClassName}>
                     <p className="mb-1 font-semibold capitalize text-foreground">{p.label}</p>
                     <p className="flex justify-between gap-4 text-muted">
                       Valor <span className="font-medium tabular-nums text-foreground">{formatKpiValue(p.value, unit, suffix)}</span>

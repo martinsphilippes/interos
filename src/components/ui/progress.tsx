@@ -4,7 +4,7 @@ import * as React from "react";
 import * as ProgressPrimitive from "@radix-ui/react-progress";
 import { cn } from "@/lib/utils";
 
-export type ProgressTone = "brand" | "success" | "warning" | "danger" | "info" | "secondary";
+export type ProgressTone = "brand" | "success" | "warning" | "danger" | "info" | "secondary" | "purple" | "neutral";
 
 const toneClass: Record<ProgressTone, string> = {
   brand: "bg-brand",
@@ -13,6 +13,8 @@ const toneClass: Record<ProgressTone, string> = {
   danger: "bg-danger",
   info: "bg-info",
   secondary: "bg-secondary",
+  purple: "bg-accent-purple",
+  neutral: "bg-muted-light",
 };
 
 export interface ProgressProps extends React.ComponentPropsWithoutRef<typeof ProgressPrimitive.Root> {
@@ -32,7 +34,7 @@ export const Progress = React.forwardRef<React.ComponentRef<typeof ProgressPrimi
         <ProgressPrimitive.Root
           ref={ref}
           value={pct}
-          className={cn("relative w-full overflow-hidden rounded-full bg-surface-hover", size === "sm" ? "h-1.5" : "h-2")}
+          className={cn("relative w-full overflow-hidden rounded-full bg-track", size === "sm" ? "h-1.5" : "h-2")}
           {...props}
         >
           <ProgressPrimitive.Indicator className={cn("h-full rounded-full transition-[width] duration-300", toneClass[tone])} style={{ width: `${pct}%` }} />

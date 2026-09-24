@@ -9,10 +9,10 @@ import { cn } from "@/lib/utils";
 const SCORES = Array.from({ length: 11 }, (_, i) => i);
 
 function scoreTone(score: number, selected: boolean): string {
-  if (!selected) return "border-border bg-surface text-foreground hover:border-border-strong hover:bg-surface-hover";
-  if (score >= 9) return "border-success bg-success text-white";
-  if (score >= 7) return "border-warning bg-warning text-white";
-  return "border-danger bg-danger text-white";
+  if (!selected) return "border-border-strong bg-surface-muted text-foreground hover:border-muted-light/60 hover:bg-surface-hover";
+  if (score >= 9) return "border-success bg-success-strong text-white";
+  if (score >= 7) return "border-warning bg-warning text-canvas";
+  return "border-danger bg-danger-strong text-white";
 }
 
 /** Formulário público de avaliação (0–10 + comentário), enviado para POST /api/csat/<ticketId>. */

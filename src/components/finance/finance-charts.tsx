@@ -3,18 +3,19 @@
 import * as React from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatCurrency, formatPercent } from "@/lib/format";
+import { chartAxisTick, chartCursor, chartTooltipClassName } from "@/lib/chart-theme";
 
 /**
  * Gráficos do Financeiro, no mesmo padrão da Central de Vendas: cores do tema, grade recessiva, barras
  * com ponta arredondada, tooltip por categoria e tabela equivalente (details) para leitura sem mouse.
  */
 
-const AXIS = { fontSize: 11, fill: "var(--color-muted)" } as const;
+const AXIS = chartAxisTick;
 
 function ChartTooltip({ active, title, rows }: { active?: boolean; title?: string; rows: { label: string; value: string; color?: string }[] }) {
   if (!active || !title) return null;
   return (
-    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-pop">
+    <div className={chartTooltipClassName}>
       <p className="mb-1 font-semibold capitalize text-foreground">{title}</p>
       {rows.map((r) => (
         <p key={r.label} className="flex items-center justify-between gap-4 text-muted">
@@ -85,11 +86,11 @@ export function ReceivedBilledChart({ data }: { data: FlowDatum[] }) {
       <div className="h-[240px] w-full" role="img" aria-label="Faturado e recebido por mês nos últimos 6 meses">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 4 }} barCategoryGap="24%" barGap={3}>
-            <CartesianGrid vertical={false} stroke="var(--color-border)" />
+            <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" />
             <XAxis dataKey="label" tick={AXIS} axisLine={false} tickLine={false} />
             <YAxis tick={AXIS} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => formatCurrency(v, true)} />
             <Tooltip
-              cursor={{ fill: "var(--color-surface-hover)" }}
+              cursor={chartCursor}
               content={({ active, payload }) => {
                 const d = payload?.[0]?.payload as FlowDatum | undefined;
                 return (
@@ -134,11 +135,11 @@ export function MrrHistoryChart({ data }: { data: MrrDatum[] }) {
       <div className="h-[240px] w-full" role="img" aria-label="MRR por mês nos últimos 8 meses">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 4 }} barCategoryGap="30%">
-            <CartesianGrid vertical={false} stroke="var(--color-border)" />
+            <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" />
             <XAxis dataKey="label" tick={AXIS} axisLine={false} tickLine={false} />
             <YAxis tick={AXIS} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => formatCurrency(v, true)} />
             <Tooltip
-              cursor={{ fill: "var(--color-surface-hover)" }}
+              cursor={chartCursor}
               content={({ active, payload }) => {
                 const d = payload?.[0]?.payload as MrrDatum | undefined;
                 return (

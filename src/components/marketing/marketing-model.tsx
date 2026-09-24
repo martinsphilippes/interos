@@ -24,8 +24,8 @@ export const LEAD_STATUSES: LeadStatus[] = [...LEAD_FUNNEL, "desqualificado"];
 
 export const TEMPERATURE_LABELS: Record<LeadTemperature, string> = { quente: "Quente", morno: "Morno", frio: "Frio" };
 export const TEMPERATURES: LeadTemperature[] = ["quente", "morno", "frio"];
-/** Cores de série (paleta de dados validada) para gráficos de temperatura. */
-export const TEMPERATURE_COLORS: Record<LeadTemperature, string> = { quente: "#eb6834", morno: "#eda100", frio: "#2a78d6" };
+/** Cores de série (tema escuro: laranja, âmbar, azul) para gráficos de temperatura. */
+export const TEMPERATURE_COLORS: Record<LeadTemperature, string> = { quente: "var(--color-brand)", morno: "var(--color-warning)", frio: "var(--color-info)" };
 
 export const CAMPAIGN_STATUS_LABELS: Record<Campaign["status"], string> = { planejada: "Planejada", ativa: "Ativa", pausada: "Pausada", encerrada: "Encerrada" };
 export const CAMPAIGN_CHANNELS: { value: string; label: string }[] = [

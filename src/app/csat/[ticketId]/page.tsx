@@ -13,7 +13,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex min-h-dvh items-start justify-center bg-canvas px-4 py-10 sm:items-center">
       <div className="w-full max-w-xl rounded-2xl border border-border bg-surface p-6 shadow-card sm:p-8">
-        <p className="mb-6 text-center text-sm font-semibold tracking-wide text-navy-900">
+        <p className="mb-6 text-center text-sm font-semibold tracking-wide text-foreground">
           INTERCERT <span className="font-normal text-muted">· Suporte</span>
         </p>
         {children}

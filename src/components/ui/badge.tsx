@@ -3,18 +3,23 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const badgeVariants = cva(
-  "inline-flex items-center gap-1 whitespace-nowrap rounded-full border font-medium leading-none [&_svg]:size-3",
+  "inline-flex items-center gap-1 whitespace-nowrap rounded-md border font-medium leading-none [&_svg]:size-3",
   {
     variants: {
+      /* Tingido com borda fina: fundo -soft, borda da cor a ~30%, texto -fg (legível no escuro). */
       variant: {
-        default: "border-transparent bg-navy-900 text-white",
-        success: "border-transparent bg-success-soft text-success-fg",
-        warning: "border-transparent bg-warning-soft text-warning-fg",
-        danger: "border-transparent bg-danger-soft text-danger-fg",
-        info: "border-transparent bg-info-soft text-info-fg",
-        brand: "border-transparent bg-brand-soft text-brand-fg",
-        outline: "border-border-strong bg-surface text-foreground",
-        muted: "border-transparent bg-surface-hover text-muted",
+        default: "border-border-strong bg-surface-hover text-foreground",
+        success: "border-success/30 bg-success-soft text-success-fg",
+        warning: "border-warning/30 bg-warning-soft text-warning-fg",
+        danger: "border-danger/35 bg-danger-soft text-danger-fg",
+        info: "border-info/35 bg-info-soft text-info-fg",
+        brand: "border-brand/35 bg-brand-soft text-brand-fg",
+        purple: "border-accent-purple/35 bg-accent-purple-soft text-accent-purple-fg",
+        secondary: "border-secondary/35 bg-secondary-soft text-secondary-fg",
+        outline: "border-border-strong bg-transparent text-foreground",
+        muted: "border-border bg-surface-hover text-muted",
+        /* Sólido laranja (contador, "Novo"): texto branco sobre a cor. */
+        solid: "border-transparent bg-brand text-white",
       },
       size: {
         sm: "h-5 px-2 text-[11px]",

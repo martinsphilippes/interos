@@ -147,7 +147,14 @@ export interface User extends BaseEntity {
   baseSalary?: number;
   /** Metas padrão do colaborador (usadas no Meu Desempenho até haver `goals`). */
   monthlyGoals?: Record<string, number>;
+  /** Presença informada pelo próprio usuário na top bar (telas operacionais). */
+  presence?: UserPresence;
+  presenceUpdatedAt?: string;
 }
+
+export const USER_PRESENCES = ["online", "ausente", "ocupado"] as const;
+export type UserPresence = (typeof USER_PRESENCES)[number];
+export const USER_PRESENCE_LABELS: Record<UserPresence, string> = { online: "Online", ausente: "Ausente", ocupado: "Ocupado" };
 
 export interface Department extends BaseEntity {
   key: DepartmentKey;

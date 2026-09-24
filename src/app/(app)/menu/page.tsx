@@ -26,7 +26,7 @@ export default async function MenuPage() {
               {section.items.map((item) => (
                 <li key={item.href}>
                   <Link href={item.href} className="flex min-h-[48px] items-center gap-3 px-4 text-sm transition-colors hover:bg-surface-hover">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-navy-50 text-navy-700">
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border-strong bg-surface-hover text-brand-fg">
                       <NavIcon name={item.icon} className="size-4" />
                     </span>
                     <span className="flex-1 truncate font-medium">{item.label}</span>

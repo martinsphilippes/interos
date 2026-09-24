@@ -163,7 +163,7 @@ function KanbanColumn({ status, tasks, onOpen }: { status: TaskStatus; tasks: Ta
         <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{tasks.length}</span>
       </header>
       <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-        <div className="flex min-h-[120px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-380px)] md:overflow-y-auto md:scrollbar-thin">
+        <div className="flex min-h-[120px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-380px)] md:overflow-y-auto md:scrollbar-thin [&>*]:shrink-0">
           {tasks.map((task) => (
             <SortableCard key={task.id} task={task} onOpen={onOpen} />
           ))}

@@ -5,8 +5,9 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis
 import type { ImplementationStatus } from "@/domain/types";
 import { formatCompetence } from "@/lib/format";
 import { IMPLEMENTATION_STATUS_LABELS } from "@/components/clients/labels";
+import { chartAxisTick, chartCursor, chartTooltipClassName } from "@/lib/chart-theme";
 
-const AXIS = { fontSize: 11, fill: "var(--color-muted)" } as const;
+const AXIS = chartAxisTick;
 
 /** Cor por status: semântica (verde concluído/pronto, âmbar aguardando, vermelho bloqueado, azul em processo). */
 const STATUS_COLOR: Record<ImplementationStatus, string> = {
@@ -22,7 +23,7 @@ const STATUS_COLOR: Record<ImplementationStatus, string> = {
 function ChartTooltip({ active, title, rows }: { active?: boolean; title?: string; rows: { label: string; value: string; color?: string }[] }) {
   if (!active || !title) return null;
   return (
-    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-pop">
+    <div className={chartTooltipClassName}>
       <p className="mb-1 font-semibold text-foreground">{title}</p>
       {rows.map((r) => (
         <p key={r.label} className="flex items-center justify-between gap-4 text-muted">
@@ -76,11 +77,11 @@ export function ProjectsByStatusChart({ data }: { data: { status: Implementation
       <div className="h-[240px] w-full" role="img" aria-label="Projetos de implantação por status">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 4 }} barCategoryGap="25%">
-            <CartesianGrid horizontal={false} stroke="var(--color-border)" />
+            <CartesianGrid horizontal={false} stroke="var(--color-chart-grid)" />
             <XAxis type="number" allowDecimals={false} tick={AXIS} axisLine={false} tickLine={false} />
             <YAxis type="category" dataKey="label" tick={AXIS} axisLine={false} tickLine={false} width={128} />
             <Tooltip
-              cursor={{ fill: "var(--color-surface-hover)" }}
+              cursor={chartCursor}
               content={({ active, payload }) => {
                 const d = payload?.[0]?.payload as (typeof rows)[number] | undefined;
                 return <ChartTooltip active={active} title={d?.label} rows={d ? [{ label: "Projetos", value: String(d.count), color: STATUS_COLOR[d.status] }] : []} />;
@@ -119,11 +120,11 @@ export function GoLivesByMonthChart({ data }: { data: { month: string; total: nu
       <div className="h-[216px] w-full" role="img" aria-label="Go-lives por mês nos últimos 6 meses">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 4 }} barCategoryGap="30%">
-            <CartesianGrid vertical={false} stroke="var(--color-border)" />
+            <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" />
             <XAxis dataKey="label" tick={AXIS} axisLine={false} tickLine={false} />
             <YAxis allowDecimals={false} tick={AXIS} axisLine={false} tickLine={false} width={28} />
             <Tooltip
-              cursor={{ fill: "var(--color-surface-hover)" }}
+              cursor={chartCursor}
               content={({ active, payload }) => {
                 const d = payload?.[0]?.payload as (typeof rows)[number] | undefined;
                 return (

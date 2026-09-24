@@ -81,14 +81,14 @@ export default async function CheckpointsPage({ searchParams }: { searchParams: 
           </Button>
           <h2 className="ml-1 text-base font-semibold capitalize">{periodLabel}</h2>
         </div>
-        <div className="inline-flex items-center gap-0.5 self-start rounded-lg bg-surface-hover p-0.5" role="radiogroup" aria-label="Visão">
+        <div className="inline-flex items-center gap-0.5 self-start rounded-lg border border-border bg-surface-muted p-0.5" role="radiogroup" aria-label="Visão">
           {(["semana", "mes"] as const).map((v) => (
             <Link
               key={v}
               href={link({ visao: v, ref: 0 })}
               role="radio"
               aria-checked={agenda.view === v}
-              className={cn("inline-flex h-8 items-center rounded-md px-3 text-[13px] font-medium", agenda.view === v ? "bg-surface text-foreground shadow-card" : "text-muted hover:text-foreground")}
+              className={cn("inline-flex h-8 items-center rounded-md px-3 text-[13px] font-medium", agenda.view === v ? "bg-brand text-white shadow-brand" : "text-muted hover:bg-surface-hover hover:text-foreground")}
             >
               {v === "semana" ? "Semana" : "Mês"}
             </Link>

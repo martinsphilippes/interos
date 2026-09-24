@@ -3,19 +3,19 @@
 import * as React from "react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatPercent } from "@/lib/format";
+import { chartAxisTick, chartCursor, chartTooltipClassName } from "@/lib/chart-theme";
 
 /*
- * Paleta validada (scripts/validate_palette.js do guia de dataviz, modo claro): ciano #0891b2 e laranja
- * #e8590c passam banda de luminosidade, croma, separação para daltonismo (ΔE ≥ 19) e contraste ≥ 3:1.
- * Um único eixo por gráfico; a meta é uma linha de referência tracejada em tinta neutra.
+ * Duas séries do tema escuro (src/lib/chart-theme.ts): azul-petróleo (1ª resposta) e laranja (solução),
+ * separáveis também para daltonismo. Um único eixo por gráfico; a meta é uma linha tracejada em tinta neutra.
  */
-const SERIES = { response: "#0891b2", resolution: "#e8590c" } as const;
-const AXIS = { fontSize: 11, fill: "var(--color-muted)" } as const;
+const SERIES = { response: "var(--color-secondary)", resolution: "var(--color-brand)" } as const;
+const AXIS = chartAxisTick;
 
 function ChartTooltip({ active, title, rows }: { active?: boolean; title?: string; rows: { label: string; value: string; color?: string }[] }) {
   if (!active || !title) return null;
   return (
-    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-pop">
+    <div className={chartTooltipClassName}>
       <p className="mb-1 font-semibold text-foreground">{title}</p>
       {rows.map((r) => (
         <p key={r.label} className="flex items-center justify-between gap-4 text-muted">
@@ -100,7 +100,7 @@ export function SlaTrendChart({ data, target }: { data: SlaTrendPoint[]; target:
       <div className="h-[240px] w-full" role="img" aria-label="Cumprimento de SLA de primeira resposta e de solução por mês">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 4, left: -8 }}>
-            <CartesianGrid vertical={false} stroke="var(--color-border)" />
+            <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" />
             <XAxis dataKey="label" tick={AXIS} axisLine={false} tickLine={false} />
             <YAxis domain={[0, 100]} tick={AXIS} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={44} />
             <ReferenceLine y={target * 100} stroke="var(--color-muted)" strokeDasharray="4 4" />
@@ -151,12 +151,12 @@ export function CsatTrendChart({ data, target }: { data: { label: string; averag
       <div className="h-[220px] w-full" role="img" aria-label="CSAT médio por mês">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} margin={{ top: 8, right: 12, bottom: 4, left: -16 }} barCategoryGap="30%">
-            <CartesianGrid vertical={false} stroke="var(--color-border)" />
+            <CartesianGrid vertical={false} stroke="var(--color-chart-grid)" />
             <XAxis dataKey="label" tick={AXIS} axisLine={false} tickLine={false} />
             <YAxis domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tick={AXIS} axisLine={false} tickLine={false} width={36} />
             <ReferenceLine y={target} stroke="var(--color-muted)" strokeDasharray="4 4" />
             <Tooltip
-              cursor={{ fill: "var(--color-surface-hover)" }}
+              cursor={chartCursor}
               content={({ active, payload }) => {
                 const p = payload?.[0]?.payload as (typeof rows)[number] | undefined;
                 return <ChartTooltip active={active} title={p?.label} rows={p ? [{ label: "CSAT médio", value: fmt(p.average), color: SERIES.response }, { label: "Avaliações", value: String(p.count) }] : []} />;

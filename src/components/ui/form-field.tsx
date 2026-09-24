@@ -26,7 +26,7 @@ export function FormField({ label, htmlFor, required, error, hint, className, ch
       <div className="flex flex-col gap-1.5">
         {children}
         {error ? (
-          <p className="text-xs text-danger" role="alert">
+          <p className="text-xs text-danger-fg" role="alert">
             {error}
           </p>
         ) : hint ? (

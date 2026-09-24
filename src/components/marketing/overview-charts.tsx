@@ -7,15 +7,13 @@ import { BarChart3 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatNumber } from "@/lib/format";
+import { CHART_COLORS, chartActiveDot, chartAxisTick, chartCategoryTick, chartCursor, chartLegendStyle, chartTooltipItemStyle, chartTooltipLabelStyle, chartTooltipStyle } from "@/lib/chart-theme";
 import { TEMPERATURE_COLORS, type MarketingOverview } from "./marketing-model";
 
-/* Paleta de dados validada (slots 1 e 2) e tinta de eixos/grade recessiva. */
-const SERIES_1 = "#2a78d6";
-const SERIES_2 = "#eb6834";
-const AXIS = "#64748b";
-const GRID = "#e2e8f0";
-
-const tooltipStyle: React.CSSProperties = { borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12, boxShadow: "0 4px 16px -2px rgb(15 23 42 / 0.12)" };
+/* Séries e tinta de eixos/grade do tema escuro (src/lib/chart-theme.ts). */
+const SERIES_1 = CHART_COLORS.secondary;
+const SERIES_2 = CHART_COLORS.primary;
+const GRID = CHART_COLORS.grid;
 
 /** Recharts entrega o item clicado com os campos do dado e/ou em `payload`, conforme o tipo de gráfico. */
 function goTo(router: ReturnType<typeof useRouter>, entry: unknown) {
@@ -44,11 +42,11 @@ function RankingBars({ data, height }: { data: { name: string; leads: number; hr
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} layout="vertical" margin={{ top: 0, right: 36, bottom: 0, left: 0 }} barCategoryGap={6}>
           <CartesianGrid horizontal={false} stroke={GRID} />
-          <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 12, fill: "#0f172a" }} axisLine={false} tickLine={false} interval={0} />
-          <Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={tooltipStyle} formatter={(value) => [formatNumber(Number(value)), "Leads"]} />
+          <XAxis type="number" allowDecimals={false} tick={chartAxisTick} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="name" width={150} tick={chartCategoryTick} axisLine={false} tickLine={false} interval={0} />
+          <Tooltip cursor={chartCursor} contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} formatter={(value) => [formatNumber(Number(value)), "Leads"]} />
           <Bar dataKey="leads" name="Leads" fill={SERIES_1} radius={[0, 4, 4, 0]} maxBarSize={22} className="cursor-pointer" onClick={(entry) => goTo(router, entry)}>
-            <LabelList dataKey="leads" position="right" style={{ fontSize: 12, fill: "#0f172a" }} />
+            <LabelList dataKey="leads" position="right" style={{ fontSize: 12, fill: "var(--color-foreground)" }} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -81,12 +79,12 @@ export function TemperatureDonut({ data }: { data: MarketingOverview["byTemperat
         <div className="relative h-[180px] w-[180px] shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={data} dataKey="leads" nameKey="name" innerRadius={56} outerRadius={84} paddingAngle={2} stroke="#fff" strokeWidth={2} className="cursor-pointer" onClick={(entry) => goTo(router, entry)}>
+              <Pie data={data} dataKey="leads" nameKey="name" innerRadius={56} outerRadius={84} paddingAngle={2} stroke="var(--color-surface)" strokeWidth={2} className="cursor-pointer" onClick={(entry) => goTo(router, entry)}>
                 {data.map((d) => (
                   <Cell key={d.key} fill={TEMPERATURE_COLORS[d.key]} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [formatNumber(Number(value)), String(name)]} />
+              <Tooltip contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} formatter={(value, name) => [formatNumber(Number(value)), String(name)]} />
             </PieChart>
           </ResponsiveContainer>
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -119,12 +117,12 @@ export function EvolutionChart({ data, bucket }: { data: MarketingOverview["evol
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -16 }}>
             <CartesianGrid vertical={false} stroke={GRID} />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: AXIS }} axisLine={{ stroke: GRID }} tickLine={false} minTickGap={16} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: AXIS }} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [formatNumber(Number(value)), String(name)]} />
-            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-            <Line type="monotone" dataKey="leads" name="Leads" stroke={SERIES_1} strokeWidth={2} dot={false} activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }} />
-            <Line type="monotone" dataKey="mqls" name="MQLs" stroke={SERIES_2} strokeWidth={2} dot={false} activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }} />
+            <XAxis dataKey="label" tick={chartAxisTick} axisLine={{ stroke: GRID }} tickLine={false} minTickGap={16} />
+            <YAxis allowDecimals={false} tick={chartAxisTick} axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} formatter={(value, name) => [formatNumber(Number(value)), String(name)]} />
+            <Legend iconType="circle" iconSize={8} wrapperStyle={chartLegendStyle} />
+            <Line type="monotone" dataKey="leads" name="Leads" stroke={SERIES_1} strokeWidth={2} dot={false} activeDot={chartActiveDot(SERIES_1)} />
+            <Line type="monotone" dataKey="mqls" name="MQLs" stroke={SERIES_2} strokeWidth={2} dot={false} activeDot={chartActiveDot(SERIES_2)} />
           </LineChart>
         </ResponsiveContainer>
       </div>

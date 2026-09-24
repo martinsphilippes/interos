@@ -209,13 +209,47 @@ export const NAVIGATION: NavSection[] = [
   },
 ];
 
-/** Itens da barra inferior no celular (máximo 5). */
+/**
+ * Itens da barra inferior no celular. São 4 links; o botão central "+" (ações rápidas, QUICK_ACTIONS)
+ * é inserido pelo MobileNav entre o 2º e o 3º item: Início · Tarefas · [+] · Clientes · Mais.
+ */
 export const MOBILE_NAV: NavItem[] = [
-  { label: "Meu Dia", href: "/meu-dia", icon: "Sun" },
+  { label: "Início", href: "/meu-dia", icon: "Home" },
   { label: "Tarefas", href: "/tarefas", icon: "CheckSquare" },
-  { label: "Clientes", href: "/clientes", icon: "Building2" },
-  { label: "Workflow", href: "/workflow", icon: "GitBranch" },
+  { label: "Clientes", href: "/clientes", icon: "Users" },
   { label: "Mais", href: "/menu", icon: "Menu" },
+];
+
+export type QuickAction = {
+  key: string;
+  label: string;
+  description: string;
+  /** Rota que abre o formulário de criação (contrato de URL do módulo). */
+  href: string;
+  /** Nome do ícone lucide-react. */
+  icon: string;
+  /** Módulo exigido (MODULE_ACCESS). */
+  module: keyof typeof MODULE_ACCESS;
+  /** Restringe a papéis específicos dentro do módulo (admin sempre vê). Ausente = todos com acesso ao módulo. */
+  roles?: readonly RoleKey[];
+};
+
+/** Ações rápidas do botão "+" (mobile), filtradas por papel no servidor. */
+export const QUICK_ACTIONS: QuickAction[] = [
+  { key: "tarefa", label: "Nova tarefa", description: "Crie e atribua uma tarefa", href: "/tarefas?novo=1", icon: "CheckSquare", module: "operacao" },
+  { key: "lead", label: "Novo lead", description: "Cadastre um lead captado", href: "/marketing/leads?novo=1", icon: "UserPlus", module: "marketing" },
+  {
+    key: "oportunidade",
+    label: "Nova oportunidade",
+    description: "Abra uma negociação",
+    href: "/vendas/oportunidades?novo=1",
+    icon: "Target",
+    module: "vendas",
+    roles: ["diretoria", "gestor", "vendas", "cs"],
+  },
+  { key: "chamado", label: "Novo chamado", description: "Registre um atendimento", href: "/suporte/chamados?novo=1", icon: "Ticket", module: "suporte" },
+  { key: "visita", label: "Registrar visita", description: "Agende ou registre uma visita", href: "/vendas/visitas?nova=1", icon: "MapPin", module: "vendas", roles: ["diretoria", "gestor", "vendas"] },
+  { key: "cliente", label: "Novo cliente", description: "Cadastre uma empresa", href: "/clientes/novo", icon: "Building2", module: "operacao" },
 ];
 
 export const TASK_STATUS = ["aberta", "em_andamento", "aguardando", "concluida", "cancelada"] as const;

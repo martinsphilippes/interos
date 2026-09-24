@@ -160,7 +160,7 @@ export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProp
                       </div>
                     </TableCell>
                     <TableCell className="max-w-[280px]">
-                      <button type="button" onClick={() => setDrawer({ mode: "edit", id: p.id })} className="block min-w-0 text-left">
+                      <button type="button" onClick={() => setDrawer({ mode: "edit", id: p.id })} className="block w-full min-w-0 max-w-[280px] text-left">
                         <span className="block truncate font-medium text-foreground">{p.name}</span>
                         {p.description ? <span className="block truncate text-xs text-muted">{p.description}</span> : null}
                       </button>

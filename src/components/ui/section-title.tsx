@@ -18,7 +18,7 @@ export function SectionTitle({ title, description, count, actions, className, as
       <div className="min-w-0">
         <Tag className="flex items-center gap-2 text-base font-semibold leading-tight tracking-tight text-foreground">
           {title}
-          {count !== undefined ? <span className="rounded-full bg-surface-hover px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{count}</span> : null}
+          {count !== undefined ? <span className="rounded-md border border-border bg-surface-hover px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{count}</span> : null}
         </Tag>
         {description ? <p className="mt-0.5 text-sm text-muted">{description}</p> : null}
       </div>

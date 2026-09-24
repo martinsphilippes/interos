@@ -196,7 +196,7 @@ export function TemplateEditor({ template, versions, instances, slaRuleKeys }: T
                 <div className="flex items-center gap-2 px-3 py-2">
                   <button type="button" onClick={() => toggleOpen(stage.key)} className="flex min-h-[40px] min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={expanded}>
                     {expanded ? <ChevronDown className="size-4 shrink-0 text-muted" /> : <ChevronRight className="size-4 shrink-0 text-muted" />}
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-navy-900 text-[11px] font-semibold text-white">{index + 1}</span>
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-brand/40 bg-brand-soft text-[11px] font-semibold text-brand-fg">{index + 1}</span>
                     <span className="truncate text-sm font-medium">{stage.name}</span>
                     <span className="hidden truncate text-xs text-muted sm:inline">
                       {DEPARTMENT_LABELS[stage.department]} · gate {stage.gate.name} · {stage.gate.requiredFields.length} campos · {stage.gate.checklist.length} itens · {stage.autoTasks.length} tarefas

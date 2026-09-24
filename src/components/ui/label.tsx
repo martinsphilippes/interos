@@ -15,7 +15,7 @@ export const Label = React.forwardRef<React.ComponentRef<typeof LabelPrimitive.R
     {...props}
   >
     {children}
-    {required ? <span className="ml-0.5 text-danger" aria-hidden>*</span> : null}
+    {required ? <span className="ml-0.5 text-danger-fg" aria-hidden>*</span> : null}
   </LabelPrimitive.Root>
 ));
 Label.displayName = "Label";

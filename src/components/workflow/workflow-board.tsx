@@ -146,7 +146,7 @@ function KanbanView({ board, filteredIds, currentUserId, onOpen }: { board: Work
                   <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold tabular-nums text-muted">{items.length}</span>
                 </div>
               </header>
-              <div className="flex max-h-[calc(100dvh-380px)] min-h-[120px] flex-col gap-2 overflow-y-auto px-2 pb-2 scrollbar-thin">
+              <div className="flex max-h-[calc(100dvh-380px)] min-h-[120px] flex-col gap-2 overflow-y-auto px-2 pb-2 scrollbar-thin [&>*]:shrink-0">
                 {items.length === 0 ? <p className="px-2 py-6 text-center text-xs text-muted-light">Nenhuma jornada nesta etapa</p> : items.map((item) => <StepCard key={item.id} item={item} currentUserId={currentUserId} onOpen={onOpen} />)}
               </div>
             </li>

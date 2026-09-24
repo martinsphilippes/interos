@@ -24,7 +24,7 @@ function ScopeToggle({ scope, teamSize }: { scope: MeuDiaData["scope"]; teamSize
     { value: "equipe", label: "Minha equipe", icon: <Users />, href: "/meu-dia?escopo=equipe" },
   ];
   return (
-    <div role="radiogroup" aria-label="Escopo do Meu Dia" className="inline-flex items-center gap-0.5 rounded-lg bg-surface-hover p-0.5">
+    <div role="radiogroup" aria-label="Escopo do Meu Dia" className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-muted p-0.5">
       {options.map((opt) => {
         const active = opt.value === scope;
         return (
@@ -35,7 +35,7 @@ function ScopeToggle({ scope, teamSize }: { scope: MeuDiaData["scope"]; teamSize
             aria-checked={active}
             className={cn(
               "inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-medium transition-colors [&_svg]:size-4",
-              active ? "bg-surface text-foreground shadow-card" : "text-muted hover:text-foreground",
+              active ? "bg-brand text-white shadow-brand" : "text-muted hover:bg-surface-hover hover:text-foreground",
             )}
           >
             {opt.icon}

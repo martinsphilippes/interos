@@ -130,7 +130,7 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
                 className="w-auto min-w-[160px]"
                 options={detail.stages.map((s) => ({ value: s.key, label: s.label }))}
               />
-              <Button size="sm" className="min-h-[44px] bg-success hover:bg-success-fg md:min-h-0" onClick={() => setDialog("ganho")}>
+              <Button size="sm" className="min-h-[44px] bg-success-strong hover:bg-success-hover md:min-h-0" onClick={() => setDialog("ganho")}>
                 <Trophy /> Marcar como ganho
               </Button>
               <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setDialog("perdido")}>

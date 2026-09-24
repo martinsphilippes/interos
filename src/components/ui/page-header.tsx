@@ -43,10 +43,10 @@ export function PageHeader({ title, description, breadcrumbs, actions, children,
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="truncate text-xl font-semibold leading-tight tracking-tight text-foreground md:text-2xl">{title}</h1>
+            <h1 className="truncate text-[22px] font-semibold leading-tight tracking-tight text-foreground md:text-[28px] md:leading-9">{title}</h1>
             {badge}
           </div>
-          {description ? <p className="mt-1 text-sm text-muted">{description}</p> : null}
+          {description ? <p className="mt-1 text-sm text-muted md:text-[15px]">{description}</p> : null}
         </div>
         {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
       </div>

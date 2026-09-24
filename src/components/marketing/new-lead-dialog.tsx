@@ -12,6 +12,7 @@ import { checkLeadDuplicates, createLeadAction } from "@/server/marketing/action
 import type { LeadDuplicate } from "@/server/marketing/service";
 import { LeadFormFields, emptyLeadForm, leadFormPayload, type LeadFormState } from "./lead-form-fields";
 import { LEAD_STATUS_LABELS, TEMPERATURE_LABELS, type MarketingOptions } from "./marketing-model";
+import { useUrlFlag } from "@/lib/use-url-flag";
 
 interface DuplicateState {
   leads: LeadDuplicate[];
@@ -19,7 +20,7 @@ interface DuplicateState {
 }
 
 /** "Novo lead" com detecção de duplicidade em tempo real (telefone, e-mail e empresa). */
-export function NewLeadDialog({ options, currentUserId }: { options: MarketingOptions; currentUserId: string }) {
+export function NewLeadDialog({ options, currentUserId, openOnUrlFlag }: { options: MarketingOptions; currentUserId: string; /** Abre com ?novo=1 (ações rápidas). */ openOnUrlFlag?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const defaultOwner = options.users.some((u) => u.id === currentUserId && u.departmentId === "marketing") ? currentUserId : "";
@@ -29,6 +30,18 @@ export function NewLeadDialog({ options, currentUserId }: { options: MarketingOp
   const [pending, startTransition] = React.useTransition();
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestId = React.useRef(0);
+  // Ações rápidas: ?novo=1 abre o formulário (ajuste de estado durante a renderização, sem effect).
+  const flag = useUrlFlag("novo");
+  const urlOpen = Boolean(openOnUrlFlag) && flag.active;
+  const [urlSeen, setUrlSeen] = React.useState(false);
+  if (urlOpen !== urlSeen) {
+    setUrlSeen(urlOpen);
+    if (urlOpen) setOpen(true);
+  }
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    if (!next && urlOpen) flag.clear();
+  };
 
   const scheduleCheck = (next: LeadFormState) => {
     if (timer.current) clearTimeout(timer.current);
@@ -85,7 +98,7 @@ export function NewLeadDialog({ options, currentUserId }: { options: MarketingOp
       <Button onClick={() => setOpen(true)}>
         <Plus /> Novo lead
       </Button>
-      <Dialog open={open} onOpenChange={(v) => !pending && setOpen(v)}>
+      <Dialog open={open} onOpenChange={(v) => !pending && changeOpen(v)}>
         <DialogContent size="lg">
           <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
             <DialogHeader>
@@ -132,7 +145,7 @@ export function NewLeadDialog({ options, currentUserId }: { options: MarketingOp
               <LeadFormFields value={form} onChange={change} options={options} idPrefix="new-lead" />
             </DialogBody>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)} disabled={pending}>
+              <Button variant="outline" onClick={() => changeOpen(false)} disabled={pending}>
                 Cancelar
               </Button>
               <Button type="submit" loading={pending}>

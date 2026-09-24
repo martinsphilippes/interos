@@ -158,7 +158,7 @@ function Column({ id, label, rows, onOpen }: { id: string; label: string; rows: 
           {formatCurrency(monthly)}/mês · {formatCurrency(setup)} adesão
         </p>
       </header>
-      <div className="flex min-h-[140px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-330px)] md:overflow-y-auto md:scrollbar-thin">
+      <div className="flex min-h-[140px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-330px)] md:overflow-y-auto md:scrollbar-thin [&>*]:shrink-0">
         {rows.map((r) => (
           <DraggableCard key={r.id} row={r} onOpen={onOpen} />
         ))}

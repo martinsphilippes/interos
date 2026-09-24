@@ -123,7 +123,7 @@ function Column({ status, leads, onOpen }: { status: LeadStatus; leads: LeadList
         <h3 className="text-sm font-semibold">{LEAD_STATUS_LABELS[status]}</h3>
         <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{leads.length}</span>
       </header>
-      <div className="flex min-h-[120px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-360px)] md:overflow-y-auto md:scrollbar-thin">
+      <div className="flex min-h-[120px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-360px)] md:overflow-y-auto md:scrollbar-thin [&>*]:shrink-0">
         {leads.map((lead) => (
           <DraggableCard key={lead.id} lead={lead} onOpen={onOpen} />
         ))}

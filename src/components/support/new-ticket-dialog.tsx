@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { formatSlaHours } from "./format";
+import { useUrlFlag } from "@/lib/use-url-flag";
 
 export type NewTicketOptions = Pick<SupportOptions, "clients" | "products" | "team" | "categories" | "slaRules">;
 
@@ -36,6 +37,8 @@ export interface NewTicketDialogProps {
   trigger?: React.ReactNode;
   /** Após criar, abre a página do chamado (padrão: só atualiza a tela). */
   openAfterCreate?: boolean;
+  /** Abre com ?novo=1 (ações rápidas). */
+  openOnUrlFlag?: boolean;
 }
 
 interface ClientContext {
@@ -57,7 +60,7 @@ const PRIORITY_TONE: Record<TicketPriority, string> = {
 };
 
 /** Botão + diálogo de novo chamado (Central, Chamados e ficha do cliente). */
-export function NewTicketDialog({ options, fixedClient, trigger, openAfterCreate }: NewTicketDialogProps) {
+export function NewTicketDialog({ options, fixedClient, trigger, openAfterCreate, openOnUrlFlag }: NewTicketDialogProps) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [pending, startTransition] = React.useTransition();
@@ -76,6 +79,14 @@ export function NewTicketDialog({ options, fixedClient, trigger, openAfterCreate
   const [category, setCategory] = React.useState("");
   const [assigneeId, setAssigneeId] = React.useState("");
   const id = React.useId();
+  // Ações rápidas: ?novo=1 abre o formulário (ajuste de estado durante a renderização, sem effect).
+  const flag = useUrlFlag("novo");
+  const urlOpen = Boolean(openOnUrlFlag) && flag.active;
+  const [urlSeen, setUrlSeen] = React.useState(false);
+  if (urlOpen !== urlSeen) {
+    setUrlSeen(urlOpen);
+    if (urlOpen) setOpen(true);
+  }
 
   const clientName = fixedClient?.name ?? options.clients.find((c) => c.id === clientId)?.name;
   const matches = React.useMemo(() => {
@@ -152,6 +163,7 @@ export function NewTicketDialog({ options, fixedClient, trigger, openAfterCreate
       });
       setOpen(false);
       reset();
+      if (urlOpen) flag.clear();
       if (openAfterCreate) router.push(`/suporte/chamados/${result.data.id}`);
       else router.refresh();
     });
@@ -167,6 +179,7 @@ export function NewTicketDialog({ options, fixedClient, trigger, openAfterCreate
       onOpenChange={(next) => {
         if (pending) return;
         setOpen(next);
+        if (!next && urlOpen) flag.clear();
         if (next && fixedClient && !context) loadContext(fixedClient.id);
       }}
     >

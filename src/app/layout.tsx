@@ -39,7 +39,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0B1F3A",
+  themeColor: "#060d1a",
+  colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -47,16 +48,17 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html lang="pt-BR" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`} style={{ colorScheme: "dark" }}>
       <body className="min-h-full flex flex-col bg-canvas text-foreground">
         {children}
         <Toaster
+          theme="dark"
           position="top-right"
           richColors
           closeButton
           toastOptions={{
             classNames: {
-              toast: "font-sans text-sm rounded-lg border border-border shadow-pop",
+              toast: "font-sans text-sm rounded-lg border border-border-strong shadow-pop",
             },
           }}
         />
