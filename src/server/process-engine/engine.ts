@@ -112,7 +112,7 @@ async function emitProcessEvent(run: ProcessRun, kind: string, actor: UserRef, t
 }
 
 function runHref(run: Pick<ProcessRun, "id" | "definitionId">): string {
-  return `/admin/workflows/processos/${run.definitionId}/execucoes?run=${run.id}`;
+  return `/admin/workflows/execucoes/${run.id}`;
 }
 
 async function loadClient(clientId: string | undefined): Promise<Client | null> {

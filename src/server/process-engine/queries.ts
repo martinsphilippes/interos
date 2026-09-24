@@ -6,8 +6,8 @@ import { getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { COLLECTIONS, type Client, type SlaInstance, type SlaView, type Task, type User } from "@/domain/types";
 import type { DepartmentKey, RoleKey } from "@/domain/constants";
-import type { ProcessDefinition, ProcessDefinitionStatus, ProcessRun, ProcessRunStatus } from "@/domain/workflow-graph";
-import { getDefinition, listDefinitions, listRuns } from "./store";
+import { parseProcessTaskId, type ProcessDefinition, type ProcessDefinitionStatus, type ProcessRun, type ProcessRunStatus } from "@/domain/workflow-graph";
+import { getDefinition, getRun, listDefinitions, listRuns } from "./store";
 
 export interface ProcessSummary {
   key: string;
@@ -179,5 +179,41 @@ export async function getRunsPageData(definitionId: string, runId?: string): Pro
       .filter((c) => c.status !== "cancelado")
       .map((c) => ({ id: c.id, name: c.tradeName }))
       .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+  };
+}
+
+export interface ProcessTaskContext {
+  runId: string;
+  nodeId: string;
+  definitionName: string;
+  /** A conclusão pede Sim/Não (tarefa com resultado ou aprovação). */
+  needsOutcome: boolean;
+  isApproval: boolean;
+  /** Pergunta a exibir ("Cliente homologou?"). */
+  question?: string;
+  /** Rota da execução (admin). */
+  runHref: string;
+}
+
+/**
+ * Contexto de processo de uma tarefa (para o drawer de tarefas pedir Sim/Não e chamar completeProcessTask).
+ * Devolve null para tarefas que não são etapa pendente de um processo.
+ */
+export async function getProcessTaskContext(task: Pick<Task, "id" | "processType" | "processId">): Promise<ProcessTaskContext | null> {
+  const ref = task.processType === "workflow" ? parseProcessTaskId(task.processId) : null;
+  if (!ref) return null;
+  const run = await getRun(ref.runId);
+  const pending = run?.pending[ref.nodeId];
+  if (!run || !pending || pending.taskId !== task.id) return null;
+  const def = await getDefinition(run.definitionId);
+  const node = def?.nodes.find((n) => n.id === ref.nodeId);
+  return {
+    runId: run.id,
+    nodeId: ref.nodeId,
+    definitionName: run.definitionName,
+    needsOutcome: Boolean(pending.needsOutcome),
+    isApproval: pending.kind === "aprovacao",
+    question: node?.type === "tarefa" ? node.data.outcomeQuestion || node.data.label : node?.type === "aprovacao" ? `${node.data.label}: aprovar?` : undefined,
+    runHref: `/admin/workflows/execucoes/${run.id}`,
   };
 }
