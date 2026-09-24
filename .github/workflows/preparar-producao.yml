@@ -61,7 +61,11 @@ jobs:
           printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
 
+      # A service account padrão do Firebase Admin não tem serviceusage.services.get, que o firebase-tools
+      # consulta antes do deploy. Sem esse papel o passo falha sem afetar o app (o Admin SDK ignora as regras
+      # e um banco em modo produção já nega o acesso do navegador); conceda "Service Usage Consumer" para ativá-lo.
       - name: Publicar regras e índices do Firestore
+        continue-on-error: true
         run: npx --yes firebase-tools@latest deploy --only firestore:rules,firestore:indexes --project interos-crm --non-interactive
 
       - name: Recriar dados de demonstração
