@@ -141,6 +141,7 @@ export async function createUser(input: unknown): Promise<ActionResult<{ id: str
           phone: data.phone,
           active: true,
           monthlyGoals: Object.keys(data.monthlyGoals).length > 0 ? data.monthlyGoals : undefined,
+          baseSalary: data.baseSalary,
           createdBy: user.id,
         },
         authUser.uid,
@@ -176,6 +177,7 @@ const USER_TRACKED_FIELDS: { key: keyof User; label: string }[] = [
   { key: "jobTitle", label: "cargo" },
   { key: "phone", label: "telefone" },
   { key: "active", label: "ativo" },
+  { key: "baseSalary", label: "salário base" },
 ];
 
 export async function updateUser(input: unknown): Promise<ActionResult<{ id: string }>> {
@@ -198,6 +200,7 @@ export async function updateUser(input: unknown): Promise<ActionResult<{ id: str
       phone: data.phone,
       active: data.active,
       monthlyGoals: Object.keys(data.monthlyGoals).length > 0 ? data.monthlyGoals : undefined,
+      baseSalary: data.baseSalary,
     };
     const changed = USER_TRACKED_FIELDS.filter(({ key }) => (current[key] ?? "") !== (patch[key] ?? "")).map((f) => f.label);
     if (JSON.stringify(current.monthlyGoals ?? {}) !== JSON.stringify(patch.monthlyGoals ?? {})) changed.push("metas mensais");

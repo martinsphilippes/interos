@@ -3,6 +3,8 @@
  *
  * Uso: npm run seed (emuladores, via .env.local) ou npm run seed:prod (FIREBASE_SERVICE_ACCOUNT_JSON).
  * Idempotente: limpa todas as coleções da organização e recria os usuários do Auth.
+ * Roda com `--conditions=react-server`: o seed usa o registro de fórmulas e os motores de KPIs e bônus
+ * (módulos server-only) para gerar definições, snapshots e o fechamento do bônus coerentes com os dados.
  */
 import "./seed/quiet";
 import { COLLECTIONS, type CollectionName, type SlaInstance } from "../src/domain/types";
@@ -19,6 +21,7 @@ import { seedSupport } from "./seed/journey-support";
 import { seedWorkflowAndTasks } from "./seed/journey-workflow";
 import { seedEventsAndNotifications } from "./seed/journey-events";
 import { seedPerformance } from "./seed/journey-performance";
+import { seedDerived } from "./seed/derived";
 
 function elapsed(from: number): string {
   return `${((Date.now() - from) / 1000).toFixed(1)}s`;
@@ -70,6 +73,12 @@ async function main(): Promise<void> {
     summary.push([name, count]);
     console.log(`  ${name.padEnd(26)} ${String(count).padStart(5)}`);
   }
+  // 5. Derivados calculados pelos motores sobre os dados gravados.
+  const tDerived = Date.now();
+  const derived = await seedDerived();
+  total += derived.snapshots + derived.bonus;
+  console.log(`  ${"kpi_snapshots (motor)".padEnd(26)} ${String(derived.snapshots).padStart(5)}  (${derived.skipped} sem valor)`);
+  console.log(`  ${"bonus_results (motor)".padEnd(26)} ${String(derived.bonus).padStart(5)}  (${elapsed(tDerived)})`);
   console.log(`\nResumo: ${total} documentos em ${summary.length} coleções — tempo total ${elapsed(t0)}`);
   const sla = slaSummary(ctx);
   console.log(`SLA ativos: ${sla.total} — ${sla.breached} violados, ${sla.atRisk} em risco (${Math.round(((sla.breached + sla.atRisk) / sla.total) * 100)}% violados ou em risco)`);

@@ -10,10 +10,10 @@ import { searchGlobalQuery, type SearchResponse } from "./queries";
 const termSchema = z.string({ message: "Termo inválido" }).trim().min(2, "Digite pelo menos 2 caracteres").max(80, "Termo muito longo");
 
 export async function searchGlobal(term: unknown): Promise<ActionResult<SearchResponse>> {
-  await requireUser();
+  const user = await requireUser();
   try {
     const value = termSchema.parse(term);
-    return { ok: true, data: await searchGlobalQuery(value) };
+    return { ok: true, data: await searchGlobalQuery(value, { admin: user.role === "admin" }) };
   } catch (error) {
     if (error instanceof z.ZodError) return { ok: false, error: error.issues.map((i) => i.message).join(" · ") };
     console.error("[search]", error);

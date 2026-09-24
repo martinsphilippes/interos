@@ -182,9 +182,9 @@ export interface CommissionSummary {
 
 /** Chaves de meta aceitas em `goals.kpiKey` para cada tipo de receita. */
 const GOAL_KEYS: Record<RevenueType, string[]> = {
-  setup: ["setup", "vendas_setup", "meta_setup"],
-  recorrencia: ["recorrencia", "vendas_recorrencia", "meta_recorrencia"],
-  hardware: ["hardware", "vendas_hardware", "meta_hardware"],
+  setup: ["setup_vendido", "setup", "vendas_setup", "meta_setup"],
+  recorrencia: ["recorrencia_vendida", "recorrencia", "vendas_recorrencia", "meta_recorrencia"],
+  hardware: ["hardware_vendido", "hardware", "vendas_hardware", "meta_hardware"],
 };
 
 function previousCompetences(comp: string, count: number): string[] {

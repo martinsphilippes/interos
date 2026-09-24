@@ -16,7 +16,7 @@ import {
   type Training,
 } from "../../src/domain/types";
 import type { HealthLevel } from "../../src/domain/constants";
-import { NOW, addDays, businessTime, daysAgo, daysFromNow, id, pastOnly, rng, type SeedDoc } from "./lib";
+import { NOW, addDays, businessTime, competence, dayInCompetence, daysAgo, daysFromNow, id, pastOnly, rng, type SeedDoc } from "./lib";
 import { clientById, type SeedContext, type SeededClient } from "./context";
 
 // ---------------------------------------------------------------------------
@@ -308,6 +308,34 @@ function seedCs(ctx: SeedContext): void {
       status: r.status,
       notes: r.status === "em_negociacao" ? "Cliente pediu desconto na mensalidade para renovar por mais 12 meses." : undefined,
       createdAt: pastOnly(addDays(dueDate, -75)),
+    } satisfies SeedDoc<Renewal>);
+  });
+
+  // Renovações já decididas (mês atual e anterior): base do KPI "Taxa de renovação".
+  const decided: { client: SeededClient | undefined; monthOffset: number; day: number; status: Renewal["status"]; result: string }[] = [
+    { client: actives[1], monthOffset: 0, day: 5, status: "renovado", result: "Renovado por 12 meses com reajuste de 5%." },
+    { client: actives[2], monthOffset: 0, day: 12, status: "renovado", result: "Renovado por 12 meses sem reajuste." },
+    { client: actives[3], monthOffset: -1, day: 8, status: "renovado", result: "Renovado por 24 meses com desconto de fidelidade." },
+    { client: actives[5], monthOffset: -1, day: 19, status: "renovado", result: "Renovado por 12 meses." },
+    { client: actives[6], monthOffset: -1, day: 26, status: "perdido", result: "Cliente migrou o módulo de ponto para concorrente; ERP segue ativo em contrato mensal." },
+  ];
+  decided.forEach((r, i) => {
+    if (!r.client) return;
+    const contract = ctx.contracts.find((c) => c.clientId === r.client!.doc.id);
+    if (!contract) return;
+    const decidedAt = pastOnly(dayInCompetence(competence(r.monthOffset), r.day, 15));
+    const dueDate = addDays(decidedAt, 10);
+    store.add(COLLECTIONS.renewals, id("renewal", renewalPlan.length + i + 1), {
+      clientId: r.client.doc.id,
+      contractId: contract.id,
+      ownerId: r.client.doc.ownerCsId ?? users.felipe.id,
+      dueDate,
+      windowOpensAt: addDays(dueDate, -60),
+      risk: r.client.doc.healthLevel ?? "saudavel",
+      status: r.status,
+      result: r.result,
+      createdAt: addDays(dueDate, -75),
+      updatedAt: decidedAt,
     } satisfies SeedDoc<Renewal>);
   });
 

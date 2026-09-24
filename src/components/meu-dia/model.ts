@@ -148,6 +148,8 @@ export interface GoalItem {
   /** Fração (0.85 = 85%). */
   attainment: number | null;
   source: "snapshot" | "calculado" | "indisponivel";
+  /** Drill-down do indicador no escopo da meta (/gestao/indicadores/<kpi>?...). */
+  href?: string;
 }
 
 export interface TeamMember {

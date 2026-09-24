@@ -58,6 +58,8 @@ export const userFieldsSchema = z.object({
   jobTitle: optionalText(80),
   phone: phoneSchema,
   monthlyGoals: goalsSchema,
+  /** Salário base (R$) usado no bônus; visível só para o próprio colaborador, o gestor e o admin. */
+  baseSalary: z.number("Salário inválido").min(0, "O salário não pode ser negativo").max(1_000_000, "Salário muito alto").optional(),
 });
 
 export const createUserSchema = userFieldsSchema.extend({

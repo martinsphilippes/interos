@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { CalendarClock, CircleDollarSign, Handshake, RefreshCw, TrendingDown } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { listRenewals, type RenewalRow } from "@/server/cs/queries";
-import { maybeRunRenewalSweep } from "@/server/cs/service";
+import { runDueSweeps } from "@/server/automations/lazy";
 import { RENEWAL_STATUS_LABELS, RENEWAL_STATUS_VARIANT } from "@/server/cs/schemas";
 import { formatCurrency, formatDate, formatNumber, formatRelative } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -32,12 +32,8 @@ function StatusBadge({ status }: { status: RenewalRow["status"] }) {
 export default async function RenewalsPage() {
   const user = await requireUser();
   if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
-  // Cria renovações da janela de 90 dias e emite renewal.due, no máximo 1x por dia.
-  try {
-    await maybeRunRenewalSweep();
-  } catch (error) {
-    console.error("[cs] falha na varredura diária de renovações", error);
-  }
+  // Cria renovações da janela de 90 dias e emite renewal.due pela varredura central (padrão: 1x por dia).
+  await runDueSweeps(["renovacoes"]);
   const data = await listRenewals();
   const { totals } = data;
 

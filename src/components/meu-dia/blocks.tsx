@@ -205,9 +205,15 @@ export function GoalsBlock({ items }: { items: GoalItem[] }) {
             return (
               <li key={g.id}>
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                    {g.name} <span className="text-xs font-normal text-muted">· {g.scopeLabel}</span>
-                  </span>
+                  {g.href ? (
+                    <Link href={g.href} className="min-w-0 truncate text-sm font-medium text-foreground hover:text-brand hover:underline">
+                      {g.name} <span className="text-xs font-normal text-muted">· {g.scopeLabel}</span>
+                    </Link>
+                  ) : (
+                    <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                      {g.name} <span className="text-xs font-normal text-muted">· {g.scopeLabel}</span>
+                    </span>
+                  )}
                   <span className="shrink-0 text-xs tabular-nums text-muted">
                     {g.value === null ? "Sem dados" : `${formatGoalValue(g.value, g.unit)} / ${formatGoalValue(g.target, g.unit)}`}
                   </span>

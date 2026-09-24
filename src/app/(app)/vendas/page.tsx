@@ -18,6 +18,7 @@ import { NewOpportunityButton } from "@/components/sales/new-opportunity-dialog"
 import { OpportunityDrawer } from "@/components/sales/opportunity-drawer";
 import { FunnelChart, WonHistoryChart } from "@/components/sales/sales-charts";
 import { SweepButton } from "@/components/sales/sweep-button";
+import { AgentSuggestions } from "@/components/automations/agent-suggestions";
 
 export const metadata: Metadata = { title: "Central de Vendas" };
 
@@ -162,6 +163,8 @@ export default async function CentralDeVendasPage({ searchParams }: { searchPara
           </Card>
         </div>
       </div>
+
+      {!team ? <AgentSuggestions kind="comercial" subjectId={user.id} title="Sugestões do assistente comercial" className="mb-6" /> : null}
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
         <Card>

@@ -8,8 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "seed": "tsx --env-file=.env.local scripts/seed.ts",
-    "seed:prod": "tsx --env-file=.env.production.local scripts/seed.ts",
+    "seed": "tsx --conditions=react-server --env-file=.env.local scripts/seed.ts",
+    "seed:prod": "tsx --conditions=react-server --env-file=.env.production.local scripts/seed.ts",
     "test:e2e": "tsx --env-file=.env.local scripts/e2e.ts",
     "firebase:emulators": "firebase emulators:start --only auth,firestore --project interos-crm",
     "firebase:deploy:rules": "firebase deploy --only firestore"

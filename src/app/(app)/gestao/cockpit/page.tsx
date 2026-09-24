@@ -3,7 +3,7 @@ import Link from "next/link";
 import { BarChart3, LayoutDashboard, Search } from "lucide-react";
 import { requireRole } from "@/server/auth/session";
 import { getCockpit } from "@/server/management/queries";
-import { parsePeriod, periodOptions } from "@/server/kpis/queries";
+import { currentMonthKey, parsePeriod, periodOptions } from "@/server/kpis/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { SectionTitle } from "@/components/ui/section-title";
@@ -14,6 +14,7 @@ import { KpiCard } from "@/components/kpis/kpi-card";
 import { KpiTrendChart } from "@/components/kpis/kpi-trend-chart";
 import { PeriodSelect } from "@/components/kpis/period-select";
 import { InsightList } from "@/components/insights/insight-list";
+import { AgentSuggestions } from "@/components/automations/agent-suggestions";
 import { CockpitChain, CockpitFunnel } from "@/components/management/cockpit-chain";
 
 export const metadata: Metadata = { title: "Cockpit da Diretoria" };
@@ -95,6 +96,8 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
           </CardContent>
         </Card>
       </div>
+
+      <AgentSuggestions kind="executivo" subjectId={/^\d{4}-\d{2}$/.test(period.key) ? period.key : currentMonthKey()} title="Sugestões do assistente executivo" className="mb-6" />
 
       <div className="grid gap-5 xl:grid-cols-2">
         <Card>

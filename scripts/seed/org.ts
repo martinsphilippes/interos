@@ -20,6 +20,8 @@ interface UserSpec {
   manager?: UserKey;
   jobTitle: string;
   goals?: Record<string, number>;
+  /** Salário base (R$) usado no cálculo do bônus das funções com regra de bônus. */
+  baseSalary?: number;
 }
 
 const SALES_GOALS = { setup: 10000, recorrencia: 5000, hardware: 25000 };
@@ -33,15 +35,15 @@ export const USER_SPECS: UserSpec[] = [
   { key: "luciano", name: "Luciano Bezerra", email: `luciano@${DOMAIN}`, role: "marketing", department: "marketing", manager: "mateus", jobTitle: "Analista de Marketing", goals: { leads: 120, mqls: 40 } },
   { key: "igor", name: "Igor Sampaio", email: `igor@${DOMAIN}`, role: "gestor", department: "vendas", manager: "hercules", jobTitle: "Gestor Comercial", goals: SALES_GOALS },
   { key: "vinicius", name: "Vinícius Landim", email: `vinicius@${DOMAIN}`, role: "vendas", department: "vendas", manager: "igor", jobTitle: "Consultor de Vendas", goals: SALES_GOALS },
-  { key: "karem", name: "Karem Feitosa", email: `karem@${DOMAIN}`, role: "gestor", department: "financeiro", manager: "hercules", jobTitle: "Gestora Financeira", goals: { inadimplencia: 0.04, mrr_crescimento: 0.08 } },
-  { key: "anapaula", name: "Ana Paula Macêdo", email: `anapaula@${DOMAIN}`, role: "financeiro", department: "financeiro", manager: "karem", jobTitle: "Analista Financeira", goals: { inadimplencia: 0.04 } },
-  { key: "lando", name: "Lando Tavares", email: `lando@${DOMAIN}`, role: "gestor", department: "implantacao", manager: "hercules", jobTitle: "Gestor de Implantação e Suporte", goals: { ...IMPL_GOALS, ...SUPPORT_GOALS } },
-  { key: "marcos", name: "Marcos Brito", email: `marcos@${DOMAIN}`, role: "implantacao", department: "implantacao", manager: "lando", jobTitle: "Analista de Implantação", goals: IMPL_GOALS },
-  { key: "bruno", name: "Bruno Monteiro", email: `bruno@${DOMAIN}`, role: "implantacao", department: "implantacao", manager: "lando", jobTitle: "Analista de Implantação", goals: IMPL_GOALS },
+  { key: "karem", name: "Karem Feitosa", email: `karem@${DOMAIN}`, role: "gestor", department: "financeiro", manager: "hercules", jobTitle: "Gestora Financeira", goals: { inadimplencia: 0.04, mrr_crescimento: 0.08 }, baseSalary: 5500 },
+  { key: "anapaula", name: "Ana Paula Macêdo", email: `anapaula@${DOMAIN}`, role: "financeiro", department: "financeiro", manager: "karem", jobTitle: "Analista Financeira", goals: { inadimplencia: 0.04 }, baseSalary: 3000 },
+  { key: "lando", name: "Lando Tavares", email: `lando@${DOMAIN}`, role: "gestor", department: "implantacao", manager: "hercules", jobTitle: "Gestor de Implantação e Suporte", goals: { ...IMPL_GOALS, ...SUPPORT_GOALS }, baseSalary: 5200 },
+  { key: "marcos", name: "Marcos Brito", email: `marcos@${DOMAIN}`, role: "implantacao", department: "implantacao", manager: "lando", jobTitle: "Analista de Implantação", goals: IMPL_GOALS, baseSalary: 3200 },
+  { key: "bruno", name: "Bruno Monteiro", email: `bruno@${DOMAIN}`, role: "implantacao", department: "implantacao", manager: "lando", jobTitle: "Analista de Implantação", goals: IMPL_GOALS, baseSalary: 3200 },
   { key: "felipe", name: "Felipe Araújo", email: `felipe@${DOMAIN}`, role: "gestor", department: "cs", manager: "hercules", jobTitle: "Gestor de Customer Success", goals: { saude_cliente: 85, taxa_renovacao: 0.9 } },
   { key: "camila", name: "Camila Ribeiro", email: `camila@${DOMAIN}`, role: "cs", department: "cs", manager: "felipe", jobTitle: "Analista de Customer Success", goals: { saude_cliente: 85, taxa_renovacao: 0.9 } },
-  { key: "rafael", name: "Rafael Nascimento", email: `rafael@${DOMAIN}`, role: "suporte", department: "suporte", manager: "lando", jobTitle: "Analista de Suporte N1", goals: SUPPORT_GOALS },
-  { key: "larissa", name: "Larissa Cavalcante", email: `larissa@${DOMAIN}`, role: "suporte", department: "suporte", manager: "lando", jobTitle: "Analista de Suporte N2", goals: SUPPORT_GOALS },
+  { key: "rafael", name: "Rafael Nascimento", email: `rafael@${DOMAIN}`, role: "suporte", department: "suporte", manager: "lando", jobTitle: "Analista de Suporte N1", goals: SUPPORT_GOALS, baseSalary: 2800 },
+  { key: "larissa", name: "Larissa Cavalcante", email: `larissa@${DOMAIN}`, role: "suporte", department: "suporte", manager: "lando", jobTitle: "Analista de Suporte N2", goals: SUPPORT_GOALS, baseSalary: 3400 },
 ];
 
 const DEPARTMENTS: { key: DepartmentKey; name: string; manager: UserKey; color: string; description: string }[] = [
@@ -92,6 +94,7 @@ export async function seedOrg(ctx: SeedContext): Promise<void> {
       phone: `8899${String(100000 + USER_SPECS.indexOf(spec) * 7351).slice(0, 6)}`,
       active: true,
       monthlyGoals: spec.goals,
+      baseSalary: spec.baseSalary,
       createdAt,
     } satisfies SeedDoc<User>);
     users[spec.key] = doc;

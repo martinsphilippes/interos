@@ -54,6 +54,7 @@ interface FormState {
   phone: string;
   active: boolean;
   goals: KeyValueRow[];
+  baseSalary: string;
 }
 
 /** Chaves de meta já usadas por outros usuários (sugestões reais, não fixas). */
@@ -78,6 +79,7 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
     phone: user.phone ?? "",
     active: user.active !== false,
     goals: recordToRows(user.monthlyGoals),
+    baseSalary: user.baseSalary === undefined || user.baseSalary === null ? "" : String(user.baseSalary),
   });
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
   const isSelf = user.id === currentUserId;
@@ -105,6 +107,11 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
       setError(goals.error);
       return;
     }
+    const salary = form.baseSalary.trim() === "" ? undefined : Number(form.baseSalary.replace(",", "."));
+    if (salary !== undefined && (!Number.isFinite(salary) || salary < 0)) {
+      setError("Salário base inválido");
+      return;
+    }
     const input: UpdateUserInput = {
       id: user.id,
       name: form.name,
@@ -115,6 +122,7 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
       phone: form.phone || undefined,
       active: form.active,
       monthlyGoals: goals.value,
+      baseSalary: salary,
     };
     startTransition(async () => {
       const result = await updateUser(input);
@@ -188,6 +196,9 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
             </FormField>
             <FormField label="Telefone" htmlFor="ud-phone" hint="DDD + número, só dígitos.">
               <Input id="ud-phone" value={form.phone} onChange={(e) => set("phone", e.target.value)} inputMode="tel" placeholder="88999990000" disabled={readOnly} />
+            </FormField>
+            <FormField label="Salário base (R$)" htmlFor="ud-salary" hint="Base do bônus. Visível só para o colaborador, o gestor e o admin.">
+              <Input id="ud-salary" value={form.baseSalary} onChange={(e) => set("baseSalary", e.target.value)} inputMode="decimal" placeholder="Ex.: 3200" disabled={readOnly} />
             </FormField>
             <div className="flex items-end">
               <Switch

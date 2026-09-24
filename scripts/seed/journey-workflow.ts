@@ -388,9 +388,17 @@ function seedSla(ctx: SeedContext): void {
 
   // Etapas de workflow em andamento (a etapa de suporte é contínua e não tem SLA).
   for (const step of ctx.steps) {
-    if (step.status === "concluida") continue;
     const stage = ctx.workflowTemplate.stages.find((s) => s.key === step.stageKey)!;
     if (!stage.slaRuleKey) continue;
+    if (step.status === "concluida") {
+      // Etapas concluídas guardam o prazo que tinham (base do KPI "SLA do workflow cumprido").
+      const rule = rules.get(stage.slaRuleKey);
+      if (rule && step.startedAt) {
+        const startDate = new Date(step.startedAt);
+        step.dueAt = (rule.businessHoursOnly ? addBusinessHours(startDate, rule.resolutionHours, ctx.holidays) : new Date(startDate.getTime() + rule.resolutionHours * 3_600_000)).toISOString();
+      }
+      continue;
+    }
     const sla = start({
       ruleKey: stage.slaRuleKey,
       entityType: "workflow_step",

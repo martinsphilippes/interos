@@ -69,7 +69,7 @@ export const MODULE_ACCESS: Record<string, readonly RoleKey[] | "all"> = {
 };
 
 /** Onda de entrega atual: itens com `wave` até este número já têm tela pronta. */
-export const CURRENT_WAVE = 3;
+export const CURRENT_WAVE = 5;
 
 export type NavItem = {
   label: string;

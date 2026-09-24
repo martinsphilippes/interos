@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight, HeartPulse, Settings } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getHealthDetail, getHealthOverview } from "@/server/cs/queries";
-import { maybeRunHealthSweep } from "@/server/cs/service";
+import { runDueSweeps } from "@/server/automations/lazy";
 import { HEALTH_FACTORS, HEALTH_LEVEL_LABELS } from "@/server/cs/schemas";
 import { HEALTH_LEVELS, type HealthLevel } from "@/domain/constants";
 import { formatCurrency, formatPercent, formatRelative } from "@/lib/format";
@@ -31,12 +31,8 @@ export default async function HealthPage({ searchParams }: { searchParams: Searc
   const user = await requireUser();
   if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
   const params = await searchParams;
-  // Recálculo automático da carteira no máximo 1x por dia.
-  try {
-    await maybeRunHealthSweep();
-  } catch (error) {
-    console.error("[cs] falha na varredura diária de saúde", error);
-  }
+  // Recálculo automático da carteira pela varredura central (padrão: 1x por dia; ajustável em /admin/automacoes).
+  await runDueSweeps(["saude_clientes"]);
   const clientParam = typeof params.cliente === "string" ? params.cliente : undefined;
   const [data, detail] = await Promise.all([getHealthOverview(user, params), clientParam ? getHealthDetail(clientParam) : Promise.resolve(null)]);
   const total = HEALTH_LEVELS.reduce((s, l) => s + data.distribution[l].count, 0);

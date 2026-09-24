@@ -9,7 +9,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
-import { Bell, BookOpen, Building2, CheckSquare, Contact, FileSignature, FileText, GitBranch, Loader2, Route, Megaphone, Plus, Rocket, Search, Sun, Target, Ticket, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Bell, BookOpen, Building2, Gauge, Sparkles, Zap, CheckSquare, Contact, FileSignature, FileText, GitBranch, Loader2, Route, Megaphone, Plus, Rocket, Search, Sun, Target, Ticket, UserPlus, Users, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { searchGlobal } from "@/server/search/actions";
@@ -32,6 +32,10 @@ const KIND_ICONS: Record<SearchKind, LucideIcon> = {
   artigo: BookOpen,
   lead: UserPlus,
   campanha: Megaphone,
+  indicador: Activity,
+  relatorio: BarChart3,
+  desafio: Sparkles,
+  automacao: Zap,
   usuario: Users,
 };
 
@@ -41,6 +45,7 @@ const SHORTCUTS: { label: string; href: string; icon: LucideIcon; hint?: string 
   { label: "Clientes 360º", href: "/clientes", icon: Building2 },
   { label: "Workflow", href: "/workflow", icon: GitBranch },
   { label: "Notificações", href: "/notificacoes", icon: Bell },
+  { label: "Meu Desempenho", href: "/performance", icon: Gauge },
   { label: "Nova tarefa", href: "/tarefas?novo=1", icon: Plus, hint: "Criar" },
   { label: "Novo cliente", href: "/clientes/novo", icon: Plus, hint: "Criar" },
 ];

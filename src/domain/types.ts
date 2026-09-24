@@ -1111,8 +1111,17 @@ export interface WorkflowStep extends BaseEntity {
 export interface AutomationRule extends BaseEntity {
   name: string;
   description?: string;
-  trigger: { type: "evento" | "agendado"; eventType?: EventType; schedule?: string };
-  conditions: { path: string; operator: "==" | "!=" | ">" | "<" | ">=" | "<=" | "contains" | "exists"; value?: unknown }[];
+  trigger: {
+    type: "evento" | "agendado";
+    eventType?: EventType;
+    /** Frequência ("horaria" | "diaria" | "semanal"); regras antigas podem trazer expressão cron. */
+    schedule?: string;
+    /** Varredura nativa (src/server/automations/sweeps.ts) cuja frequência a regra agendada controla. */
+    sweep?: string;
+    /** Tipo de registro varrido por uma regra agendada (só registros em aberto). */
+    entity?: "opportunity" | "lead" | "task" | "ticket" | "project" | "renewal" | "client";
+  };
+  conditions: { path: string; operator: "==" | "!=" | ">" | "<" | ">=" | "<=" | "contains" | "exists" | "older_than_hours"; value?: unknown }[];
   actions: {
     type: "criar_tarefa" | "notificar" | "mudar_status" | "iniciar_sla" | "criar_handoff" | "criar_plano_sucesso" | "webhook";
     params: Record<string, unknown>;
@@ -1120,6 +1129,8 @@ export interface AutomationRule extends BaseEntity {
   active: boolean;
   runCount: number;
   lastRunAt?: string;
+  /** Última execução agendada (controle de frequência das regras agendadas). */
+  lastScheduledAt?: string;
 }
 
 export interface AutomationRun extends BaseEntity {
@@ -1129,6 +1140,21 @@ export interface AutomationRun extends BaseEntity {
   status: "sucesso" | "erro" | "ignorada";
   detail?: string;
   ranAt: string;
+  eventType?: string;
+  entityType?: string;
+  entityId?: string;
+  clientId?: string;
+  trigger?: "evento" | "agendado" | "manual";
+  actions?: {
+    type: AutomationRule["actions"][number]["type"];
+    status: "sucesso" | "ignorada" | "erro" | "simulada";
+    detail: string;
+    effect?: string;
+    clientId?: string;
+    href?: string;
+  }[];
+  conditions?: { path: string; operator: AutomationRule["conditions"][number]["operator"]; expected?: unknown; actual: unknown; ok: boolean }[];
+  depth?: number;
 }
 
 // ---------------------------------------------------------------------------

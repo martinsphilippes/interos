@@ -34,7 +34,8 @@ import type { DepartmentKey } from "@/domain/constants";
 import { effectiveProposalStatus, isOpenStage, type CommissionRuleView } from "@/components/sales/model";
 import { competenceOf, getCommissionSummary, listActiveCommissionRules, type CommissionSummary } from "./commissions";
 import { HEADQUARTERS, formatAddressLine, geocode, googleMapsSearchUrl, route } from "./maps";
-import { getLastSweep, getOpportunitySettings, getPipelineStages, maybeRunFollowupSweep, type OpportunitySettings, type PipelineStage } from "./service";
+import { getLastSweep, getOpportunitySettings, getPipelineStages, type OpportunitySettings, type PipelineStage } from "./service";
+import { runDueSweeps } from "@/server/automations/lazy";
 import { OPEN_STAGES } from "./schemas";
 
 // ---------------------------------------------------------------------------
@@ -362,15 +363,11 @@ export interface SalesOverview {
 }
 
 /**
- * Painel do vendedor/gestor. Antes de calcular, dispara a varredura de follow-up se a última
- * execução tiver mais de 1 hora (na Onda 5 isso vira automação agendada).
+ * Painel do vendedor/gestor. Antes de calcular, dispara a varredura central de follow-up
+ * (automações: frequência configurável em /admin/automacoes, padrão horária) quando está vencida.
  */
 export async function getSalesOverview(user: CurrentUser, escopo?: string): Promise<SalesOverview> {
-  try {
-    await maybeRunFollowupSweep();
-  } catch (error) {
-    console.error("[vendas] falha na varredura de follow-up", error);
-  }
+  await runDueSweeps(["followup_vendas"]);
 
   const scope = await resolveScope(user, escopo);
   const comp = currentCompetence();

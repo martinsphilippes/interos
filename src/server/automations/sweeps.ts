@@ -374,13 +374,29 @@ async function loadKpiModules(): Promise<KpiModules | null> {
   }
 }
 
-/** Fotografia do mês corrente (storeSnapshots também recalcula o mês anterior). */
+/**
+ * Fotografia do mês corrente e, nos 3 primeiros dias do mês, o fechamento do mês anterior (os indicadores
+ * de fluxo recebem os eventos das últimas horas; os de estado sem valor no passado mantêm a última fotografia,
+ * porque storeSnapshots não grava valores nulos).
+ */
 async function kpiSnapshots(now: Date): Promise<SweepOutcome> {
   const kpis = await loadKpiModules();
   if (!kpis) return { summary: "Motor de indicadores não instalado: nada a gravar", data: { available: false } };
   const key = kpis.currentMonthKey(now);
   const result = (await kpis.storeSnapshots(kpis.monthPeriod(key))) as { written?: number; skipped?: number } | undefined;
-  return { summary: `Competência ${key}: ${result?.written ?? 0} snapshot(s) gravado(s), ${result?.skipped ?? 0} sem valor`, data: { available: true, period: key, written: result?.written ?? null, skipped: result?.skipped ?? null } };
+  let closing: { period: string; written?: number } | null = null;
+  const day = Number(dateKey(now).slice(8, 10));
+  if (day <= 3) {
+    const [y, m] = key.split("-").map(Number);
+    const prev = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
+    const r = (await kpis.storeSnapshots(kpis.monthPeriod(prev))) as { written?: number } | undefined;
+    closing = { period: prev, written: r?.written };
+  }
+  const closingText = closing ? ` · fechamento de ${closing.period}: ${closing.written ?? 0} snapshot(s)` : "";
+  return {
+    summary: `Competência ${key}: ${result?.written ?? 0} snapshot(s) gravado(s), ${result?.skipped ?? 0} sem valor${closingText}`,
+    data: { available: true, period: key, written: result?.written ?? null, skipped: result?.skipped ?? null, closing },
+  };
 }
 
 // ---------------------------------------------------------------------------

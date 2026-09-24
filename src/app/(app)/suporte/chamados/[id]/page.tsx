@@ -14,6 +14,7 @@ import { OpportunityLink, TicketActions } from "@/components/support/ticket-acti
 import { TicketConversation } from "@/components/support/ticket-conversation";
 import { SuggestedArticles, TicketAttachments, TicketClassification, TicketClientCard } from "@/components/support/ticket-side-panels";
 import { ChannelIcon, QueueBadge, TicketPriorityBadge } from "@/components/support/ticket-badges";
+import { AgentSuggestions } from "@/components/automations/agent-suggestions";
 
 type Params = Promise<{ id: string }>;
 
@@ -105,6 +106,7 @@ export default async function TicketPage({ params }: { params: Params }) {
           <TicketActions detail={detail} currentUserId={user.id} canOperate={canOperate} canWriteArticles={canEditArticles(user)} articleCategories={kb.categories} />
           <OpportunityLink detail={detail} />
           <TicketClientCard detail={detail} />
+          {ticket.status !== "resolvido" && ticket.status !== "fechado" ? <AgentSuggestions kind="suporte" subjectId={ticket.id} title="Sugestões do assistente" limit={3} /> : null}
           <TicketClassification key={ticket.updatedAt} detail={detail} canOperate={canOperate} />
           <SuggestedArticles detail={detail} />
           <TicketAttachments detail={detail} canOperate={canOperate} />

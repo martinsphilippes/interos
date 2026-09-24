@@ -2,7 +2,7 @@
  * Histórico: eventos e timeline por cliente (coerentes com a jornada, chamados, oportunidades e
  * tarefas concluídas) e notificações (60) geradas a partir das entidades reais do seed.
  */
-import { COLLECTIONS, type DomainEvent, type Notification, type SlaInstance, type TimelineEvent, type User } from "../../src/domain/types";
+import { COLLECTIONS, type CsatResponse, type DomainEvent, type Notification, type SlaInstance, type TimelineEvent, type User } from "../../src/domain/types";
 import type { DepartmentKey, EventType, NotificationKind } from "../../src/domain/constants";
 import { NOW, addHours, hoursAgo, id, isPast, rng, type SeedDoc } from "./lib";
 import type { SeedContext, SeededClient } from "./context";
@@ -28,6 +28,13 @@ function firstName(u: User): string {
 
 function journeyEvents(ctx: SeedContext, client: SeededClient): EventSpec[] {
   const { users } = ctx;
+  const slaById = new Map(ctx.store.all<SlaInstance>(COLLECTIONS.slaInstances).map((s) => [s.id, s]));
+  const csatByTicket = new Map<string, CsatResponse[]>();
+  for (const r of ctx.store.all<CsatResponse>(COLLECTIONS.csatResponses)) csatByTicket.set(r.ticketId, [...(csatByTicket.get(r.ticketId) ?? []), r]);
+  const withinSla = (slaId: string | undefined) => {
+    const sla = slaId ? slaById.get(slaId) : undefined;
+    return sla ? !sla.breachedAt && (!sla.completedAt || sla.completedAt <= sla.dueAt) : undefined;
+  };
   const j = client.journey;
   const c = client.doc;
   const marketing = users[Number(c.id.slice(-3)) % 2 === 0 ? "luciano" : "mateus"];
@@ -50,15 +57,19 @@ function journeyEvents(ctx: SeedContext, client: SeededClient): EventSpec[] {
   push("workflow.started", j.leadAt, marketing, "Jornada do cliente iniciada", { entity: c.workflowInstanceId ? { type: "workflow_instance", id: c.workflowInstanceId } : undefined, department: "marketing" });
   push("lead.qualified", j.qualifiedAt, marketing, `Lead qualificado (MQL) por ${firstName(marketing)}`, { entity: lead ? { type: "lead", id: lead.id } : undefined, department: "marketing" });
   push("opportunity.created", j.opportunityAt, seller, `Oportunidade criada por ${firstName(seller)}`, { entity: opp ? { type: "opportunity", id: opp.id } : undefined, department: "vendas", payload: opp ? { monthlyTotal: opp.monthlyTotal } : undefined });
-  push("proposal.sent", j.proposalAt, seller, `Proposta enviada por ${firstName(seller)}`, { entity: proposal ? { type: "proposal", id: proposal.id } : undefined, department: "vendas" });
-  push("opportunity.won", j.wonAt, seller, `Negócio ganho: ${c.tradeName}`, { entity: opp ? { type: "opportunity", id: opp.id } : undefined, department: "vendas", payload: opp ? { setupTotal: opp.setupTotal, monthlyTotal: opp.monthlyTotal } : undefined });
+  push("proposal.sent", j.proposalAt, seller, `Proposta enviada por ${firstName(seller)}`, { entity: proposal ? { type: "proposal", id: proposal.id } : undefined, department: "vendas", payload: { ownerId: seller.id } });
+  push("opportunity.won", j.wonAt, seller, `Negócio ganho: ${c.tradeName}`, { entity: opp ? { type: "opportunity", id: opp.id } : undefined, department: "vendas", payload: opp ? { setupTotal: opp.setupTotal, monthlyTotal: opp.monthlyTotal, ownerId: opp.ownerId } : undefined });
   push("contract.created", j.contractAt, users.karem, `Contrato ${contract?.number ?? ""} gerado`.trim(), { entity: contract ? { type: "contract", id: contract.id } : undefined, department: "financeiro" });
   push("contract.signed", contract?.signedAt, users.karem, `Contrato ${contract?.number ?? ""} assinado`.trim(), { entity: contract ? { type: "contract", id: contract.id } : undefined, department: "financeiro" });
   push("payment.approved", j.paidAt, users.anapaula, "Pagamento da adesão confirmado", { entity: contract ? { type: "contract", id: contract.id } : undefined, department: "financeiro" });
   push("financial.released", j.releasedAt, users.karem, `Cliente liberado para implantação por ${firstName(users.karem)}`, { entity: contract ? { type: "contract", id: contract.id } : undefined, department: "financeiro" });
   push("implementation.started", j.implementationStartAt, implementer, `Implantação iniciada por ${firstName(implementer)}`, { entity: project ? { type: "project", id: project.id } : undefined, department: "implantacao" });
   push("implementation.training.completed", j.trainingAt, implementer, "Treinamento da equipe do cliente concluído", { entity: project ? { type: "project", id: project.id } : undefined, department: "implantacao" });
-  push("implementation.go_live", j.goLiveAt, implementer, `Go-live realizado com aceite de ${client.contacts[0].name}`, { entity: project ? { type: "project", id: project.id } : undefined, department: "implantacao" });
+  push("implementation.go_live", j.goLiveAt, implementer, `Go-live realizado com aceite de ${client.contacts[0].name}`, {
+    entity: project ? { type: "project", id: project.id } : undefined,
+    department: "implantacao",
+    payload: project ? { projectId: project.id, startDate: project.startDate, dueDate: project.dueDate, goLiveAt: j.goLiveAt, onTime: Boolean(j.goLiveAt && project.dueDate && j.goLiveAt <= project.dueDate) } : undefined,
+  });
   push("customer.activated", j.activatedAt, csOwner, `Cliente ativado por ${firstName(csOwner)}`, { entity: { type: "client", id: c.id }, department: "cs" });
   push("churn.registered", j.cancelledAt, csOwner, "Cancelamento registrado", { entity: { type: "client", id: c.id }, department: "cs" });
 
@@ -71,7 +82,11 @@ function journeyEvents(ctx: SeedContext, client: SeededClient): EventSpec[] {
   for (const t of ctx.tickets.filter((x) => x.clientId === c.id)) {
     const actor = userById(ctx, t.assigneeId, users.rafael);
     push("support.ticket.created", t.openedAt, actor, `Chamado ${t.number} aberto: ${t.subject}`, { entity: { type: "ticket", id: t.id }, department: "suporte", payload: { priority: t.priority } });
-    push("support.ticket.resolved", t.resolvedAt, actor, `Chamado ${t.number} resolvido por ${firstName(actor)}`, { entity: { type: "ticket", id: t.id }, department: "suporte", payload: { rootCause: t.rootCause } });
+    push("support.ticket.resolved", t.resolvedAt, actor, `Chamado ${t.number} resolvido por ${firstName(actor)}`, { entity: { type: "ticket", id: t.id }, department: "suporte", payload: { number: t.number, rootCause: t.rootCause, assigneeId: t.assigneeId, withinSla: withinSla(t.slaInstanceId) } });
+    for (const r of csatByTicket.get(t.id) ?? []) {
+      const attendant = userById(ctx, r.attendantId, actor);
+      push("support.csat.received", r.respondedAt, attendant, `Avaliação CSAT ${r.score} no chamado ${t.number}`, { entity: { type: "ticket", id: t.id }, department: "suporte", payload: { ticketId: t.id, score: r.score, attendantId: r.attendantId, csatId: r.id } });
+    }
     if (t.reopenedFromId) push("support.ticket.reopened", t.openedAt, actor, `Chamado ${t.number} reaberto`, { entity: { type: "ticket", id: t.id }, department: "suporte" });
   }
   // Upsell / cross-sell.

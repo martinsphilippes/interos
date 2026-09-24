@@ -22,11 +22,15 @@ import {
   type KnowledgeArticle,
   type Task,
   type User,
+  type Kpi,
+  type GamificationCampaign,
+  type AutomationRule,
 } from "@/domain/types";
+import { REPORT_DEFINITIONS } from "@/server/reports/definitions";
 import { CLIENT_STATUS_LABELS, DEPARTMENT_LABELS, ROLE_LABELS, TASK_STATUS_LABELS } from "@/domain/constants";
 import { formatCurrency, formatDocument } from "@/lib/format";
 
-export const SEARCH_KINDS = ["cliente", "contato", "tarefa", "oportunidade", "proposta", "contrato", "implantacao", "plano", "chamado", "artigo", "lead", "campanha", "usuario"] as const;
+export const SEARCH_KINDS = ["cliente", "contato", "tarefa", "oportunidade", "proposta", "contrato", "implantacao", "plano", "chamado", "artigo", "lead", "campanha", "indicador", "relatorio", "desafio", "automacao", "usuario"] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
 
 export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
@@ -42,6 +46,10 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   artigo: "Base de conhecimento",
   lead: "Leads",
   campanha: "Campanhas",
+  indicador: "Indicadores",
+  relatorio: "Relatórios",
+  desafio: "Campanhas de gamificação",
+  automacao: "Automações",
   usuario: "Usuários",
 };
 
@@ -183,6 +191,9 @@ interface Loaded {
   leads: Lead[];
   campaigns: Campaign[];
   users: User[];
+  kpis: Kpi[];
+  challenges: GamificationCampaign[];
+  automations: AutomationRule[];
 }
 
 let cache: { loadedAt: number; data: Loaded } | null = null;
@@ -196,7 +207,7 @@ async function recent<T extends BaseEntity>(name: CollectionName, where?: [strin
 
 async function loadAll(): Promise<Loaded> {
   if (cache && Date.now() - cache.loadedAt < CACHE_TTL_MS) return cache.data;
-  const [clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, plans, articles, leads, campaigns, users] = await Promise.all([
+  const [clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, plans, articles, leads, campaigns, users, kpis, challenges, automations] = await Promise.all([
     recent<Client>(COLLECTIONS.clients),
     recent<Contact>(COLLECTIONS.contacts),
     recent<Task>(COLLECTIONS.tasks),
@@ -210,8 +221,11 @@ async function loadAll(): Promise<Loaded> {
     recent<Lead>(COLLECTIONS.leads),
     recent<Campaign>(COLLECTIONS.campaigns),
     recent<User>(COLLECTIONS.users, ["active", "==", true]),
+    recent<Kpi>(COLLECTIONS.kpis, ["active", "==", true]),
+    recent<GamificationCampaign>(COLLECTIONS.gamificationCampaigns),
+    recent<AutomationRule>(COLLECTIONS.automationRules),
   ]);
-  const data = { clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, plans, articles, leads, campaigns, users };
+  const data = { clients, contacts, tasks, opportunities, proposals, contracts, projects, tickets, plans, articles, leads, campaigns, users, kpis, challenges, automations };
   cache = { loadedAt: Date.now(), data };
   return data;
 }
@@ -225,7 +239,8 @@ export function invalidateSearchCache(): void {
 // Busca
 // ---------------------------------------------------------------------------
 
-export async function searchGlobalQuery(rawTerm: string): Promise<SearchResponse> {
+/** `admin` libera os resultados de telas só do administrador (automações). */
+export async function searchGlobalQuery(rawTerm: string, viewer: { admin?: boolean } = {}): Promise<SearchResponse> {
   const term = normalizeText(rawTerm);
   const termDigits = digitsOf(rawTerm);
   if (term.length < 2) return { term: rawTerm, total: 0, groups: [] };
@@ -285,6 +300,24 @@ export async function searchGlobalQuery(rawTerm: string): Promise<SearchResponse
   for (const c of data.campaigns) {
     const score = matchScore(term, termDigits, [c.name, c.channel]);
     add("campanha", c, score, c.name, `/marketing/campanhas?campanha=${c.id}`, [CAMPAIGN_STATUS_LABELS[c.status], c.channel].filter(Boolean).join(" · "));
+  }
+  for (const k of data.kpis) {
+    const score = matchScore(term, termDigits, [k.name, k.key.replace(/_/g, " "), k.description]);
+    add("indicador", k, score, k.name, `/gestao/indicadores/${k.key}`, k.department === "empresa" ? "Empresa" : DEPARTMENT_LABELS[k.department]);
+  }
+  for (const r of Object.values(REPORT_DEFINITIONS)) {
+    const score = matchScore(term, termDigits, [r.title, `relatório ${r.title}`, r.description]);
+    if (score > 0) results.push({ id: `relatorio_${r.key}`, kind: "relatorio", title: `Relatório: ${r.title}`, subtitle: r.description, href: `/gestao/relatorios?tipo=${r.key}`, score, createdAt: "" });
+  }
+  for (const c of data.challenges) {
+    const score = matchScore(term, termDigits, [c.name, c.description]);
+    add("desafio", c, score, c.name, "/performance/campanhas", [c.status === "ativa" ? "Ativa" : c.status === "planejada" ? "Planejada" : "Encerrada", c.prize].filter(Boolean).join(" · "));
+  }
+  if (viewer.admin) {
+    for (const a of data.automations) {
+      const score = matchScore(term, termDigits, [a.name, a.description]);
+      add("automacao", a, score, a.name, `/admin/automacoes/${a.id}`, a.active ? "Ativa" : "Inativa");
+    }
   }
   for (const u of data.users) {
     const score = matchScore(term, termDigits, [u.name, u.email, u.jobTitle], [u.phone]);

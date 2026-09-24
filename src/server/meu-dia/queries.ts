@@ -20,8 +20,6 @@ import {
   type CurrentUser,
   type Goal,
   type ImplementationProject,
-  type Kpi,
-  type KpiSnapshot,
   type Lead,
   type Opportunity,
   type Renewal,
@@ -37,6 +35,7 @@ import {
 } from "@/domain/types";
 import { DEPARTMENT_LABELS, PRIORITY_WEIGHT, type DepartmentKey, type Priority } from "@/domain/constants";
 import { formatCurrency } from "@/lib/format";
+import { computeKpiBatch, kpiHref, monthPeriod, type KpiResult } from "@/server/kpis/queries";
 import type {
   AgendaItem,
   AttentionClient,
@@ -244,16 +243,13 @@ const OPEN_TICKET_STATUS = new Set<SupportTicket["status"]>(["aberto", "em_atend
 const OPEN_OPP_STAGE = (stage: Opportunity["stage"]) => stage !== "ganho" && stage !== "perdido";
 const OPEN_LEAD_STATUS = new Set<Lead["status"]>(["novo", "em_contato"]);
 
-/** KPIs com fórmula bruta quando não existe snapshot na competência. */
-const RAW_FORMULAS = new Set(["novas_vendas", "ticket_medio", "chamados_resolvidos", "tarefas_concluidas"]);
-
+/**
+ * Metas do mês com o valor calculado pelo motor de indicadores (mesmo número do Meu Desempenho, do
+ * Dashboard do Gestor e do drill-down): uma única carga para todos os escopos das metas.
+ */
 async function computeGoals(user: CurrentUser, scopeInfo: ScopeInfo, month: string): Promise<GoalItem[]> {
   const memberIds = new Set(scopeInfo.members.map((u) => u.id));
-  const [goals, kpis, snapshots] = await Promise.all([
-    list<Goal>(COLLECTIONS.goals, { where: [["period", "==", month]] }),
-    list<Kpi>(COLLECTIONS.kpis),
-    list<KpiSnapshot>(COLLECTIONS.kpiSnapshots, { where: [["period", "==", month]] }),
-  ]);
+  const goals = await list<Goal>(COLLECTIONS.goals, { where: [["period", "==", month]] });
   // No modo equipe, as metas dos departamentos representados na equipe também entram.
   const teamDepartments = new Set(scopeInfo.scope === "equipe" ? scopeInfo.members.map((u) => u.departmentId) : []);
   const relevant = goals.filter((g) => {
@@ -263,44 +259,20 @@ async function computeGoals(user: CurrentUser, scopeInfo: ScopeInfo, month: stri
   });
   if (relevant.length === 0) return [];
 
-  const kpiByKey = new Map(kpis.map((k) => [k.key, k]));
-  const snapshotFor = (g: Goal) => snapshots.find((s) => s.kpiKey === g.kpiKey && s.scope === g.scope && (s.scopeId ?? "") === (g.scopeId ?? ""));
-
-  // Fórmulas brutas só são carregadas quando alguma meta precisa delas.
-  const needsRaw = relevant.filter((g) => !snapshotFor(g) && RAW_FORMULAS.has(g.kpiKey));
-  const rawKeys = new Set(needsRaw.map((g) => g.kpiKey));
-  const [wonOpps, closedTickets, doneTasks] = await Promise.all([
-    rawKeys.has("novas_vendas") || rawKeys.has("ticket_medio") ? list<Opportunity>(COLLECTIONS.opportunities, { where: [["stage", "==", "ganho"]] }) : Promise.resolve([] as Opportunity[]),
-    rawKeys.has("chamados_resolvidos") ? list<SupportTicket>(COLLECTIONS.supportTickets, { where: [["status", "in", ["resolvido", "fechado"]]] }) : Promise.resolve([] as SupportTicket[]),
-    rawKeys.has("tarefas_concluidas") ? list<Task>(COLLECTIONS.tasks, { where: [["status", "==", "concluida"]] }) : Promise.resolve([] as Task[]),
-  ]);
-
-  /** Usuários cobertos por uma meta: o próprio, o departamento ou a empresa. */
-  const ownersOf = (g: Goal): Set<string> | null => {
-    if (g.scope === "usuario") return new Set(g.scopeId ? [g.scopeId] : []);
-    if (g.scope === "departamento") return new Set(scopeInfo.allUsers.filter((u) => u.departmentId === g.scopeId).map((u) => u.id));
-    return null; // empresa: todos
-  };
-  const inMonth = (iso: string | undefined) => Boolean(iso && dayKey(iso).startsWith(month));
-
-  const rawValue = (g: Goal): number | null => {
-    const owners = ownersOf(g);
-    const belongs = (id: string | undefined) => owners === null || (Boolean(id) && owners.has(id as string));
-    switch (g.kpiKey) {
-      case "novas_vendas":
-        return wonOpps.filter((o) => belongs(o.ownerId) && inMonth(o.wonAt)).length;
-      case "ticket_medio": {
-        const sales = wonOpps.filter((o) => belongs(o.ownerId) && inMonth(o.wonAt));
-        return sales.length ? Number((sales.reduce((s, o) => s + o.monthlyTotal, 0) / sales.length).toFixed(2)) : 0;
-      }
-      case "chamados_resolvidos":
-        return closedTickets.filter((t) => belongs(t.assigneeId) && inMonth(t.resolvedAt)).length;
-      case "tarefas_concluidas":
-        return doneTasks.filter((t) => belongs(t.assigneeId) && inMonth(t.completedAt)).length;
-      default:
-        return null;
-    }
-  };
+  const period = monthPeriod(month);
+  const groups = new Map<string, { scope: Goal["scope"]; scopeId?: string; keys: string[] }>();
+  for (const g of relevant) {
+    const k = `${g.scope}|${g.scopeId ?? ""}`;
+    const group = groups.get(k) ?? { scope: g.scope, scopeId: g.scopeId, keys: [] };
+    group.keys.push(g.kpiKey);
+    groups.set(k, group);
+  }
+  const requests = Array.from(groups.values());
+  const batches = await computeKpiBatch(requests, period, { withTrend: false, withSources: false });
+  const resultFor = new Map<string, KpiResult>();
+  requests.forEach((req, i) => {
+    for (const r of batches[i] ?? []) resultFor.set(`${req.scope}|${req.scopeId ?? ""}|${r.key}`, r);
+  });
 
   const scopeLabelOf = (g: Goal): string => {
     if (g.scope === "usuario") return scopeInfo.allUsers.find((u) => u.id === g.scopeId)?.name.split(" ")[0] ?? "Você";
@@ -309,34 +281,20 @@ async function computeGoals(user: CurrentUser, scopeInfo: ScopeInfo, month: stri
   };
 
   const items: GoalItem[] = relevant.map((g) => {
-    const kpi = kpiByKey.get(g.kpiKey);
-    const snapshot = snapshotFor(g);
-    const direction = kpi?.direction ?? "maior_melhor";
-    let value: number | null;
-    let source: GoalItem["source"];
-    if (snapshot) {
-      value = snapshot.value;
-      source = "snapshot";
-    } else {
-      value = rawValue(g);
-      source = value === null ? "indisponivel" : "calculado";
-    }
-    let attainment: number | null = null;
-    if (value !== null && g.target > 0) {
-      if (direction === "menor_melhor") attainment = value <= 0 ? 1 : Math.min(g.target / value, 9.99);
-      else attainment = value / g.target;
-    }
+    const r = resultFor.get(`${g.scope}|${g.scopeId ?? ""}|${g.kpiKey}`);
+    const value = r?.value ?? null;
     return {
       id: g.id,
       kpiKey: g.kpiKey,
-      name: kpi?.name ?? g.kpiKey,
-      unit: kpi?.unit ?? "numero",
-      direction,
+      name: r?.kpi.name ?? g.kpiKey,
+      unit: r?.kpi.unit ?? "numero",
+      direction: r?.kpi.direction ?? "maior_melhor",
       scopeLabel: scopeLabelOf(g),
       target: g.target,
       value,
-      attainment: attainment === null ? null : Number(attainment.toFixed(3)),
-      source,
+      attainment: r?.attainment === null || r?.attainment === undefined ? null : Number(r.attainment.toFixed(3)),
+      source: value === null ? "indisponivel" : "calculado",
+      href: r?.href ?? kpiHref(g.kpiKey, period, g.scope, g.scopeId),
     };
   });
   // Metas pessoais primeiro, depois departamento e empresa; dentro do grupo, maior peso.

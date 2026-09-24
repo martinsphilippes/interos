@@ -12,7 +12,6 @@ import {
   type ImplementationPhase,
   type ImplementationTemplate,
   type KnowledgeArticle,
-  type Kpi,
   type LeadSource,
   type Product,
   type Settings,
@@ -20,9 +19,11 @@ import {
   type WorkflowStage,
   type WorkflowTemplate,
 } from "../../src/domain/types";
-import type { DepartmentKey, Priority, RoleKey } from "../../src/domain/constants";
+import type { Priority, RoleKey } from "../../src/domain/constants";
 import { daysAgo, daysFromNow, type SeedDoc } from "./lib";
 import type { SeedContext } from "./context";
+import { seedKpiDefinitions } from "./kpis";
+import { DEFAULT_GAMIFICATION, DEFAULT_SALES_PRIZES } from "../../src/server/performance/schemas";
 
 const createdAt = daysAgo(400);
 
@@ -260,6 +261,8 @@ const SETTINGS: (SeedDoc<Settings> & { id: string })[] = [
   { id: "setting_oportunidade", key: "oportunidade", description: "Parâmetros de acompanhamento de oportunidades.", value: { diasSemMovimentoParaParada: 7, horasSemInteracaoFollowup: 48 } },
   { id: "setting_go_live", key: "go_live", description: "Regras de aprovação do go-live da implantação.", value: { exigeAprovacaoGestor: true } },
   { id: "setting_cs_ativacao", key: "cs_ativacao", description: "Critérios do gate de ativação do cliente pelo Customer Success.", value: { adocaoMinimaPct: 30, exigePlano: true } },
+  { id: "setting_gamificacao", key: "gamificacao", description: "Pontos por evento, multiplicadores de equivalência entre funções e níveis da gamificação.", value: { ...DEFAULT_GAMIFICATION } },
+  { id: "setting_premios_vendas", key: "premios_vendas", description: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.", value: { ...DEFAULT_SALES_PRIZES } },
 ];
 
 // ---------------------------------------------------------------------------
@@ -411,35 +414,6 @@ const JOURNEY_STAGES_SPEC: WorkflowStage[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// KPIs
-// ---------------------------------------------------------------------------
-
-type KpiSpec = Pick<Kpi, "key" | "name" | "department" | "unit" | "direction" | "weight"> & { target?: number; source?: string; description?: string };
-const KPIS: KpiSpec[] = [
-  { key: "leads_captados", name: "Leads captados", department: "marketing", unit: "numero", direction: "maior_melhor", target: 220, weight: 2, source: "leads" },
-  { key: "mqls", name: "MQLs (leads qualificados)", department: "marketing", unit: "numero", direction: "maior_melhor", target: 80, weight: 3, source: "leads" },
-  { key: "cpl", name: "Custo por lead", department: "marketing", unit: "moeda", direction: "menor_melhor", target: 25, weight: 1, source: "campaigns" },
-  { key: "conversao_mql", name: "Conversão lead → MQL", department: "marketing", unit: "percentual", direction: "maior_melhor", target: 0.35, weight: 2, source: "leads" },
-  { key: "novas_vendas", name: "Novas vendas", department: "vendas", unit: "numero", direction: "maior_melhor", target: 12, weight: 3, source: "opportunities" },
-  { key: "conversao_funil", name: "Conversão do funil", department: "vendas", unit: "percentual", direction: "maior_melhor", target: 0.2, weight: 2, source: "opportunities" },
-  { key: "ticket_medio", name: "Ticket médio", department: "vendas", unit: "moeda", direction: "maior_melhor", target: 350, weight: 1, source: "opportunities" },
-  { key: "mrr", name: "MRR", department: "empresa", unit: "moeda", direction: "maior_melhor", target: 450000, weight: 3, source: "contracts" },
-  { key: "inadimplencia", name: "Inadimplência", department: "financeiro", unit: "percentual", direction: "menor_melhor", target: 0.04, weight: 3, source: "billing" },
-  { key: "contas_receber", name: "Contas a receber", department: "financeiro", unit: "moeda", direction: "faixa", target: 60000, weight: 1, source: "billing" },
-  { key: "entregas_prazo", name: "Entregas no prazo", department: "implantacao", unit: "percentual", direction: "maior_melhor", target: 0.9, weight: 3, source: "implementation_projects" },
-  { key: "produtividade", name: "Produtividade (projetos concluídos)", department: "implantacao", unit: "numero", direction: "maior_melhor", target: 10, weight: 1, source: "implementation_projects" },
-  { key: "qualidade_implantacao", name: "Qualidade da implantação", department: "implantacao", unit: "percentual", direction: "maior_melhor", target: 0.95, weight: 2, source: "support_tickets" },
-  { key: "chamados_resolvidos", name: "Chamados resolvidos", department: "suporte", unit: "numero", direction: "maior_melhor", target: 250, weight: 1, source: "support_tickets" },
-  { key: "sla_solucao", name: "SLA de solução", department: "suporte", unit: "percentual", direction: "maior_melhor", target: 0.9, weight: 3, source: "sla_instances" },
-  { key: "sla_resposta", name: "SLA de primeira resposta", department: "suporte", unit: "percentual", direction: "maior_melhor", target: 0.95, weight: 2, source: "sla_instances" },
-  { key: "csat", name: "CSAT (0-10)", department: "suporte", unit: "numero", direction: "maior_melhor", target: 8.5, weight: 3, source: "csat_responses" },
-  { key: "reincidencia", name: "Reincidência de chamados", department: "suporte", unit: "percentual", direction: "menor_melhor", target: 0.1, weight: 1, source: "support_tickets" },
-  { key: "taxa_renovacao", name: "Taxa de renovação", department: "cs", unit: "percentual", direction: "maior_melhor", target: 0.9, weight: 2, source: "renewals" },
-  { key: "saude_cliente", name: "Saúde média da carteira", department: "cs", unit: "numero", direction: "maior_melhor", target: 85, weight: 3, source: "health_scores" },
-  { key: "churn", name: "Churn mensal", department: "empresa", unit: "percentual", direction: "menor_melhor", target: 0.03, weight: 3, source: "churn_records" },
-];
-
-// ---------------------------------------------------------------------------
 // Comissão, bônus, automações e conhecimento
 // ---------------------------------------------------------------------------
 
@@ -515,6 +489,33 @@ const BONUS_RULES: (SeedDoc<BonusRule> & { id: string })[] = [
     active: true,
     version: 1,
   },
+  {
+    id: "bonus_rule_financeiro",
+    name: "Bônus do Financeiro (até 20% do salário)",
+    department: "financeiro",
+    maxPctOfSalary: 20,
+    individualWeight: 60,
+    collectiveWeight: 40,
+    individualKpis: [
+      { kpiKey: "inadimplencia", weight: 40, target: 0.04 },
+      { kpiKey: "tempo_liberacao_dias", weight: 30, target: 2 },
+      { kpiKey: "faturamento", weight: 30, target: 35000 },
+    ],
+    collectiveKpis: [
+      { kpiKey: "mrr", weight: 40, target: 18000 },
+      { kpiKey: "crescimento_mrr", weight: 30, target: 0.08 },
+      { kpiKey: "churn", weight: 30, target: 0.03 },
+    ],
+    tiers: TIERS,
+    blockers: [
+      { key: "descumprimento_processo", label: "Descumprimento grave de processo financeiro" },
+      { key: "venda_fora_conformidade", label: "Liberação de venda fora da conformidade" },
+      { key: "churn_erro_operacional", label: "Churn causado por erro operacional do financeiro" },
+    ],
+    extras: [],
+    active: true,
+    version: 1,
+  },
 ];
 
 const AUTOMATION_RULES: (SeedDoc<AutomationRule> & { id: string })[] = [
@@ -522,7 +523,7 @@ const AUTOMATION_RULES: (SeedDoc<AutomationRule> & { id: string })[] = [
     id: "auto_followup_48h",
     name: "Follow-up de oportunidade sem interação há 48h",
     description: "Cria tarefa de follow-up para o vendedor quando uma oportunidade aberta fica 48h sem interação.",
-    trigger: { type: "agendado", schedule: "0 * * * *" },
+    trigger: { type: "agendado", schedule: "horaria", entity: "opportunity" },
     conditions: [{ path: "opportunity.stage", operator: "!=", value: "ganho" }, { path: "opportunity.hoursSinceLastActivity", operator: ">=", value: 48 }],
     actions: [{ type: "criar_tarefa", params: { title: "Follow-up da oportunidade", priority: "alta", dueInHours: 4, assignee: "opportunity.ownerId" } }, { type: "notificar", params: { kind: "acao", to: "opportunity.ownerId" } }],
     active: true,
@@ -544,7 +545,7 @@ const AUTOMATION_RULES: (SeedDoc<AutomationRule> & { id: string })[] = [
     description: "No go-live, cria a etapa de CS com tarefa de boas-vindas e notifica o gestor de CS.",
     trigger: { type: "evento", eventType: "implementation.go_live" },
     conditions: [],
-    actions: [{ type: "criar_handoff", params: { toDepartment: "cs", stageKey: "cs" } }, { type: "criar_tarefa", params: { title: "Contato de boas-vindas", priority: "alta", dueInHours: 8, department: "cs" } }],
+    actions: [{ type: "criar_handoff", params: { department: "cs" } }, { type: "criar_tarefa", params: { title: "Contato de boas-vindas", priority: "alta", dueInHours: 8, department: "cs" } }],
     active: true,
     runCount: 0,
   },
@@ -553,7 +554,7 @@ const AUTOMATION_RULES: (SeedDoc<AutomationRule> & { id: string })[] = [
     name: "Baixa adoção cria plano de sucesso",
     description: "Quando a saúde muda para risco por baixa adoção, cria um plano de sucesso automático.",
     trigger: { type: "evento", eventType: "customer.health_changed" },
-    conditions: [{ path: "payload.level", operator: "==", value: "risco" }, { path: "payload.adoptionPct", operator: "<", value: 40 }],
+    conditions: [{ path: "payload.to", operator: "==", value: "risco" }, { path: "cs.adoptionPct", operator: "<", value: 40 }],
     actions: [{ type: "criar_plano_sucesso", params: { objective: "Recuperar adoção do sistema", checkpointInDays: 15 } }, { type: "notificar", params: { kind: "atencao", to: "cs.ownerId" } }],
     active: true,
     runCount: 0,
@@ -606,41 +607,10 @@ export async function seedCatalog(ctx: SeedContext): Promise<void> {
     createdAt,
   } satisfies SeedDoc<WorkflowTemplate>);
 
-  for (const k of KPIS) {
-    store.add(COLLECTIONS.kpis, `kpi_${k.key}`, {
-      key: k.key,
-      name: k.name,
-      department: k.department,
-      description: k.description,
-      formula: k.key,
-      source: k.source ?? "events",
-      period: "mensal",
-      unit: k.unit,
-      direction: k.direction,
-      target: k.target,
-      attentionPct: 85,
-      weight: k.weight,
-      ownerId: k.department === "empresa" ? "user_hercules" : `user_${DEPT_MANAGER[k.department]}`,
-      active: true,
-      createdAt,
-    } satisfies SeedDoc<Kpi>);
-  }
+  seedKpiDefinitions(ctx, createdAt);
 
   for (const { id, ...r } of COMMISSION_RULES) store.add(COLLECTIONS.commissionRules, id, { ...r, createdAt });
   for (const { id, ...r } of BONUS_RULES) store.add(COLLECTIONS.bonusRules, id, { ...r, createdAt });
   for (const { id, ...r } of AUTOMATION_RULES) store.add(COLLECTIONS.automationRules, id, { ...r, createdAt });
   for (const { id, ...a } of ARTICLES) store.add(COLLECTIONS.knowledgeArticles, id, { ...a, createdAt: daysAgo(120) });
 }
-
-const DEPT_MANAGER: Record<DepartmentKey, string> = {
-  marketing: "mateus",
-  vendas: "igor",
-  financeiro: "karem",
-  implantacao: "lando",
-  cs: "felipe",
-  suporte: "lando",
-  administrativo: "karem",
-  diretoria: "hercules",
-};
-
-export { KPIS };

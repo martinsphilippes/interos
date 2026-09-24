@@ -5,6 +5,8 @@ import { AlarmClock, CheckCircle2, Hourglass, Inbox, Layers, MessageSquareWarnin
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getSupportOptions, getSupportOverview, type OverviewScope } from "@/server/support/queries";
 import { maybeRunSlaAlerts } from "@/server/support/service";
+import { after } from "next/server";
+import { runDueSweeps } from "@/server/automations/lazy";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
@@ -55,11 +57,14 @@ export default async function SupportCentralPage({ searchParams }: { searchParam
   const scopeParam = Array.isArray(sp.escopo) ? sp.escopo[0] : sp.escopo;
   const scope: OverviewScope | undefined = scopeParam === "minha" || scopeParam === "equipe" ? scopeParam : undefined;
 
+  // Chamados: alertas de SLA a cada 10 minutos (serviço do Suporte). Demais SLAs (tarefas, etapas, projetos):
+  // varredura central de alertas, depois da resposta para não atrasar a tela.
   try {
     await maybeRunSlaAlerts();
   } catch (error) {
     console.error("[suporte] falha na varredura de SLA", error);
   }
+  after(() => runDueSweeps(["sla_alerts"]));
   const [overview, options] = await Promise.all([getSupportOverview(user, scope), getSupportOptions(user)]);
   const { stats } = overview;
   const mine = overview.scope === "minha" ? "&atendente=meus" : "";

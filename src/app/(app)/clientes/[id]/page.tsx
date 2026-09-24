@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { requireUser } from "@/server/auth/session";
+import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getClient, getClient360, getClientFormOptions } from "@/server/clients/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { ClientHeader } from "@/components/clients/client-header";
@@ -19,6 +19,7 @@ import { getClientCs } from "@/server/cs/queries";
 import { getSupportOptions } from "@/server/support/queries";
 import { ClientCsPanel } from "@/components/cs/client-cs-panel";
 import { NewTicketDialog } from "@/components/support/new-ticket-dialog";
+import { AgentSuggestions } from "@/components/automations/agent-suggestions";
 
 type Params = Promise<{ id: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
@@ -60,7 +61,19 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
     produtos: <TabProdutos data={data} />,
     financeiro: <TabFinanceiro data={data} />,
     implantacao: <TabImplantacao data={data} />,
-    cs: <TabCs data={data} panel={csData ? <ClientCsPanel clientId={data.client.id} clientName={data.client.tradeName} data={csData} /> : null} />,
+    cs: (
+      <TabCs
+        data={data}
+        panel={
+          csData ? (
+            <div className="flex flex-col gap-4">
+              {canAccessModule(user, "cs") && data.client.status !== "cancelado" ? <AgentSuggestions kind="cs" subjectId={data.client.id} title="Sugestões do assistente de CS" limit={3} /> : null}
+              <ClientCsPanel clientId={data.client.id} clientName={data.client.tradeName} data={csData} />
+            </div>
+          ) : null
+        }
+      />
+    ),
     suporte: <TabSuporte data={data} action={supportOptions ? <NewTicketDialog options={supportOptions} fixedClient={{ id: data.client.id, name: data.client.tradeName }} /> : null} />,
     documentos: <TabDocumentos data={data} />,
     tarefas: <TabTarefas data={data} />,
