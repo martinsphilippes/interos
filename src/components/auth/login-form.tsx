@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { OAuthProvider, signInWithEmailAndPassword, signInWithPopup, signOut, type UserCredential } from "firebase/auth";
+import { OAuthProvider, signInWithCustomToken, signInWithEmailAndPassword, signInWithPopup, signOut, type UserCredential } from "firebase/auth";
 import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/button";
@@ -11,10 +11,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/form-field";
 import { AuthCard } from "./auth-card";
+import { demoSignInAction } from "@/server/auth/demo-actions";
 import { ForgotPasswordDialog } from "./forgot-password-dialog";
+import { QuickAccess, type QuickAccessUser } from "./quick-access";
 
-const DEMO_EMAIL = "hercules@intercert.com.br";
-const DEMO_PASSWORD = "interos123";
 const MICROSOFT_DISABLED = "O login com Microsoft ainda não foi habilitado pelo administrador.";
 
 /** Erro com mensagem já pronta para o usuário (resposta do /api/auth/session). */
@@ -73,18 +73,23 @@ function MicrosoftLogo() {
 
 export interface LoginFormProps {
   next?: string;
-  /** Mostra a dica de credenciais de demonstração (NEXT_PUBLIC_DEMO_MODE=true). */
-  demoMode?: boolean;
+  /** Usuários do acesso rápido (só vem preenchido com NEXT_PUBLIC_DEMO_MODE=true). */
+  quickAccessUsers?: QuickAccessUser[];
 }
 
-export function LoginForm({ next, demoMode = false }: LoginFormProps) {
+/**
+ * Formulário de login. Devolve um fragmento: o card e, em modo demonstração, o acesso rápido, que ocupa as duas
+ * colunas da grade da página (lg:col-span-2).
+ */
+export function LoginForm({ next, quickAccessUsers = [] }: LoginFormProps) {
   const router = useRouter();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [remember, setRemember] = React.useState(true);
   const [showPassword, setShowPassword] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState<"password" | "microsoft" | null>(null);
+  const [loading, setLoading] = React.useState<"password" | "microsoft" | "quick" | null>(null);
+  const [quickId, setQuickId] = React.useState<string | null>(null);
   const [forgotOpen, setForgotOpen] = React.useState(false);
 
   /** Troca o ID token por cookie de sessão; se o servidor recusar, desfaz o login no Firebase cliente. */
@@ -120,6 +125,26 @@ export function LoginForm({ next, demoMode = false }: LoginFormProps) {
     }
   };
 
+  /** Acesso rápido: preenche o e-mail e entra com token emitido pelo servidor (dispensa a senha). */
+  const handleQuickAccess = async (user: QuickAccessUser) => {
+    if (loading) return;
+    setError(null);
+    setEmail(user.email);
+    setPassword("");
+    setLoading("quick");
+    setQuickId(user.id);
+    try {
+      const result = await demoSignInAction({ userId: user.id });
+      if (!result.ok) throw new SessionError(result.error);
+      const credential = await signInWithCustomToken(getFirebaseAuth(), result.data.token);
+      await startSession(credential);
+    } catch (err) {
+      setError(errorMessage(err));
+      setLoading(null);
+      setQuickId(null);
+    }
+  };
+
   const handleMicrosoft = async () => {
     if (loading) return;
     setError(null);
@@ -136,6 +161,7 @@ export function LoginForm({ next, demoMode = false }: LoginFormProps) {
   };
 
   return (
+    <>
     <AuthCard title="Acesse sua conta" description="Entre com seus dados para continuar">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
         <FormField label="E-mail" htmlFor="email">
@@ -216,26 +242,10 @@ export function LoginForm({ next, demoMode = false }: LoginFormProps) {
         </Link>
       </div>
 
-      {demoMode ? (
-        <div className="mt-4 rounded-lg border border-border-strong bg-surface-muted px-4 py-3 text-xs text-muted">
-          <p className="font-medium text-foreground">Ambiente de demonstração</p>
-          <p className="mt-0.5">
-            {DEMO_EMAIL} / {DEMO_PASSWORD}
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setEmail(DEMO_EMAIL);
-              setPassword(DEMO_PASSWORD);
-            }}
-            className="mt-1.5 font-medium text-brand-fg hover:underline"
-          >
-            Preencher credenciais de demonstração
-          </button>
-        </div>
-      ) : null}
 
       <ForgotPasswordDialog key={forgotOpen ? "aberto" : "fechado"} open={forgotOpen} onOpenChange={setForgotOpen} initialEmail={email} />
     </AuthCard>
+    <QuickAccess users={quickAccessUsers} pendingId={quickId} disabled={loading !== null} onSelect={handleQuickAccess} className="lg:col-span-2" />
+    </>
   );
 }
