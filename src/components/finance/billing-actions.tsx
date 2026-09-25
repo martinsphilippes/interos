@@ -1,0 +1,247 @@
+"use client";
+
+import * as React from "react";
+import { Ban, CircleDollarSign, MessageCircle, MoreHorizontal, Phone } from "lucide-react";
+import type { Billing } from "@/domain/types";
+import { cancelBillingAction, getBillingContactAction, registerBillingCallAction, registerPaymentAction, sendBillingWhatsappAction } from "@/server/finance/actions";
+import type { BillingContactInfo } from "@/server/finance/service";
+import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS } from "@/server/finance/schemas";
+import { dateKey, formatCurrency, formatDate, formatPhone } from "@/lib/format";
+import { BILLING_TYPE_LABELS } from "@/components/clients/labels";
+import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { FormField } from "@/components/ui/form-field";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/toast";
+import { whatsappWithText } from "./contract-links";
+import { useFinanceAction } from "./use-finance-action";
+
+export type BillingLite = Pick<Billing, "id" | "type" | "installment" | "amount" | "dueDate" | "status"> & { clientName?: string };
+
+export function billingLabel(b: Pick<Billing, "type" | "installment">): string {
+  return `${BILLING_TYPE_LABELS[b.type]}${b.installment ? ` ${b.installment}` : ""}`;
+}
+
+/** Registrar pagamento: data, valor, forma e comprovante (link). */
+export function PaymentDialog({ billing, open, onOpenChange }: { billing: BillingLite; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const id = React.useId();
+  const [form, setForm] = React.useState(() => ({ paidAt: dateKey(new Date()), amount: String(billing.amount).replace(".", ","), method: "pix", receiptUrl: "" }));
+  const { pending, run } = useFinanceAction();
+  const amount = Number(form.amount.includes(",") ? form.amount.replace(/\./g, "").replace(",", ".") : form.amount);
+
+  const submit = async () => {
+    const ok = await run(
+      () => registerPaymentAction({ billingId: billing.id, paidAt: form.paidAt, amount, method: form.method, receiptUrl: form.receiptUrl.trim() }),
+      `Pagamento de ${formatCurrency(amount)} registrado`,
+    );
+    if (ok) onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <DialogTitle>Registrar pagamento</DialogTitle>
+          <DialogDescription>
+            {billingLabel(billing)} de {formatCurrency(billing.amount)} · vencimento {formatDate(billing.dueDate)}
+            {billing.clientName ? ` · ${billing.clientName}` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Data do pagamento" htmlFor={`${id}-d`} required>
+            <DateInput id={`${id}-d`} value={form.paidAt} onChange={(e) => setForm({ ...form, paidAt: e.target.value })} className="h-11 md:h-9" />
+          </FormField>
+          <FormField label="Valor pago (R$)" htmlFor={`${id}-v`} required error={Number.isFinite(amount) && amount > 0 ? undefined : "Informe um valor válido"}>
+            <Input id={`${id}-v`} inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="h-11 md:h-9" />
+          </FormField>
+          <FormField label="Forma de pagamento" htmlFor={`${id}-m`} required>
+            <Select id={`${id}-m`} value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} options={PAYMENT_METHODS.map((m) => ({ value: m, label: PAYMENT_METHOD_LABELS[m] }))} />
+          </FormField>
+          <FormField label="Comprovante (link)" htmlFor={`${id}-u`} hint="Opcional: URL do comprovante">
+            <Input id={`${id}-u`} type="url" placeholder="https://" value={form.receiptUrl} onChange={(e) => setForm({ ...form, receiptUrl: e.target.value })} className="h-11 md:h-9" />
+          </FormField>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending} className="h-11 md:h-9">
+            Cancelar
+          </Button>
+          <Button onClick={submit} loading={pending} disabled={!form.paidAt || !(amount > 0)} className="h-11 md:h-9">
+            Registrar pagamento
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type Mode = "pagar" | "cancelar" | "whatsapp" | "ligar" | null;
+
+/**
+ * Menu de ações de uma cobrança (pagamento, WhatsApp, ligação, cancelamento) com os diálogos.
+ * WhatsApp e ligação consultam o estado real das integrações: sem WhatsApp conectado o botão abre o wa.me
+ * com o texto pronto e registra "cobrança enviada manualmente"; sem VoIP, o tel: abre o discador e o
+ * resultado é registrado à mão.
+ */
+export function BillingActions({ billing, compact }: { billing: BillingLite; compact?: boolean }) {
+  const id = React.useId();
+  const [mode, setMode] = React.useState<Mode>(null);
+  const [text, setText] = React.useState("");
+  const [contact, setContact] = React.useState<BillingContactInfo | null>(null);
+  const [loadingContact, setLoadingContact] = React.useState(false);
+  const { pending, run } = useFinanceAction();
+  const open = billing.status === "aberta" || billing.status === "vencida";
+  if (!open) return null;
+
+  const openMode = async (m: Mode) => {
+    setText("");
+    setMode(m);
+    if (m === "whatsapp" || m === "ligar") {
+      setLoadingContact(true);
+      const result = await getBillingContactAction({ billingId: billing.id });
+      setLoadingContact(false);
+      if (!result.ok) {
+        toast.error(result.error);
+        setMode(null);
+        return;
+      }
+      setContact(result.data);
+      if (m === "whatsapp") setText(result.data.message);
+    }
+  };
+
+  const close = () => setMode(null);
+
+  const cancel = async () => {
+    if (await run(() => cancelBillingAction({ billingId: billing.id, reason: text }), "Cobrança cancelada")) close();
+  };
+  const sendWhatsapp = async () => {
+    const ok = await run(
+      () => sendBillingWhatsappAction({ billingId: billing.id, notes: text }),
+      (d) => (d.manual ? "Cobrança registrada como enviada manualmente pelo WhatsApp" : d.delivered ? "Cobrança enviada pelo WhatsApp" : "Falha no envio pelo WhatsApp (registrada)"),
+    );
+    if (ok) close();
+  };
+  const registerCall = async () => {
+    if (await run(() => registerBillingCallAction({ billingId: billing.id, notes: text }), "Ligação registrada")) close();
+  };
+
+  const whatsappManual = contact && !contact.whatsappConnected;
+  const waLink = contact?.whatsappUrl ? whatsappWithText(contact.whatsappUrl, text) : null;
+  const titles: Record<Exclude<Mode, "pagar" | null>, { title: string; label: string; placeholder: string }> = {
+    whatsapp: { title: "Cobrança por WhatsApp", label: "Mensagem", placeholder: "Mensagem com valor, vencimento e oferta de 2ª via/PIX" },
+    ligar: { title: "Ligação de cobrança", label: "Resultado da ligação", placeholder: "Ex.: cliente prometeu pagar até sexta" },
+    cancelar: { title: "Cancelar cobrança", label: "Motivo", placeholder: "Ex.: cobrança duplicada" },
+  };
+  const current = mode && mode !== "pagar" ? titles[mode] : null;
+
+  return (
+    <>
+      <div className="flex items-center justify-end gap-1">
+        {!compact ? (
+          <Button size="sm" variant="outline" className="h-10 md:h-8" onClick={() => openMode("pagar")}>
+            <CircleDollarSign /> Pagar
+          </Button>
+        ) : null}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="size-10 md:size-8" aria-label={`Ações da cobrança ${billingLabel(billing)}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => openMode("pagar")}>
+              <CircleDollarSign /> Registrar pagamento
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openMode("whatsapp")}>
+              <MessageCircle /> Cobrar por WhatsApp
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openMode("ligar")}>
+              <Phone /> Ligar
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem destructive onSelect={() => openMode("cancelar")}>
+              <Ban /> Cancelar cobrança
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {mode === "pagar" ? <PaymentDialog billing={billing} open onOpenChange={(o) => !o && close()} /> : null}
+
+      <Dialog open={current !== null} onOpenChange={(o) => !pending && !o && close()}>
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>{current?.title}</DialogTitle>
+            <DialogDescription>
+              {billingLabel(billing)} de {formatCurrency(billing.amount)} · vencimento {formatDate(billing.dueDate)}
+              {billing.clientName ? ` · ${billing.clientName}` : ""}
+              {contact && mode !== "cancelar" ? ` · ${contact.contactName}${contact.phone ? ` ${formatPhone(contact.phone)}` : ""}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="flex flex-col gap-3">
+            {mode === "whatsapp" || mode === "ligar" ? (
+              loadingContact ? (
+                <p className="text-sm text-muted">Carregando contato…</p>
+              ) : contact ? (
+                <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-xs text-muted">
+                  {mode === "whatsapp"
+                    ? contact.whatsappConnected
+                      ? "WhatsApp conectado: a mensagem é enviada pela API da Meta."
+                      : "WhatsApp não conectado · envio manual: o botão abre o WhatsApp com o texto pronto e a cobrança fica registrada como enviada manualmente."
+                    : contact.voipConnected
+                      ? "Telefonia conectada."
+                      : "Telefonia não conectada · registro manual: ligue pelo discador e registre o resultado (sem gravação)."}
+                </p>
+              ) : null
+            ) : null}
+            <FormField label={current?.label} htmlFor={`${id}-t`} required={mode === "cancelar"}>
+              <Textarea id={`${id}-t`} value={text} onChange={(e) => setText(e.target.value)} placeholder={current?.placeholder} rows={mode === "whatsapp" ? 5 : 3} />
+            </FormField>
+            {mode === "ligar" && contact?.telUrl ? (
+              <Button asChild variant="outline" className="h-11 md:h-9">
+                <a href={contact.telUrl}>
+                  <Phone /> Ligar para {formatPhone(contact.phone)}
+                </a>
+              </Button>
+            ) : null}
+            {(mode === "whatsapp" || mode === "ligar") && contact && !contact.phone ? <p className="text-xs text-danger-fg">Cliente sem telefone cadastrado.</p> : null}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={close} disabled={pending} className="h-11 md:h-9">
+              Voltar
+            </Button>
+            {mode === "cancelar" ? (
+              <Button variant="destructive" onClick={cancel} loading={pending} disabled={text.trim().length < 3} className="h-11 md:h-9">
+                Cancelar cobrança
+              </Button>
+            ) : mode === "ligar" ? (
+              <Button onClick={registerCall} loading={pending} disabled={loadingContact} className="h-11 md:h-9">
+                Registrar ligação
+              </Button>
+            ) : whatsappManual ? (
+              waLink ? (
+                <Button asChild className="h-11 md:h-9">
+                  <a href={waLink} target="_blank" rel="noreferrer" onClick={() => void sendWhatsapp()} aria-disabled={pending || !text.trim()}>
+                    <MessageCircle /> Abrir WhatsApp e registrar
+                  </a>
+                </Button>
+              ) : (
+                <Button disabled className="h-11 md:h-9">
+                  <MessageCircle /> Sem telefone
+                </Button>
+              )
+            ) : (
+              <Button onClick={sendWhatsapp} loading={pending} disabled={loadingContact || !text.trim()} className="h-11 md:h-9">
+                <MessageCircle /> Enviar pelo WhatsApp
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

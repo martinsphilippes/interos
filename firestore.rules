@@ -21,6 +21,16 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Coleções de domínio: acesso somente pelo servidor (Admin SDK ignora as regras).
+    // Listadas explicitamente quando têm dados sensíveis ou foram criadas depois da regra padrão.
+    // Construtor visual de processos: definições (grafos) e execuções.
+    match /process_definitions/{docId} {
+      allow read, write: if false;
+    }
+    match /process_runs/{docId} {
+      allow read, write: if false;
+    }
+
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {
       allow read, write: if false;

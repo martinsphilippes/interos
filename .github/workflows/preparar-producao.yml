@@ -1,0 +1,88 @@
+name: Preparar produção (Firebase)
+
+# Execução manual (aba Actions → "Preparar produção (Firebase)" → Run workflow).
+# Publica as regras e índices do Firestore e, se pedido, recria os dados de demonstração.
+# ATENÇÃO: o seed APAGA todas as coleções da organização e recria os usuários de demonstração.
+#
+# Segredos necessários (Settings → Secrets and variables → Actions):
+# - FIREBASE_SERVICE_ACCOUNT_JSON: conteúdo do JSON da service account do projeto interos-crm.
+# - INTEROS_SEED_PASSWORD: senha dos usuários de demonstração (mínimo 10 caracteres).
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Recriar os dados de demonstração (apaga os dados atuais)"
+        type: boolean
+        default: false
+      confirmacao:
+        description: 'Para recriar os dados, digite APAGAR E RECRIAR'
+        type: string
+        default: ""
+
+concurrency:
+  group: preparar-producao
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preparar:
+    name: Regras do Firestore e dados de demonstração
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: producao
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Conferir segredos
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$SA" ]; then
+            echo "::error::Segredo FIREBASE_SERVICE_ACCOUNT_JSON não configurado."
+            exit 1
+          fi
+
+      - name: Credencial temporária
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          umask 077
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+
+      # A service account padrão do Firebase Admin não tem serviceusage.services.get, que o firebase-tools
+      # consulta antes do deploy. Sem esse papel o passo falha sem afetar o app (o Admin SDK ignora as regras
+      # e um banco em modo produção já nega o acesso do navegador); conceda "Service Usage Consumer" para ativá-lo.
+      - name: Publicar regras e índices do Firestore
+        continue-on-error: true
+        run: npx --yes firebase-tools@latest deploy --only firestore:rules,firestore:indexes --project interos-crm --non-interactive
+
+      - name: Recriar dados de demonstração
+        if: ${{ inputs.seed }}
+        env:
+          CONFIRMACAO: ${{ inputs.confirmacao }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          INTEROS_SEED_PASSWORD: ${{ secrets.INTEROS_SEED_PASSWORD }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: interos-crm
+        run: |
+          if [ "$CONFIRMACAO" != "APAGAR E RECRIAR" ]; then
+            echo "::error::Confirmação ausente. Digite exatamente: APAGAR E RECRIAR"
+            exit 1
+          fi
+          npx tsx --conditions=react-server scripts/seed.ts
+          npx tsx --conditions=react-server scripts/seed/verify.ts
+
+      - name: Remover credencial temporária
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/sa.json"

@@ -1,26 +1,261 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+ * Design System escuro do INTEROS (Tailwind v4). Contrato documentado em docs/design-system.md.
+ *
+ * Identidade: fundo azul-marinho quase preto, superfícies navy com bordas finas azuladas e o laranja
+ * INTEROS como destaque (ação primária, item ativo, números de destaque). Cores semânticas vivas, sempre
+ * com função: verde = concluído/positivo, âmbar = atenção, vermelho = crítico/atrasado, azul = informação/
+ * processo, roxo = metas/qualidade/conquistas. Cada cor tem:
+ *   <cor>        tom vivo (barras, pontos, ícones, bordas; texto grande)
+ *   <cor>-soft   fundo translúcido escuro (badges, quadrados de ícone, linhas destacadas)
+ *   <cor>-fg     tom claro legível sobre fundo escuro (texto sobre -soft ou sobre surface; contraste AA)
+ *   <cor>-hover  tom para hover de fundos sólidos
+ * Os NOMES dos tokens são os mesmos do tema claro anterior: toda tela que usa bg-surface, text-muted,
+ * border-border, text-danger-fg etc. muda de tema sem reescrita.
+ */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* Navy (paleta de marca; prefira os tokens de superfície abaixo nas telas) */
+  --color-navy-950: #040914;
+  --color-navy-900: #0b1f3a;
+  --color-navy-800: #122a4c;
+  --color-navy-700: #1a375f;
+  --color-navy-600: #244673;
+  --color-navy-500: #4a6d9c;
+  --color-navy-200: #b7c6dc;
+  --color-navy-100: #dbe4f0;
+  --color-navy-50: #eef2f8;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* Laranja INTEROS (destaque) */
+  --color-brand: #f26a21;
+  --color-brand-hover: #ff7a33;
+  --color-brand-active: #e05a14;
+  --color-brand-soft: rgb(242 106 33 / 0.14);
+  --color-brand-soft-hover: rgb(242 106 33 / 0.24);
+  --color-brand-fg: #ff9a5c;
+
+  /* Secundário azul-petróleo (processo, séries secundárias) */
+  --color-secondary: #1ba3c6;
+  --color-secondary-hover: #178fae;
+  --color-secondary-soft: rgb(27 163 198 / 0.14);
+  --color-secondary-fg: #67cfe8;
+
+  /* Superfícies e texto */
+  --color-canvas: #060d1a;
+  --color-surface: #0c1a2e;
+  --color-surface-muted: #0a1626;
+  --color-surface-hover: #12233b;
+  --color-card-elevated: #102039;
+  --color-foreground: #e7edf6;
+  --color-muted: #94a3ba;
+  --color-muted-light: #71839f;
+  --color-border: #1b2c47;
+  --color-border-strong: #26395a;
+  --color-ring: #f26a21;
+  --color-overlay: rgb(2 6 14 / 0.72);
+  /* Trilha de barras de progresso */
+  --color-track: #1a2b45;
+
+  /* Sidebar */
+  --color-sidebar: #050b16;
+  --color-sidebar-hover: #0d1a2e;
+  --color-sidebar-border: #13213a;
+  --color-sidebar-fg: #b4c1d4;
+  --color-sidebar-muted: #6f809b;
+  --color-sidebar-active: #f26a21;
+  --color-sidebar-active-fg: #ffffff;
+
+  /* Gráficos */
+  --color-chart-grid: #1a2a44;
+  --color-chart-axis: #8697b1;
+
+  /* Semânticas */
+  --color-success: #22c55e;
+  --color-success-hover: #16a34a;
+  --color-success-strong: #15803d;
+  --color-success-soft: rgb(34 197 94 / 0.14);
+  --color-success-fg: #4ade80;
+  --color-warning: #f59e0b;
+  --color-warning-hover: #d97706;
+  --color-warning-soft: rgb(245 158 11 / 0.14);
+  --color-warning-fg: #fbbf24;
+  --color-danger: #ef4444;
+  --color-danger-hover: #dc2626;
+  --color-danger-strong: #c52222;
+  --color-danger-soft: rgb(239 68 68 / 0.15);
+  --color-danger-fg: #f87171;
+  --color-info: #3b82f6;
+  --color-info-hover: #2563eb;
+  --color-info-soft: rgb(59 130 246 / 0.15);
+  --color-info-fg: #60a5fa;
+  /* Roxo de destaque: metas, qualidade, conquistas */
+  --color-accent-purple: #8b5cf6;
+  --color-accent-purple-soft: rgb(139 92 246 / 0.16);
+  --color-accent-purple-fg: #a78bfa;
+
+  /* Raios: padrão 10px (rounded-lg); cards 14px (rounded-xl) */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+
+  /* Sombras para o escuro: profundidade por sombra preta + brilho laranja no primário */
+  --shadow-card: 0 1px 0 0 rgb(255 255 255 / 0.02) inset, 0 1px 3px 0 rgb(0 0 0 / 0.35);
+  --shadow-pop: 0 16px 40px -12px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.03);
+  --shadow-drawer: -16px 0 48px -12px rgb(0 0 0 / 0.75);
+  --shadow-brand: 0 6px 18px -6px rgb(242 106 33 / 0.55);
+
+  /* Dimensões do shell */
+  --spacing-sidebar: 264px;
+  --spacing-sidebar-collapsed: 72px;
+  --spacing-topbar: 64px;
+  --spacing-mobile-nav: 64px;
+
+  --animate-fade-in: fade-in 150ms ease-out;
+  --animate-zoom-in: zoom-in 150ms ease-out;
+  --animate-slide-in-right: slide-in-right 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-slide-in-bottom: slide-in-bottom 260ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-slide-in-left: slide-in-left 220ms cubic-bezier(0.32, 0.72, 0, 1);
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes zoom-in {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
+    to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+  @keyframes slide-in-right {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+  @keyframes slide-in-bottom {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+  @keyframes slide-in-left {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    height: 100%;
+    background: var(--color-canvas);
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
+    /* Scrollbars escuras (Firefox e herança para elementos roláveis) */
+    scrollbar-color: var(--color-border-strong) var(--color-canvas);
+  }
+  body {
+    min-height: 100%;
+    background: var(--color-canvas);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Scrollbars escuras (Chromium/WebKit) */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--color-muted-light); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  /* Foco visível apenas para teclado. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: rgb(242 106 33 / 0.35);
+    color: #ffffff;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-muted-light);
+  }
+  /* <option> de selects nativos herdam o tema escuro. */
+  option,
+  optgroup {
+    background-color: var(--color-card-elevated);
+    color: var(--color-foreground);
+  }
+  /* Campos de data nativos: ícone do calendário claro sobre o escuro. */
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator {
+    opacity: 0.7;
+    cursor: pointer;
+    filter: invert(0.85);
+  }
+  /* Autofill do navegador sem fundo amarelo/branco. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--color-foreground);
+    -webkit-box-shadow: 0 0 0 1000px var(--color-surface-muted) inset;
+    caret-color: var(--color-foreground);
+    transition: background-color 9999s ease-out 0s;
+  }
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+  &::-webkit-scrollbar { width: 8px; height: 8px; }
+  &::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 8px; border: 0; }
+  &::-webkit-scrollbar-track { background: transparent; }
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
+/* Rótulo padrão: 12px, uppercase, tracking. */
+@utility label-caps {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* Área de toque mínima (mobile). */
+@utility touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Grade de pontos discreta (fundo de canvas de workflow e ilustrações). */
+@utility bg-dot-grid {
+  background-image: radial-gradient(circle, rgb(148 163 186 / 0.14) 1px, transparent 1px);
+  background-size: 22px 22px;
 }
