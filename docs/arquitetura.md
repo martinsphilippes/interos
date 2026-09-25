@@ -17,6 +17,12 @@ firebase-admin, firebase, zod, date-fns, lucide-react, recharts, @dnd-kit/{core,
 tailwind-merge, class-variance-authority, @radix-ui/react-{dialog,dropdown-menu,tabs,popover,select,tooltip,checkbox,
 switch,avatar,scroll-area,separator,label,progress,slot}, cmdk, sonner, server-only. Dev: tsx, dotenv, playwright.
 
+`overrides` no package.json: `jwks-rsa` (usado por `firebase-admin/auth`) fica com `jose` 5, que tem build CommonJS.
+O `jose` 6 é só ESM e o runtime de funções da Vercel não carrega ESM via `require()` (`ERR_REQUIRE_ESM`), o que
+derrubava toda rota que verifica sessão com 500. Reproduzir localmente: `next build` e
+`NODE_OPTIONS=--no-experimental-require-module next start`. Só remova o override quando o `jwks-rsa` voltar a
+funcionar nessa condição.
+
 ## Estrutura de pastas
 ```
 src/domain/types.ts        tipos de TODAS as entidades (fonte da verdade do modelo de dados)
