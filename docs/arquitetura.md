@@ -1,7 +1,9 @@
 # INTEROS — Arquitetura e convenções (leitura obrigatória antes de codar)
 
 ## Stack (decidida, não rediscutir)
-- Next.js 16 App Router + React 19 + TypeScript estrito. Tailwind v4. Deploy na Vercel.
+- Next.js 16 App Router + React 19 + TypeScript estrito. Tailwind v4. Deploy na Vercel com as funções em `gru1`
+  (São Paulo, `regions` no vercel.json), perto do Firestore: cada tela faz várias leituras e a ida e volta até os EUA
+  multiplicava a latência.
 - Banco: Cloud Firestore (projeto `interos-crm`, região southamerica-east1). Acesso **somente pelo servidor** via
   `firebase-admin` (Server Components, Server Actions, Route Handlers). O SDK cliente do Firebase é usado apenas para
   **login** (Firebase Auth e-mail/senha). Regras do Firestore negam tudo ao cliente; o Admin SDK ignora regras.
