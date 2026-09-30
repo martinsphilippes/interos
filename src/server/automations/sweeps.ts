@@ -258,11 +258,17 @@ async function leadsSemContato24h(now: Date): Promise<SweepOutcome> {
 // Customer Success
 // ---------------------------------------------------------------------------
 
-async function renovacoes(): Promise<SweepOutcome> {
+async function renovacoes(now: Date): Promise<SweepOutcome> {
   const cs = await import("@/server/cs/service");
   const r = await cs.ensureRenewals(AUTOMATION_ACTOR);
   await mergeSweepsSetting({ csRenewalsLastRunAt: r.ranAt, csRenewalsLastResult: r });
-  return { summary: `${r.created} renovação(ões) criada(s) · ${r.dueEmitted} aviso(s) de renovação próxima`, data: { ...r } };
+  // Renovação automática (D26): contratos com autoRenew na janela de aviso renovam por aditivo (Financeiro).
+  const { autoRenewContracts } = await import("@/server/finance/renewals");
+  const auto = await autoRenewContracts(now);
+  return {
+    summary: `${r.created} renovação(ões) criada(s) · ${r.dueEmitted} aviso(s) de renovação próxima · automáticas: ${auto.candidates} candidato(s), ${auto.renewed} renovado(s)${auto.indexPending ? ` (${auto.indexPending} com índice a informar)` : ""}${auto.errors.length ? ` · ${auto.errors.length} erro(s)` : ""}`,
+    data: { ...r, autoRenew: auto },
+  };
 }
 
 async function saudeClientes(): Promise<SweepOutcome> {

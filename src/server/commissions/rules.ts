@@ -217,9 +217,28 @@ export function termInstallments(contract: Pick<Contract, "recurrence" | "termMo
   return contract.recurrence === "anual" ? Math.max(1, Math.ceil(contract.termMonths / 12)) : Math.max(1, contract.termMonths);
 }
 
-/** Maior mensalidade paga (ou existente) — renovações além do prazo também geram comissão "enquanto ativo". */
-function lastRecurringInstallment(billings: Billing[]): number {
-  return billings.filter((b) => b.type === "mensalidade" && b.status !== "cancelada").reduce((max, b) => Math.max(max, b.installment ?? 0), 0);
+/** Maior mensalidade PAGA — mensalidades pagas além do prazo (renovação) geram comissão "enquanto ativo". */
+function lastPaidRecurringInstallment(billings: Billing[]): number {
+  return billings.filter((b) => b.type === "mensalidade" && b.status === "paga").reduce((max, b) => Math.max(max, b.installment ?? 0), 0);
+}
+
+function monthsBetween(a: string, b: string): number {
+  const [ay, am] = a.split("-").map(Number);
+  const [by, bm] = b.split("-").map(Number);
+  return (by - ay) * 12 + (bm - am);
+}
+
+/**
+ * Horizonte das previstas de recorrência (D26): até o fim da vigência do contrato (`endDate`) — a renovação, ao
+ * estender a vigência, faz o mesmo recálculo criar as novas. Sem vigência conhecida, o prazo do contrato.
+ */
+export function recurringHorizon(contract: Pick<Contract, "recurrence" | "termMonths" | "endDate">, firstComp: string): number {
+  const step = contract.recurrence === "anual" ? 12 : 1;
+  if (!contract.endDate) return termInstallments(contract);
+  const endComp = dateKey(contract.endDate).slice(0, 7);
+  const months = monthsBetween(firstComp, endComp);
+  // O mês do fim da vigência não é cobrado (a 1ª mensalidade vence no início); no mínimo 1.
+  return Math.max(1, Math.floor(months / step));
 }
 
 export function planSlots(rule: CommissionRuleSnapshot, item: EffectiveContractItem, contract: Contract, totals: { setupTotal: number; monthlyTotal: number; hardwareTotal: number }, billings: Billing[]): SlotSpec[] {
@@ -256,8 +275,9 @@ export function planSlots(rule: CommissionRuleSnapshot, item: EffectiveContractI
   const perCompetence = round2(item.monthlyValue * step);
   const from = rule.releaseInstallment;
   const limit = rule.recurringCompetences === null ? Infinity : from + rule.recurringCompetences - 1;
-  // Projeção até o prazo do contrato; além dele, só as mensalidades que já existem (renovação).
-  const horizon = Math.min(limit, Math.max(termInstallments(contract), lastRecurringInstallment(billings)));
+  // Projeção até o fim da vigência (ou o prazo do contrato); além disso, só mensalidades já PAGAS (renovação
+  // aplicada estende a vigência e o recálculo cria as novas previstas).
+  const horizon = Math.min(limit, Math.max(recurringHorizon(contract, firstComp), lastPaidRecurringInstallment(billings)));
   const out: SlotSpec[] = [];
   for (let n = from; n <= horizon; n++) {
     out.push({ slot: `m${n}`, revenueType: "recorrencia", billingType: "mensalidade", billingInstallment: n, expectedBase: perCompetence, fullBase: perCompetence, share, estimatedCompetence: addMonths(firstComp, (n - 1) * step), installment: n });
@@ -293,6 +313,9 @@ export interface SlotEvaluation {
   /** Data em que o gatilho aconteceu (pagamento, assinatura…). */
   triggeredAt?: string;
   billing?: Billing;
+  /** Gatilho "N-ésima mensalidade paga" (D27): cobrança que adquire a comissão e o vencimento dela (previsão). */
+  gateBillingId?: string;
+  expectedAt?: string;
   steps: CommissionCalcStep[];
   formula: string;
   /** O que falta (texto curto). */
@@ -313,6 +336,15 @@ function slotLabel(spec: SlotSpec): string {
 export function slotBilling(spec: Pick<SlotSpec, "billingType" | "billingInstallment">, billings: Billing[]): Billing | undefined {
   const matches = billings.filter((b) => b.type === spec.billingType && b.status !== "cancelada" && (b.installment ?? 1) === spec.billingInstallment);
   return matches.find((b) => b.status === "paga") ?? matches[0];
+}
+
+/** Vencimento estimado da N-ésima mensalidade quando a cobrança ainda não existe (dia de vencimento nos meses seguintes ao 1º). */
+function estimatedDueDate(contract: Pick<Contract, "firstDueDate" | "createdAt" | "billingDay" | "recurrence">, billings: Billing[], n: number): string {
+  const step = contract.recurrence === "anual" ? 12 : 1;
+  const comp = addMonths(firstCompetence(contract, billings), (n - 1) * step);
+  const [y, m] = comp.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m - 1, Math.min(contract.billingDay, last), 12)).toISOString();
 }
 
 function isOverdue(b: Billing | undefined, today: string): boolean {
@@ -374,6 +406,8 @@ export function evaluateSlot(input: EvaluateInput): SlotEvaluation {
   let triggeredAt: string | undefined;
   let waiting: string | undefined;
   let awaitingPayment = false;
+  let gateBillingId: string | undefined;
+  let expectedAt: string | undefined;
   if (trigger === "venda" || trigger === "permanencia") triggeredAt = saleDate;
   else if (trigger === "contrato_assinado") {
     if (contract.signedAt) triggeredAt = contract.signedAt;
@@ -382,10 +416,13 @@ export function evaluateSlot(input: EvaluateInput): SlotEvaluation {
     // Aquisição só com a N-ésima mensalidade paga (política anticancelamento parametrizada por regra).
     const nth = rule.releaseInstallment;
     const gate = slotBilling({ billingType: "mensalidade", billingInstallment: nth }, billings);
+    gateBillingId = gate?.id;
+    // Previsão (D27): vencimento da N-ésima mensalidade — real quando a cobrança existe, estimada pelo dia de vencimento.
+    expectedAt = gate?.dueDate ?? (contract.recurrence === "unico" ? undefined : estimatedDueDate(contract, billings, nth));
     if (contract.recurrence === "unico") waiting = `${nth}ª mensalidade paga (contrato sem mensalidades)`;
     else if (gate?.status === "paga") triggeredAt = gate.paidAt ?? nowIso;
     else {
-      waiting = gate ? `pagamento da ${nth}ª mensalidade (vence ${formatDate(gate.dueDate)})` : `pagamento da ${nth}ª mensalidade (cobrança ainda não gerada)`;
+      waiting = gate ? `pagamento da ${nth}ª mensalidade (vence ${formatDate(gate.dueDate)})` : `pagamento da ${nth}ª mensalidade (cobrança ainda não gerada${expectedAt ? `; previsão ${formatDate(expectedAt)}` : ""})`;
       awaitingPayment = isOverdue(gate, today);
     }
   } else if (trigger === "primeiro_pagamento") {
@@ -402,6 +439,7 @@ export function evaluateSlot(input: EvaluateInput): SlotEvaluation {
       triggeredAt = undefined;
       waiting = billing ? `recebimento da ${slotLabel(spec)} (vence ${formatDate(billing.dueDate)})` : `recebimento da ${slotLabel(spec)} (cobrança ainda não gerada)`;
       awaitingPayment = isOverdue(billing, today);
+      if (!expectedAt) expectedAt = billing?.dueDate ?? (spec.revenueType === "recorrencia" && contract.recurrence !== "unico" ? estimatedDueDate(contract, billings, spec.billingInstallment) : undefined);
     }
   }
   if (spec.revenueType === "recorrencia" && rule.releaseInstallment > 1) {
@@ -417,7 +455,7 @@ export function evaluateSlot(input: EvaluateInput): SlotEvaluation {
   });
 
   const competence = billing?.competence ?? spec.estimatedCompetence;
-  const result = (status: EvaluatedStatus, extra: Partial<SlotEvaluation> = {}): SlotEvaluation => ({ status, base, amount, competence, billing, steps, formula, triggeredAt, waiting, ...extra });
+  const result = (status: EvaluatedStatus, extra: Partial<SlotEvaluation> = {}): SlotEvaluation => ({ status, base, amount, competence, billing, steps, formula, triggeredAt, waiting, gateBillingId, expectedAt, ...extra });
   if (!triggeredAt) return result(awaitingPayment ? "aguardando_recebimento" : "prevista");
 
   // 5. Carência

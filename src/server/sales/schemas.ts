@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { VISIT_KINDS } from "@/domain/sales-extra";
 import { MAX_SETUP_INSTALLMENTS } from "@/domain/sale-closing";
+import { readjustmentSchema } from "@/server/finance/schemas";
 import { SALE_PAYMENT_METHODS } from "@/domain/types";
 
 /**
@@ -160,6 +161,11 @@ export const closingSchema = z.object({
   implementationRequired: z.boolean().default(true),
   implementationNotes: optionalText(1000),
   commercialNotes: optionalText(1000),
+  // Renovação (D26), opcionais: padrão na interface é renovar automaticamente pelo mesmo prazo, sem reajuste.
+  autoRenew: z.boolean().optional(),
+  renewalTermMonths: z.coerce.number({ message: "Prazo da renovação inválido" }).int("Prazo da renovação deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses").optional(),
+  readjustment: readjustmentSchema.optional(),
+  noticeDays: z.coerce.number({ message: "Antecedência inválida" }).int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(180, "Máximo de 180 dias").optional(),
 });
 export type ClosingInput = z.input<typeof closingSchema>;
 

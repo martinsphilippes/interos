@@ -51,6 +51,7 @@ export function CommissionPanel({ c, canReverse }: { c: CommissionDetail; canRev
               { label: "Base", value: formatCurrency(c.baseAmount) },
               { label: "Competência", value: formatCompetence(c.competence) },
               { label: c.status === "em_carencia" ? "Elegível em" : "Elegível desde", value: c.eligibleAt ? formatDate(c.eligibleAt) : undefined },
+              ...((c.status === "prevista" || c.status === "aguardando_recebimento") && c.expectedAt ? [{ label: "Previsão", value: `${formatDate(c.expectedAt)}${c.expectedLabel ? ` · ${c.expectedLabel}` : ""}` }] : []),
               ...(c.cancelReason ? [{ label: "Motivo do cancelamento", value: c.cancelReason }] : []),
               ...(c.blockedReason ? [{ label: "Motivo do bloqueio", value: c.blockedReason }] : []),
               ...(c.reverseReason ? [{ label: "Motivo do estorno", value: c.reverseReason }] : []),

@@ -113,6 +113,10 @@ export interface CommissionRow {
   payableCode?: string;
   ruleName?: string;
   createdAt: string;
+  /** Previsão (D27): vencimento da cobrança que adquire a comissão (N-ésima mensalidade ou a parcela aguardada). */
+  expectedAt?: string;
+  /** Texto da previsão: "vencimento da 3ª mensalidade". */
+  expectedLabel?: string;
 }
 
 export interface TraceLink {
@@ -197,7 +201,17 @@ function toRow(c: Commission, users: Map<string, User>, clients: Map<string, Cli
     payableCode: c.payableId ? (payables.get(c.payableId)?.code ?? c.payableId) : undefined,
     ruleName: c.ruleSnapshot?.name,
     createdAt: c.createdAt,
+    expectedAt: c.expectedAt,
+    expectedLabel: expectedLabelOf(c),
   };
+}
+
+/** "vencimento da 3ª mensalidade" (gatilho mensalidade_n) ou "vencimento da parcela" (demais, quando há previsão). */
+function expectedLabelOf(c: Pick<Commission, "expectedAt" | "ruleSnapshot" | "slot" | "revenueType">): string | undefined {
+  if (!c.expectedAt) return undefined;
+  if (c.ruleSnapshot?.trigger === "mensalidade_n") return `vencimento da ${c.ruleSnapshot.releaseInstallment}ª mensalidade`;
+  if (c.revenueType === "recorrencia" && c.slot?.startsWith("m")) return `vencimento da ${c.slot.slice(1)}ª mensalidade`;
+  return "vencimento da cobrança";
 }
 
 const STATUS_TONE: Record<CommissionStatus, HistoryItem["tone"]> = {
@@ -319,15 +333,18 @@ export async function getUserCommissionsDigest(viewer: CurrentUser, userId: stri
     const row = toRow(c, users, clients, contracts, payables);
     const payable = c.payableId ? payables.get(c.payableId) : undefined;
     const billing = c.billingId ? billings.get(c.billingId) : undefined;
+    // Previsão (D27): para prevista/aguardando, o vencimento da cobrança que adquire a comissão (3ª mensalidade,
+    // parcela aguardada); não mais a adesão.
     const whenAt =
       c.status === "paga"
         ? (c.paidAt ?? payable?.paidAt)
         : c.status === "titulo_gerado"
           ? payable?.dueDate
           : c.status === "prevista" || c.status === "aguardando_recebimento"
-            ? (c.eligibleAt ?? billing?.dueDate)
+            ? (c.expectedAt ?? c.eligibleAt ?? billing?.dueDate)
             : (c.eligibleAt ?? c.releaseAt);
-    rows.push({ ...row, whenAt, whenLabel: WHEN_LABEL[c.status], href: options.canOpenFinance ? `/financeiro/comissoes?comissao=${c.id}` : undefined });
+    const whenLabel = (c.status === "prevista" || c.status === "aguardando_recebimento") && row.expectedLabel ? `${WHEN_LABEL[c.status]} (${row.expectedLabel})` : WHEN_LABEL[c.status];
+    rows.push({ ...row, whenAt, whenLabel, href: options.canOpenFinance ? `/financeiro/comissoes?comissao=${c.id}` : undefined });
   }
   const order: Record<CommissionStatus, number> = { liberada: 0, titulo_gerado: 1, aguardando_recebimento: 2, em_carencia: 3, prevista: 4, paga: 5, bloqueada: 6, cancelada: 7, estornada: 8 };
   rows.sort((a, b) => order[a.status] - order[b.status] || (b.whenAt ?? "").localeCompare(a.whenAt ?? "") || b.competence.localeCompare(a.competence));

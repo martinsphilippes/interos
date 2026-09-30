@@ -89,8 +89,8 @@ export function isCommissionable(contract: Pick<Contract, "sellerId" | "opportun
 }
 
 /** Campos comparados para decidir se uma comissão pendente precisa ser atualizada. */
-function signature(c: Pick<Commission, "status" | "amount" | "baseAmount" | "competence" | "eligibleAt" | "billingId" | "calc" | "ruleSnapshot">): string {
-  return JSON.stringify([c.status, c.amount, c.baseAmount, c.competence, c.eligibleAt ?? null, c.billingId ?? null, c.calc?.steps ?? null, c.calc?.formula ?? null, c.ruleSnapshot ?? null]);
+function signature(c: Pick<Commission, "status" | "amount" | "baseAmount" | "competence" | "eligibleAt" | "billingId" | "calc" | "ruleSnapshot" | "gateBillingId" | "expectedAt">): string {
+  return JSON.stringify([c.status, c.amount, c.baseAmount, c.competence, c.eligibleAt ?? null, c.billingId ?? null, c.gateBillingId ?? null, c.expectedAt ?? null, c.calc?.steps ?? null, c.calc?.formula ?? null, c.ruleSnapshot ?? null]);
 }
 
 export async function reconcileCommissions(options: ReconcileOptions = {}): Promise<ReconcileResult> {
@@ -218,6 +218,9 @@ async function reconcileContract(contract: Contract, ctx: ContractContext): Prom
               ruleSnapshot: rule,
               calc: { steps: evaluation.steps, formula: evaluation.formula },
               billingId: evaluation.billing?.id,
+              // D27: N-ésima mensalidade que adquire a comissão e a previsão (vencimento dela).
+              gateBillingId: evaluation.gateBillingId,
+              expectedAt: evaluation.expectedAt,
               eligibleAt: evaluation.eligibleAt,
               createdBy: actor.id,
             },
@@ -276,6 +279,8 @@ async function reconcileContract(contract: Contract, ctx: ContractContext): Prom
         releaseAt: ev.eligibleAt ?? deleteField(),
         eligibleAt: ev.eligibleAt ?? deleteField(),
         billingId: ev.billing?.id ?? deleteField(),
+        gateBillingId: ev.gateBillingId ?? deleteField(),
+        expectedAt: ev.expectedAt ?? deleteField(),
         calc: d.doc.calc,
         ruleSnapshot: d.doc.ruleSnapshot,
         ruleId: d.doc.ruleId ?? deleteField(),

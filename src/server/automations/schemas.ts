@@ -84,7 +84,7 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   followup_vendas: { label: "Follow-up de vendas", description: "Serviço de Vendas: tarefa de follow-up para próxima ação vencida e oportunidade parada.", schedule: "horaria" },
   oportunidades_paradas: { label: "Resumo de oportunidades paradas", description: "Resumo diário ao vendedor e ao gestor comercial de oportunidades paradas ou sem próxima ação.", schedule: "diaria" },
   leads_sem_contato_24h: { label: "Leads sem contato em 24h", description: "Lead novo sem primeiro contato há mais de 24 horas gera tarefa para o responsável (ou gestor de marketing).", schedule: "horaria" },
-  renovacoes: { label: "Renovações", description: "Serviço de CS: cria renovações na janela de 90 dias e emite renovação próxima.", schedule: "diaria" },
+  renovacoes: { label: "Renovações", description: "Serviço de CS: cria renovações na janela de 90 dias e emite renovação próxima. Contratos com renovação automática são renovados por aditivo dentro da antecedência combinada (índice de reajuste nunca é buscado automaticamente: vira tarefa ao CS).", schedule: "diaria" },
   saude_clientes: { label: "Saúde dos clientes", description: "Serviço de CS: recalcula o health score de toda a carteira.", schedule: "diaria" },
   implantacoes_atrasadas: { label: "Implantações atrasadas", description: "Projetos com prazo vencido: avisa o responsável e o gestor de implantação uma vez por dia.", schedule: "diaria" },
   tarefas_recorrentes: { label: "Tarefas recorrentes", description: "Garante a próxima ocorrência das tarefas recorrentes concluídas que ficaram sem sucessora.", schedule: "diaria" },

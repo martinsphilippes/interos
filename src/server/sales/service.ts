@@ -418,6 +418,11 @@ export interface ClosingData {
   implementationRequired: boolean;
   implementationNotes?: string;
   commercialNotes?: string;
+  // Renovação (D26), opcionais.
+  autoRenew?: boolean;
+  renewalTermMonths?: number;
+  readjustment?: { type: "nenhum" | "percentual" | "indice"; percent?: number; index?: "ipca" | "igpm" | "inpc" };
+  noticeDays?: number;
 }
 
 /** Número da venda "VEN-AAAA-NNNN" (contador transacional; parte do maior saleNumber já gravado). */
@@ -499,6 +504,11 @@ export async function markOpportunityWon(data: MarkWonData, actor: UserRef): Pro
       proposalId: accepted?.id,
       closedAt: now,
       closedBy: actor.id,
+      // Renovação (D26): só quando informada no fechamento.
+      ...(data.closing.autoRenew !== undefined ? { autoRenew: data.closing.autoRenew } : {}),
+      ...(data.closing.renewalTermMonths ? { renewalTermMonths: data.closing.renewalTermMonths } : {}),
+      ...(data.closing.readjustment ? { readjustment: { type: data.closing.readjustment.type, ...(data.closing.readjustment.type === "percentual" ? { percent: data.closing.readjustment.percent } : {}), ...(data.closing.readjustment.type === "indice" ? { index: data.closing.readjustment.index } : {}) } } : {}),
+      ...(data.closing.noticeDays ? { noticeDays: data.closing.noticeDays } : {}),
     };
   }
   const paymentCondition = data.billingData.paymentCondition?.trim() || (closing ? closingPaymentConditionText(closing, conditionTotals) : "");

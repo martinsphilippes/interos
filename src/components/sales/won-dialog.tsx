@@ -3,7 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Trophy } from "lucide-react";
-import { SALE_PAYMENT_METHODS, type Opportunity, type SalePaymentMethod } from "@/domain/types";
+import { SALE_PAYMENT_METHODS, type ContractReadjustment, type Opportunity, type SalePaymentMethod } from "@/domain/types";
+import { READJUSTMENT_INDEX_LABELS, READJUSTMENT_TYPE_LABELS } from "@/domain/contract-snapshot";
 import { DEFAULT_CLOSING, MAX_SETUP_INSTALLMENTS, SALE_PAYMENT_METHOD_LABELS, SALE_RECURRENCE_LABELS, closingPaymentConditionText, splitInstallments } from "@/domain/sale-closing";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -71,6 +72,13 @@ export function WonDialog({ open, onOpenChange, opportunity, clientDefaults, pro
   const [implementationRequired, setImplementationRequired] = React.useState<boolean>(DEFAULT_CLOSING.implementationRequired);
   const [implementationNotes, setImplementationNotes] = React.useState("");
   const [commercialNotes, setCommercialNotes] = React.useState("");
+  // Renovação (D26): padrão renovar automaticamente pelo mesmo prazo, sem reajuste até definir.
+  const [autoRenew, setAutoRenew] = React.useState(true);
+  const [renewalTermMonths, setRenewalTermMonths] = React.useState("");
+  const [readjustmentType, setReadjustmentType] = React.useState<ContractReadjustment["type"]>("nenhum");
+  const [readjustmentPercent, setReadjustmentPercent] = React.useState("");
+  const [readjustmentIndex, setReadjustmentIndex] = React.useState<NonNullable<ContractReadjustment["index"]> | "">("");
+  const [noticeDays, setNoticeDays] = React.useState("30");
 
   React.useEffect(() => {
     if (!open) return;
@@ -107,7 +115,9 @@ export function WonDialog({ open, onOpenChange, opportunity, clientDefaults, pro
     termNum >= 1 &&
     termNum <= 120 &&
     (!firstDueDate || firstDueDate >= todayValue()) &&
-    (creatingContact ? newContact.name.trim().length >= 2 : Boolean(contactId));
+    (creatingContact ? newContact.name.trim().length >= 2 : Boolean(contactId)) &&
+    (readjustmentType !== "percentual" || Number(readjustmentPercent.replace(",", ".")) > 0) &&
+    (readjustmentType !== "indice" || Boolean(readjustmentIndex));
   const complete = hasValue && closingValid && legalName.trim().length >= 3 && (docDigits.length === 11 || docDigits.length === 14) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
   // O contrato usa os itens da proposta aceita (com desconto); sem ela, os produtos acima.
@@ -142,6 +152,10 @@ export function WonDialog({ open, onOpenChange, opportunity, clientDefaults, pro
           implementationRequired,
           implementationNotes: implementationNotes || undefined,
           commercialNotes: commercialNotes || undefined,
+          autoRenew,
+          renewalTermMonths: Number(renewalTermMonths) > 0 ? Number(renewalTermMonths) : termNum,
+          readjustment: readjustmentType === "percentual" ? { type: "percentual", percent: Number(readjustmentPercent.replace(",", ".")) } : readjustmentType === "indice" ? { type: "indice", index: readjustmentIndex || undefined } : { type: "nenhum" },
+          noticeDays: Number(noticeDays) > 0 ? Number(noticeDays) : 30,
         },
       });
       if (!result.ok) {
@@ -235,6 +249,29 @@ export function WonDialog({ open, onOpenChange, opportunity, clientDefaults, pro
                   onCheckedChange={setImplementationRequired}
                   className="w-full rounded-lg border border-border px-3 py-2 sm:col-span-2"
                 />
+                <fieldset className="grid gap-3 rounded-lg border border-border p-3 sm:col-span-2 sm:grid-cols-3" data-testid="closing-renewal">
+                  <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">Renovação</legend>
+                  <Switch label="Renovação automática" description={autoRenew ? "Ao fim da vigência, o contrato é renovado automaticamente (aditivo)." : "O CS negocia a renovação na janela de 90 dias."} checked={autoRenew} onCheckedChange={setAutoRenew} className="w-full rounded-lg border border-border px-3 py-2 sm:col-span-3" />
+                  <FormField label="Prazo da renovação (meses)" htmlFor={`${id}-rt`} hint="Vazio = mesmo prazo do contrato">
+                    <Input id={`${id}-rt`} type="number" inputMode="numeric" min={1} max={120} value={renewalTermMonths} onChange={(e) => setRenewalTermMonths(e.target.value)} placeholder={String(termNum || "")} />
+                  </FormField>
+                  <FormField label="Reajuste" htmlFor={`${id}-rj`} hint={readjustmentType === "nenhum" ? "Sem reajuste até definir" : readjustmentType === "indice" ? "O índice é informado pelo CS a cada renovação" : undefined}>
+                    <Select id={`${id}-rj`} value={readjustmentType} onChange={(e) => setReadjustmentType(e.target.value as ContractReadjustment["type"])} options={(Object.keys(READJUSTMENT_TYPE_LABELS) as ContractReadjustment["type"][]).map((t) => ({ value: t, label: READJUSTMENT_TYPE_LABELS[t] }))} />
+                  </FormField>
+                  {readjustmentType === "percentual" ? (
+                    <FormField label="Percentual (%)" htmlFor={`${id}-rp`} required>
+                      <Input id={`${id}-rp`} inputMode="decimal" value={readjustmentPercent} onChange={(e) => setReadjustmentPercent(e.target.value)} placeholder="Ex.: 5" />
+                    </FormField>
+                  ) : readjustmentType === "indice" ? (
+                    <FormField label="Índice" htmlFor={`${id}-ri`} required>
+                      <Select id={`${id}-ri`} value={readjustmentIndex} onChange={(e) => setReadjustmentIndex(e.target.value as NonNullable<ContractReadjustment["index"]> | "")} placeholder="Escolha" options={(Object.keys(READJUSTMENT_INDEX_LABELS) as NonNullable<ContractReadjustment["index"]>[]).map((i) => ({ value: i, label: READJUSTMENT_INDEX_LABELS[i] }))} />
+                    </FormField>
+                  ) : (
+                    <FormField label="Antecedência (dias)" htmlFor={`${id}-nd`} hint="Dias antes do fim para renovar">
+                      <Input id={`${id}-nd`} type="number" inputMode="numeric" min={1} max={180} value={noticeDays} onChange={(e) => setNoticeDays(e.target.value)} />
+                    </FormField>
+                  )}
+                </fieldset>
                 <FormField label="Observações para implantação" htmlFor={`${id}-impl`} className="sm:col-span-2">
                   <Textarea id={`${id}-impl`} value={implementationNotes} onChange={(e) => setImplementationNotes(e.target.value)} placeholder="Ex.: migrar cadastro de 2.000 produtos; treinamento no sábado" className="min-h-[64px]" />
                 </FormField>

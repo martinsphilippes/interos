@@ -857,6 +857,8 @@ export async function ensureRenewals(actor: UserRef = CS_SYSTEM_ACTOR): Promise<
 
   for (const contract of contracts) {
     if (!contract.endDate || contract.endDate > horizon || contract.endDate < staleLimit) continue;
+    // Renovação automática (D26): a varredura do Financeiro renova por aditivo; o CS não abre negociação.
+    if (contract.autoRenew) continue;
     const client = clientById.get(contract.clientId);
     if (!client || client.status === "cancelado") continue;
     const exists = renewals.some((r) => r.contractId === contract.id && (OPEN_RENEWAL.has(r.status) || r.dueDate.slice(0, 10) === contract.endDate!.slice(0, 10)));
@@ -972,15 +974,40 @@ export async function startRenewalNegotiation(renewalId: string, actor: UserRef)
   );
 }
 
-export async function completeRenewal(renewalId: string, termMonths: number, notes: string | undefined, actor: UserRef): Promise<{ newEndDate: string }> {
+export interface CompleteRenewalOptions {
+  readjustment?: Contract["readjustment"];
+  /** Aditivo de renovação exige assinatura do cliente (padrão false: aplicado na hora). */
+  requiresSignature?: boolean;
+}
+
+/**
+ * Renovação pelo CS (D26): cria e aplica um aditivo "renovacao" no MESMO contrato — endDate = fim atual + meses,
+ * `termMonths` PRESERVADO (o hash do contrato assinado não é reescrito), reajuste percentual aplicado à mensalidade
+ * (índice: fica pendente para o CS informar; nunca é buscado automaticamente) e mensalidades do novo prazo geradas
+ * pelo caminho único (`generateNextBillings`). Com `requiresSignature`, o aditivo fica aguardando assinatura no
+ * Financeiro e a renovação só se conclui na aplicação. `renewal.completed` continua sendo emitido (compatibilidade).
+ */
+export async function completeRenewal(renewalId: string, termMonths: number, notes: string | undefined, actor: UserRef, options: CompleteRenewalOptions = {}): Promise<{ newEndDate: string; amendmentId: string; amendmentNumber: string; applied: boolean }> {
   const renewal = await loadRenewal(renewalId);
   if (!OPEN_RENEWAL.has(renewal.status)) throw new Error("Renovação já encerrada");
   const contract = await getById<Contract>(COLLECTIONS.contracts, renewal.contractId);
   if (!contract) throw new Error("Contrato da renovação não encontrado");
-  const base = contract.endDate ?? renewal.dueDate;
-  const newEndDate = addMonths(new Date(base), termMonths).toISOString();
-  await update<Contract>(COLLECTIONS.contracts, contract.id, { endDate: newEndDate, termMonths });
-  const result = notes ? `Renovado por ${termMonths} meses até ${formatDate(newEndDate)}. ${notes}` : `Renovado por ${termMonths} meses até ${formatDate(newEndDate)}.`;
+  if (contract.status === "cancelado") throw new Error("Contrato cancelado não pode ser renovado");
+  const { applyAmendment, createAmendment } = await import("@/server/finance/amendments");
+  const reason = notes?.trim() ? `Renovação negociada pelo CS: ${notes.trim()}` : "Renovação negociada pelo CS";
+  const amendment = await createAmendment(
+    { contractId: contract.id, effectiveFrom: (contract.endDate ?? nowIso()).slice(0, 10), reason, requiresSignature: options.requiresSignature ?? false, renewal: { months: termMonths, readjustment: options.readjustment ?? contract.readjustment } },
+    actor,
+    { source: "renovacao_cs", renewalId: renewal.id },
+  );
+  const newEndDate = amendment.after.endDate!;
+  if (amendment.requiresSignature) {
+    // Renovação com assinatura: o Financeiro colhe as assinaturas do termo aditivo e aplica; a renovação fica em negociação.
+    await update<Renewal>(COLLECTIONS.renewals, renewal.id, { status: "em_negociacao", notes: `Aditivo ${amendment.number} aguardando assinatura do cliente (renovação por ${termMonths} meses até ${formatDate(newEndDate)}).` });
+    return { newEndDate, amendmentId: amendment.id, amendmentNumber: amendment.number, applied: false };
+  }
+  const applied = await applyAmendment(amendment.id, actor);
+  const result = `Renovado por ${termMonths} meses até ${formatDate(newEndDate)} (aditivo ${amendment.number}${amendment.readjustment && amendment.readjustment.type !== "nenhum" ? `, reajuste ${amendment.readjustment.type === "percentual" ? `${amendment.readjustment.percent}%` : `por índice a informar`}` : ""}).${notes ? ` ${notes}` : ""}`;
   await update<Renewal>(COLLECTIONS.renewals, renewal.id, { status: "renovado", result });
   const account = await getCsAccount(renewal.clientId);
   if (account) await update<CsAccount>(COLLECTIONS.csAccounts, account.id, { renewalDate: newEndDate });
@@ -993,9 +1020,19 @@ export async function completeRenewal(renewalId: string, termMonths: number, not
     title: `Contrato ${contract.number} renovado por ${termMonths} meses`,
     description: result,
     department: "cs",
-    payload: { outcome: "renovado", contractId: contract.id, termMonths, newEndDate, previousEndDate: base, monthlyTotal: contract.monthlyTotal },
+    payload: { outcome: "renovado", contractId: contract.id, termMonths, newEndDate, previousEndDate: contract.endDate ?? renewal.dueDate, monthlyTotal: applied.contract.monthlyTotal, amendmentId: amendment.id, amendmentNumber: amendment.number, billingsCreated: applied.billings.created.length },
   });
-  return { newEndDate };
+  await emitEvent({
+    type: "contract.renewed",
+    actor,
+    clientId: renewal.clientId,
+    entity: { type: "contract", id: contract.id },
+    title: `Contrato ${contract.number} renovado até ${formatDate(newEndDate)} (aditivo ${amendment.number})`,
+    description: `${termMonths} meses · ${formatCurrency(applied.contract.monthlyTotal)}/mês · renovação negociada pelo CS${applied.billings.created.length > 0 ? ` · ${applied.billings.created.length} mensalidade(s) gerada(s)` : ""}`,
+    department: "cs",
+    payload: { contractId: contract.id, amendmentId: amendment.id, amendmentNumber: amendment.number, termMonths, newEndDate, previousEndDate: contract.endDate ?? renewal.dueDate, source: "renovacao_cs", renewalId: renewal.id, readjustment: amendment.readjustment ?? null, changes: { endDate: { from: contract.endDate ?? null, to: newEndDate } } },
+  });
+  return { newEndDate, amendmentId: amendment.id, amendmentNumber: amendment.number, applied: true };
 }
 
 export async function loseRenewal(renewalId: string, reason: string, actor: UserRef): Promise<{ clientId: string }> {

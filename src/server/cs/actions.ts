@@ -171,12 +171,13 @@ export async function startNegotiation(input: unknown): Promise<ActionResult<{ t
   }
 }
 
-export async function renewContract(input: unknown): Promise<ActionResult<{ newEndDate: string }>> {
+export async function renewContract(input: unknown): Promise<ActionResult<{ newEndDate: string; amendmentNumber: string; applied: boolean }>> {
   try {
     const user = await requireCsUser();
     const data = renewSchema.parse(input);
-    const result = await completeRenewal(data.renewalId, data.termMonths, data.notes, actor(user));
-    revalidateCs(undefined, ["/financeiro/contratos", "/financeiro/recorrencia", "/tarefas"]);
+    const result = await completeRenewal(data.renewalId, data.termMonths, data.notes, actor(user), { readjustment: data.readjustment, requiresSignature: data.requiresSignature });
+    revalidateCs(undefined, ["/financeiro/contratos", "/financeiro/recorrencia", "/financeiro/cobrancas", "/tarefas"]);
+    revalidatePath("/financeiro", "layout");
     return { ok: true, data: result };
   } catch (error) {
     return fail(error, "Não foi possível registrar a renovação");
