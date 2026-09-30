@@ -190,6 +190,56 @@ injetado nas consultas · LGPD (flag consentimento_obtido) · notificações (in
 push, WhatsApp) · busca global · documentos versionados · webhooks idempotentes ·
 relatórios PDF/XLSX · paridade web/mobile via API.
 
+## Acessos: como o CEO/CTO configura quem vê e faz o quê (etapa 6A)
+Quem configura: os usuários com o papel **Administrador** (hoje Hércules e Philippe — CEO/CTO). Não há usuário
+especial: a autoridade vem da permissão "Gerir acessos", que o perfil Administrador tem por padrão e que o sistema não
+deixa ninguém perder por engano (sempre sobra pelo menos um administrador ativo).
+
+**Onde fica**: Administração › Usuários, na mesma tela de sempre, com três abas:
+- **Usuários** — cadastro, papel, departamento, gestor, ativo/inativo. No painel de cada pessoa há três seções novas:
+  *Exceções de acesso*, *Acesso efetivo* e *Histórico de acesso*.
+- **Perfis e acessos** — um perfil por papel (Administrador, Diretoria, Gestor, Marketing, Vendas, Financeiro,
+  Implantação, CS, Suporte, Colaborador). Escolha o perfil e ajuste a árvore **Módulo › Tela › Aba/Seção › Ação**.
+- **Módulos da empresa** — liga/desliga módulos inteiros para toda a empresa.
+
+**Como ler a árvore**: cada item mostra o padrão ("Padrão: permitido — Administrador, gestores ou departamento
+Financeiro") e três opções: *Padrão* (segue a regra do sistema), *Permitir* ou *Negar*. Itens mudados ganham o selo
+"Ajustado". Negar uma tela esconde também tudo abaixo dela (abas e ações); permitir uma ação não abre a tela — é preciso
+ver a tela para usar a ação. Há busca, filtro "Só ajustados", expandir/recolher e "Restaurar padrão". Ao salvar, o
+motivo é registrado.
+
+**Escopo de dados** (por tela que lista registros com dono): *Meus* (só o que é seu), *Equipe* (a descrição explica o
+que "equipe" significa naquela tela), *Departamento* e *Empresa*. O escopo vale nas listas, nos indicadores, nas
+buscas, nos detalhes abertos por link e nas ações — um vendedor com escopo "Meus" que abre a oportunidade de um colega
+por URL vê "acesso negado". Algumas telas seguem o escopo de outra (as telas do Financeiro seguem **Contratos**;
+Kanban, Treinamentos e Go-live seguem **Projetos**).
+
+**Perfil + exceção**: o perfil define o acesso de todos daquele papel; a **exceção** individual (no painel da pessoa,
+motivo obrigatório) concede ou retira um item só daquela pessoa e vence o perfil. Ordem de decisão: módulo desligado na
+empresa → exceção da pessoa → ajuste do perfil → padrão do sistema. A seção *Acesso efetivo* mostra o resultado final e
+de onde veio cada decisão (padrão, perfil, exceção, módulo desligado).
+
+**Módulos da empresa**: desligar um módulo tira o módulo do menu, dos atalhos e dos links de todo mundo (administradores
+inclusive) e as páginas e ações passam a negar — os dados continuam guardados e voltam ao religar. Início e
+Administração não podem ser desligados. O sistema avisa quantas pessoas perdem acesso antes de confirmar.
+
+**Valores financeiros**: "Visualizar valores" (Financeiro) controla se a pessoa vê quantias em contratos, cobranças,
+recebíveis, Cliente 360 e Implantação; sem ela os números aparecem como "Restrito".
+
+**Proteções** (o sistema recusa e registra a tentativa): ninguém altera as próprias exceções, muda o próprio papel, se
+desativa ou se exclui; ninguém concede um acesso que não tem; só quem tem "Gerir acessos" altera perfis, exceções e
+módulos ou atribui o papel Administrador; o perfil Administrador não aceita perder os acessos de administração; Início
+e Meu Dia nunca são negados.
+
+**Auditoria**: toda alteração gera um registro com quem fez, quando, o alvo (perfil ou pessoa), o motivo e o
+"de → para" em linguagem de negócio (ex.: "Contas a Pagar › Visualizar: Padrão (permitido) → Negado"). Tentativas
+bloqueadas também ficam registradas. O histórico aparece no painel da pessoa e na aba Perfis.
+
+**Padrão de fábrica**: sem nenhum ajuste, cada perfil vê e faz exatamente o que via antes desta etapa (com as correções
+deliberadas listadas no relatório, como Marketing passar a exigir o módulo). Recomendações que ficam para decisão do
+CEO/CTO na tela: restringir gestores de outras áreas no Financeiro; restringir o papel Vendas no Financeiro;
+restringir quem registra churn.
+
 ## Roadmap sugerido nos documentos (há duas versões, precisam ser conciliadas)
 Espec. Funcional: 1 Fundação (login, usuários, Meu Dia, tarefas, workflow, Cliente 360) ·
 2 Receita e atendimento · 3 Gestão e performance · 4 Escala e mobilidade.

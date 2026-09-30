@@ -42,7 +42,7 @@ export default async function AdminWorkflowsPage() {
           </div>
           {processes.length > 0 && canCreateProcess ? <NewProcessButton /> : null}
         </div>
-        <ProcessList processes={processes} />
+        <ProcessList processes={processes} canCreate={canCreateProcess} />
       </section>
       ) : null}
       {showJourney ? (

@@ -58,7 +58,7 @@ export default async function AdminAutomacoesPage() {
 
       <section className="mb-8">
         <SectionTitle title="Regras" count={rules.length} description="Ative ou desative direto na lista; clique para editar, testar e ver o histórico." />
-        <RulesList rules={rules} />
+        <RulesList rules={rules} canToggle={can(user, "admin.automacoes.ativar")} canCreate={canCreate} />
       </section>
 
       {showSweeps ? (

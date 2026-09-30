@@ -42,7 +42,15 @@ export default async function AutomationRulePage({ params }: { params: Params })
         breadcrumbs={[{ label: "Administração", href: "/admin" }, { label: "Automações", href: "/admin/automacoes" }, { label: detail ? detail.rule.name : "Nova" }]}
         badge={detail ? <Badge variant={detail.rule.active ? "success" : "muted"}>{detail.rule.active ? "Ativa" : "Inativa"}</Badge> : null}
       />
-      <RuleEditor key={detail?.rule.updatedAt ?? "nova"} rule={detail?.rule ?? null} options={options} eventGroups={eventGroups} />
+      <RuleEditor
+        key={detail?.rule.updatedAt ?? "nova"}
+        rule={detail?.rule ?? null}
+        options={options}
+        eventGroups={eventGroups}
+        canSave={can(user, isNew ? "admin.automacoes.criar" : "admin.automacoes.editar")}
+        canTest={can(user, "admin.automacoes.testar")}
+        canDelete={can(user, "admin.automacoes.excluir")}
+      />
       {detail && showHistory ? (
         <section className="mt-8">
           <SectionTitle

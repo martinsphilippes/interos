@@ -63,14 +63,18 @@ scripts/seed.ts            dados demonstrativos (idempotente, IDs determinístic
 ```ts
 'use server'
 import { z } from 'zod'
-import { requireUser } from '@/server/auth/session'
+import { failAction, requirePermission } from '@/server/auth/session'
 export async function createTask(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser()
-  const data = schema.parse(input)           // lance ZodError -> retorne { ok: false, error }
-  ...
-  await emitEvent({ ... })
-  revalidatePath('/tarefas')
-  return { ok: true, data: { id } }
+  try {
+    const user = await requirePermission('operacao.tarefas.criar') // chave do catálogo; nega com PermissionError
+    const data = schema.parse(input)                               // ZodError -> { ok: false, error }
+    ...
+    await emitEvent({ ... })
+    revalidatePath('/tarefas')
+    return { ok: true, data: { id } }
+  } catch (error) {
+    return failAction(error, 'Não foi possível criar a tarefa')
+  }
 }
 ```
 - `ActionResult<T> = { ok: true; data: T } | { ok: false; error: string }` (em `src/domain/types.ts`).
@@ -256,76 +260,167 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   (`initFrom`). Usada por VEN, CT, PR, COM e PAG; formatos antigos preservados, sem renumerar documentos.
   `verify.ts` confere que nenhum contador fica abaixo do maior número existente.
 
-## Autorização (catálogo, precedência, escopo, helpers)
-Resumo da etapa 6A (a versão completa, com invariantes e a tela de perfis, vem ao fim da etapa). Um só mecanismo:
-`session.ts` continua o único ponto de identidade; não há segundo sistema de permissões.
+## Autorização (catálogo, precedência, escopo, invariantes, helpers)
+Um só mecanismo: `session.ts` continua o único ponto de identidade (papéis de `ROLE_KEYS`, sessão por cookie) e as
+permissões são uma camada sobre ele; não há segundo sistema de usuários, de permissões nem de menu. O frontend só
+**esconde**; quem autoriza é sempre o servidor (página, Server Action, API).
 
-- **Catálogo** (`src/domain/permissions/`, puro, um arquivo por módulo): MÓDULO `<m>.acessar` → TELA `<m>.<tela>.ver`
-  → SEÇÃO `<m>.<tela>.<secao>.ver` → AÇÃO `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 65 telas,
-  128 seções, 235 ações (439 chaves, união literal `PermissionKey`). Cada nó tem uma **regra padrão** na DSL
-  (`"all"`, `any`, `all`, `role`, `department`, `manager`, `director`, `managerOf`, `can`) que reproduz o
-  comportamento anterior (teste T0); `evaluateRule` é o único avaliador e `describeRule` gera o texto da interface.
-  Extensões: `moduleGate: "ativo"` (tela que só exige o módulo ativo, ex.: Relatórios), `modules` (tela aberta por
-  qualquer de vários módulos, ex.: Comissões), `requireScreenAny` (página compartilhada), `redirectTo`, `nav`
-  (menu/celular/atalho "+", com `nav.rule`/`quickAction.rule`), `guards`/`checkedIn`/`viewGuards` (o que cada chave
-  protege), `SETTING_PERMISSION` (chave de edição de cada configuração). `MODULE_ACCESS` segue exportado como
-  fachada histórica.
-- **Precedência** (`resolvePermissions` em `src/server/auth/permissions.ts`): (1) módulo inativo na empresa
-  (`organizations/{org}.activeModules`, ausente = todos; `inicio` e `admin` sempre ativos) nega tudo do módulo, admin
-  incluído; (2) hierarquia por E: ação ∧ seção ∧ tela ∧ módulo; (3) valor próprio de cada nó = exceção do usuário
-  (`permission_profiles/user_<uid>`) ?? ajuste do perfil (`permission_profiles/role_<papel>`) ?? regra padrão;
-  (4) escopo por tela = exceção ?? perfil ?? padrão do papel, sempre dentro de `scope.allowed`; (5) sem atalho para
-  admin — ele tem tudo porque as regras o incluem. Cada chave registra a origem (`padrao`, `perfil`, `excecao`,
-  `modulo-inativo`, `hierarquia`).
-- **Leitura**: `getCurrentUser` (cache por requisição) lê o usuário e, num `getAll`, perfil do papel + exceção +
-  organização; anexa `user.permissions`. Falha nessa leitura → log + matriz padrão + todos os módulos ativos: nunca
-  desloga (A4.6). Permissões de OUTRO usuário: `resolvePermissionsForUser(idOuUsuario)` (memo por requisição);
-  CurrentUser de outro usuário: `currentUserFor(user)`.
-- **Escopo** (`src/server/auth/scope.ts`): `resolveDataScope(user, tela)` → `{ kind, userIds?, departmentKeys?,
-  initialKind, poolUnassigned }` com a semântica de "equipe"/"departamento" de cada tela (`scope.variants`);
-  `scopeAllows`, `filterByScope`, `canSeeRecord`. "unidades" vale "empresa" (não oferecido). Os módulos ainda usam os
-  seus `resolveScope`; os testes provam que o conjunto de usuários é o mesmo.
-- **Helpers** (importe de `@/server/auth/session`): `can(user, chave)`, `canAny`, `canSeeHref(user, href)`;
-  páginas: `requireScreen(tela | seção, { redirectTo? })` / `requireScreenAny([...])` (padrão
-  `/meu-dia?erro=sem-permissao`); actions: `requirePermission(chave)` → `PermissionError`, tratada por
-  `failAction(error, fallback)` (relança redirect/notFound com `unstable_rethrow`; devolve o `ActionResult`);
-  APIs: `requireApiPermission(chave)` → usuário ou `Response` 401/403 JSON. Predicados antigos (`canAccessModule`, `canOperateFinance`,
-  `canOperateImplementation/Support`, `canEditArticles`, `canApprovePayables`… `canAccessReport`, `canApproveGoLive`,
-  `canApproveStage`) mantêm nome e assinatura e delegam para `can`. `requireRole` continua até a migração.
-- **Navegação** (A11): `NAVIGATION`, `MOBILE_NAV` e `QUICK_ACTIONS` DERIVAM de `nav` das telas do catálogo
-  (`src/domain/permissions/nav-table.ts`); os valores ficam em `src/domain/navigation.ts` (só servidor — fora de
-  `constants.ts` para o catálogo não ir ao bundle do navegador) e os tipos em `constants.ts`; o href é a chave de
-  lookup. No servidor
-  (`src/server/auth/navigation.ts`): `filterNavigation` (layout, drawer e `/menu`), `filterMobileNav` (barra do
-  celular), `filterQuickActions` (atalhos "+"), `filterShellLinks` (atalhos da busca, criação sem resultado, menu de
-  ajuda e do usuário — listas em `constants.ts`, entregues filtradas por props), `visibleScreens` e `hrefAccessMap`.
-  O shell recebe `user.access` (visibilidade de cada rota do catálogo, já avaliada) e o `AccessProvider`
-  (`src/components/auth/access-provider.tsx`) oferece `useCanSee(href)`, `<ScreenLink>` e `<CanSee>` para **esconder**
-  links (hubs de Financeiro, Administração e Gestão; atalhos do Meu Dia). Nunca autorize operação por eles: páginas,
-  actions e APIs revalidam no servidor. `canSeeHref` (servidor) e `canSeeHrefIn` (cliente) usam o mesmo casamento de
-  rota (`src/domain/permissions/href.ts`). O catch-all `[...slug]` avalia a tela do href.
-- **Verificador de cobertura** (A15/A21): `npm run check:access` (estrito, sai 1 com pendência) ou
-  `npm run check:access -- --report` (só lista). Confere páginas com `requireScreen` da tela dona da rota, funções
-  `"use server"` com dono no catálogo (`guards`, `viewGuards`, qualificadores, `SETTING_PERMISSION`) e com
-  `requirePermission` (direto ou por helper local), handlers de API com `requireApiPermission` ou isenção, chaves
-  usadas no código existentes no catálogo, rotas de tela com página e guards apontando para funções existentes.
-- **Adicionar tela ou ação**: declare no arquivo do módulo em `src/domain/permissions/` (chave estável, rótulo de
-  negócio, regra padrão, `routes` da página ou `guards` da action; `nav` se tiver item de menu); proteja a página com
-  `requireScreen("<m>.<tela>")` e a action com `requirePermission("<chave>")` dentro do `try` + `failAction`; rode
-  `npm test` (integridade do catálogo, cobertura das páginas e equivalência) e `npm run check:access`.
-- **Testes**: `npm test` (vitest, puros — catálogo, DSL, precedência, T0 contra cópia congelada dos predicados antigos
-  em `tests/permissions/legacy.ts`, escopo contra os resolvedores atuais com banco em memória) e `npm run test:rules`
-  (regras do Firestore no emulador).
+### Catálogo (`src/domain/permissions/`, puro, um arquivo por módulo)
+- Hierarquia MÓDULO `<m>.acessar` → TELA `<m>.<tela>.ver` → SEÇÃO/ABA `<m>.<tela>.<secao>.ver` → AÇÃO
+  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 65 telas, 128 seções, 235 ações (439 chaves na união
+  literal `PermissionKey`). Rótulos de negócio em português em cada nó (a interface nunca mostra a chave técnica).
+- Cada nó tem uma **regra padrão** na DSL (`"all"`, `any`, `all`, `role`, `department`, `manager`, `director`,
+  `managerOf`, `can`) que reproduz o comportamento anterior à etapa (teste T0 contra a cópia congelada dos predicados
+  antigos em `tests/permissions/legacy.ts`); `evaluateRule` é o único avaliador e `describeRule` gera o texto da
+  interface ("Administrador, gestores ou departamento Financeiro").
+- Extensões: `moduleGate: "ativo"` (tela que só exige o módulo ativo, ex.: Relatórios), `modules` (tela aberta por
+  qualquer de vários módulos, ex.: Comissões = Financeiro ∨ Vendas), `virtual` (capacidade transversal sem página, ex.:
+  `financeiro.valores` — "Visualizar valores"), `requireScreenAny` (página compartilhada, ex.: `/admin/configuracoes`),
+  `redirectTo`, `nav` (menu/celular/atalho "+", com `nav.rule`/`quickAction.rule`), `guards` (funções que a chave
+  protege, com qualificador `#função?<condição>` quando a chave depende do argumento — criar × editar), `checkedIn`
+  (chave exigida ALÉM do dono quando uma condição ocorre), `viewGuards` (leituras protegidas por tela/seção),
+  `SETTING_PERMISSION` (chave de edição de cada configuração de `upsertSetting`), `scope` (abaixo) e `applyAt`
+  (documentação de onde o escopo é aplicado). `MODULE_ACCESS` segue exportado como fachada histórica.
+- **Chaves protegidas** (`PROTECTED_KEYS`): `inicio.acessar`, `inicio.meu-dia.ver`, `admin.acessar`,
+  `admin.usuarios.ver/editar`, `admin.acessos.ver/gerir` — base dos invariantes.
+
+### Precedência (determinística — `resolvePermissions` em `src/server/auth/permissions.ts`)
+1. **Módulo inativo na empresa** nega tudo do módulo para todos, admin incluído. `organizations/{org}.inactiveModules`
+   (os desligados) tem prioridade sobre `activeModules` (forma antiga, lista dos ligados); sem nenhum dos dois, todos
+   ativos (`activeModulesOfOrganization`). `inicio` e `admin` nunca são desativados. Dados não são apagados.
+2. **Hierarquia por E**: efetivo(ação) = valor(ação) ∧ efetivo(seção pai) ∧ efetivo(tela) ∧ efetivo(módulo). Negar a
+   tela nega todas as suas seções e ações; conceder uma ação não abre a tela.
+3. **Valor próprio de cada nó** = exceção do usuário (`permission_profiles/user_<uid>`) ?? ajuste do perfil do papel
+   (`permission_profiles/role_<papel>`) ?? regra padrão. Em cada nível há um só valor por chave: o mais específico vence.
+4. **Escopo por tela** = exceção ?? perfil ?? padrão do papel (`scope.defaultByRole` + `overrides`), sempre dentro de
+   `scope.allowed` (`clampScope`); telas com `sameAs` herdam o escopo da tela indicada (ex.: Visão Geral, Assinaturas,
+   Cobranças, Contas a Receber e Recorrência seguem **Contratos**; Kanban/Treinamentos/Go-live seguem **Projetos**).
+5. **Sem atalho para admin**: nenhum `role === "admin"` em `can`; o admin tem tudo porque as regras padrão o incluem e os
+   invariantes impedem retirar dele as chaves protegidas.
+6. Cada chave registra a **origem** (`padrao`, `perfil`, `excecao`, `modulo-inativo`, `hierarquia`) — é o que a seção
+   "Acesso efetivo" do drawer mostra.
+
+### Leitura e helpers
+- `getCurrentUser` (cache por requisição) lê o usuário e, num `getAll`, perfil do papel + exceção + organização
+  (`src/server/auth/permission-store.ts`) e anexa `user.permissions`. Falha nessa leitura → log + matriz padrão + todos
+  os módulos ativos: nunca desloga (A4.6). Permissões de OUTRO usuário: `resolvePermissionsForUser(idOuUsuario)`.
+- Importe de `@/server/auth/session`: `can(user, chave)`, `canAny`, `canSeeHref(user, href)`; **páginas**
+  `requireScreen(tela | seção, { redirectTo? })` / `requireScreenAny([...])` (padrão `/meu-dia?erro=sem-permissao`);
+  **actions** `requirePermission(chave)` → `PermissionError`, tratada por `failAction(error, fallback)` (relança
+  redirect/notFound com `unstable_rethrow`; mensagens de `BusinessError`/`PermissionError` chegam ao usuário, erros
+  técnicos viram o fallback + log); **APIs** `requireApiPermission(chave)` → usuário ou `Response` 401/403 JSON.
+  Código puro (serviços usados pelo seed, testes) importa `can` de `@/server/auth/permissions` e as classes de erro de
+  `@/server/auth/error-classes` (sem `next/navigation`).
+- `generateMetadata` de páginas de detalhe confere permissão e escopo antes de ler dados; sem acesso, título genérico.
+- Predicados antigos (`canAccessModule`, `canOperateFinance`, `canOperateImplementation/Support`, `canEditArticles`,
+  `canAccessReport`, `canApproveGoLive`…) mantêm nome e assinatura e delegam para `can`. As guardas locais
+  (`requireAdmin`, `requireFinanceOperator`, `requireCsUser`, `requireSalesUser`, `requireOperator`, `requireWith`) e os
+  `fail()` locais foram removidos; `requireRole` fica exportado sem chamadores (compatibilidade).
+- Aprovação por terceiros tem chave própria: `operacao.workflow.aprovar-qualquer` (gates de outro responsável) e
+  `implantacao.go-live.aprovar-qualquer` (go-live de projeto alheio ou com "exige gestor").
+
+### Escopo de dados (`src/server/auth/scope.ts`)
+- `ScopeKind = "meus" | "equipe" | "departamento" | "unidades" | "empresa"`; `resolveDataScope(user, tela)` →
+  `{ kind, userIds?, departmentKeys?, initialKind, poolUnassigned }` com a semântica de "equipe"/"departamento" de cada
+  tela (`scope.variants`, descrita na interface). "unidades" vale "empresa" (não há unidade no modelo; não é oferecido).
+- Helpers: `scopeAllows`, `filterByScope`, `canSeeRecord(user, tela, donos)`. Listas filtram na consulta do servidor;
+  detalhe por id fora do escopo → página de acesso negado; action sobre registro fora do escopo → `PermissionError`;
+  id inexistente continua `notFound`/`BusinessError`.
+- Cada módulo concentra dono/escopo/capacidades num `access.ts`: `src/server/sales/access.ts`
+  (`opportunityInScope`/`proposalInScope`/`visitInScope`, `assert*Access`), `finance/access.ts` (donos do contrato =
+  vendedor com fallback oportunidade → cliente, ou responsável financeiro; cobrança e aditivo herdam do contrato;
+  `contractAccessById`, `assert*Access`) + `finance/redact.ts` (A13), `commissions/access.ts`
+  (`commissionVisibility`, `payableVisibility`, `assert*Access`), `implementation/access.ts` (donos = responsável ∪
+  equipe; treinamento = instrutor ∪ donos), `cs/access.ts` (dono = responsável da conta de CS ou `ownerCsId`),
+  `support/access.ts` (dono = atendente; chamado sem atendente fica na fila), `marketing/access.ts` (leads sem dono
+  visíveis a quem pode atribuir/assumir), `clients/access.ts` e os resolvedores de Meu Dia/Tarefas/Performance/Gestão.
+  Os resolvedores antigos que ainda existem (`resolveScope`, `resolveCommissionScope`…) são fachadas sobre o núcleo.
+- Padrão = comportamento anterior (testes de equivalência em `tests/permissions/scope.test.ts`); onde não havia
+  recorte, o padrão é "empresa" e o CEO/CTO pode restringir.
+- Cliente 360: cada aba é uma seção (`operacao.clientes.<aba>.ver`, dados de aba negada não são lidos) e as abas de
+  Implantação, Suporte, CS e Financeiro aplicam o escopo da tela dona (`getClient360(id, { sections, user })`).
+
+### "Visualizar valores" (A13)
+`financeiro.valores.ver` (e `financeiro.contratos.valores.ver`): sem a chave o servidor zera as quantias
+(`redactContract`, `redactBilling`, `redactClientFinancialSummary`…) e a interface mostra "Restrito" — o número nunca vai
+ao navegador. Linha digitável e PIX copia-e-cola também saem (codificam o valor).
+
+### Navegação (A11)
+`NAVIGATION`, `MOBILE_NAV` e `QUICK_ACTIONS` DERIVAM de `nav` das telas do catálogo
+(`src/domain/permissions/nav-table.ts`; valores em `src/domain/navigation.ts`, só servidor). No servidor
+(`src/server/auth/navigation.ts`): `filterNavigation` (layout, drawer e `/menu`), `filterMobileNav`,
+`filterQuickActions`, `filterShellLinks`, `visibleScreens`, `hrefAccessMap`. O `AccessProvider`
+(`src/components/auth/access-provider.tsx`) oferece `useCanSee(href)`, `<ScreenLink>` e `<CanSee>` para esconder links;
+cada módulo passa capacidades calculadas no servidor aos Client Components (`SalesAccessProvider`,
+`FinanceAccessProvider`, `MarketingAccessProvider`, props `capabilities`). Salvar perfil/exceção/módulos revalida o
+layout: o menu muda na próxima navegação.
+
+### Administração de acessos (`/admin/usuarios`)
+- Abas `?aba=usuarios|perfis|modulos`. **Perfis e acessos**: árvore Módulo › Tela › Seção › Ação com Padrão/Permitir/Negar
+  por nó, badge "Ajustado", escopo por tela, busca, "Só ajustados", restaurar padrão, motivo e últimas alterações.
+  **Módulos da empresa**: liga/desliga com aviso de quantos usuários perdem acesso (Início e Administração travados).
+  Drawer do usuário: **Exceções de acesso** (motivo obrigatório; bloqueada para o próprio usuário), **Acesso efetivo**
+  (origem de cada decisão) e **Histórico de acesso**. As abas aparecem para quem tem a seção `.ver` e ficam somente
+  leitura sem `admin.acessos.gerir` (padrão: só admin).
+- Leituras em `src/server/admin/access.ts`; helpers puros (árvore, validação, diff "de → para") em
+  `src/server/auth/access-admin.ts`; actions `savePermissionProfile`, `saveUserPermissionOverrides`,
+  `saveActiveModules` em `src/server/admin/actions.ts` (só chaves do catálogo com valor booleano e escopos permitidos;
+  `__proto__` recusado). `saveActiveModules` grava `inactiveModules` e `activeModules` (compatibilidade).
+
+### Invariantes (A9 — `src/server/auth/invariants.ts`, puro)
+Avaliados no **estado resultante** de criar/editar/ativar/excluir usuário e de salvar perfil, exceção e módulos:
+- **I1** sempre existe ≥ 1 usuário ativo com `admin.acessos.gerir` + `admin.usuarios.editar` efetivas (só acusa quando
+  a mudança quebra a condição);
+- **I2** ninguém edita as próprias exceções, perde por perfil/módulo/cadastro uma chave protegida que tinha, se
+  desativa/exclui ou muda o próprio papel;
+- **I3** o perfil `admin` não aceita negar chaves protegidas;
+- **I4** `inicio` e `admin` sempre ativos; `inicio.acessar`/`inicio.meu-dia.ver` nunca negados (evita laço de redirect);
+- **I5** não se exclui quem é gestor de departamento;
+- **I6** anti-escalada: só quem tem `admin.acessos.gerir` edita perfis/exceções/módulos; o ator só concede chaves e
+  escopos que ele próprio tem; atribuir/retirar o papel `admin` exige `admin.acessos.gerir`.
+Violação → `BusinessError` com mensagem amigável + evento `permissions.blocked`. Sem bypass hardcoded.
+
+### Auditoria
+`permissions.updated` (perfil, exceção ou módulos; `payload.changes` por chave com rótulos de negócio — "Contas a
+Pagar › Visualizar: Padrão (permitido) → Negado" —, ator, alvo, motivo), `permissions.blocked`, `user.updated` (com o
+que mudou; salário ocultado), `user.deleted`, `department.updated`. Histórico no drawer e na aba Perfis.
+
+### Como adicionar tela ou ação
+1. Declare no arquivo do módulo em `src/domain/permissions/` — chave estável em pt-kebab, rótulo de negócio, regra
+   padrão (= quem deve ver/fazer hoje), `routes` da página, `guards` da action (`arquivo#função`, com `?condição`
+   quando a chave depende do argumento), `nav` se tiver item de menu, `scope` se a tela lista registros com dono.
+2. Página: `const user = await requireScreen("<m>.<tela>")` (seção: a chave da seção) — antes de ler qualquer dado;
+   `generateMetadata` de detalhe confere acesso antes de ler.
+3. Server action: `const user = await requirePermission("<chave>")` como primeira linha dentro do `try`, `catch` com
+   `failAction`; registro por id → confira o escopo (`canSeeRecord`/`assert*Access` do módulo).
+4. API: `requireApiPermission("<chave>")` (ou token de webhook/cron, listado em `scripts/check-access/analyze.ts`).
+5. Interface: esconda botões com capacidades calculadas no servidor (props/contexto), nunca decida no cliente.
+6. Rode `npm test` (integridade do catálogo, cobertura, equivalência, precedência, invariantes) e
+   `npm run check:access` (estrito: sai 1 com qualquer pendência).
+
+### Verificador de cobertura (A15/A21 — `npm run check:access`)
+Estrito por padrão (sai 1 com pendência; `-- --report` só lista; `-- --json`). Confere: toda `page.tsx` chama
+`requireScreen` da tela dona da rota (exceto as públicas isentas); toda função exportada de arquivo `"use server"` tem
+dono no catálogo e chama `requirePermission` com a chave dona (ou `checkedIn`); todo `route.ts` tem
+`requireApiPermission` ou isenção justificada (webhook/cron com token); chaves literais usadas no código existem no
+catálogo; toda rota de tela tem página; todo guard aponta para função existente.
+
+### Testes
+`npm test` (vitest, puros): catálogo, DSL, precedência, módulos (`inactiveModules`), invariantes, T0 de equivalência,
+escopo contra os resolvedores antigos, navegação, erros, verificador e um arquivo `guards-<módulo>.test.ts` por
+módulo. `npm run test:rules` (regras do Firestore no emulador). E2E `77-acessos.mjs` (T1–T10) na pasta de e2e.
 
 ## Auditoria via eventos
 - Não há coleção de auditoria: cada mudança relevante emite evento com `actorId`, `occurredAt` e
   `payload.changes {campo: {from, to}}` + `payload.reason` (`auditChanges` em `src/server/audit.ts`). Cobre itens e
   condições do contrato, regras de comissão (`commission_rule.changed`), aprovação/pagamento/cancelamento de títulos
   (`payable.*`), estorno/cancelamento/bloqueio de comissão (`commission.*`), cancelamento de contrato,
-  `settings.updated`, boleto registrado (`billing.updated`), baixa (`payment.approved`) e estorno (`payment.reversed`). A timeline do cliente e do contrato usa os mesmos eventos (ícones em
+  `settings.updated`, boleto registrado (`billing.updated`), baixa (`payment.approved`), estorno (`payment.reversed`),
+  acessos (`permissions.updated`/`permissions.blocked`) e usuários/departamentos (`user.updated`, `user.deleted`,
+  `department.updated`). A timeline do cliente e do contrato usa os mesmos eventos (ícones em
   `src/components/timeline/event-icon.tsx`).
 
 ## Qualidade
-- `npm run lint && npm run typecheck && npm test && npm run build` devem passar antes de considerar uma entrega pronta.
+- `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.
 - Emuladores locais: `FIRESTORE_EMULATOR_HOST` e `FIREBASE_AUTH_EMULATOR_HOST` já estão em `.env.local`.
   Seed: `npm run seed`. Dev: `npm run dev` (porta 3000). Usuário demo: `hercules@intercert.com.br` / `interos123`.

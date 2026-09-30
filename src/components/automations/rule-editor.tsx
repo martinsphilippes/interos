@@ -350,10 +350,17 @@ export interface RuleEditorProps {
   rule: AutomationRuleRecord | null;
   options: EditorOptions;
   eventGroups: { domain: string; types: string[] }[];
+  /**
+   * Capacidades calculadas no servidor (só escondem; as actions revalidam): salvar = admin.automacoes.criar (nova) ou
+   * .editar (existente); testar = .testar; excluir = .excluir. Ausentes = tudo liberado (comportamento anterior).
+   */
+  canSave?: boolean;
+  canTest?: boolean;
+  canDelete?: boolean;
 }
 
 /** Construtor de regras: gatilho, condições (caminho/operador/valor) e ações com parâmetros por tipo. */
-export function RuleEditor({ rule, options, eventGroups }: RuleEditorProps) {
+export function RuleEditor({ rule, options, eventGroups, canSave = true, canTest = true, canDelete = true }: RuleEditorProps) {
   const router = useRouter();
   const [draft, setDraft] = useState<Draft>(() => toDraft(rule));
   const [saving, startSave] = useTransition();
@@ -600,19 +607,25 @@ export function RuleEditor({ rule, options, eventGroups }: RuleEditorProps) {
 
       {simulation ? <SimulationView result={simulation} /> : null}
 
-      <div className="sticky bottom-[calc(var(--spacing-mobile-nav)+8px)] z-10 flex gap-2 rounded-lg border border-border bg-surface/95 p-3 shadow-pop backdrop-blur md:bottom-4 md:justify-end">
-        {draft.id ? (
-          <Button variant="ghost" className="min-h-[44px] text-danger md:mr-auto md:min-h-0" onClick={() => setConfirmDelete(true)}>
-            <Trash2 /> <span className="hidden sm:inline">Excluir</span>
-          </Button>
-        ) : null}
-        <Button variant="outline" className="min-h-[44px] flex-1 md:min-h-0 md:flex-none" loading={testing} onClick={test}>
-          {testing ? null : <FlaskConical />} {draft.triggerType === "evento" ? "Testar com último evento" : "Testar"}
-        </Button>
-        <Button className="min-h-[44px] flex-1 md:min-h-0 md:flex-none" loading={saving} onClick={save}>
-          {saving ? null : <Save />} Salvar
-        </Button>
-      </div>
+      {canSave || canTest || (canDelete && draft.id) ? (
+        <div className="sticky bottom-[calc(var(--spacing-mobile-nav)+8px)] z-10 flex gap-2 rounded-lg border border-border bg-surface/95 p-3 shadow-pop backdrop-blur md:bottom-4 md:justify-end">
+          {draft.id && canDelete ? (
+            <Button variant="ghost" className="min-h-[44px] text-danger md:mr-auto md:min-h-0" onClick={() => setConfirmDelete(true)}>
+              <Trash2 /> <span className="hidden sm:inline">Excluir</span>
+            </Button>
+          ) : null}
+          {canTest ? (
+            <Button variant="outline" className="min-h-[44px] flex-1 md:min-h-0 md:flex-none" loading={testing} onClick={test}>
+              {testing ? null : <FlaskConical />} {draft.triggerType === "evento" ? "Testar com último evento" : "Testar"}
+            </Button>
+          ) : null}
+          {canSave ? (
+            <Button className="min-h-[44px] flex-1 md:min-h-0 md:flex-none" loading={saving} onClick={save}>
+              {saving ? null : <Save />} Salvar
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       <ConfirmDialog
         open={confirmDelete}
