@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { CONTRACT_STATUS_LABELS } from "@/components/clients/labels";
 import { netItem } from "@/components/sales/model";
 import { PrintButton } from "@/components/sales/print-button";
+import { ContractSummaryCard } from "@/components/finance/contract-summary-card";
 
 type Params = Promise<{ id: string }>;
 
@@ -122,33 +123,35 @@ export default async function ContractDocumentPage({ params }: { params: Params 
           {contract.items.length === 0 ? (
             <p className="text-muted">Nenhum item cadastrado.</p>
           ) : (
-            <table className="w-full border-collapse tabular-nums">
-              <thead>
-                <tr className="border-b border-border-strong text-left text-xs uppercase tracking-wide text-muted">
-                  <th className="py-2 pr-2">Produto</th>
-                  <th className="py-2 pr-2 text-right">Qtd.</th>
-                  <th className="py-2 pr-2 text-right">Adesão</th>
-                  <th className="py-2 pr-2 text-right">Mensalidade</th>
-                  <th className="py-2 pr-2 text-right">Hardware</th>
-                  <th className="py-2 text-right">Desconto</th>
-                </tr>
-              </thead>
-              <tbody>
-                {contract.items.map((i) => {
-                  const net = netItem(i);
-                  return (
-                    <tr key={i.productId} className="border-b border-border">
-                      <td className="py-2 pr-2">{i.productName}</td>
-                      <td className="py-2 pr-2 text-right">{i.quantity}</td>
-                      <td className="py-2 pr-2 text-right">{formatCurrency(net.setupTotal)}</td>
-                      <td className="py-2 pr-2 text-right">{formatCurrency(net.monthlyTotal)}</td>
-                      <td className="py-2 pr-2 text-right">{formatCurrency(net.hardwareTotal)}</td>
-                      <td className="py-2 text-right">{i.discountPct > 0 ? `${i.discountPct}%` : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="-mx-1 overflow-x-auto px-1">
+              <table className="w-full min-w-[520px] border-collapse tabular-nums">
+                <thead>
+                  <tr className="border-b border-border-strong text-left text-xs uppercase tracking-wide text-muted">
+                    <th className="py-2 pr-2">Produto</th>
+                    <th className="py-2 pr-2 text-right">Qtd.</th>
+                    <th className="py-2 pr-2 text-right">Adesão</th>
+                    <th className="py-2 pr-2 text-right">Mensalidade</th>
+                    <th className="py-2 pr-2 text-right">Hardware</th>
+                    <th className="py-2 text-right">Desconto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contract.items.map((i) => {
+                    const net = netItem(i);
+                    return (
+                      <tr key={i.productId} className="border-b border-border">
+                        <td className="py-2 pr-2">{i.productName}</td>
+                        <td className="py-2 pr-2 text-right">{i.quantity}</td>
+                        <td className="py-2 pr-2 text-right">{formatCurrency(net.setupTotal)}</td>
+                        <td className="py-2 pr-2 text-right">{formatCurrency(net.monthlyTotal)}</td>
+                        <td className="py-2 pr-2 text-right">{formatCurrency(net.hardwareTotal)}</td>
+                        <td className="py-2 text-right">{i.discountPct > 0 ? `${i.discountPct}%` : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
           <dl className="ml-auto mt-4 grid max-w-sm grid-cols-2 gap-x-4 gap-y-1 tabular-nums">
             <dt className="text-muted">Adesão / setup</dt>
@@ -180,6 +183,8 @@ export default async function ContractDocumentPage({ params }: { params: Params 
             <p className="whitespace-pre-line">{contract.paymentCondition || "—"}</p>
           </div>
         </section>
+
+        <ContractSummaryCard summary={detail.summary} variant="print" />
 
         <section className="border-t border-border pt-5">
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Assinaturas</h2>

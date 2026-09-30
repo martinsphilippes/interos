@@ -16,6 +16,7 @@ import { Progress } from "@/components/ui/progress";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { cn } from "@/lib/utils";
 import { contractDocumentPath, contractEmailHref } from "./contract-links";
+import { ContractSummaryCard } from "./contract-summary-card";
 import { ManualSignatureButton } from "./manual-signature-dialog";
 import { useFinanceAction } from "./use-finance-action";
 import { useOrigin } from "@/components/ui/use-origin";
@@ -171,6 +172,12 @@ export function ContractSidePanel({ panel, integrations, canOperate }: { panel: 
           <Link href={`/financeiro/contratos/${panel.id}`} className="inline-flex items-center gap-1 self-end text-sm font-medium text-brand-fg hover:underline">
             Cobranças, itens e liberação <ChevronRight className="size-4" />
           </Link>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-5">
+          <ContractSummaryCard summary={panel.summary} variant="compact" />
         </CardContent>
       </Card>
 

@@ -17,11 +17,12 @@ import { UserChip } from "@/components/ui/user-chip";
 import { Timeline } from "@/components/timeline/timeline";
 import { CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "@/components/clients/labels";
 import { BillingDataCard } from "@/components/finance/billing-data-card";
-import { CancelContractButton } from "@/components/finance/cancel-contract-button";
+import { CancelContractCard } from "@/components/finance/cancel-contract-button";
 import { ContractBillingCard } from "@/components/finance/contract-billing-card";
 import { ContractConditionsCard } from "@/components/finance/contract-conditions-card";
 import { buildFlow, ContractFlow } from "@/components/finance/contract-flow";
 import { ContractItemsCard } from "@/components/finance/contract-items-card";
+import { ContractSummaryCard } from "@/components/finance/contract-summary-card";
 import { DocumentsCard } from "@/components/finance/documents-card";
 import { PendencyCard } from "@/components/finance/pendency-card";
 import { ReleaseCard } from "@/components/finance/release-card";
@@ -92,7 +93,6 @@ export default async function ContractPage({ params }: { params: Params }) {
                 </Link>
               </Button>
             ) : null}
-            {canOperate && !closed ? <CancelContractButton contractId={contract.id} number={contract.number} openBillings={billings.filter((b) => b.status === "aberta" || b.status === "vencida").length} /> : null}
           </>
         }
       />
@@ -144,6 +144,7 @@ export default async function ContractPage({ params }: { params: Params }) {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex min-w-0 flex-col gap-4">
+          <ContractSummaryCard summary={detail.summary} />
           <ContractItemsCard contractId={contract.id} items={contract.items} products={detail.products} canEdit={canOperate && detail.editable} sent={sent} version={contract.version} />
           <ContractConditionsCard contract={contract} canEdit={canOperate && detail.editable} sent={sent} />
           <ContractBillingCard
@@ -198,6 +199,7 @@ export default async function ContractPage({ params }: { params: Params }) {
             fromOpportunity={Boolean(detail.opportunity?.billingData)}
           />
           <DocumentsCard contractId={contract.id} documents={detail.documents} users={users} canOperate={canOperate} />
+          {canOperate && !closed ? <CancelContractCard contractId={contract.id} number={contract.number} openBillings={billings.filter((b) => b.status === "aberta" || b.status === "vencida").length} /> : null}
           {contract.startDate ? (
             <p className="px-1 text-xs text-muted">
               Vigência {formatDate(contract.startDate)} a {formatDate(contract.endDate)}

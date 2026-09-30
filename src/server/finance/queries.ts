@@ -14,6 +14,7 @@ import {
   type ChurnRecord,
   type Client,
   type Communication,
+  type Contact,
   type Contract,
   type Document,
   type DomainEvent,
@@ -28,6 +29,7 @@ import {
 } from "@/domain/types";
 import { AGING_BUCKETS, agingBucket, allSigned, daysBetween, evaluateReleaseGate, listBillingsSwept, requiredPaymentBilling, todayKey, type AgingBucketKey } from "./billing";
 import { getGateSettings, mergedBillingData } from "./service";
+import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import { BILLING_STATUSES, BILLING_TYPES, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
 
 // ---------------------------------------------------------------------------
@@ -318,6 +320,8 @@ export interface ContractDetail {
   products: ProductOption[];
   /** Itens/condições editáveis (não assinado por todos, não liberado/cancelado). */
   editable: boolean;
+  /** Resumo do contratado (D7): o que a venda contratou, com vendedor e contato. */
+  summary: ContractSummaryData;
 }
 
 /** Memoizado por requisição: generateMetadata e a página compartilham a leitura. */
@@ -393,7 +397,12 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
   ]);
 
   const signedByAll = Boolean(contract.signatureEnvelopeId) && allSigned(contract);
+  const contactId = contract.contactId ?? opportunity?.closing?.contactId;
+  const contact = contactId ? await getById<Contact>(COLLECTIONS.contacts, contactId) : null;
+  const sellerId = contract.sellerId ?? opportunity?.ownerId;
+  const summary = buildContractSummary(contract, { billings, sellerName: sellerId ? users[sellerId]?.name : undefined, contact });
   return {
+    summary,
     contract,
     client,
     opportunity,

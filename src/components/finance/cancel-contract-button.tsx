@@ -4,6 +4,7 @@ import * as React from "react";
 import { Ban } from "lucide-react";
 import { cancelContractAction } from "@/server/finance/actions";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FormField } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
@@ -63,5 +64,22 @@ export function CancelContractButton({ contractId, number, openBillings, classNa
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** Card da página do contrato com a ação de cancelar (fica fora do cabeçalho para não espremer o título). */
+export function CancelContractCard(props: CancelContractButtonProps) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Ban className="size-4 text-muted" /> Cancelamento
+        </CardTitle>
+        <CardDescription>A venda não vai adiante? Cancele o contrato com o motivo; as cobranças em aberto são canceladas junto.</CardDescription>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <CancelContractButton {...props} className="h-11 w-full text-danger-fg md:h-9" />
+      </CardContent>
+    </Card>
   );
 }

@@ -4,7 +4,8 @@ import "server-only";
  * sobre o fim do mês anterior, linhas da gestão de contratos, fluxo financeiro dos contratos listados e o
  * painel do contrato selecionado (assinatura, comunicação, histórico e linha do tempo a partir dos eventos).
  */
-import { getManyByIds, list } from "@/server/db";
+import { getById, getManyByIds, list } from "@/server/db";
+import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import { dateKey } from "@/lib/format";
 import { COLLECTIONS, type Billing, type Client, type Communication, type Contact, type Contract, type ContractSignerEntry, type DomainEvent, type Opportunity, type User } from "@/domain/types";
 import { communicationStatusLabel } from "@/server/integrations/communications";
@@ -122,6 +123,8 @@ export interface ContractPanel {
   interactions: PanelInteraction[];
   milestones: Milestone[];
   pendingReason?: string;
+  /** Resumo do contratado (D7). */
+  summary: ContractSummaryData;
 }
 
 export interface ContractsWorkspace {
@@ -306,8 +309,12 @@ async function buildPanel(contract: Contract, client: Client | undefined, billin
     list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", contract.id]] }),
     billings.length > 0 ? list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "in", billings.map((b) => b.id)]] }) : Promise.resolve([] as DomainEvent[]),
   ]);
-  const users = await getManyByIds<User>(COLLECTIONS.users, comms.map((c) => c.userId ?? ""));
+  const opp = !contract.sellerId && contract.opportunityId ? await getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : null;
+  const sellerId = contract.sellerId ?? opp?.ownerId;
+  const users = await getManyByIds<User>(COLLECTIONS.users, [...comms.map((c) => c.userId ?? ""), sellerId ?? ""]);
   const phones = contactPhone(client, contacts);
+  const saleContactId = contract.contactId ?? opp?.closing?.contactId;
+  const summary = buildContractSummary(contract, { billings, sellerName: sellerId ? users.get(sellerId)?.name : undefined, contact: saleContactId ? contacts.find((c) => c.id === saleContactId) : null });
 
   const interactions: PanelInteraction[] = comms
     .filter((c) => c.channel !== "interno")
@@ -391,5 +398,6 @@ async function buildPanel(contract: Contract, client: Client | undefined, billin
     interactions: interactions.slice(0, 6),
     milestones,
     pendingReason: contract.pendingReason,
+    summary,
   };
 }
