@@ -17,6 +17,9 @@ export interface TaskListProps {
   /** Checkbox de conclusão rápida: marca conclui, desmarca reabre. */
   onToggleComplete: (task: TaskListItem, done: boolean) => void;
   pendingIds: ReadonlySet<string>;
+  /** Permissões do usuário (calculadas no servidor): sem concluir/reabrir o checkbox fica desabilitado. */
+  canComplete?: boolean;
+  canReopen?: boolean;
   /** Mostra a coluna de status (views que misturam status). */
   showStatus?: boolean;
   /** Mostra "concluída em" no lugar do prazo. */
@@ -27,7 +30,7 @@ export interface TaskListProps {
 }
 
 /** Lista densa: linhas no desktop, cards empilhados no celular. Clique abre o drawer (?tarefa=id). */
-export function TaskList({ items, onOpen, onToggleComplete, pendingIds, showStatus, showCompleted, emptyTitle = "Nenhuma tarefa por aqui", emptyDescription, emptyAction }: TaskListProps) {
+export function TaskList({ items, onOpen, onToggleComplete, pendingIds, canComplete = true, canReopen = true, showStatus, showCompleted, emptyTitle = "Nenhuma tarefa por aqui", emptyDescription, emptyAction }: TaskListProps) {
   if (items.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-surface">
@@ -59,7 +62,7 @@ export function TaskList({ items, onOpen, onToggleComplete, pendingIds, showStat
             <span className="flex min-h-[28px] items-center md:min-h-0" onClick={(e) => e.stopPropagation()}>
               <Checkbox
                 checked={done}
-                disabled={pending || task.status === "cancelada"}
+                disabled={pending || task.status === "cancelada" || (done ? !canReopen : !canComplete)}
                 onCheckedChange={(v) => onToggleComplete(task, v === true)}
                 aria-label={done ? `Reabrir ${task.title}` : `Concluir ${task.title}`}
                 className="size-[18px] md:size-4"

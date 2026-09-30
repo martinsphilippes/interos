@@ -12,7 +12,8 @@ import { computeSlaState } from "@/server/sla";
 import { listNotifications } from "@/server/notifications";
 import { sweepOverdue } from "@/server/finance/billing";
 import { getDueSoonDays } from "@/server/finance/regua";
-import { isFinanceTeam } from "@/server/commissions/permissions";
+import { can } from "@/server/auth/session";
+import { resolveDataScope } from "@/server/auth/scope";
 import { toNotificationItem } from "@/components/notifications/model";
 import {
   COLLECTIONS,
@@ -30,6 +31,7 @@ import {
   type Goal,
   type ImplementationProject,
   type Lead,
+  type Notification,
   type Opportunity,
   type Payable,
   type PayableStatus,
@@ -61,6 +63,7 @@ import type {
   GoalItem,
   MeuDiaData,
   MeuDiaScope,
+  MeuDiaSections,
   MeuDiaStats,
   NotificationItem,
   PriorityItem,
@@ -239,16 +242,38 @@ interface ScopeInfo {
 }
 
 /**
- * Gestores veem quem tem managerId = eles; admin/diretoria veem toda a organização.
- * O próprio usuário sempre faz parte da equipe. Exportada para a equivalência com resolveDataScope (tests/permissions).
+ * Escopo do Meu Dia pela tela `inicio.meu-dia` (resolveDataScope): visão inicial sempre "eu"; a alternância para a
+ * equipe exige a seção "Visão da equipe" e um escopo mais amplo que "meus". Padrão: gestor = ele + liderados diretos;
+ * diretoria/admin = toda a organização; demais = só o próprio. O próprio usuário sempre faz parte da equipe.
+ * Exportada para a equivalência com resolveDataScope (tests/permissions).
  */
 export async function resolveScope(user: CurrentUser, requested: MeuDiaScope): Promise<ScopeInfo> {
-  const allUsers = (await list<User>(COLLECTIONS.users, { where: [["active", "==", true]] })).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-  const canToggle = user.isManager;
+  const [activeUsers, data] = await Promise.all([list<User>(COLLECTIONS.users, { where: [["active", "==", true]] }), resolveDataScope(user, "inicio.meu-dia")]);
+  const allUsers = activeUsers.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const canToggle = data.kind !== "meus" && can(user, "inicio.meu-dia.equipe.ver");
   if (requested !== "equipe" || !canToggle) return { members: [user], allUsers, canToggle, scope: "eu" };
-  const team = user.isDirector ? allUsers : allUsers.filter((u) => u.managerId === user.id);
+  const team = data.userIds ? allUsers.filter((u) => data.userIds!.has(u.id)) : allUsers;
   if (!team.some((u) => u.id === user.id)) team.unshift(user);
   return { members: team, allUsers, canToggle, scope: "equipe" };
+}
+
+/** Seções visíveis do Meu Dia (catálogo inicio.meu-dia.<secao>.ver). */
+export function meuDiaSections(user: CurrentUser): MeuDiaSections {
+  return {
+    prioridades: can(user, "inicio.meu-dia.prioridades.ver"),
+    equipe: can(user, "inicio.meu-dia.equipe.ver"),
+    insights: can(user, "inicio.meu-dia.insights.ver"),
+    financeiro: can(user, "inicio.meu-dia.financeiro.ver"),
+    cobrancasVendas: can(user, "inicio.meu-dia.cobrancas-vendas.ver"),
+    contratos: can(user, "inicio.meu-dia.contratos.ver"),
+    agenda: can(user, "inicio.meu-dia.agenda.ver"),
+    aguardando: can(user, "inicio.meu-dia.aguardando.ver"),
+    followups: can(user, "inicio.meu-dia.followups.ver"),
+    etapas: can(user, "inicio.meu-dia.etapas.ver"),
+    clientesAtencao: can(user, "inicio.meu-dia.clientes-atencao.ver"),
+    metas: can(user, "inicio.meu-dia.metas.ver"),
+    notificacoes: can(user, "inicio.meu-dia.notificacoes.ver"),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -276,9 +301,13 @@ interface MeuDiaProfile {
   sales: boolean;
 }
 
-function profileOf(user: CurrentUser, members: User[]): MeuDiaProfile {
+/**
+ * Perfil financeiro = seção "Financeiro do dia" (padrão: equipe financeira, admin, diretoria ≡ isFinanceTeam);
+ * perfil comercial = vendedor (ou equipe com vendedores) E a seção "Cobranças e contratos das minhas vendas".
+ */
+function profileOf(user: CurrentUser, members: User[], sections: MeuDiaSections): MeuDiaProfile {
   const isSeller = (u: Pick<User, "role" | "departmentId">) => u.role === "vendas" || u.departmentId === "vendas";
-  return { finance: isFinanceTeam(user), sales: isSeller(user) || members.some(isSeller) };
+  return { finance: sections.financeiro, sales: sections.cobrancasVendas && (isSeller(user) || members.some(isSeller)) };
 }
 
 function billingLabel(b: Billing): string {
@@ -371,7 +400,9 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   const userById = new Map(allUsers.map((u) => [u.id, u]));
   const nameOf = (id: string | undefined) => (id ? userById.get(id)?.name : undefined);
   const isTeam = scope === "equipe";
-  const profile = profileOf(user, members);
+  const sections = meuDiaSections(user);
+  const profile = profileOf(user, members, sections);
+  const canCompleteTasks = can(user, "operacao.tarefas.concluir");
   const wantsBillings = profile.finance || profile.sales;
 
   const [tasks, steps, leads, opps, projects, tickets, csClients, csAccounts, renewals, ownedSlas, visits, trainings, unread, oppSettings, goals, ownedContracts, successPlans, communications, openBillingsRaw, payables, eligibleCommissions, queueContracts, sellerContracts] = await Promise.all([
@@ -387,13 +418,13 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     byOwner<SlaInstance>(COLLECTIONS.slaInstances, "ownerId", ids),
     byOwner<Visit>(COLLECTIONS.visits, "sellerId", ids),
     byOwner<Training>(COLLECTIONS.trainings, "instructorId", ids),
-    listNotifications(user.id, { unreadOnly: true }),
+    sections.notificacoes ? listNotifications(user.id, { unreadOnly: true }) : Promise.resolve([] as Notification[]),
     list<Settings>(COLLECTIONS.settings, { where: [["key", "==", "oportunidade"]] }),
-    computeGoals(user, scopeInfo, month),
+    sections.metas ? computeGoals(user, scopeInfo, month) : Promise.resolve([] as GoalItem[]),
     byOwner<Contract>(COLLECTIONS.contracts, "ownerId", ids),
     byOwner<SuccessPlan>(COLLECTIONS.successPlans, "ownerId", ids),
     // Mensagens recebidas/enviadas (coleção pequena): base de "clientes aguardando retorno".
-    list<Communication>(COLLECTIONS.communications),
+    sections.aguardando ? list<Communication>(COLLECTIONS.communications) : Promise.resolve([] as Communication[]),
     // Perfil financeiro/comercial (D17): cobranças em aberto (a varredura de vencidas roda na leitura, como no
     // Financeiro), títulos abertos, comissões elegíveis sem título, fila de contratos e contratos das vendas.
     wantsBillings ? list<Billing>(COLLECTIONS.billing, { where: [["status", "in", ["aberta", "vencida"]]] }) : Promise.resolve([] as Billing[]),
@@ -497,7 +528,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
       impactLabel: mrrLabel(t.clientId),
       score: urgencyScore(t.dueAt, nowMs) + priorityScore(t.priority) + impactScore(clientMrr(t.clientId), maxMrr) + slaScore(sla),
       href: `/tarefas?tarefa=${t.id}`,
-      canComplete: true,
+      canComplete: canCompleteTasks,
       assigneeId: t.assigneeId,
       assigneeName: isTeam ? (t.assigneeName ?? nameOf(t.assigneeId)) : undefined,
       overdue: Boolean(t.dueAt && t.dueAt < nowIso),
@@ -1157,8 +1188,10 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     team = rows.map((r) => ({ ...r, load: avg > 0 ? Number((r.openTasks / avg).toFixed(2)) : 0 })).sort((a, b) => b.overdueTasks - a.overdueTasks || b.slaRisk - a.slaRisk || b.openTasks - a.openTasks || a.name.localeCompare(b.name, "pt-BR"));
   }
 
+  // Seção negada: nada dela sai do servidor (o bloco também não aparece na página).
   return {
     user: { id: user.id, name: user.name, firstName: user.name.split(" ")[0] },
+    sections,
     scope,
     canToggleScope: scopeInfo.canToggle,
     teamSize: members.length,
@@ -1166,17 +1199,17 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     todayLabel: longDateFormat.format(now),
     summaryLine: summaryParts.join(" · "),
     stats,
-    priorities: cappedPriorities,
-    agenda,
-    upcomingVisits,
-    followups,
-    steps: stepItems,
-    attentionClients: attentionClients.slice(0, 8),
+    priorities: sections.prioridades ? cappedPriorities : [],
+    agenda: sections.agenda ? agenda : [],
+    upcomingVisits: sections.agenda ? upcomingVisits : [],
+    followups: sections.followups ? followups : [],
+    steps: sections.etapas ? stepItems : [],
+    attentionClients: sections.clientesAtencao ? attentionClients.slice(0, 8) : [],
     goals,
     notifications,
-    team,
+    team: sections.equipe ? team : [],
     awaiting,
-    contracts: contractItems,
-    finance,
+    contracts: sections.contratos ? contractItems : [],
+    finance: profile.finance || profile.sales ? finance : undefined,
   };
 }

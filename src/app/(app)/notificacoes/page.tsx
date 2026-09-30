@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireUser } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
 import { listNotifications } from "@/server/notifications";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -19,7 +19,10 @@ function first(value: string | string[] | undefined): string | undefined {
 
 /** Central de notificações: filtros por leitura e tipo (URL), agrupadas por dia. */
 export default async function NotificacoesPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
+  const user = await requireScreen("inicio.notificacoes");
+  // Escopo fixo "meus": só as notificações do próprio usuário (listNotifications(user.id)).
+  const canEdit = can(user, "inicio.notificacoes.editar");
+  const canDelete = can(user, "inicio.notificacoes.excluir");
   const sp = await searchParams;
   const readFilter = parseReadFilter(first(sp.filtro));
   const kindFilter = parseKindFilter(first(sp.tipo));
@@ -32,13 +35,15 @@ export default async function NotificacoesPage({ searchParams }: { searchParams:
   return (
     <PageContainer size="narrow">
       <PageHeader title="Notificações" description={unread > 0 ? `${unread} não lida${unread === 1 ? "" : "s"} de ${all.length}.` : "Você está em dia com suas notificações."}>
-        <NotificationsToolbar readFilter={readFilter} kindFilter={kindFilter} totals={{ all: all.length, unread }} />
+        <NotificationsToolbar readFilter={readFilter} kindFilter={kindFilter} totals={{ all: all.length, unread }} canEdit={canEdit} />
       </PageHeader>
       <Card>
         <CardContent className="px-3 py-3 md:px-4">
           <NotificationsList
             items={items}
             variant="full"
+            canEdit={canEdit}
+            canDelete={canDelete}
             emptyTitle={readFilter === "nao-lidas" ? "Nenhuma notificação não lida" : "Nenhuma notificação"}
             emptyDescription={kindFilter ? "Nenhuma notificação desse tipo com o filtro atual." : "As notificações de tarefas, SLAs, workflow e clientes aparecem aqui."}
           />

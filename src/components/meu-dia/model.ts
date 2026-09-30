@@ -256,8 +256,29 @@ export interface FinanceDigest {
   count: number;
 }
 
+/**
+ * Seções do Meu Dia que o usuário vê (catálogo: inicio.meu-dia.<secao>.ver), calculadas no servidor. Seção negada:
+ * os dados não são carregados nem enviados e o bloco não aparece.
+ */
+export interface MeuDiaSections {
+  prioridades: boolean;
+  equipe: boolean;
+  insights: boolean;
+  financeiro: boolean;
+  cobrancasVendas: boolean;
+  contratos: boolean;
+  agenda: boolean;
+  aguardando: boolean;
+  followups: boolean;
+  etapas: boolean;
+  clientesAtencao: boolean;
+  metas: boolean;
+  notificacoes: boolean;
+}
+
 export interface MeuDiaData {
   user: { id: string; name: string; firstName: string };
+  sections: MeuDiaSections;
   scope: MeuDiaScope;
   canToggleScope: boolean;
   teamSize: number;

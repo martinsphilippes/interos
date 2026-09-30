@@ -262,10 +262,10 @@ export function GoalsBlock({ items }: { items: GoalItem[] }) {
 
 // ---------------------------------------------------------------------------
 
-export function NotificationsBlock({ items, unreadTotal }: { items: NotificationItem[]; unreadTotal: number }) {
+export function NotificationsBlock({ items, unreadTotal, canEdit, canDelete }: { items: NotificationItem[]; unreadTotal: number; canEdit?: boolean; canDelete?: boolean }) {
   return (
     <CollapsibleBlock title="Notificações recentes" count={unreadTotal} description="Não lidas" action={<ScreenLink href="/notificacoes" className="font-medium text-brand hover:underline">Central</ScreenLink>}>
-      <NotificationsList items={items} variant="compact" emptyTitle="Nenhuma notificação não lida" />
+      <NotificationsList items={items} variant="compact" emptyTitle="Nenhuma notificação não lida" canEdit={canEdit} canDelete={canDelete} />
     </CollapsibleBlock>
   );
 }
