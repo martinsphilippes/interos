@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { FilePlus2 } from "lucide-react";
 import type { WonWithoutContract } from "@/server/finance/queries";
 import { createContractFromOpportunityAction } from "@/server/finance/actions";
-import { formatCurrency } from "@/lib/format";
+import { money } from "./values";
+import { useFinanceAccess } from "./finance-access";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { RelativeTime } from "@/components/ui/relative-time";
@@ -15,8 +16,10 @@ import { RelativeTime } from "@/components/ui/relative-time";
  * Vendas ganhas que ainda não têm contrato (ex.: handler de vendas indisponível no momento do ganho).
  * "Gerar contrato" cria o contrato inicial a partir da oportunidade e abre a página dele.
  */
-export function WonWithoutContractList({ items, canOperate }: { items: WonWithoutContract[]; canOperate: boolean }) {
+export function WonWithoutContractList({ items }: { items: WonWithoutContract[] }) {
   const router = useRouter();
+  const access = useFinanceAccess();
+  const hidden = !access.values;
   const [busy, setBusy] = React.useState<string | null>(null);
   const [, startTransition] = React.useTransition();
 
@@ -43,11 +46,11 @@ export function WonWithoutContractList({ items, canOperate }: { items: WonWithou
               {o.clientName}
             </Link>
             <p className="text-xs text-muted">
-              {o.title} · {formatCurrency(o.monthlyTotal)}/mês{o.setupTotal > 0 ? ` · adesão ${formatCurrency(o.setupTotal)}` : ""}
+              {o.title} · {money(o.monthlyTotal, hidden)}{hidden ? "" : "/mês"}{!hidden && o.setupTotal > 0 ? ` · adesão ${money(o.setupTotal, hidden)}` : ""}
               {o.wonAt ? <> · ganha <RelativeTime value={o.wonAt} /></> : ""}
             </p>
           </div>
-          {canOperate ? (
+          {access.contracts.create ? (
             <Button size="sm" onClick={() => create(o.opportunityId)} loading={busy === o.opportunityId} disabled={busy !== null} className="h-11 sm:h-8">
               <FilePlus2 /> Gerar contrato
             </Button>

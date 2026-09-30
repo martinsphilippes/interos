@@ -22,6 +22,8 @@ import { ReasonDialog } from "@/components/commissions/commission-ui";
 import { ContractItemsEditor, fromEdit, toEdit, type EditRow } from "./contract-items-card";
 import { ConditionsFields, conditionsFormFromContract, conditionsPayload, type ConditionsContract, type ConditionsForm } from "./contract-conditions-card";
 import { ManualSignatureButton } from "./manual-signature-dialog";
+import { NO_FINANCE_CAPABILITIES } from "./access-model";
+import { useFinanceAccess } from "./finance-access";
 import { useFinanceAction } from "./use-finance-action";
 
 type Scope = "itens" | "condicoes" | "ambos";
@@ -30,7 +32,8 @@ export interface ContractAmendmentsCardProps {
   contract: ConditionsContract & Pick<Contract, "number" | "status" | "items" | "signers">;
   amendments: ContractAmendment[];
   products: ProductOption[];
-  canOperate: boolean;
+  /** Contrato cancelado: só leitura. */
+  closed?: boolean;
 }
 
 /** Linhas "campo: de → para" de um aditivo. */
@@ -52,13 +55,16 @@ export function AmendmentChanges({ changes, compact }: { changes: ContractAmendm
  * Aditivos do contrato (D25): lista com situação e ações (enviar para assinatura, registrar assinatura, aplicar,
  * cancelar, ver termo) e o diálogo "Criar aditivo", que reutiliza o editor de itens e os campos de condições.
  */
-export function ContractAmendmentsCard({ contract, amendments, products, canOperate }: ContractAmendmentsCardProps) {
+export function ContractAmendmentsCard({ contract, amendments, products, closed }: ContractAmendmentsCardProps) {
+  // Capacidades do servidor (uma chave por ação do aditivo); contrato cancelado não recebe operações.
+  const access = useFinanceAccess();
+  const can = closed ? NO_FINANCE_CAPABILITIES.contracts : access.contracts;
   const { pending, run } = useFinanceAction();
   const [creating, setCreating] = React.useState(false);
   const [cancelling, setCancelling] = React.useState<ContractAmendment | null>(null);
   const open = amendments.find((a) => AMENDMENT_OPEN_STATUSES.includes(a.status));
   const amendable = ["assinado", "aguardando_pagamento", "pago", "liberado", "pendencia"].includes(contract.status);
-  const canCreate = canOperate && amendable && !open;
+  const canCreate = can.amendmentCreate && amendable && !open;
 
   return (
     <Card data-testid="amendments-card">
@@ -71,7 +77,7 @@ export function ContractAmendmentsCard({ contract, amendments, products, canOper
             {amendable ? "Alterações de itens, condições, reajuste e renovação depois da assinatura entram por aditivo no mesmo contrato: antes/depois, assinatura do cliente (quando exigida), comissões e cobranças futuras recalculadas." : "Antes da assinatura, itens e condições são alterados diretamente no contrato."}
           </CardDescription>
         </div>
-        {canOperate && amendable ? (
+        {can.amendmentCreate && amendable ? (
           <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={() => setCreating(true)} disabled={!canCreate} title={open ? `Aditivo ${open.number} em andamento` : undefined}>
             <Plus /> Criar aditivo
           </Button>
@@ -111,6 +117,7 @@ export function ContractAmendmentsCard({ contract, amendments, products, canOper
                     {a.cancelReason ? ` · cancelado: ${a.cancelReason}` : ""}
                   </p>
                   <AmendmentChanges changes={a.changes} compact />
+                  {!access.contractValues ? <p className="text-xs text-muted">Valores do aditivo: restrito.</p> : null}
                   {a.status === "aguardando_assinatura" && (a.signers ?? []).length > 0 ? (
                     <ul className="flex flex-col gap-1 rounded-lg border border-border px-3 py-2 text-xs">
                       {(a.signers ?? []).map((s) => (
@@ -119,28 +126,30 @@ export function ContractAmendmentsCard({ contract, amendments, products, canOper
                             {s.name} · {s.role} · {s.email}
                             {s.signedAt ? <span className="text-success-fg"> · assinou em {formatDate(s.signedAt)}</span> : null}
                           </span>
-                          {canOperate && s.status !== "assinado" ? <ManualSignatureButton contractId={contract.id} contractNumber={contract.number} amendment={{ id: a.id, number: a.number }} signer={s} className="h-9 md:h-7" /> : null}
+                          {can.amendmentSign && s.status !== "assinado" ? <ManualSignatureButton contractId={contract.id} contractNumber={contract.number} amendment={{ id: a.id, number: a.number }} signer={s} className="h-9 md:h-7" /> : null}
                         </li>
                       ))}
                     </ul>
                   ) : null}
                   <div className="flex flex-wrap gap-2">
-                    <Button asChild variant="ghost" size="sm" className="h-9 md:h-8">
-                      <Link href={`/financeiro/contratos/${contract.id}/documento?aditivo=${a.id}`}>
-                        <FileText /> Ver termo
-                      </Link>
-                    </Button>
-                    {canOperate && a.status === "rascunho" && a.requiresSignature ? (
+                    {access.contracts.documentsView ? (
+                      <Button asChild variant="ghost" size="sm" className="h-9 md:h-8">
+                        <Link href={`/financeiro/contratos/${contract.id}/documento?aditivo=${a.id}`}>
+                          <FileText /> Ver termo
+                        </Link>
+                      </Button>
+                    ) : null}
+                    {can.amendmentSend && a.status === "rascunho" && a.requiresSignature ? (
                       <Button size="sm" className="h-9 md:h-8" loading={pending} onClick={() => run(() => sendAmendmentForSignatureAction({ amendmentId: a.id }), (d) => `Termo aditivo ${d.number} gerado: aguardando assinatura (envio manual)`)}>
                         <Send /> Enviar para assinatura
                       </Button>
                     ) : null}
-                    {canOperate && applyable ? (
+                    {can.amendmentApply && applyable ? (
                       <Button size="sm" variant="success" className="h-9 md:h-8" loading={pending} onClick={() => run(() => applyAmendmentAction({ amendmentId: a.id }), (d) => `Aditivo aplicado: contrato v${d.version}${d.billingsRebuilt > 0 ? ` · ${d.billingsRebuilt} cobrança(s) refeita(s)` : ""}${d.billingsCreated > 0 ? ` · ${d.billingsCreated} gerada(s)` : ""}`)}>
                         <CheckCircle2 /> Aplicar
                       </Button>
                     ) : null}
-                    {canOperate && AMENDMENT_OPEN_STATUSES.includes(a.status) ? (
+                    {can.amendmentCancel && AMENDMENT_OPEN_STATUSES.includes(a.status) ? (
                       <Button size="sm" variant="ghost" className="h-9 text-danger-fg md:h-8" disabled={pending} onClick={() => setCancelling(a)}>
                         <Ban /> Cancelar
                       </Button>

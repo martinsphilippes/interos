@@ -31,7 +31,11 @@ import {
 import { AGING_BUCKETS, agingBucket, allSigned, daysBetween, evaluateReleaseGate, isContractExpired, listBillingsSwept, pendingRecurringInstallments, requiredPaymentBilling, todayKey, type AgingBucketKey } from "./billing";
 import { getFinanceAlertSettings } from "./alerts";
 import { getGateSettings, mergedBillingData } from "./service";
-import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
+import { buildContractSummary, redactContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
+import type { DataScope } from "@/server/auth/scope";
+import { getCurrentUser } from "@/server/auth/session";
+import { canSeeFinanceValues, filterBillingsByContracts, filterContractsByScope, isCompanyScope, ownersPredicate, visibleContractIds } from "./access";
+import { maskMoneyText, redactAmendment, redactBilling, redactContract } from "./redact";
 import { BILLING_STATUSES, BILLING_TYPES, BOLETO_FILTERS, boletoState, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type BoletoFilter, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
 
 // ---------------------------------------------------------------------------
@@ -50,6 +54,19 @@ export interface Option {
 }
 
 type SearchParams = Record<string, string | string[] | undefined>;
+
+/**
+ * Opções de leitura das telas (A7/A13): `scope` = escopo da tela (resolveDataScope; ausente = empresa, como antes) e
+ * `hideValues` = sem "Visualizar valores" (os números saem zerados e o resultado marca `valuesHidden`).
+ */
+export interface FinanceReadOptions {
+  scope?: DataScope;
+  hideValues?: boolean;
+}
+
+async function scoped<T extends Contract>(contracts: T[], scope: DataScope | undefined): Promise<T[]> {
+  return scope ? filterContractsByScope(contracts, scope) : contracts;
+}
 const one = (params: SearchParams, key: string) => {
   const v = params[key];
   return (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
@@ -157,6 +174,8 @@ export interface ContractListResult {
   rows: ContractRow[];
   total: number;
   facets: { clients: Option[]; owners: Option[] };
+  /** Valores ocultos (A13): setupTotal/monthlyTotal/hardwareTotal chegam zerados. */
+  valuesHidden?: boolean;
 }
 
 function matchesStatus(contract: Contract, status: string | undefined, releasedMonth: string): boolean {
@@ -172,8 +191,9 @@ const normalize = (text: string) =>
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 
-export async function listContracts(filters: ContractFilters = {}): Promise<ContractListResult> {
-  const [contracts, steps] = await Promise.all([list<Contract>(COLLECTIONS.contracts), financeStepsByClient()]);
+export async function listContracts(filters: ContractFilters = {}, options: FinanceReadOptions = {}): Promise<ContractListResult> {
+  const [all, steps] = await Promise.all([list<Contract>(COLLECTIONS.contracts), financeStepsByClient()]);
+  const contracts = await scoped(all, options.scope);
   const [names, users] = await Promise.all([clientNames(contracts.map((c) => c.clientId)), usersMap(contracts.map((c) => c.ownerId))]);
   const start = periodStart(filters.period);
   const month = todayKey().slice(0, 7);
@@ -197,9 +217,9 @@ export async function listContracts(filters: ContractFilters = {}): Promise<Cont
         financialStatus: c.financialStatus,
         clientId: c.clientId,
         clientName: names.get(c.clientId) ?? c.clientId,
-        setupTotal: c.setupTotal,
-        monthlyTotal: c.monthlyTotal,
-        hardwareTotal: c.hardwareTotal,
+        setupTotal: options.hideValues ? 0 : c.setupTotal,
+        monthlyTotal: options.hideValues ? 0 : c.monthlyTotal,
+        hardwareTotal: options.hideValues ? 0 : c.hardwareTotal,
         signersSigned: c.signers.filter((s) => s.status === "assinado").length,
         signersTotal: c.signers.length,
         ownerId: c.ownerId,
@@ -225,7 +245,7 @@ export async function listContracts(filters: ContractFilters = {}): Promise<Cont
   const owners = Object.values(users)
     .map((u) => ({ value: u.id, label: u.name }))
     .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-  return { rows, total: contracts.length, facets: { clients, owners } };
+  return { rows, total: contracts.length, facets: { clients, owners }, ...(options.hideValues ? { valuesHidden: true } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -253,14 +273,22 @@ export interface FinanceOverview {
   delinquency: number | null;
   wonWithoutContract: WonWithoutContract[];
   month: string;
+  /** Valores ocultos (A13): quantias zeradas; a tela mostra "Restrito". */
+  valuesHidden?: boolean;
 }
 
-export async function getFinanceOverview(): Promise<FinanceOverview> {
-  const [contracts, billings, wonOpps] = await Promise.all([
+export async function getFinanceOverview(options: FinanceReadOptions = {}): Promise<FinanceOverview> {
+  const [allContracts, allBillings, allWon] = await Promise.all([
     list<Contract>(COLLECTIONS.contracts),
     listBillingsSwept(),
     list<Opportunity>(COLLECTIONS.opportunities, { where: [["stage", "==", "ganho"]] }),
   ]);
+  // Escopo (A7): contratos e cobranças pelos donos do contrato; vendas ganhas pelo vendedor da oportunidade.
+  const scope = options.scope;
+  const contracts = await scoped(allContracts, scope);
+  const billings = scope && !isCompanyScope(scope) ? filterBillingsByContracts(allBillings, new Set(contracts.map((c) => c.id))) : allBillings;
+  const allows = scope ? await ownersPredicate(scope) : () => true;
+  const wonOpps = allWon.filter((o) => allows([o.ownerId]));
   const month = todayKey().slice(0, 7);
   const inGroup = (g: ContractQueueGroup) => contracts.filter((c) => (CONTRACT_QUEUE_GROUPS[g] as readonly string[]).includes(c.status)).length;
   const released = contracts.filter((c) => c.status === "liberado");
@@ -272,11 +300,12 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
   const receivedMonth = billings.filter((b) => b.status === "paga" && monthOf(b.paidAt) === month).reduce((s, b) => s + (b.paidAmount ?? b.amount), 0);
   const overdueAmount = overdue.reduce((s, b) => s + b.amount, 0);
 
-  const withContract = new Set(contracts.filter((c) => c.status !== "cancelado" && c.opportunityId).map((c) => c.opportunityId));
+  // Venda "sem contrato" olha TODOS os contratos (o contrato pode ser de outro dono fora do escopo).
+  const withContract = new Set(allContracts.filter((c) => c.status !== "cancelado" && c.opportunityId).map((c) => c.opportunityId));
   const orphans = wonOpps.filter((o) => !withContract.has(o.id));
   const names = await clientNames(orphans.map((o) => o.clientId));
 
-  return {
+  const overview: FinanceOverview = {
     counts: {
       contrato: inGroup("contrato"),
       assinatura: inGroup("assinatura"),
@@ -294,6 +323,21 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
       .map((o) => ({ opportunityId: o.id, title: o.title, clientId: o.clientId, clientName: names.get(o.clientId) ?? o.clientId, monthlyTotal: o.monthlyTotal, setupTotal: o.setupTotal, wonAt: o.wonAt }))
       .sort((a, b) => (b.wonAt ?? "").localeCompare(a.wonAt ?? "")),
     month,
+  };
+  return options.hideValues ? redactOverview(overview) : overview;
+}
+
+/** Visão geral sem valores (A13): contagens ficam; quantias e a inadimplência (razão entre quantias) saem. */
+export function redactOverview(o: FinanceOverview): FinanceOverview {
+  return {
+    ...o,
+    mrrActive: 0,
+    overdue: { amount: 0, count: o.overdue.count },
+    billedMonth: 0,
+    receivedMonth: 0,
+    delinquency: null,
+    wonWithoutContract: o.wonWithoutContract.map((w) => ({ ...w, monthlyTotal: 0, setupTotal: 0 })),
+    valuesHidden: true,
   };
 }
 
@@ -337,6 +381,27 @@ export interface ContractDetail {
   pendingRecurring: number;
   /** Aditivos do contrato (D25), do mais recente ao mais antigo. */
   amendments: ContractAmendment[];
+  /** Valores ocultos (A13): contrato, cobranças, aditivos, resumo e catálogo chegam sem números. */
+  valuesHidden?: boolean;
+}
+
+/**
+ * Detalhe do contrato sem valores (A13), para o que vai à tela. O gate, o hash do documento e as cobranças pendentes
+ * já foram calculados com os dados reais em getContract; textos livres (histórico) têm as quantias mascaradas.
+ */
+export function redactContractDetail(detail: ContractDetail): ContractDetail {
+  return {
+    ...detail,
+    contract: redactContract(detail.contract),
+    opportunity: null,
+    billings: detail.billings.map(redactBilling),
+    amendments: detail.amendments.map(redactAmendment),
+    summary: redactContractSummary(detail.summary),
+    products: detail.products.map((p) => ({ ...p, setupPrice: 0, monthlyPrice: 0, hardwarePrice: 0 })),
+    history: detail.history.map((e) => ({ ...e, title: maskMoneyText(e.title), description: maskMoneyText(e.description) })),
+    gate: { ...detail.gate, checks: detail.gate.checks.map((c) => ({ ...c, detail: maskMoneyText(c.detail) })) },
+    valuesHidden: true,
+  };
 }
 
 /** Memoizado por requisição: generateMetadata e a página compartilham a leitura. */
@@ -471,10 +536,12 @@ export interface SignatureRow {
 export interface SignatureQueue {
   waiting: SignatureRow[];
   toSend: SignatureRow[];
+  /** Valores ocultos (A13): mensalidade zerada. */
+  valuesHidden?: boolean;
 }
 
-export async function listSignatureQueue(): Promise<SignatureQueue> {
-  const contracts = (await list<Contract>(COLLECTIONS.contracts)).filter((c) => c.status === "aguardando_assinatura" || c.status === "aguardando_contrato" || (c.status === "pendencia" && !allSigned(c)));
+export async function listSignatureQueue(options: FinanceReadOptions = {}): Promise<SignatureQueue> {
+  const contracts = (await scoped(await list<Contract>(COLLECTIONS.contracts), options.scope)).filter((c) => c.status === "aguardando_assinatura" || c.status === "aguardando_contrato" || (c.status === "pendencia" && !allSigned(c)));
   const ids = contracts.map((c) => c.id);
   const [names, users, sentEvents, comms] = await Promise.all([
     clientNames(contracts.map((c) => c.clientId)),
@@ -497,7 +564,7 @@ export async function listSignatureQueue(): Promise<SignatureQueue> {
       status: c.status,
       clientId: c.clientId,
       clientName: names.get(c.clientId) ?? c.clientId,
-      monthlyTotal: c.monthlyTotal,
+      monthlyTotal: options.hideValues ? 0 : c.monthlyTotal,
       sentAt: sentAt.get(c.id),
       daysWaiting: Math.max(0, daysBetween(dateKey(since), today)),
       signers: c.signers,
@@ -511,6 +578,7 @@ export async function listSignatureQueue(): Promise<SignatureQueue> {
   return {
     waiting: rows.filter((r) => r.envelope).sort((a, b) => b.daysWaiting - a.daysWaiting),
     toSend: rows.filter((r) => !r.envelope).sort((a, b) => b.daysWaiting - a.daysWaiting),
+    ...(options.hideValues ? { valuesHidden: true } : {}),
   };
 }
 
@@ -556,10 +624,14 @@ export interface BillingListResult {
   rows: BillingRow[];
   totals: { count: number; amount: number; open: number; overdue: number; paid: number };
   facets: { clients: Option[]; competences: Option[] };
+  /** Valores ocultos (A13): quantias zeradas. */
+  valuesHidden?: boolean;
 }
 
-export async function listBillings(filters: BillingFilters = {}): Promise<BillingListResult> {
-  const billings = await listBillingsSwept(filters.contractId ? { where: [["contractId", "==", filters.contractId]] } : {});
+export async function listBillings(filters: BillingFilters = {}, options: FinanceReadOptions = {}): Promise<BillingListResult> {
+  const swept = await listBillingsSwept(filters.contractId ? { where: [["contractId", "==", filters.contractId]] } : {});
+  // Escopo (A7): a cobrança herda os donos do contrato.
+  const billings = options.scope ? filterBillingsByContracts(swept, await visibleContractIds(options.scope)) : swept;
   const [names, contracts] = await Promise.all([clientNames(billings.map((b) => b.clientId)), getManyByIds<Contract>(COLLECTIONS.contracts, billings.map((b) => b.contractId))]);
   const today = todayKey();
   const filtered = billings.filter(
@@ -572,6 +644,7 @@ export async function listBillings(filters: BillingFilters = {}): Promise<Billin
   );
   const rank: Record<Billing["status"], number> = { vencida: 0, aberta: 1, paga: 2, cancelada: 3 };
   const rows: BillingRow[] = filtered
+    .map((b) => (options.hideValues ? redactBilling(b) : b))
     .map((b) => ({ ...b, clientName: names.get(b.clientId) ?? b.clientId, contractNumber: contracts.get(b.contractId)?.number ?? "—", daysToDue: daysBetween(today, dateKey(b.dueDate)), boletoState: boletoState(b) }))
     .sort((a, b) => rank[a.status] - rank[b.status] || (a.status === "paga" || a.status === "cancelada" ? b.dueDate.localeCompare(a.dueDate) : a.dueDate.localeCompare(b.dueDate)));
 
@@ -583,16 +656,18 @@ export async function listBillings(filters: BillingFilters = {}): Promise<Billin
   const clients = Array.from(new Set(billings.map((b) => b.clientId)))
     .map((id) => ({ value: id, label: names.get(id) ?? id }))
     .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  const hide = options.hideValues;
   return {
     rows,
     totals: {
       count: filtered.length,
-      amount: sum(filtered.filter((b) => b.status !== "cancelada")),
-      open: sum(filtered.filter((b) => b.status === "aberta")),
-      overdue: sum(filtered.filter((b) => b.status === "vencida")),
-      paid: filtered.filter((b) => b.status === "paga").reduce((s, b) => s + (b.paidAmount ?? b.amount), 0),
+      amount: hide ? 0 : sum(filtered.filter((b) => b.status !== "cancelada")),
+      open: hide ? 0 : sum(filtered.filter((b) => b.status === "aberta")),
+      overdue: hide ? 0 : sum(filtered.filter((b) => b.status === "vencida")),
+      paid: hide ? 0 : filtered.filter((b) => b.status === "paga").reduce((s, b) => s + (b.paidAmount ?? b.amount), 0),
     },
     facets: { clients, competences },
+    ...(hide ? { valuesHidden: true } : {}),
   };
 }
 
@@ -641,10 +716,13 @@ export interface ReceivablesAging {
   byClient: ReceivableClient[];
   delinquents: ReceivableClient[];
   monthly: MonthlyFlow[];
+  /** Valores ocultos (A13): quantias zeradas (contagens e dias ficam). */
+  valuesHidden?: boolean;
 }
 
-export async function getReceivablesAging(): Promise<ReceivablesAging> {
-  const billings = await listBillingsSwept();
+export async function getReceivablesAging(options: FinanceReadOptions = {}): Promise<ReceivablesAging> {
+  const swept = await listBillingsSwept();
+  const billings = options.scope ? filterBillingsByContracts(swept, await visibleContractIds(options.scope)) : swept;
   const today = todayKey();
   const receivable = billings.filter((b) => b.status === "aberta" || b.status === "vencida");
   const names = await clientNames(receivable.map((b) => b.clientId));
@@ -685,7 +763,29 @@ export async function getReceivablesAging(): Promise<ReceivablesAging> {
 
   const totalOpen = receivable.filter((b) => b.status === "aberta").reduce((s, b) => s + b.amount, 0);
   const totalOverdue = receivable.filter((b) => b.status === "vencida").reduce((s, b) => s + b.amount, 0);
-  return { buckets, totalOpen, totalOverdue, totalToReceive: totalOpen + totalOverdue, byClient: clients, delinquents: clients.filter((c) => c.overdueCount > 0), monthly };
+  const aging: ReceivablesAging = { buckets, totalOpen, totalOverdue, totalToReceive: totalOpen + totalOverdue, byClient: clients, delinquents: clients.filter((c) => c.overdueCount > 0), monthly };
+  return options.hideValues ? redactAging(aging) : aging;
+}
+
+/** Contas a Receber sem valores (A13): ordem, contagens, faixas e dias ficam; quantias saem. */
+export function redactAging(a: ReceivablesAging): ReceivablesAging {
+  const client = (c: ReceivableClient): ReceivableClient => ({
+    ...c,
+    open: 0,
+    overdue: 0,
+    buckets: Object.fromEntries(Object.keys(c.buckets).map((k) => [k, 0])),
+    oldestOverdue: c.oldestOverdue ? redactBilling(c.oldestOverdue) : undefined,
+  });
+  return {
+    buckets: a.buckets.map((b) => ({ ...b, amount: 0 })),
+    totalOpen: 0,
+    totalOverdue: 0,
+    totalToReceive: 0,
+    byClient: a.byClient.map(client),
+    delinquents: a.delinquents.map(client),
+    monthly: a.monthly.map((m) => ({ ...m, billed: 0, received: 0 })),
+    valuesHidden: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -723,14 +823,20 @@ export interface RecurrenceMetrics {
   history: MrrPoint[];
   renewals: RenewalRow[];
   targetGrowth: number | null;
+  /** Valores ocultos (A13): MRR e quantias zerados (contagens, datas e variações relativas ficam de fora também). */
+  valuesHidden?: boolean;
 }
 
-export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
-  const [contracts, churn, goals] = await Promise.all([
+export async function getRecurrenceMetrics(options: FinanceReadOptions = {}): Promise<RecurrenceMetrics> {
+  const [allContracts, allChurn, goals] = await Promise.all([
     list<Contract>(COLLECTIONS.contracts),
     list<ChurnRecord>(COLLECTIONS.churnRecords),
     list<{ id: string; organizationId: string; createdAt: string; updatedAt: string; key: string; value: { mrrCrescimento?: number } }>(COLLECTIONS.settings, { where: [["key", "==", "metas_referencia"]] }),
   ]);
+  // Escopo (A7): contratos pelos donos; churn pelos clientes dos contratos visíveis.
+  const contracts = await scoped(allContracts, options.scope);
+  const visibleClients = new Set(contracts.map((c) => c.clientId));
+  const churn = options.scope && !isCompanyScope(options.scope) ? allChurn.filter((r) => visibleClients.has(r.clientId)) : allChurn;
   const month = todayKey().slice(0, 7);
   const released = contracts.filter((c) => c.releasedAt);
 
@@ -781,7 +887,7 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
 
   const target = goals[0]?.value?.mrrCrescimento;
-  return {
+  const metrics: RecurrenceMetrics = {
     mrr: active.reduce((s, c) => s + c.monthlyTotal, 0),
     activeContracts: active.length,
     byProduct: Array.from(byProduct.values())
@@ -797,6 +903,23 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
     history,
     renewals,
     targetGrowth: typeof target === "number" ? target : null,
+  };
+  return options.hideValues ? redactRecurrence(metrics) : metrics;
+}
+
+/** Recorrência sem valores (A13): contagens, datas e produtos ficam; MRR, quantias e variações saem. */
+export function redactRecurrence(m: RecurrenceMetrics): RecurrenceMetrics {
+  return {
+    ...m,
+    mrr: 0,
+    byProduct: m.byProduct.map((p) => ({ ...p, mrr: 0 })),
+    newMrrMonth: 0,
+    lostMrrMonth: 0,
+    netNewMrr: 0,
+    growthMonth: null,
+    history: m.history.map((h) => ({ ...h, mrr: 0, growth: null })),
+    renewals: m.renewals.map((r) => ({ ...r, monthlyTotal: 0 })),
+    valuesHidden: true,
   };
 }
 
@@ -820,6 +943,8 @@ export interface ClientFinancialSummary {
   pendingContract?: { id: string; number: string; status: Contract["status"]; pendingReason?: string };
   /** Contrato vigente: o liberado mais recente; sem liberado, o mais recente não cancelado (D7/D17). */
   currentContractId?: string;
+  /** Valores ocultos ("Visualizar valores", A13): quantias zeradas; a ficha mostra "Restrito". */
+  valuesHidden?: boolean;
 }
 
 /** Contrato vigente do cliente: o liberado mais recente; sem liberado, o mais recente ainda não cancelado. */
@@ -832,7 +957,39 @@ export function pickCurrentContract(contracts: Contract[]): Contract | undefined
  * Resumo financeiro do cliente. Aceita contratos e cobranças já carregados (a ficha 360º lê ambos uma única vez,
  * com a varredura de vencidas aplicada); sem eles, lê do Financeiro.
  */
-export async function getClientFinancialSummary(clientId: string, preloaded?: { contracts: Contract[]; billings: Billing[] }): Promise<ClientFinancialSummary> {
+export async function getClientFinancialSummary(clientId: string, preloaded?: { contracts: Contract[]; billings: Billing[] }, options: { hideValues?: boolean } = {}): Promise<ClientFinancialSummary> {
+  // Sem a opção explícita, vale o usuário da requisição (A13): sem "Visualizar valores" o resumo sai sem números.
+  const hideValues = options.hideValues ?? (await viewerHidesValues());
+  const summary = await buildClientFinancialSummary(clientId, preloaded);
+  return hideValues ? redactClientFinancialSummary(summary) : summary;
+}
+
+/** O usuário da requisição NÃO tem "Visualizar valores"? Sem sessão (ou fora de requisição) → oculta (falha fechada). */
+async function viewerHidesValues(): Promise<boolean> {
+  try {
+    const user = await getCurrentUser();
+    return !user || !canSeeFinanceValues(user);
+  } catch {
+    return true;
+  }
+}
+
+/** Resumo financeiro do cliente sem valores (A13): contagens, datas e contratos ficam; quantias saem. */
+export function redactClientFinancialSummary(s: ClientFinancialSummary): ClientFinancialSummary {
+  return {
+    ...s,
+    mrr: 0,
+    openAmount: 0,
+    overdueAmount: 0,
+    paidLast12Months: 0,
+    nextDue: s.nextDue ? { ...s.nextDue, amount: 0 } : undefined,
+    lastPayment: s.lastPayment ? { ...s.lastPayment, amount: 0 } : undefined,
+    contracts: s.contracts.map((c) => ({ ...c, monthlyTotal: 0 })),
+    valuesHidden: true,
+  };
+}
+
+async function buildClientFinancialSummary(clientId: string, preloaded?: { contracts: Contract[]; billings: Billing[] }): Promise<ClientFinancialSummary> {
   const [contracts, billings] = preloaded
     ? [preloaded.contracts, preloaded.billings]
     : await Promise.all([list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", clientId]] }), listBillingsSwept({ where: [["clientId", "==", clientId]] })]);

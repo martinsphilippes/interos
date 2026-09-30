@@ -7,6 +7,9 @@
  * para a tela, DEPOIS de calcular o que depende dos valores.
  */
 import type { Billing, Contract, ContractAmendment, ContractSnapshot, ProposalItem } from "@/domain/types";
+import { RESTRICTED_CODE } from "@/components/finance/values";
+
+export { RESTRICTED_CODE };
 
 /** Texto que substitui quantias em textos livres (títulos de eventos, mensagens, condições). */
 export const MASKED_AMOUNT = "R$ (restrito)";
@@ -77,5 +80,16 @@ function restricted(value: string | undefined): string | undefined {
   return value ? RESTRICTED_CODE : undefined;
 }
 
-/** Conteúdo de código de boleto/PIX ocultado (os diálogos de boleto só aparecem com "Visualizar valores"). */
-export const RESTRICTED_CODE = "restrito";
+
+/**
+ * Cobrança sem a seção "Boleto / PIX" (`financeiro.cobrancas.boleto.ver`): os dados do boleto/PIX não saem do
+ * servidor; fica só o marcador de emissão (a interface esconde o badge e os diálogos de boleto).
+ */
+export function stripBoleto<T extends Partial<Pick<Billing, "boleto" | "pix" | "paymentUrl">>>(b: T): T {
+  return {
+    ...b,
+    boleto: b.boleto ? { nossoNumero: RESTRICTED_CODE } : undefined,
+    pix: b.pix ? { copiaECola: RESTRICTED_CODE } : undefined,
+    paymentUrl: b.paymentUrl ? RESTRICTED_CODE : undefined,
+  };
+}

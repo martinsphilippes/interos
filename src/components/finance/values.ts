@@ -6,6 +6,8 @@ import { formatCurrency } from "@/lib/format";
 
 export const RESTRICTED_LABEL = "Restrito";
 export const RESTRICTED_HINT = "Seu perfil não tem a permissão Visualizar valores.";
+/** Conteúdo de código de boleto/PIX ocultado (a linha digitável e o PIX codificam o valor). */
+export const RESTRICTED_CODE = "restrito";
 
 /** Valor em reais, ou "Restrito" quando os valores estão ocultos. */
 export function money(value: number, hidden: boolean | undefined, compact?: boolean): string {

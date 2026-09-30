@@ -8,17 +8,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { FormField } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
 import { useFinanceAction } from "./use-finance-action";
+import { useFinanceAccess } from "./finance-access";
 
 export interface PendencyCardProps {
   contractId: string;
   pendingReason?: string;
   isPending: boolean;
   closed: boolean;
-  canOperate: boolean;
 }
 
 /** Pendência financeira: registrar (avisa o vendedor) e resolver. */
-export function PendencyCard({ contractId, pendingReason, isPending, closed, canOperate }: PendencyCardProps) {
+export function PendencyCard({ contractId, pendingReason, isPending, closed }: PendencyCardProps) {
+  // Registrar e resolver pendência têm chaves próprias (capacidades do servidor).
+  const access = useFinanceAccess();
+  const canAct = isPending ? access.contracts.pendencyResolve : access.contracts.pendencyCreate;
   const id = React.useId();
   const [open, setOpen] = React.useState(false);
   const [text, setText] = React.useState("");
@@ -51,7 +54,7 @@ export function PendencyCard({ contractId, pendingReason, isPending, closed, can
       </CardHeader>
       <CardContent className="flex flex-col gap-3 pt-0">
         {isPending && pendingReason ? <p className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger-fg">{pendingReason}</p> : null}
-        {canOperate && !closed ? (
+        {canAct && !closed ? (
           open ? (
             <>
               <FormField label={isPending ? "Como foi resolvida (opcional)" : "Motivo da pendência"} htmlFor={`${id}-t`} required={!isPending}>

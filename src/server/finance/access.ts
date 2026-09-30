@@ -206,3 +206,14 @@ export async function assertOpportunityContractAccess(user: CurrentUser, opportu
   const ref: OwnerRef = { id: `opp:${opp.id}`, clientId: opp.clientId, sellerId: opp.ownerId };
   if (!(await contractInScope(user, ref))) throw new PermissionError(OUT_OF_SCOPE_MESSAGE, "financeiro.contratos.ver");
 }
+
+/**
+ * Pode abrir o contrato por id (página, documento, generateMetadata — A29/A30)? Confere a tela e o escopo lendo só o
+ * documento do contrato, ANTES de carregar o detalhe. "missing" = não existe (a página responde 404).
+ */
+export async function contractAccessById(user: CurrentUser, contractId: string, screen: ContractScopeScreen = "financeiro.contratos"): Promise<"ok" | "missing" | "denied"> {
+  if (!can(user, `${screen}.ver`)) return "denied";
+  const contract = await getById<Contract>(COLLECTIONS.contracts, contractId);
+  if (!contract) return "missing";
+  return (await contractInScope(user, contract, screen)) ? "ok" : "denied";
+}

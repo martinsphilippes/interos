@@ -5,7 +5,7 @@ import "server-only";
  * painel do contrato selecionado (assinatura, comunicação, histórico e linha do tempo a partir dos eventos).
  */
 import { getById, getManyByIds, list } from "@/server/db";
-import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
+import { buildContractSummary, redactContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import { dateKey } from "@/lib/format";
 import { COLLECTIONS, type Billing, type Client, type Communication, type Contact, type Contract, type ContractSignerEntry, type DomainEvent, type Opportunity, type User } from "@/domain/types";
 import { communicationStatusLabel } from "@/server/integrations/communications";
@@ -13,7 +13,9 @@ import { getIntegrationFlags } from "@/server/integrations/status";
 import type { IntegrationFlags } from "@/server/integrations/types";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
 import { allSigned, isContractExpired, listBillingsSwept, todayKey } from "./billing";
-import { listContracts, type ContractFilters } from "./queries";
+import { filterBillingsByContracts, filterContractsByScope, isCompanyScope, ownersPredicate } from "./access";
+import { listContracts, type ContractFilters, type FinanceReadOptions } from "./queries";
+import { maskMoneyText } from "./redact";
 import { CONTRACT_QUEUE_GROUPS } from "./schemas";
 
 // ---------------------------------------------------------------------------
@@ -130,6 +132,8 @@ export interface ContractPanel {
   endDate?: string;
   /** Resumo do contratado (D7). */
   summary: ContractSummaryData;
+  /** Valores ocultos (A13): valor/adesão/hardware zerados e o resumo marcado. */
+  valuesHidden?: boolean;
 }
 
 export interface ContractsWorkspace {
@@ -142,6 +146,16 @@ export interface ContractsWorkspace {
   integrations: IntegrationFlags;
   /** Vendas ganhas sem contrato e clientes, para o diálogo "Novo contrato". */
   newContract: { opportunities: { id: string; label: string }[]; clients: { value: string; label: string }[] };
+  /** Valores ocultos (A13): KPIs de valor, fluxo e valores das linhas zerados. */
+  valuesHidden?: boolean;
+}
+
+/**
+ * Opções da tela Contratos: escopo e valores (FinanceReadOptions) e as seções do painel. Sem "Assinatura" o painel não
+ * leva signatários; sem "Histórico" não leva os marcos do contrato.
+ */
+export interface WorkspaceOptions extends FinanceReadOptions {
+  sections?: { signature?: boolean; history?: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -184,15 +198,23 @@ function contactPhone(client: Client | undefined, contacts: Contact[]): { whatsa
 // Consulta principal
 // ---------------------------------------------------------------------------
 
-export async function getContractsWorkspace(filters: ContractFilters, selectedId?: string): Promise<ContractsWorkspace> {
-  const [queue, contracts, billings, sentEvents, contacts, wonOpps] = await Promise.all([
-    listContracts(filters),
+export async function getContractsWorkspace(filters: ContractFilters, selectedId?: string, options: WorkspaceOptions = {}): Promise<ContractsWorkspace> {
+  const [queue, allContracts, allBillings, sentEvents, contacts, allWon] = await Promise.all([
+    listContracts(filters, { scope: options.scope }),
     list<Contract>(COLLECTIONS.contracts),
     listBillingsSwept(),
     list<DomainEvent>(COLLECTIONS.events, { where: [["type", "==", "contract.sent_for_signature"]] }),
     list<Contact>(COLLECTIONS.contacts, { where: [["isPrimary", "==", true]] }),
     list<Opportunity>(COLLECTIONS.opportunities, { where: [["stage", "==", "ganho"]] }),
   ]);
+  // Escopo (A7): KPIs, fluxo e painel só com os contratos (e cobranças) visíveis; vendas ganhas pelo vendedor.
+  const scope = options.scope;
+  const restricted = Boolean(scope && !isCompanyScope(scope));
+  const contracts = scope ? await filterContractsByScope(allContracts, scope) : allContracts;
+  const billings = restricted ? filterBillingsByContracts(allBillings, new Set(contracts.map((c) => c.id))) : allBillings;
+  const allows = scope ? await ownersPredicate(scope) : () => true;
+  const wonOpps = allWon.filter((o) => allows([o.ownerId]));
+  const hide = Boolean(options.hideValues);
   const byId = new Map(contracts.map((c) => [c.id, c]));
   const billingsByContract = new Map<string, Billing[]>();
   for (const b of billings) billingsByContract.set(b.contractId, [...(billingsByContract.get(b.contractId) ?? []), b]);
@@ -216,7 +238,7 @@ export async function getContractsWorkspace(filters: ContractFilters, selectedId
       clientName: r.clientName,
       productName: product.name,
       extraProducts: product.extra,
-      amount: recurring ? contract.monthlyTotal : contract.setupTotal + contract.hardwareTotal,
+      amount: hide ? 0 : recurring ? contract.monthlyTotal : contract.setupTotal + contract.hardwareTotal,
       amountKind: recurring ? "mensal" : "unico",
       nextDueDate: nextDue(contract, cb),
       billingDay: contract.billingDay,
@@ -239,19 +261,23 @@ export async function getContractsWorkspace(filters: ContractFilters, selectedId
   const open = flowBillings.filter((b) => b.status === "aberta").reduce((s, b) => s + b.amount, 0);
   const overdueFlow = flowBillings.filter((b) => b.status === "vencida").reduce((s, b) => s + b.amount, 0);
 
+  // Contrato fora do escopo pedido por ?contrato= não abre (byId só tem os visíveis).
   const selectedContract = selectedId ? byId.get(selectedId) : rows[0] ? byId.get(rows[0].id) : undefined;
-  const withContract = new Set(contracts.filter((c) => c.status !== "cancelado" && c.opportunityId).map((c) => c.opportunityId));
+  const withContract = new Set(allContracts.filter((c) => c.status !== "cancelado" && c.opportunityId).map((c) => c.opportunityId));
   const orphans = wonOpps.filter((o) => !withContract.has(o.id));
   const allClients = await list<Client>(COLLECTIONS.clients);
   const clientName = new Map(allClients.map((c) => [c.id, c.tradeName]));
 
+  const kpis = computeKpis(contracts, billings, sentEvents);
+  const panel = selectedContract ? await buildPanel(selectedContract, clients.get(selectedContract.clientId), billingsByContract.get(selectedContract.id) ?? []) : null;
   return {
     rows,
     total: queue.total,
     facets: queue.facets,
-    kpis: computeKpis(contracts, billings, sentEvents),
-    flow: { received, open, overdue: overdueFlow, total: received + open + overdueFlow, billings: flowBillings.length },
-    selected: selectedContract ? await buildPanel(selectedContract, clients.get(selectedContract.clientId), billingsByContract.get(selectedContract.id) ?? []) : null,
+    kpis: hide ? redactKpis(kpis) : kpis,
+    flow: hide ? { received: 0, open: 0, overdue: 0, total: 0, billings: flowBillings.length } : { received, open, overdue: overdueFlow, total: received + open + overdueFlow, billings: flowBillings.length },
+    selected: panel ? shapePanel(panel, options) : null,
+    ...(hide ? { valuesHidden: true } : {}),
     integrations: getIntegrationFlags(),
     newContract: {
       opportunities: orphans
@@ -263,6 +289,34 @@ export async function getContractsWorkspace(filters: ContractFilters, selectedId
         .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
     },
   };
+}
+
+/** KPIs sem valores (A13): quantias e variações zeradas; contagens ficam. */
+function redactKpis(k: WorkspaceKpis): WorkspaceKpis {
+  return { ...k, mrr: { value: 0, previous: null }, receivable: { value: 0, previous: null }, overdue: { value: 0, previous: null, count: k.overdue.count } };
+}
+
+/** Painel conforme as seções e os valores permitidos (o que não pode ser visto não sai do servidor). */
+function shapePanel(panel: ContractPanel, options: WorkspaceOptions): ContractPanel {
+  let out = panel;
+  if (options.sections?.signature === false) out = { ...out, signers: [] };
+  if (options.sections?.history === false) out = { ...out, milestones: [] };
+  if (options.hideValues) {
+    const mask = (i: PanelInteraction): PanelInteraction => ({ ...i, body: maskMoneyText(i.body) });
+    out = {
+      ...out,
+      amount: 0,
+      setupTotal: 0,
+      hardwareTotal: 0,
+      summary: redactContractSummary(out.summary),
+      interactions: out.interactions.map(mask),
+      lastWhatsapp: out.lastWhatsapp ? mask(out.lastWhatsapp) : undefined,
+      lastCall: out.lastCall ? mask(out.lastCall) : undefined,
+      milestones: out.milestones.map((m) => ({ ...m, detail: maskMoneyText(m.detail) })),
+      valuesHidden: true,
+    };
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

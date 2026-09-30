@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useFinanceAction } from "./use-finance-action";
+import { useFinanceAccess } from "./finance-access";
+import { money, RESTRICTED_LABEL } from "./values";
 
 export interface ContractItemsCardProps {
   contractId: string;
@@ -65,6 +67,8 @@ export interface ContractItemsEditorProps {
  * de itens e pelo diálogo de aditivo (D25): o mesmo editor, sem segundo formulário.
  */
 export function ContractItemsEditor({ rows, onChange, products, items = [], editing }: ContractItemsEditorProps) {
+  // Sem "Visualizar valores" do contrato (A13) os números chegam zerados: leitura mostra "Restrito" (edição exige valores).
+  const hidden = !useFinanceAccess().contractValues && !editing;
   const [pick, setPick] = React.useState("");
   const view = editing ? rows.map(fromEdit) : items;
   const totals = proposalTotals(view);
@@ -117,9 +121,9 @@ export function ContractItemsEditor({ rows, onChange, products, items = [], edit
                   ) : (
                     <>
                       <TableCell className="text-right tabular-nums">{item.quantity}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatCurrency(net.setupTotal)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatCurrency(net.monthlyTotal)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatCurrency(net.hardwareTotal)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{money(net.setupTotal, hidden)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{money(net.monthlyTotal, hidden)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{money(net.hardwareTotal, hidden)}</TableCell>
                       <TableCell className="text-right tabular-nums text-muted">{item.discountPct ? `${item.discountPct}%` : "—"}</TableCell>
                     </>
                   )}
@@ -131,10 +135,10 @@ export function ContractItemsEditor({ rows, onChange, products, items = [], edit
             <TableRow>
               <TableCell>Total{editing ? " (com desconto)" : ""}</TableCell>
               <TableCell />
-              <TableCell className="text-right tabular-nums">{formatCurrency(totals.setupTotal)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatCurrency(totals.monthlyTotal)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatCurrency(totals.hardwareTotal)}</TableCell>
-              <TableCell className="text-right tabular-nums text-muted">{totals.discountTotal > 0 ? `-${formatCurrency(totals.discountTotal)}` : "—"}</TableCell>
+              <TableCell className="text-right tabular-nums">{money(totals.setupTotal, hidden)}</TableCell>
+              <TableCell className="text-right tabular-nums">{money(totals.monthlyTotal, hidden)}</TableCell>
+              <TableCell className="text-right tabular-nums">{money(totals.hardwareTotal, hidden)}</TableCell>
+              <TableCell className="text-right tabular-nums text-muted">{hidden ? RESTRICTED_LABEL : totals.discountTotal > 0 ? `-${formatCurrency(totals.discountTotal)}` : "—"}</TableCell>
               {editing ? <TableCell /> : null}
             </TableRow>
           </TableFooter>

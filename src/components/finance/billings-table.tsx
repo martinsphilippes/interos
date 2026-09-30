@@ -6,6 +6,10 @@ import { Receipt } from "lucide-react";
 import type { BillingRow } from "@/server/finance/queries";
 import { paymentMethodLabel } from "@/server/finance/schemas";
 import { formatCompetence, formatCurrency, formatDate } from "@/lib/format";
+import { ScreenLink, useCanSeeFn } from "@/components/auth/access-provider";
+import { hasBillingActions } from "./access-model";
+import { useFinanceAccess } from "./finance-access";
+import { money } from "./values";
 import { BILLING_STATUS_LABELS, BILLING_STATUS_VARIANT } from "@/components/clients/labels";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -24,7 +28,12 @@ function DueInfo({ row }: { row: BillingRow }) {
 }
 
 /** Lista de cobranças com paginação em memória e ações (pagamento, WhatsApp, ligação, cancelamento). */
-export function BillingsTable({ rows, canOperate }: { rows: BillingRow[]; canOperate: boolean }) {
+export function BillingsTable({ rows }: { rows: BillingRow[] }) {
+  // Capacidades do servidor: menu de ações (uma chave por ação) e valores ("Restrito" sem Visualizar valores).
+  const access = useFinanceAccess();
+  const canOperate = hasBillingActions(access);
+  const hidden = !access.values;
+  const canSee = useCanSeeFn();
   const [page, setPage] = React.useState(1);
   const [prevRows, setPrevRows] = React.useState(rows);
   if (rows !== prevRows) {
@@ -41,11 +50,15 @@ export function BillingsTable({ rows, canOperate }: { rows: BillingRow[]; canOpe
         {visible.map((b) => (
           <li key={b.id} className={cn("flex items-start gap-3 px-4 py-3", b.status === "vencida" && "bg-danger-soft/40")}>
             <div className="min-w-0 flex-1">
-              <Link href={`/financeiro/contratos/${b.contractId}`} className="block truncate font-medium hover:text-brand">
-                {b.clientName}
-              </Link>
+              {canSee(`/financeiro/contratos/${b.contractId}`) ? (
+                <Link href={`/financeiro/contratos/${b.contractId}`} className="block truncate font-medium hover:text-brand">
+                  {b.clientName}
+                </Link>
+              ) : (
+                <span className="block truncate font-medium">{b.clientName}</span>
+              )}
               <p className="text-xs text-muted">
-                {billingLabel(b)} · {formatCurrency(b.amount)} · vence {formatDate(b.dueDate)}
+                {billingLabel(b)} · {money(b.amount, hidden)} · vence {formatDate(b.dueDate)}
               </p>
               <div className="mt-1.5 flex flex-wrap items-center gap-2">
                 <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
@@ -78,20 +91,20 @@ export function BillingsTable({ rows, canOperate }: { rows: BillingRow[]; canOpe
             {visible.map((b) => (
               <TableRow key={b.id} className={cn(b.status === "vencida" && "bg-danger-soft/40 hover:bg-danger-soft/60")}>
                 <TableCell className="max-w-[220px] truncate font-medium">
-                  <Link href={`/clientes/${b.clientId}?aba=financeiro`} className="hover:text-brand">
+                  <ScreenLink href={`/clientes/${b.clientId}?aba=financeiro`} className="hover:text-brand" fallback={b.clientName}>
                     {b.clientName}
-                  </Link>
+                  </ScreenLink>
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">
-                  <Link href={`/financeiro/contratos/${b.contractId}`} className="text-muted hover:text-brand">
+                  <ScreenLink href={`/financeiro/contratos/${b.contractId}`} className="text-muted hover:text-brand" fallback={<span className="text-muted">{b.contractNumber}</span>}>
                     {b.contractNumber}
-                  </Link>
+                  </ScreenLink>
                 </TableCell>
                 <TableCell className="whitespace-nowrap">{billingLabel(b)}</TableCell>
                 <TableCell className="whitespace-nowrap capitalize text-muted">{formatCompetence(b.competence)}</TableCell>
                 <TableCell className="whitespace-nowrap text-right tabular-nums">
-                  {formatCurrency(b.amount)}
-                  {b.paidAmount !== undefined && b.paidAmount !== b.amount ? <span className="block text-xs text-muted">pago {formatCurrency(b.paidAmount)}</span> : null}
+                  {money(b.amount, hidden)}
+                  {!hidden && b.paidAmount !== undefined && b.paidAmount !== b.amount ? <span className="block text-xs text-muted">pago {formatCurrency(b.paidAmount)}</span> : null}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   <span className={b.status === "vencida" ? "text-danger-fg" : undefined}>{formatDate(b.dueDate)}</span>

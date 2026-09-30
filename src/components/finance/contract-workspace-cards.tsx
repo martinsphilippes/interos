@@ -1,13 +1,14 @@
 import { Check, Eye, FileText, Receipt, Send, Wallet } from "lucide-react";
 import type { FinanceFlow, Milestone } from "@/server/finance/workspace";
-import { formatCurrency, formatDateTime, formatPercent } from "@/lib/format";
+import { formatDateTime, formatPercent } from "@/lib/format";
+import { money } from "./values";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TimelineList, type TimelineListItem } from "@/components/ui/timeline-list";
 import type { Tone } from "@/components/ui/tone";
 import { cn } from "@/lib/utils";
 
-/** Fluxo financeiro dos contratos listados: recebido, em aberto e vencido com barras e % do total. */
-export function FinanceFlowCard({ flow }: { flow: FinanceFlow }) {
+/** Fluxo financeiro dos contratos listados: recebido, em aberto e vencido com barras e % do total ("Restrito" sem valores). */
+export function FinanceFlowCard({ flow, hideValues }: { flow: FinanceFlow; hideValues?: boolean }) {
   const lines: { key: string; label: string; value: number; bar: string }[] = [
     { key: "recebido", label: "Recebido", value: flow.received, bar: "bg-success" },
     { key: "aberto", label: "Em aberto", value: flow.open, bar: "bg-warning" },
@@ -26,8 +27,8 @@ export function FinanceFlowCard({ flow }: { flow: FinanceFlow }) {
             <div className="flex items-baseline justify-between gap-3 text-sm">
               <span className="text-muted">{l.label}</span>
               <span className="flex items-baseline gap-3 tabular-nums">
-                <span className="font-semibold">{formatCurrency(l.value)}</span>
-                <span className="w-14 text-right text-xs text-muted">{formatPercent(pct(l.value))}</span>
+                <span className="font-semibold">{money(l.value, hideValues)}</span>
+                <span className="w-14 text-right text-xs text-muted">{hideValues ? "—" : formatPercent(pct(l.value))}</span>
               </span>
             </div>
             <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-track">
@@ -37,7 +38,7 @@ export function FinanceFlowCard({ flow }: { flow: FinanceFlow }) {
         ))}
         <div className="flex items-baseline justify-between border-t border-border pt-3 text-sm">
           <span className="font-medium">Total</span>
-          <span className="font-semibold tabular-nums">{formatCurrency(flow.total)}</span>
+          <span className="font-semibold tabular-nums">{money(flow.total, hideValues)}</span>
         </div>
       </CardContent>
     </Card>

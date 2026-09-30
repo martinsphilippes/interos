@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { ScreenLink } from "@/components/auth/access-provider";
 import { CheckCircle2, Circle, Rocket, ShieldAlert } from "lucide-react";
 import { releaseContractAction } from "@/server/finance/actions";
 import { PAYMENT_REQUIREMENT_LABELS, type ReleaseGate } from "@/server/finance/schemas";
@@ -12,6 +12,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { FormField } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
 import { useFinanceAction } from "./use-finance-action";
+import { useFinanceAccess } from "./finance-access";
 
 export interface ReleaseCardProps {
   contractId: string;
@@ -19,8 +20,6 @@ export interface ReleaseCardProps {
   gate: ReleaseGate;
   released?: { at: string; byName?: string };
   project: { id: string; name: string; dueDate: string; ownerName?: string } | null;
-  canOperate: boolean;
-  isManager: boolean;
   closed: boolean;
 }
 
@@ -28,12 +27,14 @@ export interface ReleaseCardProps {
  * Gate financeiro: critérios configuráveis (setting "gate_financeiro") e o botão "Liberar para implantação",
  * habilitado só quando todos são cumpridos. Gestor/admin pode liberar com pendência informando o motivo.
  */
-export function ReleaseCard({ contractId, number, gate, released, project, canOperate, isManager, closed }: ReleaseCardProps) {
+export function ReleaseCard({ contractId, number, gate, released, project, closed }: ReleaseCardProps) {
   const id = React.useId();
   const [exceptionOpen, setExceptionOpen] = React.useState(false);
   const [reason, setReason] = React.useState("");
   const { pending, run } = useFinanceAction();
-  const canException = isManager && gate.settings.permiteExcecaoGestor && !gate.ok;
+  // Capacidades do servidor: liberar e liberar com pendência (a configuração do gate continua valendo).
+  const access = useFinanceAccess();
+  const canException = access.contracts.releaseWithPendency && gate.settings.permiteExcecaoGestor && !gate.ok;
 
   const release = async (exceptionReason?: string) => {
     const ok = await run(() => releaseContractAction({ contractId, exceptionReason }), (d) => (d.exception ? "Liberado por exceção; projeto de implantação criado" : "Contrato liberado; projeto de implantação criado"));
@@ -72,14 +73,14 @@ export function ReleaseCard({ contractId, number, gate, released, project, canOp
             <p className="font-medium">{project.name}</p>
             <p className="text-xs">
               {project.ownerName ? `Responsável: ${project.ownerName} · ` : ""}prazo {formatDate(project.dueDate)} ·{" "}
-              <Link href={`/implantacao/${project.id}`} className="underline">
+              <ScreenLink href={`/implantacao/${project.id}`} className="underline">
                 abrir projeto
-              </Link>
+              </ScreenLink>
             </p>
           </div>
         ) : null}
 
-        {canOperate && !released && !closed ? (
+        {access.contracts.release && !released && !closed ? (
           <>
             <Button onClick={() => release()} loading={pending && !exceptionOpen} disabled={!gate.ok || pending} className="h-11 md:h-10">
               <Rocket /> Liberar para implantação

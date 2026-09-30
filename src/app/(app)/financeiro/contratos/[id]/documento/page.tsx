@@ -2,15 +2,19 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { ACCESS_DENIED_REDIRECT, can, getCurrentUser, requireScreen } from "@/server/auth/session";
 import { getById, ORG_ID } from "@/server/db";
 import { getContract } from "@/server/finance/queries";
+import { canSeeContractValues, contractAccessById } from "@/server/finance/access";
+import { maskMoneyText, redactAmendment } from "@/server/finance/redact";
+import { redactContractSummary } from "@/components/finance/contract-summary";
+import { money } from "@/components/finance/values";
 import { RECURRENCE_LABELS } from "@/server/finance/schemas";
 import { contractDocumentHash } from "@/server/finance/signature";
 import { HEADQUARTERS, formatAddressLine } from "@/server/sales/maps";
 import { AMENDMENT_FIELD_LABELS, AMENDMENT_KIND_LABELS, AMENDMENT_STATUS_LABELS, contractAtSnapshot, describeReadjustment, describeSnapshotValue } from "@/domain/contract-snapshot";
 import { COLLECTIONS, type Contract, type ContractAmendment, type Organization } from "@/domain/types";
-import { formatCurrency, formatDate, formatDateTime, formatDocument } from "@/lib/format";
+import { formatDate, formatDateTime, formatDocument } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { CONTRACT_STATUS_LABELS } from "@/components/clients/labels";
 import { netItem } from "@/components/sales/model";
@@ -22,8 +26,10 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
 
+/** Título com o número só para quem abre o documento (seção + escopo, A30); os demais veem "Contrato". */
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
-  const { id } = await params;
+  const [{ id }, user] = await Promise.all([params, getCurrentUser()]);
+  if (!user || !can(user, "financeiro.contratos.documentos.ver") || (await contractAccessById(user, id)) !== "ok") return { title: "Contrato" };
   const detail = await getContract(id);
   return { title: detail ? `Contrato ${detail.contract.number} — documento` : "Contrato" };
 }
@@ -54,23 +60,29 @@ const PRINT_CSS = `
  * Documento do contrato a ser assinado (versão imprimível / salvar PDF). O código de integridade é o hash
  * SHA-256 do conteúdo canônico gravado ao gerar o documento para assinatura.
  * `?versao=N` renderiza o snapshot da versão N (somente leitura); `?aditivo=<id>` renderiza o termo aditivo (D25).
+ * Acesso (catálogo): seção financeiro.contratos.documentos.ver (rota própria) + escopo do contrato; versão anterior
+ * exige o Histórico e termo aditivo exige Aditivos; sem os valores do contrato, "Restrito" (o hash usa os dados reais).
  */
 export default async function ContractDocumentPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "financeiro")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("financeiro.contratos.documentos.ver");
   const [{ id }, sp] = await Promise.all([params, searchParams]);
+  const access = await contractAccessById(user, id);
+  if (access === "missing") notFound();
+  if (access === "denied") redirect(ACCESS_DENIED_REDIRECT);
+  const amendmentId = first(sp.aditivo);
+  const versionParam = first(sp.versao);
+  if ((amendmentId && !can(user, "financeiro.contratos.aditivos.ver")) || (versionParam && !can(user, "financeiro.contratos.historico.ver"))) redirect(ACCESS_DENIED_REDIRECT);
   const [detail, organization] = await Promise.all([getContract(id), getById<Organization>(COLLECTIONS.organizations, ORG_ID)]);
   if (!detail) notFound();
   const companyName = organization?.name ?? "Intercert";
-  const amendmentId = first(sp.aditivo);
-  const versionParam = first(sp.versao);
+  const hidden = !canSeeContractValues(user);
 
   if (amendmentId) {
     const amendment = detail.amendments.find((a) => a.id === amendmentId);
     if (!amendment) notFound();
     return (
       <Shell contractId={detail.contract.id}>
-        <AmendmentDocument amendment={amendment} contract={detail.contract} client={detail.client} billingData={detail.billingData} companyName={companyName} />
+        <AmendmentDocument amendment={hidden ? redactAmendment(amendment) : amendment} contract={detail.contract} client={detail.client} billingData={detail.billingData} companyName={companyName} hidden={hidden} />
       </Shell>
     );
   }
@@ -90,7 +102,7 @@ export default async function ContractDocumentPage({ params, searchParams }: { p
           </Link>
         </p>
       ) : null}
-      <ContractDocument contract={contract} historical={Boolean(entry)} detail={detail} companyName={companyName} />
+      <ContractDocument contract={contract} historical={Boolean(entry)} detail={detail} companyName={companyName} hidden={hidden} amendmentLinks={can(user, "financeiro.contratos.aditivos.ver")} />
     </Shell>
   );
 }
@@ -114,7 +126,8 @@ function Shell({ contractId, children }: { contractId: string; children: React.R
 
 type Detail = NonNullable<Awaited<ReturnType<typeof getContract>>>;
 
-function ContractDocument({ contract, historical, detail, companyName }: { contract: Contract; historical: boolean; detail: Detail; companyName: string }) {
+/** `hidden`: sem os valores do contrato (A13) — o documento mostra "Restrito"; o hash é calculado com os dados reais. */
+function ContractDocument({ contract, historical, detail, companyName, hidden, amendmentLinks }: { contract: Contract; historical: boolean; detail: Detail; companyName: string; hidden: boolean; amendmentLinks: boolean }) {
   const { client, billingData } = detail;
   const currentHash = contractDocumentHash(contract);
   const generated = Boolean(contract.signatureEnvelopeId);
@@ -175,16 +188,16 @@ function ContractDocument({ contract, historical, detail, companyName }: { contr
 
         <section className="py-5">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Objeto: produtos e serviços contratados</h2>
-          <ItemsTable contract={contract} />
+          <ItemsTable contract={contract} hidden={hidden} />
           <dl className="ml-auto mt-4 grid max-w-sm grid-cols-2 gap-x-4 gap-y-1 tabular-nums">
             <dt className="text-muted">Adesão / setup</dt>
-            <dd className="text-right font-semibold">{formatCurrency(contract.setupTotal)}</dd>
+            <dd className="text-right font-semibold">{money(contract.setupTotal, hidden)}</dd>
             <dt className="text-muted">Mensalidade</dt>
-            <dd className="text-right font-semibold">{formatCurrency(contract.monthlyTotal)}</dd>
+            <dd className="text-right font-semibold">{money(contract.monthlyTotal, hidden)}</dd>
             <dt className="text-muted">Hardware</dt>
-            <dd className="text-right font-semibold">{formatCurrency(contract.hardwareTotal)}</dd>
+            <dd className="text-right font-semibold">{money(contract.hardwareTotal, hidden)}</dd>
             <dt className="border-t border-border-strong pt-1 font-semibold">Valor no 1º ano</dt>
-            <dd className="border-t border-border-strong pt-1 text-right font-bold">{formatCurrency(firstYear)}</dd>
+            <dd className="border-t border-border-strong pt-1 text-right font-bold">{money(firstYear, hidden)}</dd>
           </dl>
         </section>
 
@@ -208,11 +221,11 @@ function ContractDocument({ contract, historical, detail, companyName }: { contr
           </div>
           <div>
             <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Condição de pagamento</h2>
-            <p className="whitespace-pre-line">{contract.paymentCondition || "—"}</p>
+            <p className="whitespace-pre-line">{(hidden ? maskMoneyText(contract.paymentCondition) : contract.paymentCondition) || "—"}</p>
           </div>
         </section>
 
-        {!historical ? <ContractSummaryCard summary={detail.summary} variant="print" /> : null}
+        {!historical ? <ContractSummaryCard summary={hidden ? redactContractSummary(detail.summary) : detail.summary} variant="print" /> : null}
 
         {appliedAmendments.length > 0 ? (
           <section className="border-t border-border py-5">
@@ -220,10 +233,14 @@ function ContractDocument({ contract, historical, detail, companyName }: { contr
             <ul className="flex flex-col gap-1">
               {appliedAmendments.map((a) => (
                 <li key={a.id}>
-                  <Link href={`/financeiro/contratos/${contract.id}/documento?aditivo=${a.id}`} className="font-medium hover:text-brand">
-                    {a.number}
-                  </Link>{" "}
-                  · {AMENDMENT_KIND_LABELS[a.kind]} · vigência {formatDate(`${a.effectiveFrom}T12:00:00.000Z`)} · aplicado em {formatDate(a.appliedAt)} (v{a.appliedVersion}) · {a.reason}
+                  {amendmentLinks ? (
+                    <Link href={`/financeiro/contratos/${contract.id}/documento?aditivo=${a.id}`} className="font-medium hover:text-brand">
+                      {a.number}
+                    </Link>
+                  ) : (
+                    <span className="font-medium">{a.number}</span>
+                  )}{" "}
+                  · {AMENDMENT_KIND_LABELS[a.kind]} · vigência {formatDate(`${a.effectiveFrom}T12:00:00.000Z`)} · aplicado em {formatDate(a.appliedAt)} (v{a.appliedVersion}) · {hidden ? maskMoneyText(a.reason) : a.reason}
                 </li>
               ))}
             </ul>
@@ -269,7 +286,7 @@ function ContractDocument({ contract, historical, detail, companyName }: { contr
   );
 }
 
-function ItemsTable({ contract }: { contract: Pick<Contract, "items"> }) {
+function ItemsTable({ contract, hidden }: { contract: Pick<Contract, "items">; hidden: boolean }) {
   if (contract.items.length === 0) return <p className="text-muted">Nenhum item cadastrado.</p>;
   return (
     <div className="-mx-1 overflow-x-auto px-1">
@@ -291,9 +308,9 @@ function ItemsTable({ contract }: { contract: Pick<Contract, "items"> }) {
               <tr key={`${i.productId}-${idx}`} className="border-b border-border">
                 <td className="py-2 pr-2">{i.productName}</td>
                 <td className="py-2 pr-2 text-right">{i.quantity}</td>
-                <td className="py-2 pr-2 text-right">{formatCurrency(net.setupTotal)}</td>
-                <td className="py-2 pr-2 text-right">{formatCurrency(net.monthlyTotal)}</td>
-                <td className="py-2 pr-2 text-right">{formatCurrency(net.hardwareTotal)}</td>
+                <td className="py-2 pr-2 text-right">{money(net.setupTotal, hidden)}</td>
+                <td className="py-2 pr-2 text-right">{money(net.monthlyTotal, hidden)}</td>
+                <td className="py-2 pr-2 text-right">{money(net.hardwareTotal, hidden)}</td>
                 <td className="py-2 text-right">{i.discountPct > 0 ? `${i.discountPct}%` : "—"}</td>
               </tr>
             );
@@ -305,7 +322,7 @@ function ItemsTable({ contract }: { contract: Pick<Contract, "items"> }) {
 }
 
 /** Termo aditivo (D25): contrato base, quadro "condições anteriores × novas", motivo, vigência, assinaturas e hash. */
-function AmendmentDocument({ amendment, contract, client, billingData, companyName }: { amendment: ContractAmendment; contract: Contract; client: Detail["client"]; billingData: Detail["billingData"]; companyName: string }) {
+function AmendmentDocument({ amendment, contract, client, billingData, companyName, hidden }: { amendment: ContractAmendment; contract: Contract; client: Detail["client"]; billingData: Detail["billingData"]; companyName: string; hidden: boolean }) {
   const changes = Object.entries(amendment.changes ?? {}).filter(([f]) => !["version", "documentHash", "signers"].includes(f));
   const hash = amendment.documentHash;
   return (
@@ -374,9 +391,9 @@ function AmendmentDocument({ amendment, contract, client, billingData, companyNa
 
         <section className="border-t border-border py-5">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Itens depois do aditivo</h2>
-          <ItemsTable contract={{ items: amendment.after.items }} />
+          <ItemsTable contract={{ items: amendment.after.items }} hidden={hidden} />
           <p className="mt-2 text-muted">
-            Mensalidade {formatCurrency(amendment.after.monthlyTotal)} · adesão {formatCurrency(amendment.after.setupTotal)} · hardware {formatCurrency(amendment.after.hardwareTotal)}. As demais cláusulas do contrato {contract.number} permanecem inalteradas.
+            Mensalidade {money(amendment.after.monthlyTotal, hidden)} · adesão {money(amendment.after.setupTotal, hidden)} · hardware {money(amendment.after.hardwareTotal, hidden)}. As demais cláusulas do contrato {contract.number} permanecem inalteradas.
           </p>
         </section>
 

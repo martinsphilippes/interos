@@ -8,6 +8,8 @@ import type { IntegrationFlags } from "@/server/integrations/types";
 import { sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
 import { formatCurrency, formatDateTime } from "@/lib/format";
+import { useFinanceAccess } from "./finance-access";
+import { RESTRICTED_LABEL } from "./values";
 import { CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "@/components/clients/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,7 +31,9 @@ function waitingTone(days: number): string {
  * Contratos aguardando assinatura (ou geração do documento): signatários pendentes, espera, lembretes e
  * ações. Sem provedor de assinatura: lembrete pelo e-mail do usuário e assinatura registrada com evidência.
  */
-export function SignaturesList({ rows, mode, canOperate, integrations }: { rows: SignatureRow[]; mode: "waiting" | "toSend"; canOperate: boolean; integrations: IntegrationFlags }) {
+export function SignaturesList({ rows, mode, integrations }: { rows: SignatureRow[]; mode: "waiting" | "toSend"; integrations: IntegrationFlags }) {
+  // Capacidades do servidor: lembrete/gerar documento (enviar), registrar assinatura, ver documento, valores.
+  const { contracts: can, contractValues } = useFinanceAccess();
   const emailConnected = integrations.email === "conectado";
   const { pending, run } = useFinanceAction();
   const [busy, setBusy] = React.useState<string | null>(null);
@@ -54,7 +58,7 @@ export function SignaturesList({ rows, mode, canOperate, integrations }: { rows:
                 </Badge>
               </div>
               <p className="text-xs text-muted">
-                {r.number} v{r.version} · {formatCurrency(r.monthlyTotal)}/mês{r.ownerName ? ` · ${r.ownerName}` : ""}
+                {r.number} v{r.version} · {contractValues ? `${formatCurrency(r.monthlyTotal)}/mês` : `mensalidade: ${RESTRICTED_LABEL.toLowerCase()}`}{r.ownerName ? ` · ${r.ownerName}` : ""}
               </p>
             </div>
             <div className="text-sm md:text-right">
@@ -83,9 +87,9 @@ export function SignaturesList({ rows, mode, canOperate, integrations }: { rows:
                       {s.signedAt ? ` em ${formatDateTime(s.signedAt)}` : ""}
                     </p>
                   </div>
-                  {canOperate && s.status !== "assinado" ? (
+                  {(can.signatureSend || can.sign) && s.status !== "assinado" ? (
                     <div className="flex flex-wrap gap-2">
-                      {emailConnected ? (
+                      {!can.signatureSend ? null : emailConnected ? (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -103,13 +107,13 @@ export function SignaturesList({ rows, mode, canOperate, integrations }: { rows:
                           </a>
                         </Button>
                       )}
-                      <ManualSignatureButton contractId={r.contractId} contractNumber={r.number} signer={s} label="Registrar assinatura" className="h-10 sm:h-8" />
+                      {can.sign ? <ManualSignatureButton contractId={r.contractId} contractNumber={r.number} signer={s} label="Registrar assinatura" className="h-10 sm:h-8" /> : null}
                     </div>
                   ) : null}
                 </li>
               ))}
             </ul>
-          ) : canOperate ? (
+          ) : can.signatureSend ? (
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 size="sm"
@@ -120,9 +124,11 @@ export function SignaturesList({ rows, mode, canOperate, integrations }: { rows:
               >
                 <FileText /> Gerar documento para assinatura
               </Button>
-              <Button asChild variant="outline" size="sm" className="h-10 sm:h-8">
-                <Link href={contractDocumentPath(r.contractId)}>Ver contrato</Link>
-              </Button>
+              {can.documentsView ? (
+                <Button asChild variant="outline" size="sm" className="h-10 sm:h-8">
+                  <Link href={contractDocumentPath(r.contractId)}>Ver contrato</Link>
+                </Button>
+              ) : null}
               <Button asChild variant="outline" size="sm" className="h-10 sm:h-8">
                 <Link href={`/financeiro/contratos/${r.contractId}`}>Revisar contrato</Link>
               </Button>

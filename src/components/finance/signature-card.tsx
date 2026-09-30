@@ -19,12 +19,12 @@ import { ManualSignatureButton } from "./manual-signature-dialog";
 import { useFinanceAction } from "./use-finance-action";
 import { useOrigin } from "@/components/ui/use-origin";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { useFinanceAccess } from "./finance-access";
 
 export interface SignatureCardProps {
   contract: Pick<Contract, "id" | "number" | "version" | "status" | "signers" | "signatureEnvelopeId" | "signatureProvider" | "documentHash" | "signedAt">;
   sentAt?: string;
   reminders: Record<string, { count: number; lastAt: string }>;
-  canOperate: boolean;
   /** Itens/condições/signatários ainda podem mudar. */
   editable: boolean;
   clientName: string;
@@ -38,8 +38,10 @@ const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "da
  * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
  * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
  */
-export function SignatureCard({ contract, sentAt, reminders, canOperate, editable, clientName, integrations }: SignatureCardProps) {
+export function SignatureCard({ contract, sentAt, reminders, editable, clientName, integrations }: SignatureCardProps) {
   const id = React.useId();
+  // Capacidades do servidor (assinatura: editar signatários, enviar/lembrar, registrar assinatura; documento: ver).
+  const { contracts: can } = useFinanceAccess();
   const { pending, run } = useFinanceAction();
   const [adding, setAdding] = React.useState(false);
   const [signer, setSigner] = React.useState({ name: "", email: "", role: "Contratante" });
@@ -146,12 +148,12 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
                     {SIGNER_STATUS_LABELS[s.status]}
                   </Badge>
                 </div>
-                {canOperate && !closed && s.status !== "assinado" ? (
+                {(can.sign || can.signatureSend || (can.signersEdit && editable)) && !closed && s.status !== "assinado" ? (
                   <div className="flex flex-wrap gap-2">
                     {sent ? (
                       <>
-                        <ManualSignatureButton contractId={contract.id} contractNumber={contract.number} signer={s} className="h-10 md:h-8" />
-                        {emailConnected ? (
+                        {can.sign ? <ManualSignatureButton contractId={contract.id} contractNumber={contract.number} signer={s} className="h-10 md:h-8" /> : null}
+                        {!can.signatureSend ? null : emailConnected ? (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -174,7 +176,7 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
                         )}
                       </>
                     ) : null}
-                    {editable ? (
+                    {can.signersEdit && editable ? (
                       <Button variant="ghost" size="sm" className="h-10 text-danger md:h-8" disabled={pending} onClick={() => setRemoving({ email: s.email, name: s.name })}>
                         <Trash2 /> Remover
                       </Button>
@@ -186,7 +188,7 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
           })}
         </ul>
 
-        {canOperate && editable ? (
+        {can.signersEdit && editable ? (
           adding ? (
             <div className="grid gap-3 rounded-lg border border-border p-3">
               <FormField label="Nome" htmlFor={`${id}-n`} required>
@@ -214,7 +216,7 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
           )
         ) : null}
 
-        {canOperate && editable ? (
+        {can.signatureSend && editable ? (
           <Button
             onClick={() =>
               act("send", () =>
@@ -234,11 +236,13 @@ export function SignatureCard({ contract, sentAt, reminders, canOperate, editabl
         ) : null}
 
         <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" className="h-11 flex-1 md:h-9">
-            <Link href={contractDocumentPath(contract.id)}>
-              <FileText /> Ver contrato
-            </Link>
-          </Button>
+          {can.documentsView ? (
+            <Button asChild variant="outline" className="h-11 flex-1 md:h-9">
+              <Link href={contractDocumentPath(contract.id)}>
+                <FileText /> Ver contrato
+              </Link>
+            </Button>
+          ) : null}
           {sent && !allSigned && manual ? (
             <Button asChild variant="outline" className="h-11 flex-1 md:h-9">
               <a href={mailHref}>

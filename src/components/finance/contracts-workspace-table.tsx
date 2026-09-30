@@ -5,7 +5,9 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ExternalLink, FileSignature, FileText, MessageCircle, MoreVertical, Phone, UserRound } from "lucide-react";
 import type { BillingState, WorkspaceRow } from "@/server/finance/workspace";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
+import { useFinanceAccess } from "./finance-access";
+import { money } from "./values";
 import { cn } from "@/lib/utils";
 import { CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "@/components/clients/labels";
 import { Badge } from "@/components/ui/badge";
@@ -120,6 +122,8 @@ function ContactActions({ row, className }: { row: WorkspaceRow; className?: str
  */
 export function ContractsWorkspaceTable({ rows, selectedId }: { rows: WorkspaceRow[]; selectedId?: string }) {
   const router = useRouter();
+  // Sem "Visualizar valores" os valores chegam zerados do servidor: mostra "Restrito".
+  const hidden = !useFinanceAccess().contractValues;
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [pending, startTransition] = React.useTransition();
@@ -146,8 +150,8 @@ export function ContractsWorkspaceTable({ rows, selectedId }: { rows: WorkspaceR
             <button type="button" onClick={() => select(r.id)} className="flex min-h-[44px] w-full flex-col gap-1.5 px-4 py-3 pr-24 text-left active:bg-surface-hover">
               <span className="truncate font-medium">{r.clientName}</span>
               <span className="text-xs text-muted">
-                {r.number} · {r.productName} · {formatCurrency(r.amount)}
-                {r.amountKind === "mensal" ? "/mês" : ""} · vence {dueText(r)}
+                {r.number} · {r.productName} · {money(r.amount, hidden)}
+                {r.amountKind === "mensal" && !hidden ? "/mês" : ""} · vence {dueText(r)}
               </span>
               <span className="flex flex-wrap items-center gap-1.5">
                 <SignatureBadge row={r} />
@@ -230,8 +234,8 @@ export function ContractsWorkspaceTable({ rows, selectedId }: { rows: WorkspaceR
                   {r.extraProducts > 0 ? <span className="text-xs text-muted">+{r.extraProducts} item(ns)</span> : null}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-right tabular-nums">
-                  {formatCurrency(r.amount)}
-                  <span className="text-xs text-muted">{r.amountKind === "mensal" ? "/mês" : ""}</span>
+                  {money(r.amount, hidden)}
+                  <span className="text-xs text-muted">{r.amountKind === "mensal" && !hidden ? "/mês" : ""}</span>
                   {r.amountKind === "unico" ? <span className="block text-xs text-muted">valor único</span> : null}
                   <span className="block text-xs text-muted 2xl:hidden">vence {dueText(r, true)}</span>
                 </TableCell>

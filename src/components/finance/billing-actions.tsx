@@ -21,6 +21,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { whatsappWithText } from "./contract-links";
 import { useFinanceAction } from "./use-finance-action";
+import { useFinanceAccess } from "./finance-access";
+import { money, RESTRICTED_CODE } from "./values";
 
 export type BillingLite = Pick<Billing, "id" | "type" | "installment" | "amount" | "dueDate" | "status"> & Partial<Pick<Billing, "boleto" | "pix" | "paymentUrl" | "externalId" | "provider" | "chargeStatus" | "paidAt" | "paidAmount">> & { clientName?: string };
 
@@ -33,8 +35,12 @@ const BOLETO_VARIANT: Record<BoletoFilter, "muted" | "info" | "success"> = { sem
 /** Badge "Sem boleto · Boleto emitido · Boleto pago" (D20). */
 export function BoletoBadge({ billing, size = "sm" }: { billing: Pick<Billing, "status"> & Partial<Pick<Billing, "boleto" | "pix" | "paymentUrl" | "externalId">>; size?: "sm" | "md" }) {
   const state = boletoState(billing);
+  // Sem a seção "Boleto / PIX" (ou sem valores: a linha digitável codifica o valor) o badge não aparece / não mostra a linha.
+  const access = useFinanceAccess();
+  if (!access.billings.boletoView) return null;
+  const line = billing.boleto?.linhaDigitavel && billing.boleto.linhaDigitavel !== RESTRICTED_CODE ? billing.boleto.linhaDigitavel : undefined;
   return (
-    <Badge variant={BOLETO_VARIANT[state]} size={size} title={billing.boleto?.linhaDigitavel ? `Linha digitável ${billing.boleto.linhaDigitavel}` : undefined}>
+    <Badge variant={BOLETO_VARIANT[state]} size={size} title={line ? `Linha digitável ${line}` : undefined}>
       {BOLETO_FILTER_LABELS[state]}
     </Badge>
   );
@@ -193,8 +199,15 @@ function describeResults(results: BillingChannelResult[]): string {
  * texto pronto e registra "enviado manualmente"; sem VoIP, o tel: abre o discador e o resultado é registrado à mão.
  * Sem provedor de cobrança, o boleto é emitido no banco/ERP e registrado aqui — nunca simulado.
  */
-export function BillingActions({ billing, compact }: { billing: BillingLite; compact?: boolean }) {
+export function BillingActions({ billing, compact, hideValues }: { billing: BillingLite; compact?: boolean; hideValues?: boolean }) {
   const id = React.useId();
+  // Capacidades do servidor (uma chave por ação); baixa e boleto pedem o valor, então exigem "Visualizar valores".
+  const access = useFinanceAccess();
+  const hidden = hideValues ?? !access.values;
+  const can = access.billings;
+  const canPay = can.pay && !hidden;
+  const canBoleto = can.boletoCreate && can.boletoView && !hidden;
+  const canSendBoleto = can.boletoSend && can.boletoView;
   const [mode, setMode] = React.useState<Mode>(null);
   const [text, setText] = React.useState("");
   const [channel, setChannel] = React.useState<ChannelChoice>("whatsapp");
@@ -204,7 +217,9 @@ export function BillingActions({ billing, compact }: { billing: BillingLite; com
   const open = billing.status === "aberta" || billing.status === "vencida";
   const paid = billing.status === "paga";
   const hasBoleto = boletoState(billing) !== "sem_boleto";
+  const anyOpenAction = canPay || can.collect || canBoleto || canSendBoleto || can.cancel;
   if (!open && !paid) return null;
+  if ((open && !anyOpenAction) || (paid && !can.reverse)) return null;
 
   const isMessage = (m: Mode): m is MessageMode => m === "whatsapp" || m === "email" || m === "enviar_boleto" || m === "segunda_via";
   const includeBoleto = mode === "enviar_boleto" || mode === "segunda_via";
@@ -295,7 +310,7 @@ export function BillingActions({ billing, compact }: { billing: BillingLite; com
   return (
     <>
       <div className="flex items-center justify-end gap-1">
-        {!compact && open ? (
+        {!compact && open && canPay ? (
           <Button size="sm" variant="outline" className="h-10 md:h-8" onClick={() => openMode("pagar")}>
             <CircleDollarSign /> Pagar
           </Button>
@@ -309,32 +324,48 @@ export function BillingActions({ billing, compact }: { billing: BillingLite; com
           <DropdownMenuContent align="end">
             {open ? (
               <>
-                <DropdownMenuItem onSelect={() => openMode("pagar")}>
-                  <CircleDollarSign /> Registrar pagamento
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => openMode("whatsapp")}>
-                  <MessageCircle /> Cobrar por WhatsApp
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => openMode("email")}>
-                  <Mail /> Cobrar por e-mail (complementar)
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => openMode("ligar")}>
-                  <Phone /> Ligar
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => openMode("boleto")}>
-                  <Receipt /> {hasBoleto ? "Atualizar boleto" : "Registrar boleto"}
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => openMode("enviar_boleto")} disabled={!hasBoleto}>
-                  <Send /> Enviar boleto{hasBoleto ? "" : " (registre antes)"}
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => openMode("segunda_via")} disabled={!hasBoleto}>
-                  <FileText /> 2ª via do boleto
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem destructive onSelect={() => openMode("cancelar")}>
-                  <Ban /> Cancelar cobrança
-                </DropdownMenuItem>
+                {canPay ? (
+                  <DropdownMenuItem onSelect={() => openMode("pagar")}>
+                    <CircleDollarSign /> Registrar pagamento
+                  </DropdownMenuItem>
+                ) : null}
+                {can.collect ? (
+                  <>
+                    <DropdownMenuItem onSelect={() => openMode("whatsapp")}>
+                      <MessageCircle /> Cobrar por WhatsApp
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => openMode("email")}>
+                      <Mail /> Cobrar por e-mail (complementar)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => openMode("ligar")}>
+                      <Phone /> Ligar
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+                {canBoleto || canSendBoleto ? <DropdownMenuSeparator /> : null}
+                {canBoleto ? (
+                  <DropdownMenuItem onSelect={() => openMode("boleto")}>
+                    <Receipt /> {hasBoleto ? "Atualizar boleto" : "Registrar boleto"}
+                  </DropdownMenuItem>
+                ) : null}
+                {canSendBoleto ? (
+                  <>
+                    <DropdownMenuItem onSelect={() => openMode("enviar_boleto")} disabled={!hasBoleto}>
+                      <Send /> Enviar boleto{hasBoleto ? "" : " (registre antes)"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => openMode("segunda_via")} disabled={!hasBoleto}>
+                      <FileText /> 2ª via do boleto
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+                {can.cancel ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem destructive onSelect={() => openMode("cancelar")}>
+                      <Ban /> Cancelar cobrança
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
               </>
             ) : (
               <DropdownMenuItem destructive onSelect={() => openMode("estornar")}>
@@ -353,9 +384,9 @@ export function BillingActions({ billing, compact }: { billing: BillingLite; com
           <DialogHeader>
             <DialogTitle>{dialogTitle}</DialogTitle>
             <DialogDescription>
-              {billingLabel(billing)} de {formatCurrency(billing.amount)} · vencimento {formatDate(billing.dueDate)}
+              {billingLabel(billing)} de {money(billing.amount, hidden)} · vencimento {formatDate(billing.dueDate)}
               {billing.clientName ? ` · ${billing.clientName}` : ""}
-              {paid && billing.paidAt ? ` · pago em ${formatDate(billing.paidAt)}${billing.paidAmount !== undefined ? ` (${formatCurrency(billing.paidAmount)})` : ""}` : ""}
+              {paid && billing.paidAt ? ` · pago em ${formatDate(billing.paidAt)}${billing.paidAmount !== undefined && !hidden ? ` (${formatCurrency(billing.paidAmount)})` : ""}` : ""}
               {contact && (isMessage(mode) || mode === "ligar") ? ` · ${contact.contactName}${contact.phone ? ` ${formatPhone(contact.phone)}` : ""}${contact.email && isMessage(mode) ? ` · ${contact.email}` : ""}` : ""}
             </DialogDescription>
           </DialogHeader>
