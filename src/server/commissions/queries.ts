@@ -1,11 +1,11 @@
 import "server-only";
 /**
- * Leituras das telas do Financeiro › Comissões, Regras e Contas a Pagar. O escopo de visibilidade (D15) é resolvido
- * AQUI, no servidor: financeiro/admin/diretoria veem tudo; gestor, a equipe (getPerformanceAccess); vendedor, só o que
- * é dele. Todo número exibido sai dos documentos do motor (nada calculado só na tela).
+ * Leituras das telas do Financeiro › Comissões, Regras e Contas a Pagar. A visibilidade é resolvida AQUI, no servidor,
+ * pelo núcleo de autorização (./access.ts: seções Minhas/Todas + resolveDataScope da tela) — padrão: financeiro/admin/
+ * diretoria veem tudo; gestor, a equipe; vendedor, só o que é dele. Seção negada = dado não lido nem enviado. Todo
+ * número exibido sai dos documentos do motor (nada calculado só na tela).
  */
 import { getById, getManyByIds, list } from "@/server/db";
-import { getPerformanceAccess } from "@/server/performance/queries";
 import { dateKey } from "@/lib/format";
 import { PRODUCT_CATEGORY_LABELS } from "@/domain/constants";
 import {
@@ -36,36 +36,41 @@ import {
 } from "@/domain/types";
 import { getCommissionPaymentSettings, getPayablesSettings, listPayableAttachments } from "./payables";
 import { listSuppliers } from "./suppliers";
+import { can } from "@/server/auth/session";
+import type { CommissionScope } from "./permissions";
 import {
-  canApprovePayables,
-  canManageCommissionRules,
-  canOperatePayables,
-  canPayPayables,
-  canReverseCommission,
-  canViewAllCommissions,
-  canViewCommissionRules,
-  canViewPayables,
-  commissionScopeFor,
-  scopeAllows,
-  type CommissionScope,
-} from "./permissions";
+  commissionAllowed,
+  commissionCapabilities,
+  commissionVisibility,
+  payableAllowed,
+  payableCapabilities,
+  payableVisibility,
+  type CommissionCapabilities,
+  type CommissionVisibility,
+  type PayableCapabilities,
+} from "./access";
 import { describeSnapshot, isLegacyRule, ruleScope, snapshotRule } from "./rules";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-/** Escopo de comissões do usuário (D15). */
+/**
+ * Visão de comissões do usuário no formato antigo (relatórios): "all" (sem recorte), "team" (lista de donos) ou "own".
+ * Sai da mesma visibilidade das telas (seções + escopo da tela); sem as seções, "own" com lista vazia.
+ */
 export async function resolveCommissionScope(viewer: CurrentUser): Promise<CommissionScope> {
-  if (canViewAllCommissions(viewer)) return { kind: "all" };
-  if (!viewer.isManager) return { kind: "own", userIds: [viewer.id] };
-  const access = await getPerformanceAccess(viewer);
-  return commissionScopeFor(viewer, access.userIds);
+  const vis = await commissionVisibility(viewer);
+  if (vis.ownerIds === null && !vis.excludeSelf) return { kind: "all" };
+  const ids = vis.ownerIds ? Array.from(vis.ownerIds) : (await list<User>(COLLECTIONS.users)).filter((u) => u.active !== false && u.id !== viewer.id).map((u) => u.id);
+  return vis.kind === "own" || vis.kind === "none" ? { kind: "own", userIds: ids } : { kind: "team", userIds: ids };
 }
 
-async function commissionsInScope(scope: CommissionScope): Promise<Commission[]> {
-  if (scope.kind === "all") return list<Commission>(COLLECTIONS.commissions);
-  return list<Commission>(COLLECTIONS.commissions, { where: [["userId", "in", scope.userIds]] });
+/** Comissões visíveis (só as dos donos permitidos são lidas). */
+async function commissionsVisible(vis: CommissionVisibility): Promise<Commission[]> {
+  if (vis.ownerIds === null) return (await list<Commission>(COLLECTIONS.commissions)).filter((c) => commissionAllowed(vis, c.userId));
+  if (vis.ownerIds.size === 0) return [];
+  return list<Commission>(COLLECTIONS.commissions, { where: [["userId", "in", Array.from(vis.ownerIds)]] });
 }
 
 // ---------------------------------------------------------------------------
@@ -158,13 +163,14 @@ export interface CountAmount {
 }
 
 export interface CommissionsWorkspace {
-  scope: CommissionScope["kind"];
+  /** Visão: todas, equipe, próprias ou nenhuma (sem as seções Minhas/Todas). */
+  scope: CommissionVisibility["kind"];
   kpis: Record<"prevista" | "em_carencia" | "aguardando_recebimento" | "liberada" | "titulo_gerado" | "paga" | "bloqueada" | "void", CountAmount>;
   rows: CommissionRow[];
   total: number;
   facets: { sellers: Opt[]; clients: Opt[]; contracts: Opt[]; competences: Opt[] };
   selected: CommissionDetail | null;
-  can: { reverse: boolean; viewPayables: boolean; viewRules: boolean };
+  can: CommissionCapabilities & { viewPayables: boolean; viewRules: boolean };
 }
 
 interface Opt {
@@ -229,8 +235,8 @@ const STATUS_TONE: Record<CommissionStatus, HistoryItem["tone"]> = {
 };
 
 export async function getCommissionsWorkspace(viewer: CurrentUser, filters: CommissionFilters, selectedId?: string): Promise<CommissionsWorkspace> {
-  const scope = await resolveCommissionScope(viewer);
-  const all = await commissionsInScope(scope);
+  const vis = await commissionVisibility(viewer);
+  const all = await commissionsVisible(vis);
   const [users, clients, contracts, payables] = await Promise.all([
     getManyByIds<User>(COLLECTIONS.users, all.map((c) => c.userId)),
     getManyByIds<Client>(COLLECTIONS.clients, all.map((c) => c.clientId)),
@@ -254,7 +260,7 @@ export async function getCommissionsWorkspace(viewer: CurrentUser, filters: Comm
 
   const opt = (entries: [string, string][]) => Array.from(new Map(entries).entries()).map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   const facets = {
-    sellers: scope.kind === "own" ? [] : opt(rowsAll.map((r) => [r.userId, r.userName])),
+    sellers: vis.kind === "own" || vis.kind === "none" ? [] : opt(rowsAll.map((r) => [r.userId, r.userName])),
     clients: opt(rowsAll.map((r) => [r.clientId, r.clientName])),
     contracts: opt(rowsAll.filter((r) => r.contractId).map((r) => [r.contractId!, `${r.contractNumber ?? r.contractId} · ${r.clientName}`])),
     competences: Array.from(new Set(rowsAll.map((r) => r.competence)))
@@ -263,10 +269,10 @@ export async function getCommissionsWorkspace(viewer: CurrentUser, filters: Comm
       .map((c) => ({ value: c, label: competenceLabel(c) })),
   };
 
-  const can = { reverse: canReverseCommission(viewer), viewPayables: canViewPayables(viewer), viewRules: canViewCommissionRules(viewer) };
+  const caps = { ...commissionCapabilities(viewer), viewPayables: can(viewer, "financeiro.contas-a-pagar.ver"), viewRules: can(viewer, "financeiro.comissoes.regras.ver") };
   const chosen = selectedId ? all.find((c) => c.id === selectedId) : undefined;
-  const selected = chosen && scopeAllows(scope, chosen.userId) ? await commissionDetail(chosen, toRow(chosen, users, clients, contracts, payables), contracts, payables, can) : null;
-  return { scope: scope.kind, kpis, rows, total: rowsAll.length, facets, selected, can };
+  const selected = chosen && commissionAllowed(vis, chosen.userId) ? await commissionDetail(chosen, toRow(chosen, users, clients, contracts, payables), contracts, payables, caps) : null;
+  return { scope: vis.kind, kpis, rows, total: rowsAll.length, facets, selected, can: caps };
 }
 
 const z = (): CountAmount => ({ count: 0, amount: 0 });
@@ -290,8 +296,8 @@ export interface UserCommissionsDigest {
   total: number;
   /** Totais por grupo de situação (valores do motor, não recalculados na tela). */
   totals: { previstas: CountAmount; em_carencia: CountAmount; aguardando_recebimento: CountAmount; elegiveis: CountAmount; a_pagar: CountAmount; pagas: CountAmount };
-  /** Link para a tela de comissões com o filtro do vendedor (ou "Minhas comissões"). */
-  href: string;
+  /** Link para a tela de comissões com o filtro do vendedor (ou "Minhas comissões"); ausente sem acesso à tela. */
+  href?: string;
 }
 
 const WHEN_LABEL: Record<CommissionStatus, string> = {
@@ -307,12 +313,14 @@ const WHEN_LABEL: Record<CommissionStatus, string> = {
 };
 
 /**
- * Comissões de um colaborador para o Meu Desempenho. O escopo D15 vale aqui também: devolve null quando o visitante
- * não pode ver as comissões desse usuário (vendedor só vê as próprias; gestor, a equipe; financeiro, todas).
+ * Comissões de um colaborador para o Meu Desempenho. A visibilidade da tela Comissões vale aqui também (seções
+ * Minhas/Todas + escopo): devolve null quando o visitante não pode ver as comissões desse usuário (padrão: vendedor só
+ * as próprias; gestor, a equipe; financeiro, todas). Links para Financeiro › Comissões só com acesso à tela.
  */
 export async function getUserCommissionsDigest(viewer: CurrentUser, userId: string, options: { canOpenFinance: boolean; limit?: number } = { canOpenFinance: false }): Promise<UserCommissionsDigest | null> {
-  const scope = await resolveCommissionScope(viewer);
-  if (!scopeAllows(scope, userId)) return null;
+  const vis = await commissionVisibility(viewer);
+  if (!commissionAllowed(vis, userId)) return null;
+  const canOpen = options.canOpenFinance && can(viewer, "financeiro.comissoes.ver");
   const all = await list<Commission>(COLLECTIONS.commissions, { where: [["userId", "==", userId]] });
   const [users, clients, contracts, payables, billings] = await Promise.all([
     getManyByIds<User>(COLLECTIONS.users, [userId]),
@@ -346,7 +354,7 @@ export async function getUserCommissionsDigest(viewer: CurrentUser, userId: stri
             ? (c.expectedAt ?? c.eligibleAt ?? billing?.dueDate)
             : (c.eligibleAt ?? c.releaseAt);
     const whenLabel = (c.status === "prevista" || c.status === "aguardando_recebimento") && row.expectedLabel ? `${WHEN_LABEL[c.status]} (${row.expectedLabel})` : WHEN_LABEL[c.status];
-    rows.push({ ...row, whenAt, whenLabel, href: options.canOpenFinance ? `/financeiro/comissoes?comissao=${c.id}` : undefined });
+    rows.push({ ...row, whenAt, whenLabel, href: canOpen ? `/financeiro/comissoes?comissao=${c.id}` : undefined });
   }
   const order: Record<CommissionStatus, number> = { liberada: 0, titulo_gerado: 1, aguardando_recebimento: 2, em_carencia: 3, prevista: 4, paga: 5, bloqueada: 6, cancelada: 7, estornada: 8 };
   rows.sort((a, b) => order[a.status] - order[b.status] || (b.whenAt ?? "").localeCompare(a.whenAt ?? "") || b.competence.localeCompare(a.competence));
@@ -356,7 +364,7 @@ export async function getUserCommissionsDigest(viewer: CurrentUser, userId: stri
     rows: rows.slice(0, limit),
     total: rows.length,
     totals,
-    href: scope.kind === "own" ? "/financeiro/comissoes" : `/financeiro/comissoes?vendedor=${userId}`,
+    href: !canOpen ? undefined : vis.kind === "own" ? "/financeiro/comissoes" : `/financeiro/comissoes?vendedor=${userId}`,
   };
 }
 
@@ -476,7 +484,9 @@ export interface RulesWorkspace {
   history: HistoryItem[];
   options: { sellers: Opt[]; contracts: Opt[]; products: Opt[]; categories: Opt[] };
   paymentDay: number;
+  /** Alterar regras (financeiro.comissoes.regras.editar). */
   canManage: boolean;
+  can: { edit: boolean; toggle: boolean; exception: boolean; configure: boolean };
   selectedId?: string;
 }
 
@@ -577,7 +587,13 @@ export async function getRulesWorkspace(viewer: CurrentUser, selectedId?: string
       categories: Object.entries(PRODUCT_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),
     },
     paymentDay: settings.diaPagamento,
-    canManage: canManageCommissionRules(viewer),
+    canManage: can(viewer, "financeiro.comissoes.regras.editar"),
+    can: {
+      edit: can(viewer, "financeiro.comissoes.regras.editar"),
+      toggle: can(viewer, "financeiro.comissoes.regras.ativar"),
+      exception: can(viewer, "financeiro.comissoes.regras.criar-excecao"),
+      configure: can(viewer, "financeiro.comissoes.regras.configurar"),
+    },
     selectedId,
   };
 }
@@ -671,7 +687,7 @@ export interface PayablesWorkspace {
   total: number;
   facets: { creditors: Opt[]; competences: Opt[]; categories: Opt[]; costCenters: Opt[] };
   selected: PayableDetail | null;
-  can: { approve: boolean; pay: boolean; operate: boolean; readOnly: boolean };
+  can: PayableCapabilities;
   users: Opt[];
   suppliers: Opt[];
   settings: { categorias: Opt[]; centrosDeCusto: string[] };
@@ -688,9 +704,10 @@ function addMonthsKey(comp: string, n: number): string {
 }
 
 export async function getPayablesWorkspace(viewer: CurrentUser, filters: PayableFilters, selectedId?: string): Promise<PayablesWorkspace> {
-  const full = canViewAllCommissions(viewer);
-  const scope = await resolveCommissionScope(viewer);
-  const all = (await list<Payable>(COLLECTIONS.payables)).filter((p) => full || (p.creditorId && scopeAllows(scope, p.creditorId)));
+  const vis = await payableVisibility(viewer);
+  const full = vis.creditorIds === null;
+  const caps = payableCapabilities(viewer);
+  const all = (await list<Payable>(COLLECTIONS.payables)).filter((p) => payableAllowed(vis, p));
   const today = dateKey(new Date());
   const month = today.slice(0, 7);
   const toRow = (p: Payable): PayableRow => ({
@@ -756,13 +773,15 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
     .map((c) => ({ value: c, label: competenceLabel(c) }));
 
   const chosen = selectedId ? all.find((p) => p.id === selectedId) : undefined;
-  const selected = chosen ? await payableDetail(chosen, toRow(chosen), all) : null;
-  const operate = canOperatePayables(viewer);
+  const links: TraceAccess = { suppliers: caps.suppliers, rules: can(viewer, "financeiro.comissoes.regras.ver"), commissions: can(viewer, "financeiro.comissoes.ver") };
+  const selected = chosen ? await payableDetail(chosen, toRow(chosen), all, links) : null;
+  // Lançamento manual: credores colaboradores dentro do escopo (empresa = todos os ativos).
   const [users, suppliers, settings, cashFlow] = await Promise.all([
-    operate ? list<User>(COLLECTIONS.users).then((us) => us.filter((u) => u.active !== false).map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"))) : Promise.resolve([] as Opt[]),
-    operate ? listSuppliers({ activeOnly: true }).then((ss) => ss.map((s) => ({ value: s.id, label: s.name }))) : Promise.resolve([] as Opt[]),
+    caps.create ? list<User>(COLLECTIONS.users).then((us) => us.filter((u) => u.active !== false && (full || vis.creditorIds!.has(u.id))).map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"))) : Promise.resolve([] as Opt[]),
+    caps.create && full ? listSuppliers({ activeOnly: true }).then((ss) => ss.map((s) => ({ value: s.id, label: s.name }))) : Promise.resolve([] as Opt[]),
     getPayablesSettings(),
-    full ? buildCashFlow(all, today) : Promise.resolve({ overdue: emptyCashMonth("atraso", "Em atraso"), months: [] }),
+    // Fluxo de caixa: seção própria e só com escopo empresa (soma cobranças e títulos da empresa inteira).
+    caps.cashFlow && full ? buildCashFlow(all, today) : Promise.resolve({ overdue: emptyCashMonth("atraso", "Em atraso"), months: [] }),
   ]);
   const categories = Array.from(new Set([...settings.categorias, ...rowsAll.map((r) => r.category)])).map((c) => ({ value: c, label: payableCategoryLabel(c) })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   const costCenters = Array.from(new Set([...settings.centrosDeCusto, ...rowsAll.map((r) => r.costCenter).filter((c): c is string => Boolean(c))])).map((c) => ({ value: c, label: c })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
@@ -772,7 +791,7 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
     total: rowsAll.length,
     facets: { creditors, competences, categories, costCenters },
     selected,
-    can: { approve: canApprovePayables(viewer), pay: canPayPayables(viewer), operate, readOnly: !operate },
+    can: { ...caps, cashFlow: caps.cashFlow && full },
     users,
     suppliers,
     settings: { categorias: settings.categoriasComRotulo.filter((c) => c.value !== "comissao_comercial" && c.value !== "estorno_comissao"), centrosDeCusto: settings.centrosDeCusto },
@@ -809,7 +828,14 @@ async function buildCashFlow(payables: Payable[], today: string): Promise<Payabl
   return { overdue, months };
 }
 
-async function payableDetail(p: Payable, row: PayableRow, all: Payable[] = []): Promise<PayableDetail> {
+/** Links da origem só para telas/seções que o usuário abre (a interface só esconde; as páginas revalidam). */
+interface TraceAccess {
+  suppliers: boolean;
+  rules: boolean;
+  commissions: boolean;
+}
+
+async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links: TraceAccess): Promise<PayableDetail> {
   const commissionId = p.sourceIds.commissionIds?.[0];
   const [commission, contract, billing, events, approver, attachments] = await Promise.all([
     commissionId ? getById<Commission>(COLLECTIONS.commissions, commissionId) : Promise.resolve(null),
@@ -820,7 +846,7 @@ async function payableDetail(p: Payable, row: PayableRow, all: Payable[] = []): 
     listPayableAttachments(p),
   ]);
   const trace: TraceLink[] = [];
-  if (p.supplierId) trace.push({ key: "fornecedor", label: "Fornecedor", value: p.creditorName, href: `/financeiro/contas-a-pagar/fornecedores?fornecedor=${p.supplierId}` });
+  if (p.supplierId) trace.push({ key: "fornecedor", label: "Fornecedor", value: p.creditorName, href: links.suppliers ? `/financeiro/contas-a-pagar/fornecedores?fornecedor=${p.supplierId}` : undefined });
   if (p.seriesId && p.seriesId !== p.id) trace.push({ key: "serie", label: p.installments ? "Parcelamento" : "Série", value: p.installments ? `parcela ${p.installment}/${p.installments}` : `ocorrência da série ${all.find((x) => x.id === p.seriesId)?.code ?? p.seriesId}`, href: `/financeiro/contas-a-pagar?serie=${p.seriesId}` });
   if (p.sourceIds.saleNumber || p.sourceIds.opportunityId) trace.push({ key: "venda", label: "Venda", value: p.sourceIds.saleNumber ?? "Oportunidade", href: p.sourceIds.opportunityId ? `/vendas/oportunidades?oportunidade=${p.sourceIds.opportunityId}` : undefined });
   if (contract) trace.push({ key: "contrato", label: "Contrato", value: contract.number, href: `/financeiro/contratos/${contract.id}` });
@@ -828,8 +854,8 @@ async function payableDetail(p: Payable, row: PayableRow, all: Payable[] = []): 
     const kind = { setup: "Adesão", mensalidade: "Mensalidade", hardware: "Hardware", servico: "Serviço" }[billing.type];
     trace.push({ key: "cobranca", label: "Recebimento", value: `${kind}${billing.installment ? ` ${billing.installment}` : ""} · ${billing.status === "paga" ? `paga em ${dateKey(billing.paidAt ?? billing.dueDate).split("-").reverse().join("/")}` : billing.status}`, href: `/financeiro/cobrancas?cliente=${billing.clientId}&competencia=${billing.competence}&tipo=${billing.type}` });
   }
-  if (commission?.ruleSnapshot) trace.push({ key: "regra", label: "Regra", value: commission.ruleSnapshot.name, href: commission.ruleSnapshot.source === "regra" ? `/financeiro/comissoes/regras?regra=${commission.ruleSnapshot.id}` : undefined });
-  if (commission) trace.push({ key: "comissao", label: "Comissão", value: commission.code ?? commission.id, href: `/financeiro/comissoes?comissao=${commission.id}` });
+  if (commission?.ruleSnapshot) trace.push({ key: "regra", label: "Regra", value: commission.ruleSnapshot.name, href: links.rules && commission.ruleSnapshot.source === "regra" ? `/financeiro/comissoes/regras?regra=${commission.ruleSnapshot.id}` : undefined });
+  if (commission) trace.push({ key: "comissao", label: "Comissão", value: commission.code ?? commission.id, href: links.commissions ? `/financeiro/comissoes?comissao=${commission.id}` : undefined });
   if (p.sourceIds.reversalOf) trace.push({ key: "original", label: "Título estornado", value: p.sourceIds.reversalOf, href: `/financeiro/contas-a-pagar?titulo=${p.sourceIds.reversalOf}` });
   trace.push({ key: "titulo", label: "Título", value: row.code });
 

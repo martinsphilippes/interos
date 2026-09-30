@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
-import { canAccessModule, requireUser } from "@/server/auth/session";
-import { canOperatePayables, canViewPayables } from "@/server/commissions/permissions";
+import { can, requireScreen } from "@/server/auth/session";
+import { payableAllowed, payableVisibility } from "@/server/commissions/access";
 import { listSuppliers } from "@/server/commissions/suppliers";
 import { list } from "@/server/db";
 import { COLLECTIONS, type Payable } from "@/domain/types";
@@ -13,13 +12,17 @@ export const metadata: Metadata = { title: "Fornecedores" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Financeiro › Contas a Pagar › Fornecedores (D28): cadastro simples dos credores, com títulos em aberto e pagos. */
+/**
+ * Financeiro › Contas a Pagar › Fornecedores (D28): cadastro simples dos credores, com títulos em aberto e pagos.
+ * Seção financeiro.contas-a-pagar.fornecedores (sem ela, volta para Comissões com aviso). Os totais contam só os
+ * títulos no escopo de Contas a Pagar (padrão da equipe financeira: todos); cadastrar, editar e ativar por chave.
+ */
 export default async function SuppliersPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "financeiro") || !canViewPayables(user)) redirect("/financeiro/comissoes?erro=sem-permissao");
+  const user = await requireScreen("financeiro.contas-a-pagar.fornecedores.ver");
   const sp = await searchParams;
   const selected = (Array.isArray(sp.fornecedor) ? sp.fornecedor[0] : sp.fornecedor)?.trim() || undefined;
-  const [suppliers, payables] = await Promise.all([listSuppliers(), list<Payable>(COLLECTIONS.payables)]);
+  const [suppliers, allPayables, visibility] = await Promise.all([listSuppliers(), list<Payable>(COLLECTIONS.payables), payableVisibility(user)]);
+  const payables = allPayables.filter((p) => payableAllowed(visibility, p));
   const rows: SupplierRow[] = suppliers.map((s) => {
     const own = payables.filter((p) => p.supplierId === s.id);
     const open = own.filter((p) => p.status === "previsto" || p.status === "aprovado" || p.status === "a_pagar");
@@ -28,7 +31,11 @@ export default async function SuppliersPage({ searchParams }: { searchParams: Se
   return (
     <PageContainer size="full" className="max-w-[1680px]">
       <PageHeader title="Fornecedores" description="Credores de Contas a Pagar: dados de contato, PIX e banco para pagar títulos (não é o cadastro de clientes)" breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contas a Pagar", href: "/financeiro/contas-a-pagar" }, { label: "Fornecedores" }]} />
-      <SuppliersWorkspace rows={rows} selectedId={selected} canOperate={canOperatePayables(user)} />
+      <SuppliersWorkspace
+        rows={rows}
+        selectedId={selected}
+        can={{ create: can(user, "financeiro.contas-a-pagar.fornecedores.criar"), edit: can(user, "financeiro.contas-a-pagar.fornecedores.editar"), toggle: can(user, "financeiro.contas-a-pagar.fornecedores.ativar") }}
+      />
     </PageContainer>
   );
 }

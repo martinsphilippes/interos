@@ -33,8 +33,15 @@ const empty: Form = { name: "", document: "", email: "", phone: "", pixKey: "", 
 const toForm = (s: Supplier): Form => ({ name: s.name, document: s.document ?? "", email: s.email ?? "", phone: s.phone ?? "", pixKey: s.pixKey ?? "", banco: s.bank?.banco ?? "", agencia: s.bank?.agencia ?? "", conta: s.bank?.conta ?? "", category: s.category ?? "", notes: s.notes ?? "", active: s.active !== false });
 const money = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+/** Permissões da seção Fornecedores (calculadas no servidor; a interface só esconde — as actions revalidam). */
+export interface SupplierCan {
+  create: boolean;
+  edit: boolean;
+  toggle: boolean;
+}
+
 /** Fornecedores (D28): lista com títulos em aberto/pagos, painel (?fornecedor=<id>) e formulário. Não é cadastro de clientes. */
-export function SuppliersWorkspace({ rows, selectedId, canOperate }: { rows: SupplierRow[]; selectedId?: string; canOperate: boolean }) {
+export function SuppliersWorkspace({ rows, selectedId, can }: { rows: SupplierRow[]; selectedId?: string; can: SupplierCan }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -49,7 +56,7 @@ export function SuppliersWorkspace({ rows, selectedId, canOperate }: { rows: Sup
 
   return (
     <>
-      <div className="mb-4 flex justify-end">{canOperate ? <Button className="h-11 md:h-9" onClick={() => setEditing("new")}><Plus /> Novo fornecedor</Button> : null}</div>
+      <div className="mb-4 flex justify-end">{can.create ? <Button className="h-11 md:h-9" onClick={() => setEditing("new")}><Plus /> Novo fornecedor</Button> : null}</div>
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
         <Card className="min-w-0 overflow-hidden">
           <CardHeader className="flex-row items-center justify-between gap-3">
@@ -125,7 +132,7 @@ export function SuppliersWorkspace({ rows, selectedId, canOperate }: { rows: Sup
                     {selected.active !== false ? "Ativo" : "Inativo"}
                   </Badge>
                 </CardTitle>
-                {canOperate ? (
+                {can.edit ? (
                   <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={() => setEditing(selected)}>
                     <Pencil /> Editar
                   </Button>
@@ -146,7 +153,7 @@ export function SuppliersWorkspace({ rows, selectedId, canOperate }: { rows: Sup
                     ...(selected.notes ? [{ label: "Observações", value: selected.notes }] : []),
                   ]}
                 />
-                {canOperate ? (
+                {can.toggle ? (
                   <Switch label={selected.active !== false ? "Fornecedor ativo" : "Fornecedor inativo"} description="Inativo não aparece ao lançar títulos novos; os existentes continuam." checked={selected.active !== false} disabled={pending} onCheckedChange={(v) => void run(() => setSupplierActiveAction({ id: selected.id, active: v }), v ? "Fornecedor reativado" : "Fornecedor inativado")} className="w-full rounded-lg border border-border px-3 py-2" />
                 ) : null}
               </CardContent>

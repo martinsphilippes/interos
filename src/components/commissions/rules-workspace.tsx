@@ -48,10 +48,19 @@ const emptyForm = (scope: Scope = "padrao"): Form => ({
   active: true,
 });
 
+/**
+ * Regras de comissão. Botões por permissão (calculadas no servidor, a interface só esconde; as actions revalidam):
+ * criar/editar = "Alterar regras"; ativar/desativar = "Ativar/desativar regra"; exceção por contrato exige também
+ * "Criar exceção"; dia de pagamento = "Definir o dia de pagamento". Sem nenhuma delas, modo leitura.
+ */
 export function RulesWorkspaceView({ ws }: { ws: RulesWorkspace }) {
   const [editing, setEditing] = React.useState<Form | null>(null);
   const [toggling, setToggling] = React.useState<RuleRow | null>(null);
   const { pending, run } = useFinanceAction();
+  /** Exceção por contrato exige a permissão própria além da de alterar/ativar. */
+  const allowsScope = (scope: Scope) => scope !== "contrato" || ws.can.exception;
+  const canEdit = (scope: Scope) => ws.can.edit && allowsScope(scope);
+  const canToggle = (scope: Scope) => ws.can.toggle && allowsScope(scope);
 
   React.useEffect(() => {
     if (!ws.selectedId) return;
@@ -61,14 +70,14 @@ export function RulesWorkspaceView({ ws }: { ws: RulesWorkspace }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="flex min-w-0 flex-col gap-4">
-        {ws.canManage ? (
+        {ws.can.edit ? (
           <div className="flex justify-end">
             <Button className="h-11 md:h-9" onClick={() => setEditing(emptyForm())}>
               <Plus /> Nova regra
             </Button>
           </div>
-        ) : (
-          <p className="rounded-lg border border-border bg-surface-muted px-4 py-3 text-sm text-muted">Somente admin, diretoria ou gestor do Financeiro alteram regras. Você está vendo em modo leitura.</p>
+        ) : ws.can.toggle ? null : (
+          <p className="rounded-lg border border-border bg-surface-muted px-4 py-3 text-sm text-muted">Seu perfil não altera regras de comissão. Você está vendo em modo leitura.</p>
         )}
         {SECTIONS.map((section) => {
           const rules = ws.rules.filter((r) => r.scope === section.scope);
@@ -81,7 +90,7 @@ export function RulesWorkspaceView({ ws }: { ws: RulesWorkspace }) {
                   </CardTitle>
                   <CardDescription>{section.description}</CardDescription>
                 </div>
-                {ws.canManage ? (
+                {canEdit(section.scope) ? (
                   <Button variant="outline" size="sm" className="h-10 shrink-0 md:h-8" onClick={() => setEditing(emptyForm(section.scope))} aria-label={`Nova regra: ${section.title}`}>
                     <Plus /> Nova
                   </Button>
@@ -122,14 +131,18 @@ export function RulesWorkspaceView({ ws }: { ws: RulesWorkspace }) {
                           </p>
                           {r.reason ? <p className="mt-0.5 text-xs text-muted">Motivo: {r.reason}</p> : null}
                         </div>
-                        {ws.canManage ? (
+                        {canEdit(r.scope) || canToggle(r.scope) ? (
                           <div className="flex shrink-0 gap-1.5">
-                            <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={() => setEditing({ ...r.form })} aria-label={`Editar ${r.name}`}>
-                              <Pencil /> Editar
-                            </Button>
-                            <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={() => setToggling(r)} aria-label={`${r.active ? "Desativar" : "Reativar"} ${r.name}`}>
-                              {r.active ? <PowerOff /> : <Power />} {r.active ? "Desativar" : "Reativar"}
-                            </Button>
+                            {canEdit(r.scope) ? (
+                              <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={() => setEditing({ ...r.form })} aria-label={`Editar ${r.name}`}>
+                                <Pencil /> Editar
+                              </Button>
+                            ) : null}
+                            {canToggle(r.scope) ? (
+                              <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={() => setToggling(r)} aria-label={`${r.active ? "Desativar" : "Reativar"} ${r.name}`}>
+                                {r.active ? <PowerOff /> : <Power />} {r.active ? "Desativar" : "Reativar"}
+                              </Button>
+                            ) : null}
                           </div>
                         ) : null}
                       </li>
@@ -143,7 +156,7 @@ export function RulesWorkspaceView({ ws }: { ws: RulesWorkspace }) {
         <ProductDefaultsCard ws={ws} />
       </div>
       <aside className="flex min-w-0 flex-col gap-4">
-        <PaymentDayCard value={ws.paymentDay} canManage={ws.canManage} />
+        <PaymentDayCard value={ws.paymentDay} canManage={ws.can.configure} />
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -285,7 +298,7 @@ function RuleDialog({ initial, ws, onClose }: { initial: Form; ws: RulesWorkspac
               <Select id={`${id}-escopo`} value={f.scope} onChange={(e) => set("scope", e.target.value as Scope)} disabled={editingExisting}>
                 <option value="padrao">{COMMISSION_SCOPE_LABELS.padrao}</option>
                 <option value="vendedor">{COMMISSION_SCOPE_LABELS.vendedor}</option>
-                <option value="contrato">{COMMISSION_SCOPE_LABELS.contrato}</option>
+                {ws.can.exception || f.scope === "contrato" ? <option value="contrato">{COMMISSION_SCOPE_LABELS.contrato}</option> : null}
               </Select>
             </FormField>
             {f.scope === "vendedor" ? (

@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, ExternalLink, FileText, History, Paperclip, Pencil, Plus, Repeat, Route } from "lucide-react";
 import type { PayableDetail } from "@/server/commissions/queries";
+import type { PayableCapabilities } from "@/server/commissions/access";
 import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, createManualPayableAction, payPayableAction, schedulePayableAction, updatePayableAction } from "@/server/commissions/actions";
 import { PAYOUT_METHOD_LABELS, PAYOUT_METHODS } from "@/server/commissions/schemas";
 import { PAYABLE_ORIGIN_LABELS, payableCategoryLabel } from "@/domain/commissions";
@@ -21,11 +22,8 @@ import { CalcMemory, CommissionStatusBadge, HistoryList, PayableStatusBadge, Rea
 
 type Dialogs = null | "schedule" | "pay" | "cancel" | "edit" | "attach";
 
-export interface PayableCan {
-  approve: boolean;
-  pay: boolean;
-  operate: boolean;
-}
+/** Capacidades calculadas no servidor (payableCapabilities); a interface só esconde — as actions revalidam. */
+export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate">;
 
 const today = () => dateKey(new Date());
 
@@ -34,6 +32,10 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
   const { pending, run } = useFinanceAction();
   const [dialog, setDialog] = React.useState<Dialogs>(null);
   const open = p.status !== "pago" && p.status !== "cancelado";
+  // Título de comissão/estorno: aprovar exige também "Aprovar comissão".
+  const canApprove = can.approve && (!(p.origin === "comissao_automatica" || p.origin === "estorno") || can.approveCommission);
+  const supplierHref = p.trace.find((t) => t.key === "fornecedor")?.href;
+  const commissionHref = p.trace.find((t) => t.key === "comissao")?.href;
   const close = (ok: boolean) => {
     if (ok) setDialog(null);
     return ok;
@@ -54,7 +56,7 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
           <DataList
             labelWidth="8rem"
             items={[
-              { label: "Credor", value: p.creditorName, href: p.supplierId ? `/financeiro/contas-a-pagar/fornecedores?fornecedor=${p.supplierId}` : undefined },
+              { label: "Credor", value: p.creditorName, href: supplierHref },
               { label: "Categoria", value: payableCategoryLabel(p.category) },
               ...(p.costCenter ? [{ label: "Centro de custo", value: p.costCenter }] : []),
               { label: "Origem", value: `${PAYABLE_ORIGIN_LABELS[p.origin]}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}` },
@@ -79,14 +81,14 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
               ...(p.notes ? [{ label: "Observações", value: p.notes }] : []),
             ]}
           />
-          {open && (can.approve || can.operate || can.pay) ? (
+          {open && (canApprove || can.schedule || can.pay || can.edit || can.attach || can.cancel) ? (
             <div className="mt-4 flex flex-wrap gap-2">
-              {p.status === "previsto" && can.approve ? (
+              {p.status === "previsto" && canApprove ? (
                 <Button className="h-11 md:h-9" loading={pending} onClick={() => run(() => approvePayableAction({ payableId: p.id }), "Título aprovado")}>
                   <CheckCircle2 /> Aprovar
                 </Button>
               ) : null}
-              {p.status === "aprovado" && can.operate ? (
+              {p.status === "aprovado" && can.schedule ? (
                 <Button variant="secondary" className="h-11 md:h-9" onClick={() => setDialog("schedule")}>
                   <CalendarCheck /> Programar pagamento
                 </Button>
@@ -96,24 +98,24 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
                   <CircleDollarSign /> Pagar
                 </Button>
               ) : null}
-              {can.operate ? (
+              {can.edit ? (
                 <Button variant="outline" className="h-11 md:h-9" onClick={() => setDialog("edit")}>
                   <Pencil /> Alterar
                 </Button>
               ) : null}
-              {can.operate ? (
+              {can.attach ? (
                 <Button variant="outline" className="h-11 md:h-9" onClick={() => setDialog("attach")}>
                   <Paperclip /> Anexar
                 </Button>
               ) : null}
-              {can.operate ? (
+              {can.cancel ? (
                 <Button variant="outline" className="h-11 text-danger-fg md:h-9" onClick={() => setDialog("cancel")}>
                   <Ban /> Cancelar título
                 </Button>
               ) : null}
             </div>
           ) : null}
-          {open && p.status === "previsto" && !can.approve && can.operate ? <p className="mt-3 text-xs text-muted">Aguardando aprovação do gestor do Financeiro.</p> : null}
+          {open && p.status === "previsto" && !canApprove && can.operate ? <p className="mt-3 text-xs text-muted">Aguardando aprovação do gestor do Financeiro.</p> : null}
         </CardContent>
       </Card>
 
@@ -128,13 +130,13 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
         </CardContent>
       </Card>
 
-      {p.attachments.length > 0 || (!open ? false : can.operate) ? (
+      {p.attachments.length > 0 || (!open ? false : can.attach) ? (
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2">
               <Paperclip className="size-4 text-muted" /> Anexos
             </CardTitle>
-            {can.operate && p.status !== "cancelado" ? (
+            {can.attach && p.status !== "cancelado" ? (
               <Button variant="ghost" size="sm" className="h-9 md:h-8" onClick={() => setDialog("attach")}>
                 <Plus /> Anexar
               </Button>
@@ -192,9 +194,13 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
           <CardHeader>
             <CardTitle className="flex flex-wrap items-center gap-2">
               <Calculator className="size-4 text-muted" /> Memória da comissão
-              <Link href={`/financeiro/comissoes?comissao=${p.commission.id}`} className="text-sm font-normal text-brand-fg hover:underline">
-                {p.commission.code}
-              </Link>
+              {commissionHref ? (
+                <Link href={commissionHref} className="text-sm font-normal text-brand-fg hover:underline">
+                  {p.commission.code}
+                </Link>
+              ) : (
+                <span className="text-sm font-normal">{p.commission.code}</span>
+              )}
               <CommissionStatusBadge status={p.commission.status} />
             </CardTitle>
           </CardHeader>

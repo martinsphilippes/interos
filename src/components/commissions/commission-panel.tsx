@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Ban, Calculator, FilePlus2, History, Lock, LockOpen, Route, Undo2 } from "lucide-react";
 import type { CommissionDetail } from "@/server/commissions/queries";
+import type { CommissionCapabilities } from "@/server/commissions/access";
 import { blockCommissionAction, regenerateCommissionPayableAction, reverseCommissionAction, unblockCommissionAction } from "@/server/commissions/actions";
 import { COMMISSION_PENDING_STATUSES, COMMISSION_REVENUE_LABELS } from "@/domain/commissions";
 import { formatCompetence, formatCurrency, formatDate } from "@/lib/format";
@@ -14,12 +15,19 @@ import { CalcMemory, CommissionStatusBadge, HistoryList, ReasonDialog, TraceChai
 
 type Dialog = null | "reverse" | "block" | "unblock";
 
-/** Painel da comissão selecionada: resumo, memória de cálculo, origem rastreável, histórico e ações do Financeiro. */
-export function CommissionPanel({ c, canReverse }: { c: CommissionDetail; canReverse: boolean }) {
+/**
+ * Painel da comissão selecionada: resumo, memória de cálculo, origem rastreável, histórico e ações do Financeiro. Cada
+ * botão aparece só com a permissão própria (calculada no servidor); as actions revalidam permissão e escopo.
+ */
+export function CommissionPanel({ c, can }: { c: CommissionDetail; can: CommissionCapabilities }) {
   const { pending, run } = useFinanceAction();
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const pendingStatus = (COMMISSION_PENDING_STATUSES as readonly string[]).includes(c.status);
   const reversible = c.status === "paga" || c.status === "titulo_gerado" || c.status === "liberada" || pendingStatus || c.status === "bloqueada";
+  const showRegenerate = can.regenerate && c.canRegeneratePayable;
+  const showBlock = can.block && (pendingStatus || (c.status === "liberada" && !c.payableId));
+  const showUnblock = can.unblock && c.status === "bloqueada";
+  const showReverse = can.reverse && reversible;
   const reverseLabel = c.status === "paga" || c.status === "titulo_gerado" || c.status === "liberada" ? "Estornar comissão" : "Cancelar comissão";
 
   const close = (ok: boolean) => {
@@ -57,24 +65,24 @@ export function CommissionPanel({ c, canReverse }: { c: CommissionDetail; canRev
               ...(c.reverseReason ? [{ label: "Motivo do estorno", value: c.reverseReason }] : []),
             ]}
           />
-          {canReverse ? (
+          {showRegenerate || showBlock || showUnblock || showReverse ? (
             <div className="mt-4 flex flex-wrap gap-2">
-              {c.canRegeneratePayable ? (
+              {showRegenerate ? (
                 <Button variant="secondary" className="h-11 md:h-9" loading={pending} onClick={() => run(() => regenerateCommissionPayableAction({ commissionId: c.id }), (d) => `Título ${d.code ?? ""} gerado`)}>
                   <FilePlus2 /> Gerar título
                 </Button>
               ) : null}
-              {pendingStatus || (c.status === "liberada" && !c.payableId) ? (
+              {showBlock ? (
                 <Button variant="outline" className="h-11 md:h-9" onClick={() => setDialog("block")}>
                   <Lock /> Bloquear
                 </Button>
               ) : null}
-              {c.status === "bloqueada" ? (
+              {showUnblock ? (
                 <Button variant="outline" className="h-11 md:h-9" onClick={() => setDialog("unblock")}>
                   <LockOpen /> Desbloquear
                 </Button>
               ) : null}
-              {reversible ? (
+              {showReverse ? (
                 <Button variant="outline" className="h-11 text-danger-fg md:h-9" onClick={() => setDialog("reverse")}>
                   {pendingStatus || c.status === "bloqueada" ? <Ban /> : <Undo2 />} {reverseLabel}
                 </Button>

@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { AlertTriangle, Ban, BadgeCheck, CalendarClock, CircleDollarSign, Clock, FileText, Lock, Settings2 } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { getCommissionsWorkspace, parseCommissionFilters } from "@/server/commissions/queries";
 import { COMMISSION_STATUS_LABELS, COMMISSION_STATUSES } from "@/domain/commissions";
@@ -12,6 +11,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { KpiStrip } from "@/components/ui/kpi-strip";
+import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import { StatCard } from "@/components/ui/stat-card";
@@ -28,20 +28,30 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
 
 /**
  * Financeiro › Comissões (D14): KPIs por situação, lista filtrável e painel com memória de cálculo e origem rastreável.
- * Escopo no servidor (D15): financeiro/admin/diretoria veem todas; gestor, as da equipe; vendedor, só as próprias.
+ * Acesso (catálogo financeiro.comissoes, aberta pelos módulos Financeiro ou Vendas): seções "Minhas comissões" e
+ * "Todas as comissões" (de terceiros, no escopo da tela — padrão: financeiro/admin/diretoria veem todas; gestor, as da
+ * equipe; vendedor, só as próprias), resolvidas no servidor. Sem as duas seções, nada é lido.
  */
 export default async function CommissionsPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "financeiro") && !canAccessModule(user, "vendas")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("financeiro.comissoes");
   const sp = await searchParams;
+  const denied = first(sp.erro) === "sem-permissao";
+  if (!can(user, "financeiro.comissoes.minhas.ver") && !can(user, "financeiro.comissoes.todas.ver")) {
+    return (
+      <PageContainer size="full" className="max-w-[1680px]">
+        {denied ? <AccessNotice>Seu perfil não tem acesso a essa área do Financeiro.</AccessNotice> : null}
+        <PageHeader title="Comissões" breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Comissões" }]} />
+        <EmptyState title="Sem acesso às comissões" description="Seu perfil não inclui as suas comissões nem as de outras pessoas. Fale com o administrador se precisar desse acesso." />
+      </PageContainer>
+    );
+  }
   const filters = parseCommissionFilters(sp);
   const requested = first(sp.comissao);
   // Carência vencida/cobranças vencidas: a varredura roda depois da resposta quando está atrasada.
   after(() => runDueSweeps(["comissoes"]));
   const ws = await getCommissionsWorkspace(user, filters, requested);
-  const denied = first(sp.erro) === "sem-permissao";
   const { kpis } = ws;
-  const own = ws.scope === "own";
+  const own = ws.scope === "own" || ws.scope === "none";
   const statusHref = (status: string) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(filters)) if (v && k !== "status") q.set(k, String(v));
@@ -119,7 +129,7 @@ export default async function CommissionsPage({ searchParams }: { searchParams: 
         </Card>
         {ws.selected ? (
           <SidePanelShell explicit={Boolean(requested)} param="comissao" ariaLabel="Comissão selecionada" title={`${ws.selected.code} · ${ws.selected.clientName}`}>
-            <CommissionPanel key={ws.selected.id} c={ws.selected} canReverse={ws.can.reverse} />
+            <CommissionPanel key={ws.selected.id} c={ws.selected} can={ws.can} />
           </SidePanelShell>
         ) : (
           <aside className="hidden xl:block">

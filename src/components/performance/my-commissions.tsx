@@ -19,8 +19,9 @@ const TOTAL_LABELS: { key: keyof UserCommissionsDigest["totals"]; label: string;
 
 /**
  * "Minhas comissões" no Meu Desempenho (D17): item a item — cliente, contrato, venda VEN, regra, valor, situação,
- * data provável/elegibilidade — com link para a memória de cálculo em Financeiro › Comissões. Os números vêm do
- * motor de comissões (src/server/commissions), no mesmo escopo de visibilidade das telas do Financeiro.
+ * data provável/elegibilidade — com link para a memória de cálculo em Financeiro › Comissões (só quando o usuário abre
+ * a tela; o servidor omite `href` sem acesso). Os números vêm do motor de comissões (src/server/commissions), no
+ * mesmo escopo de visibilidade das telas do Financeiro.
  */
 export function MyCommissionsCard({ digest, self, firstName }: { digest: UserCommissionsDigest; self: boolean; firstName: string }) {
   const title = self ? "Minhas comissões" : `Comissões de ${firstName}`;
@@ -33,9 +34,11 @@ export function MyCommissionsCard({ digest, self, firstName }: { digest: UserCom
           </CardTitle>
           <CardDescription>Item a item: situação, data provável de elegibilidade ou pagamento e a memória de cálculo de cada uma.</CardDescription>
         </div>
-        <Link href={digest.href} className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
-          Ver todas <ChevronRight className="size-4" aria-hidden />
-        </Link>
+        {digest.href ? (
+          <Link href={digest.href} className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
+            Ver todas <ChevronRight className="size-4" aria-hidden />
+          </Link>
+        ) : null}
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-0">
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
@@ -134,10 +137,15 @@ export function MyCommissionsCard({ digest, self, firstName }: { digest: UserCom
             </div>
             {digest.total > digest.rows.length ? (
               <p className="text-xs text-muted">
-                Mostrando {digest.rows.length} de {digest.total}.{" "}
-                <Link href={digest.href} className="font-medium text-brand-fg hover:underline">
-                  Ver todas
-                </Link>
+                Mostrando {digest.rows.length} de {digest.total}.
+                {digest.href ? (
+                  <>
+                    {" "}
+                    <Link href={digest.href} className="font-medium text-brand-fg hover:underline">
+                      Ver todas
+                    </Link>
+                  </>
+                ) : null}
               </p>
             ) : null}
           </>

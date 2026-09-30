@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock, Truck } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
-import { canViewPayables } from "@/server/commissions/permissions";
+import { requireScreen } from "@/server/auth/session";
 import { getPayablesWorkspace, parsePayableFilters } from "@/server/commissions/queries";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { PAYABLE_ORIGIN_LABELS, PAYABLE_STATUSES, PAYABLE_STATUS_LABELS } from "@/domain/commissions";
@@ -35,12 +33,12 @@ const VENCIMENTO_OPTIONS = [
  * Financeiro › Contas a Pagar (D13 + D28): títulos de comissão (gerados pelo motor quando a comissão fica elegível),
  * bônus, lançamentos manuais (fornecedor, categoria/centro de custo, parcelados, recorrentes, com anexo) e o fluxo de
  * caixa simplificado (a receber × a pagar por mês). Fluxo previsto → aprovado → a pagar → pago, com origem rastreável
- * e histórico. Vendedor não tem acesso (volta para Comissões com aviso); gestor fora do Financeiro vê só os títulos
- * da equipe, em modo leitura.
+ * e histórico. Acesso pela tela financeiro.contas-a-pagar (sem ela, volta para Comissões com aviso); títulos no
+ * escopo da tela (padrão: equipe financeira vê todos; gestor fora do Financeiro, só os da equipe, em modo leitura);
+ * cada botão pela sua chave; fluxo de caixa e Fornecedores são seções próprias.
  */
 export default async function PayablesPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "financeiro") || !canViewPayables(user)) redirect("/financeiro/comissoes?erro=sem-permissao");
+  const user = await requireScreen("financeiro.contas-a-pagar");
   // Séries recorrentes e avisos de vencidos: preguiçoso ao abrir a tela (1x/dia), além do cron.
   await runDueSweeps(["contas_recorrentes", "contas_a_pagar_vencidas"]);
   const sp = await searchParams;
@@ -57,12 +55,14 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
         description={ws.can.readOnly ? "Títulos da sua equipe (somente leitura)" : "Comissões elegíveis, bônus, fornecedores e lançamentos: aprovação, programação e pagamento"}
         breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contas a Pagar" }]}
         actions={
-          ws.can.operate ? (
+          (ws.can.suppliers && ws.can.operate) || ws.can.create ? (
             <>
-              <Link href="/financeiro/contas-a-pagar/fornecedores" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
-                <Truck /> Fornecedores
-              </Link>
-              <ManualPayableButton users={ws.users} suppliers={ws.suppliers} categories={ws.settings.categorias} costCenters={ws.settings.centrosDeCusto} />
+              {ws.can.suppliers && ws.can.operate ? (
+                <Link href="/financeiro/contas-a-pagar/fornecedores" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
+                  <Truck /> Fornecedores
+                </Link>
+              ) : null}
+              {ws.can.create ? <ManualPayableButton users={ws.users} suppliers={ws.suppliers} categories={ws.settings.categorias} costCenters={ws.settings.centrosDeCusto} /> : null}
             </>
           ) : undefined
         }
@@ -76,7 +76,7 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
         <StatCard label="Pagos no mês" value={formatCurrency(kpis.pagosMes.amount)} icon={<CircleDollarSign />} tone="success" hint={count(kpis.pagosMes.count)} href="/financeiro/contas-a-pagar?status=pago" compact />
       </KpiStrip>
 
-      {!ws.can.readOnly ? <CashFlowCard cashFlow={ws.cashFlow} className="mb-4" /> : null}
+      {ws.can.cashFlow ? <CashFlowCard cashFlow={ws.cashFlow} className="mb-4" /> : null}
 
       <FinanceFilters
         className="mb-4"

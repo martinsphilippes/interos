@@ -1,15 +1,20 @@
 "use server";
 /**
- * Server Actions de Comissões e Contas a Pagar. Padrão: requireUser → permissão (predicados de permissions.ts,
- * sempre no servidor) → zod → serviço (regras, eventos com auditoria) → revalidatePath → ActionResult.
+ * Server Actions de Comissões e Contas a Pagar. Padrão (A5): requirePermission("<chave do catálogo>",
+ * src/domain/permissions/financeiro.ts) → validação zod → chave extra quando a condição do argumento pede (exceção por
+ * contrato, título de comissão) → escopo do registro (./access.ts: fora do escopo = PermissionError; inexistente =
+ * BusinessError) → serviço (regras, eventos com auditoria) → revalidatePath → ActionResult. Falhas pelo tratamento
+ * único (failAction, que relança redirect/notFound).
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import type { ActionResult, CurrentUser, UserRef } from "@/domain/types";
+import { PermissionError, can, failAction, requirePermission } from "@/server/auth/session";
+import { getById } from "@/server/db";
+import { COLLECTIONS, type ActionResult, type CommissionRule, type CurrentUser, type UserRef } from "@/domain/types";
 import { addPayableAttachment, approvePayable, cancelPayable, createManualPayable, payPayable, schedulePayable, updatePayable } from "./payables";
-import { saveSupplier, setSupplierActive } from "./suppliers";
-import { canApprovePayables, canManageCommissionRules, canOperatePayables, canPayPayables, canReverseCommission } from "./permissions";
+import { getSupplier, saveSupplier, setSupplierActive } from "./suppliers";
+import { assertCommissionAccess, assertCreditorInScope, assertPayableAccess, isCommissionPayable } from "./access";
+import { ruleScope } from "./rules";
 import {
   cancelPayableSchema,
   commissionIdSchema,
@@ -31,23 +36,13 @@ import { blockCommission, regenerateCommissionPayable, reverseCommission, saveCo
 
 type Failure = { ok: false; error: string };
 
-class PermissionError extends Error {}
-
+/** Validação: a primeira mensagem do zod (como antes); o resto pelo tratamento único (failAction). */
 function fail(error: unknown, fallback: string): Failure {
   if (error instanceof z.ZodError) return { ok: false, error: zodMessage(error) };
-  if (error instanceof PermissionError) return { ok: false, error: error.message };
-  if (error instanceof Error && error.message && !/firestore|firebase|ECONN|deadline|undefined|null/i.test(error.message)) return { ok: false, error: error.message };
-  console.error(`[comissoes] ${fallback}`, error);
-  return { ok: false, error: fallback };
+  return failAction(error, fallback, "comissoes");
 }
 
 const actorOf = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
-
-async function requireWith(check: (u: CurrentUser) => boolean, message: string): Promise<CurrentUser> {
-  const user = await requireUser();
-  if (!check(user)) throw new PermissionError(message);
-  return user;
-}
 
 function revalidateCommissions() {
   revalidatePath("/financeiro", "layout");
@@ -56,16 +51,27 @@ function revalidateCommissions() {
   revalidatePath("/meu-dia");
 }
 
+/** Id presente no argumento bruto (decide entre as chaves de criar e editar antes da validação). */
+function rawId(input: unknown): boolean {
+  const id = input && typeof input === "object" ? (input as { id?: unknown }).id : undefined;
+  return typeof id === "string" && id.trim().length > 0;
+}
+
 // ---------------------------------------------------------------------------
 // Regras
 // ---------------------------------------------------------------------------
 
-const RULES_DENIED = "Somente admin, diretoria ou gestor do Financeiro configuram regras de comissão";
+const EXCEPTION_DENIED = "Seu perfil não cria nem altera exceções de comissão por contrato";
 
 export async function saveCommissionRuleAction(input: unknown): Promise<ActionResult<{ id: string; created: boolean }>> {
   try {
-    const user = await requireWith(canManageCommissionRules, RULES_DENIED);
+    const user = await requirePermission("financeiro.comissoes.regras.editar");
     const data = ruleInputSchema.parse(input);
+    const existing = data.id ? await getById<CommissionRule>(COLLECTIONS.commissionRules, data.id) : null;
+    // Exceção por contrato (nova ou existente) exige também "Criar exceção".
+    if (data.scope === "contrato" || (existing && ruleScope(existing) === "contrato")) await requirePermission("financeiro.comissoes.regras.criar-excecao", EXCEPTION_DENIED);
+    // Ativar/desativar pela edição exige a permissão própria.
+    if (existing && existing.active !== data.active && !can(user, "financeiro.comissoes.regras.ativar")) throw new PermissionError("Seu perfil não ativa nem desativa regras de comissão");
     const { rule, created } = await saveCommissionRule(data, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: { id: rule.id, created } };
@@ -76,8 +82,10 @@ export async function saveCommissionRuleAction(input: unknown): Promise<ActionRe
 
 export async function setCommissionRuleActiveAction(input: unknown): Promise<ActionResult<{ active: boolean }>> {
   try {
-    const user = await requireWith(canManageCommissionRules, RULES_DENIED);
+    const user = await requirePermission("financeiro.comissoes.regras.ativar");
     const data = ruleActiveSchema.parse(input);
+    const existing = await getById<CommissionRule>(COLLECTIONS.commissionRules, data.id);
+    if (existing && ruleScope(existing) === "contrato") await requirePermission("financeiro.comissoes.regras.criar-excecao", EXCEPTION_DENIED);
     const rule = await setCommissionRuleActive(data.id, data.active, data.reason, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: { active: rule.active } };
@@ -88,7 +96,7 @@ export async function setCommissionRuleActiveAction(input: unknown): Promise<Act
 
 export async function saveCommissionPaymentDayAction(input: unknown): Promise<ActionResult<{ diaPagamento: number }>> {
   try {
-    const user = await requireWith(canManageCommissionRules, RULES_DENIED);
+    const user = await requirePermission("financeiro.comissoes.regras.configurar");
     const data = paymentDaySchema.parse(input);
     await saveCommissionPaymentDay(data.diaPagamento, actorOf(user));
     revalidateCommissions();
@@ -99,15 +107,14 @@ export async function saveCommissionPaymentDayAction(input: unknown): Promise<Ac
 }
 
 // ---------------------------------------------------------------------------
-// Comissão (estorno, bloqueio, novo título)
+// Comissão (estorno, bloqueio, novo título) — sempre sobre comissão visível ao usuário
 // ---------------------------------------------------------------------------
-
-const REVERSE_DENIED = "Somente admin, diretoria ou gestor do Financeiro estornam, bloqueiam ou regeram títulos de comissão";
 
 export async function reverseCommissionAction(input: unknown): Promise<ActionResult<{ status: string }>> {
   try {
-    const user = await requireWith(canReverseCommission, REVERSE_DENIED);
+    const user = await requirePermission("financeiro.comissoes.estornar");
     const data = commissionReasonSchema.parse(input);
+    await assertCommissionAccess(user, data.commissionId);
     const r = await reverseCommission(data.commissionId, data.reason, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: { status: r.status } };
@@ -118,8 +125,9 @@ export async function reverseCommissionAction(input: unknown): Promise<ActionRes
 
 export async function blockCommissionAction(input: unknown): Promise<ActionResult<undefined>> {
   try {
-    const user = await requireWith(canReverseCommission, REVERSE_DENIED);
+    const user = await requirePermission("financeiro.comissoes.bloquear");
     const data = commissionReasonSchema.parse(input);
+    await assertCommissionAccess(user, data.commissionId);
     await blockCommission(data.commissionId, data.reason, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: undefined };
@@ -130,8 +138,9 @@ export async function blockCommissionAction(input: unknown): Promise<ActionResul
 
 export async function unblockCommissionAction(input: unknown): Promise<ActionResult<undefined>> {
   try {
-    const user = await requireWith(canReverseCommission, REVERSE_DENIED);
+    const user = await requirePermission("financeiro.comissoes.desbloquear");
     const data = commissionReasonSchema.parse(input);
+    await assertCommissionAccess(user, data.commissionId);
     await unblockCommission(data.commissionId, data.reason, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: undefined };
@@ -142,8 +151,9 @@ export async function unblockCommissionAction(input: unknown): Promise<ActionRes
 
 export async function regenerateCommissionPayableAction(input: unknown): Promise<ActionResult<{ payableId: string; code?: string }>> {
   try {
-    const user = await requireWith(canReverseCommission, REVERSE_DENIED);
+    const user = await requirePermission("financeiro.comissoes.gerar-titulo");
     const data = commissionIdSchema.parse(input);
+    await assertCommissionAccess(user, data.commissionId);
     const payable = await regenerateCommissionPayable(data.commissionId, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: { payableId: payable.id, code: payable.code } };
@@ -153,13 +163,18 @@ export async function regenerateCommissionPayableAction(input: unknown): Promise
 }
 
 // ---------------------------------------------------------------------------
-// Contas a pagar
+// Contas a pagar — sempre sobre título visível ao usuário
 // ---------------------------------------------------------------------------
+
+const COMMISSION_APPROVAL_DENIED = "Seu perfil não aprova títulos de comissão";
 
 export async function approvePayableAction(input: unknown): Promise<ActionResult<undefined>> {
   try {
-    const user = await requireWith(canApprovePayables, "Somente admin, diretoria ou gestor do Financeiro aprovam títulos");
+    const user = await requirePermission("financeiro.contas-a-pagar.aprovar");
     const data = payableIdSchema.parse(input);
+    const payable = await assertPayableAccess(user, data.payableId);
+    // Título de comissão (ou estorno de comissão): aprovar o pagamento é aprovar a comissão.
+    if (isCommissionPayable(payable)) await requirePermission("financeiro.comissoes.aprovar", COMMISSION_APPROVAL_DENIED);
     await approvePayable(data.payableId, actorOf(user), data.note);
     revalidateCommissions();
     return { ok: true, data: undefined };
@@ -170,8 +185,9 @@ export async function approvePayableAction(input: unknown): Promise<ActionResult
 
 export async function schedulePayableAction(input: unknown): Promise<ActionResult<undefined>> {
   try {
-    const user = await requireWith(canOperatePayables, "Somente a equipe financeira programa pagamentos");
+    const user = await requirePermission("financeiro.contas-a-pagar.programar");
     const data = schedulePayableSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
     await schedulePayable(data.payableId, { dueDate: data.dueDate, note: data.note }, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: undefined };
@@ -182,8 +198,9 @@ export async function schedulePayableAction(input: unknown): Promise<ActionResul
 
 export async function payPayableAction(input: unknown): Promise<ActionResult<{ commissions: number }>> {
   try {
-    const user = await requireWith(canPayPayables, "Somente admin, diretoria ou gestor do Financeiro registram pagamentos de títulos");
+    const user = await requirePermission("financeiro.contas-a-pagar.pagar");
     const data = payPayableSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
     const r = await payPayable(data.payableId, { paidAt: data.paidAt, paymentMethod: data.paymentMethod, receiptUrl: data.receiptUrl, notes: data.notes }, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: { commissions: r.commissionIds.length } };
@@ -194,8 +211,9 @@ export async function payPayableAction(input: unknown): Promise<ActionResult<{ c
 
 export async function cancelPayableAction(input: unknown): Promise<ActionResult<{ commissions: number }>> {
   try {
-    const user = await requireWith(canOperatePayables, "Somente a equipe financeira cancela títulos");
+    const user = await requirePermission("financeiro.contas-a-pagar.cancelar");
     const data = cancelPayableSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
     const r = await cancelPayable(data.payableId, data.reason, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: { commissions: r.commissionIds.length } };
@@ -206,8 +224,9 @@ export async function cancelPayableAction(input: unknown): Promise<ActionResult<
 
 export async function updatePayableAction(input: unknown): Promise<ActionResult<undefined>> {
   try {
-    const user = await requireWith(canOperatePayables, "Somente a equipe financeira altera títulos");
+    const user = await requirePermission("financeiro.contas-a-pagar.editar");
     const data = updatePayableSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
     await updatePayable(data.payableId, data, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: undefined };
@@ -218,8 +237,9 @@ export async function updatePayableAction(input: unknown): Promise<ActionResult<
 
 export async function createManualPayableAction(input: unknown): Promise<ActionResult<{ id: string; code?: string; parcels: number }>> {
   try {
-    const user = await requireWith(canOperatePayables, "Somente a equipe financeira lança títulos");
+    const user = await requirePermission("financeiro.contas-a-pagar.criar");
     const data = manualPayableSchema.parse(input);
+    await assertCreditorInScope(user, data);
     const p = await createManualPayable(data, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: { id: p.id, code: p.code, parcels: p.parcels?.length ?? 1 } };
@@ -230,8 +250,9 @@ export async function createManualPayableAction(input: unknown): Promise<ActionR
 
 export async function addPayableAttachmentAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireWith(canOperatePayables, "Somente a equipe financeira anexa documentos a títulos");
+    const user = await requirePermission("financeiro.contas-a-pagar.anexar");
     const data = payableAttachmentSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
     const doc = await addPayableAttachment(data.payableId, { name: data.name, url: data.url }, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: { id: doc.id } };
@@ -241,13 +262,19 @@ export async function addPayableAttachmentAction(input: unknown): Promise<Action
 }
 
 // ---------------------------------------------------------------------------
-// Fornecedores (D28) — equipe financeira
+// Fornecedores (D28)
 // ---------------------------------------------------------------------------
 
 export async function saveSupplierAction(input: unknown): Promise<ActionResult<{ id: string; created: boolean }>> {
   try {
-    const user = await requireWith(canOperatePayables, "Somente a equipe financeira cadastra fornecedores");
+    // Com id = editar; sem id = cadastrar.
+    const user = rawId(input) ? await requirePermission("financeiro.contas-a-pagar.fornecedores.editar") : await requirePermission("financeiro.contas-a-pagar.fornecedores.criar");
     const data = supplierSchema.parse(input);
+    if (data.id) {
+      // Ativar/desativar pela edição exige a permissão própria.
+      const current = await getSupplier(data.id);
+      if (current && (current.active !== false) !== data.active && !can(user, "financeiro.contas-a-pagar.fornecedores.ativar")) throw new PermissionError("Seu perfil não ativa nem desativa fornecedores");
+    }
     const r = await saveSupplier(data, actorOf(user));
     revalidatePath("/financeiro", "layout");
     return { ok: true, data: { id: r.supplier.id, created: r.created } };
@@ -258,7 +285,7 @@ export async function saveSupplierAction(input: unknown): Promise<ActionResult<{
 
 export async function setSupplierActiveAction(input: unknown): Promise<ActionResult<{ active: boolean }>> {
   try {
-    const user = await requireWith(canOperatePayables, "Somente a equipe financeira altera fornecedores");
+    const user = await requirePermission("financeiro.contas-a-pagar.fornecedores.ativar");
     const data = supplierActiveSchema.parse(input);
     const s = await setSupplierActive(data.id, data.active, actorOf(user));
     revalidatePath("/financeiro", "layout");
