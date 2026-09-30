@@ -5,7 +5,7 @@ import { AlertTriangle, CalendarClock, UserX, Wallet } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { getReceivablesAging } from "@/server/finance/queries";
-import { canOperateFinance } from "@/server/finance/schemas";
+import { canOperateFinance } from "@/server/finance/access";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { FileText, PenLine } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { listSignatureQueue } from "@/server/finance/queries";
-import { canOperateFinance } from "@/server/finance/schemas";
+import { canOperateFinance } from "@/server/finance/access";
 import { getIntegrationFlags } from "@/server/integrations/status";
 import { formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";

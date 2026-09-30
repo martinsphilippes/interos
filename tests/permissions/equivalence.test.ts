@@ -2,12 +2,15 @@
  * T0 (A3/A18/A31): as regras PADRÃO do catálogo reproduzem o comportamento anterior. Para cada chave com predicado
  * equivalente, can(usuário, chave) === predicado antigo (cópia congelada em legacy.ts), para os 15 usuários do seed,
  * os sintéticos e as 80 combinações papel × departamento. As diferenças são SÓ as correções deliberadas (A14/A27),
- * listadas nominalmente e conferidas por igualdade (nem a mais, nem a menos).
+ * listadas nominalmente e conferidas por igualdade (nem a mais, nem a menos). As fachadas são comparadas sem máscara.
+ * O bloco "consistência interna" compara o código novo com ele mesmo e não conta como equivalência.
  */
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEPARTMENT_KEYS, type RoleKey } from "@/domain/constants";
-import { MODULE_KEYS, SCREENS, deriveMobileNav, deriveNavigation, deriveQuickActions, deriveSubject, type PermissionKey } from "@/domain/permissions";
-import { can, canSeeHref, resolvePermissions } from "@/server/auth/permissions";
+import { MODULE_KEYS, NODE_BY_KEY, PERMISSION_NODES, SCREENS, deriveMobileNav, deriveNavigation, deriveQuickActions, deriveSubject, type PermissionKey } from "@/domain/permissions";
+import { can, canSeeHref, resolvePermissions, screenForHref } from "@/server/auth/permissions";
 import { visibleNavigation, visibleQuickActions } from "@/server/auth/navigation";
 import {
   canApprovePayables,
@@ -18,9 +21,9 @@ import {
   canViewCommissionRules,
   canViewPayables,
 } from "@/server/commissions/permissions";
-import { canOperateFinance } from "@/server/finance/schemas";
-import { canOperateImplementation } from "@/server/implementation/schemas";
-import { canEditArticles, canOperateSupport } from "@/server/support/schemas";
+import { canOperateFinance } from "@/server/finance/access";
+import { canOperateImplementation } from "@/server/implementation/access";
+import { canEditArticles, canOperateSupport } from "@/server/support/access";
 import { REPORT_KEYS } from "@/server/reports/definitions";
 import { ALL_USERS, asCurrentUser, label, SEED_USERS, type FixtureUser } from "./fixtures";
 import {
@@ -38,15 +41,29 @@ import {
   legacyMenu,
   legacyMobileNav,
   legacyQuickActions,
+  legacyRequireRole,
   legacyScreenAccess,
   legacyUser,
   type LegacyUser,
 } from "./legacy";
 
+/** Arquivos .ts/.tsx sob `dir` (recursivo). */
+function listSources(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const full = path.join(dir, name);
+    if (statSync(full).isDirectory()) return listSources(full);
+    return /\.tsx?$/.test(name) ? [full] : [];
+  });
+}
+
 const USERS = ALL_USERS.map((u) => ({ fixture: u, current: asCurrentUser(u), legacy: legacyUser(u) }));
+
+/** Chaves comparadas com um oráculo antigo neste arquivo (cobertura do T0, conferida no último teste). */
+const COVERED = new Set<string>();
 
 /** Diferenças (usuário, chave) entre o catálogo e o predicado antigo. */
 function differences(keys: readonly string[], legacy: (u: LegacyUser, key: string) => boolean): string[] {
+  for (const key of keys) COVERED.add(key);
   const out: string[] = [];
   for (const { fixture, current, legacy: old } of USERS) {
     for (const key of keys) {
@@ -219,9 +236,68 @@ describe("T0 — ações e seções com predicado equivalente", () => {
   });
 
   it("administração (requireAdmin/requireRole('admin')/isAdmin) ≡ papel admin", () => {
-    const keys = [...SCREENS.filter((s) => s.module === "admin").flatMap((s) => s.actions.map((a) => a.key)), "performance.bonus.regras.editar"];
-    expect(keys.length).toBeGreaterThan(40);
+    // Ações de todas as telas do Administração e seções das telas só-admin (abas de Configurações, Workflows,
+    // Automações). A tela nova Perfis e acessos (A10) não tem predicado antigo: padrão = só admin, como as demais.
+    const openToManagers = new Set(["admin.usuarios", "admin.departamentos"]);
+    const keys = [
+      ...SCREENS.filter((s) => s.module === "admin").flatMap((s) => s.actions.map((a) => a.key)),
+      ...SCREENS.filter((s) => s.module === "admin" && !openToManagers.has(s.key)).flatMap((s) => s.sections.map((x) => x.key)),
+      "performance.bonus.regras.editar",
+    ];
+    expect(keys.length).toBeGreaterThan(60);
     expect(differences(keys, (u) => u.isAdmin)).toEqual([]);
+  });
+
+  it("Usuários › remuneração ≡ quem entra na página (requireRole admin, gestor, diretoria)", () => {
+    expect(differences(["admin.usuarios.remuneracao.ver"], (u) => legacyRequireRole(u, "admin", "gestor", "diretoria"))).toEqual([]);
+  });
+
+  it("Configurações Financeiras (abas e edição) ≡ requireRole('admin') de /admin/configuracoes e upsertSetting", () => {
+    const screen = SCREENS.find((s) => s.key === "financeiro.configuracoes")!;
+    const keys = [...screen.sections.map((x) => x.key), ...screen.actions.map((a) => a.key)];
+    expect(keys.length).toBe(14);
+    expect(differences(keys, (u) => legacyRequireRole(u, "admin"))).toEqual([]);
+  });
+
+  it("Meu Dia: equipe e insights ≡ isManager (∨ isDirector); cobranças de vendas ≡ vendedor ∨ gestor", () => {
+    expect(differences(["inicio.meu-dia.equipe.ver"], (u) => u.isManager)).toEqual([]);
+    expect(differences(["inicio.meu-dia.insights.ver"], (u) => u.isManager || u.isDirector)).toEqual([]);
+    // meu-dia/queries.ts:280-281: isSeller(user) || members.some(isSeller); só gestor tem membros (visão equipe). A
+    // presença de vendedor na equipe é condição de DADOS e continua na consulta.
+    expect(differences(["inicio.meu-dia.cobrancas-vendas.ver"], (u) => u.role === "vendas" || u.departmentId === "vendas" || u.isManager)).toEqual([]);
+  });
+
+  it("SLA › qualidade de chamados ≡ módulo Suporte (sla/page.tsx:351)", () => {
+    expect(differences(["operacao.sla.qualidade-chamados.ver"], (u) => legacyCanAccessModule(u, "suporte"))).toEqual([]);
+  });
+
+  it("Marketing: criar/editar campanha ≡ isManager ∨ papel marketing (marketing/actions.ts:291)", () => {
+    expect(differences(["marketing.campanhas.criar", "marketing.campanhas.editar"], (u) => u.isManager || u.role === "marketing")).toEqual([]);
+  });
+
+  it("Vendas: executar varredura e atribuir visita ≡ requireSalesUser ∧ isManager", () => {
+    expect(differences(["vendas.central.executar-varredura", "vendas.visitas.atribuir"], (u) => legacyCanAccessModule(u, "vendas") && u.isManager)).toEqual([]);
+  });
+
+  it("Financeiro: liberar com pendência ≡ requireFinanceOperator ∧ isManager; enviar boleto ≡ requireFinanceOperator", () => {
+    const operator = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") && legacyCanOperateFinance(u);
+    expect(differences(["financeiro.contratos.liberar-com-pendencia"], (u) => operator(u) && u.isManager)).toEqual([]);
+    expect(differences(["financeiro.cobrancas.boleto.enviar"], operator)).toEqual([]);
+  });
+
+  it("Comissões › Todas ≡ página (Financeiro ∨ Vendas) ∧ (canViewAllCommissions ∨ isManager)", () => {
+    const page = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") || legacyCanAccessModule(u, "vendas");
+    expect(differences(["financeiro.comissoes.todas.ver"], (u) => page(u) && (legacyIsFinanceTeam(u) || u.isManager))).toEqual([]);
+  });
+
+  it("go-live configurar ≡ isManager (implementation/actions.ts:344); recalcular carteira ≡ requireCsUser ∧ isManager", () => {
+    expect(differences(["implantacao.go-live.configurar"], (u) => u.isManager)).toEqual([]);
+    expect(differences(["cs.saude.recalcular-carteira"], (u) => legacyCanAccessModule(u, "cs") && u.isManager)).toEqual([]);
+  });
+
+  it("Performance: bônus da equipe e detalhamento de indicadores ≡ isManager; regras de bônus ≡ requireRole('admin')", () => {
+    expect(differences(["performance.bonus.equipe.ver", "performance.indicadores.detalhamento.ver"], (u) => u.isManager)).toEqual([]);
+    expect(differences(["performance.bonus.regras.ver"], (u) => legacyRequireRole(u, "admin"))).toEqual([]);
   });
 
   it("Meu Dia › Financeiro do dia ≡ isFinanceTeam; seletor de presença ≡ isManager ∨ papel operacional", () => {
@@ -232,38 +308,115 @@ describe("T0 — ações e seções com predicado equivalente", () => {
 });
 
 describe("T0 — fachadas (predicados antigos com o mesmo nome e assinatura)", () => {
-  it("delegam para can e reproduzem o predicado antigo no contexto em que são chamados", () => {
-    const problems: string[] = [];
+  type Subject = Parameters<typeof canOperateFinance>[0] & Parameters<typeof canManageCommissionRules>[0];
+  interface Facade {
+    name: string;
+    now: (subject: Subject) => boolean;
+    before: (old: LegacyUser) => boolean;
+    /** Quem muda de propósito (a mudança é sempre permitido → negado), com a correção nominal que justifica. */
+    changes?: { when: (old: LegacyUser) => boolean; because: string };
+  }
+  const M = (old: LegacyUser, m: string) => legacyCanAccessModule(old, m);
+  // Comparação SEM máscara: cada fachada contra o predicado antigo para todos os usuários, com e sem permissions.
+  const FACADES: Facade[] = [
+    { name: "canOperateFinance", now: canOperateFinance, before: legacyCanOperateFinance, changes: { when: (o) => !M(o, "financeiro"), because: "Fachadas de operação incluem o módulo" } },
+    { name: "canOperateImplementation", now: canOperateImplementation, before: legacyCanOperateImplementation, changes: { when: (o) => !M(o, "implantacao"), because: "Fachadas de operação incluem o módulo" } },
+    { name: "canOperateSupport", now: canOperateSupport, before: legacyCanOperateSupport, changes: { when: (o) => !M(o, "suporte"), because: "A14: requireOperator do Suporte exige o módulo" } },
+    { name: "canEditArticles", now: canEditArticles, before: legacyCanEditArticles, changes: { when: (o) => !M(o, "suporte"), because: "A14: canEditArticles exige o módulo" } },
+    { name: "canOperatePayables", now: canOperatePayables, before: legacyCanOperatePayables, changes: { when: (o) => !M(o, "financeiro"), because: "A14: Comissões/CaP exigem o módulo nas actions" } },
+    { name: "canViewCommissionRules", now: canViewCommissionRules, before: legacyCanViewCommissionRules, changes: { when: (o) => !M(o, "financeiro"), because: "Comissões: botões seguem a página de destino" } },
+    { name: "canViewPayables", now: canViewPayables, before: legacyCanViewPayables, changes: { when: (o) => !M(o, "financeiro"), because: "Comissões: botões seguem a página de destino" } },
+    { name: "canManageCommissionRules", now: canManageCommissionRules, before: legacyIsFinanceManager },
+    { name: "canApprovePayables", now: canApprovePayables, before: legacyIsFinanceManager },
+    { name: "canPayPayables", now: canPayPayables, before: legacyIsFinanceManager },
+    { name: "canReverseCommission", now: canReverseCommission, before: legacyIsFinanceManager },
+  ];
+
+  function subjects(fixture: FixtureUser, current: Subject, old: LegacyUser): [string, Subject][] {
+    const plain = { id: fixture.id, role: fixture.role, departmentId: fixture.departmentId, isAdmin: old.isAdmin, isManager: old.isManager, isDirector: old.isDirector };
+    return [
+      [label(fixture), current],
+      [`${label(fixture)} (sem permissions)`, plain],
+    ];
+  }
+
+  it("diferenças sem máscara = exatamente as correções nominais (nem a mais, nem a menos)", () => {
+    const diff: string[] = [];
+    const exp: string[] = [];
     for (const { fixture, current, legacy: old } of USERS) {
-      const plain = { id: fixture.id, role: fixture.role, departmentId: fixture.departmentId, isAdmin: old.isAdmin, isManager: old.isManager, isDirector: old.isDirector };
-      for (const subject of [current, plain]) {
-        const tag = `${label(fixture)}${subject === current ? "" : " (sem permissions)"}`;
-        const fin = legacyCanAccessModule(old, "financeiro");
-        const check = (name: string, now: boolean, before: boolean) => now !== before && problems.push(`${tag} ${name}: ${before} → ${now}`);
-        check("canOperateFinance", fin && canOperateFinance(subject), fin && legacyCanOperateFinance(old));
-        check("canOperateImplementation", legacyCanAccessModule(old, "implantacao") && canOperateImplementation(subject), legacyCanAccessModule(old, "implantacao") && legacyCanOperateImplementation(old));
-        check("canOperateSupport (página)", legacyCanAccessModule(old, "suporte") && canOperateSupport(subject), legacyCanAccessModule(old, "suporte") && legacyCanOperateSupport(old));
-        check("canEditArticles (página)", legacyCanAccessModule(old, "suporte") && canEditArticles(subject), legacyCanAccessModule(old, "suporte") && legacyCanEditArticles(old));
-        check("canManageCommissionRules", canManageCommissionRules(subject), legacyIsFinanceManager(old));
-        check("canApprovePayables", canApprovePayables(subject), legacyIsFinanceManager(old));
-        check("canPayPayables", canPayPayables(subject), legacyIsFinanceManager(old));
-        check("canReverseCommission", canReverseCommission(subject), legacyIsFinanceManager(old));
-        check("canViewCommissionRules (página)", fin && canViewCommissionRules(subject), fin && legacyCanViewCommissionRules(old));
-        check("canViewPayables (página)", fin && canViewPayables(subject), fin && legacyCanViewPayables(old));
-        check("canOperatePayables (com módulo)", fin && canOperatePayables(subject), fin && legacyCanOperatePayables(old));
+      for (const [tag, subject] of subjects(fixture, current, old)) {
+        for (const f of FACADES) {
+          const before = f.before(old);
+          const now = f.now(subject);
+          if (now !== before) diff.push(`${tag} ${f.name}: ${before} → ${now}`);
+          if (before && f.changes?.when(old)) exp.push(`${tag} ${f.name}: true → false`);
+        }
       }
     }
-    expect(problems).toEqual([]);
+    expect(diff.sort()).toEqual(exp.sort());
+    expect(diff.length).toBeGreaterThan(0);
+  });
+
+  it("Comissões (aberta por Financeiro ∨ Vendas): botões Regras e Contas a Pagar mudam só para quem não tem o Financeiro", () => {
+    // Contexto real de chamada: ws.can.viewRules/viewPayables (commissions/queries.ts) na página /financeiro/comissoes.
+    const affected = new Set<string>();
+    for (const { fixture, current, legacy: old } of USERS) {
+      if (!(M(old, "financeiro") || M(old, "vendas"))) continue;
+      for (const [name, now, before] of [
+        ["viewRules", canViewCommissionRules(current), legacyCanViewCommissionRules(old)],
+        ["viewPayables", canViewPayables(current), legacyCanViewPayables(old)],
+      ] as const) {
+        if (now !== before) affected.add(`${fixture.id} ${name} ${before}→${now}`);
+      }
+    }
+    expect([...affected].sort()).toEqual(
+      ["syn_cs_fin", "combo_cs_financeiro", "combo_marketing_financeiro", "combo_suporte_financeiro"].flatMap((id) => [`${id} viewPayables true→false`, `${id} viewRules true→false`]).sort(),
+    );
+    // No seed ninguém é afetado.
+    const seedIds = new Set(SEED_USERS.map((u) => u.id));
+    expect([...affected].filter((a) => seedIds.has(a.split(" ")[0]))).toEqual([]);
+  });
+
+  it("todo chamador de canOperateFinance/canOperateImplementation exige o módulo antes (a mudança não é observável)", () => {
+    const root = path.resolve(__dirname, "../..");
+    const facades = [
+      { name: "canOperateFinance", module: "financeiro", guardFile: "src/server/finance/actions.ts" },
+      { name: "canOperateImplementation", module: "implantacao", guardFile: "src/server/implementation/actions.ts" },
+    ];
+    const files = listSources(path.join(root, "src"));
+    for (const f of facades) {
+      const callers = files.filter((file) => !file.endsWith("/access.ts") && new RegExp(`\\b${f.name}\\(`).test(readFileSync(file, "utf8")));
+      expect(callers.length, f.name).toBeGreaterThan(3);
+      for (const file of callers) {
+        const rel = path.relative(root, file);
+        if (rel === f.guardFile) {
+          // requireFinanceOperator/requireOperator: canAccessModule(user, "<m>") vem antes da fachada.
+          const src = readFileSync(file, "utf8");
+          const moduleCheck = src.indexOf(`canAccessModule(user, "${f.module}")`);
+          const facadeCall = src.indexOf(`${f.name}(user)`);
+          expect(moduleCheck, `${rel}: checagem do módulo`).toBeGreaterThan(-1);
+          expect(moduleCheck, `${rel}: módulo antes de ${f.name}`).toBeLessThan(facadeCall);
+          continue;
+        }
+        // Página: a rota pertence a uma tela cujo acesso exige o módulo (hierarquia do catálogo).
+        const match = rel.match(/^src\/app\/\(app\)(\/.*)\/page\.tsx$/);
+        expect(match, `${rel}: chamador fora de página/guarda conhecida`).not.toBeNull();
+        const href = match![1].replace(/\[[^\]]+\]/g, "x");
+        const owner = screenForHref(href);
+        expect(owner, `${rel}: rota sem tela`).not.toBeNull();
+        for (const key of owner!.keys) expect(NODE_BY_KEY.get(key)?.requires.keys, `${rel} (${key})`).toContain(`${f.module}.acessar`);
+      }
+    }
   });
 });
 
 describe("T0 — menu, barra do celular e atalhos '+'", () => {
-  it("menu derivado ≡ filtro atual do layout, exceto A14/A27 (Administração, Cockpit, Contas a Pagar)", () => {
+  it("menu do layout e de /menu (visibleNavigation) ≡ filtro anterior, exceto A14/A27 (Administração, Cockpit, Contas a Pagar)", () => {
     const diff: string[] = [];
     const exp: string[] = [];
     for (const { fixture, current, legacy: old } of USERS) {
       const before = new Set(legacyMenu(old).flatMap((s) => s.hrefs));
-      const now = new Set(deriveNavigation(deriveSubject(current), current.permissions.has).flatMap((s) => s.items.map((i) => i.href)));
+      const now = new Set(visibleNavigation(current).flatMap((s) => s.items.map((i) => i.href)));
       for (const href of new Set([...before, ...now])) if (before.has(href) !== now.has(href)) diff.push(`${label(fixture)} ${href} ${now.has(href) ? "+" : "-"}`);
       // Esperado (nominal): gestor/diretoria veem Usuários e Departamentos; gestor deixa de ver o Cockpit;
       // papel Vendas lotado no Financeiro passa a ver Contas a Pagar (a rota já abria).
@@ -274,13 +427,6 @@ describe("T0 — menu, barra do celular e atalhos '+'", () => {
     expect(diff.sort()).toEqual(exp.sort());
   });
 
-  it("visibleNavigation (layout e /menu) = menu derivado, com os mesmos itens de NAVIGATION", () => {
-    for (const { current } of USERS) {
-      const derived = deriveNavigation(deriveSubject(current), current.permissions.has).map((s) => [s.key, s.items.map((i) => i.href)]);
-      expect(visibleNavigation(current).map((s) => [s.key, s.items.map((i) => i.href)])).toEqual(derived);
-    }
-  });
-
   it("atalhos '+' e MOBILE_NAV idênticos para todos", () => {
     for (const { fixture, current, legacy: old } of USERS) {
       expect(deriveQuickActions(deriveSubject(current), current.permissions.has).map((q) => q.key), label(fixture)).toEqual(legacyQuickActions(old));
@@ -288,8 +434,18 @@ describe("T0 — menu, barra do celular e atalhos '+'", () => {
       expect(deriveMobileNav(current.permissions.has).map((i) => i.href), label(fixture)).toEqual(legacyMobileNav());
     }
   });
+});
 
-  it("canSeeHref de cada item do menu ≡ item visível", () => {
+/** Consistência interna do código novo (NÃO é equivalência com o comportamento anterior; não entra no T0). */
+describe("consistência interna — menu e canSeeHref", () => {
+  it("visibleNavigation (layout e /menu) = menu derivado do catálogo, com os mesmos itens de NAVIGATION", () => {
+    for (const { current } of USERS) {
+      const derived = deriveNavigation(deriveSubject(current), current.permissions.has).map((s) => [s.key, s.items.map((i) => i.href)]);
+      expect(visibleNavigation(current).map((s) => [s.key, s.items.map((i) => i.href)])).toEqual(derived);
+    }
+  });
+
+  it("canSeeHref de cada item do menu ≡ chave de visualização da tela", () => {
     for (const { current } of USERS) {
       for (const s of SCREENS) {
         if (!s.nav?.href || s.nav.rule) continue;
@@ -305,5 +461,12 @@ describe("T0 — sem curto-circuito de admin", () => {
     const missing = SCREENS.flatMap((s) => [`${s.key}.ver`, ...s.sections.map((x) => x.key), ...s.actions.map((a) => a.key)]).filter((k) => !admin.has(k as PermissionKey));
     expect(missing).toEqual([]);
     for (const d of DEPARTMENT_KEYS) expect(resolvePermissions({ role: "colaborador", departmentId: d }).has("admin.acessar")).toBe(false);
+  });
+});
+
+describe("T0 — cobertura", () => {
+  it("toda chave com regra padrão não trivial tem oráculo antigo no T0", () => {
+    const missing = PERMISSION_NODES.filter((n) => n.rule !== "all" && !COVERED.has(n.key)).map((n) => `${n.key} ${JSON.stringify(n.rule)}`);
+    expect(missing).toEqual([]);
   });
 });

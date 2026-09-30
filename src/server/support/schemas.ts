@@ -1,11 +1,10 @@
 /**
  * Suporte: enums, rótulos e validação (zod) das Server Actions e da avaliação pública de CSAT.
  * Sem dependências de servidor: também é importado por Client Components (rótulos e opções).
+ * Predicados de autorização ficam em ./access.ts (server-only), fora do bundle do cliente.
  */
 import { z } from "zod";
 import type { SupportTicket, TicketInteraction } from "@/domain/types";
-import type { EffectivePermissions } from "@/domain/permissions";
-import { can, type PermissionHolder } from "@/server/auth/permissions";
 
 // ---------------------------------------------------------------------------
 // Enums e rótulos
@@ -80,16 +79,6 @@ export const INTERACTION_KIND_LABELS: Record<TicketInteraction["kind"], string> 
 
 /** Categorias sugeridas no formulário (texto livre também é aceito). */
 export const TICKET_CATEGORY_SUGGESTIONS = ["PDV", "Fiscal", "Financeiro", "Estoque", "TEF", "Hardware", "Desempenho", "Omnichannel", "Telefonia", "Ponto", "Cadastro", "Dúvida", "Outro"];
-
-/** Operar chamados (fachada do catálogo: `suporte.chamados.assumir`; as operações de chamado têm a mesma regra). */
-export function canOperateSupport(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string; permissions?: EffectivePermissions }): boolean {
-  return can(user as PermissionHolder, "suporte.chamados.assumir");
-}
-
-/** Criar/editar artigos da base de conhecimento (fachada do catálogo: `suporte.base-de-conhecimento.editar`). */
-export function canEditArticles(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string; permissions?: EffectivePermissions }): boolean {
-  return can(user as PermissionHolder, "suporte.base-de-conhecimento.editar");
-}
 
 // ---------------------------------------------------------------------------
 // Validação

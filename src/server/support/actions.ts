@@ -34,8 +34,6 @@ import {
   assignSchema,
   attachmentSchema,
   callSchema,
-  canEditArticles,
-  canOperateSupport,
   classifySchema,
   closeSchema,
   createTicketSchema,
@@ -50,6 +48,7 @@ import {
   waitingSchema,
   zodMessage,
 } from "./schemas";
+import { canEditArticles, canOperateSupport } from "./access";
 
 const actor = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
 

@@ -178,4 +178,12 @@ export const DELIBERATE_CORRECTIONS: readonly { title: string; detail: string }[
     title: "/suporte/sla",
     detail: "Rota de redirect passa por requireScreen('operacao.sla') (all) — sem mudança efetiva.",
   },
+  {
+    title: "Comissões: botões 'Regras' e 'Contas a Pagar' seguem a página de destino",
+    detail: "Em /financeiro/comissoes (aberta também pelo módulo Vendas), ws.can.viewRules/viewPayables (commissions/queries.ts) passam a incluir o módulo Financeiro, como as páginas de destino já exigiam (regras/page.tsx e contas-a-pagar/page.tsx). Papéis cs, marketing e suporte lotados no departamento financeiro deixam de ver botões que levavam a 'acesso negado'. Nenhum no seed.",
+  },
+  {
+    title: "Fachadas de operação incluem o módulo",
+    detail: "canOperateFinance (financeiro.contratos.editar) e canOperateImplementation (implantacao.projetos.atribuir) passam a incluir o módulo: papéis sem o módulo lotados no departamento (financeiro: cs, marketing, suporte, implantacao, colaborador; implantação: vendas, marketing, financeiro, colaborador) passam a false. Sem efeito observável: todo chamador exige o módulo antes (requireFinanceOperator/requireOperator e as páginas dos módulos) — conferido em tests/permissions/equivalence.test.ts.",
+  },
 ];

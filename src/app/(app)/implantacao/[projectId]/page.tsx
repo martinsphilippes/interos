@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getProject } from "@/server/implementation/queries";
-import { canOperateImplementation } from "@/server/implementation/schemas";
+import { canOperateImplementation } from "@/server/implementation/access";
 import { canApproveGoLive } from "@/server/implementation/service";
 import { dateKey } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";

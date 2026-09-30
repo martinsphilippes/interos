@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { ArrowRight, FileSignature, PenLine, Receipt, Repeat, Wallet } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getFinanceOverview, listContracts } from "@/server/finance/queries";
-import { canOperateFinance } from "@/server/finance/schemas";
+import { canOperateFinance } from "@/server/finance/access";
 import { formatCurrency } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";

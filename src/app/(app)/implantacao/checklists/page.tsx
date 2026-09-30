@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { Info } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { listTemplates } from "@/server/implementation/queries";
-import { canOperateImplementation } from "@/server/implementation/schemas";
+import { canOperateImplementation } from "@/server/implementation/access";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { TemplatesManager } from "@/components/implementation/templates-manager";

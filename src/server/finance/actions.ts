@@ -44,7 +44,6 @@ import {
   amendmentSignatureSchema,
   billingContactSchema,
   cancelAmendmentSchema,
-  canOperateFinance,
   billingDataSchema,
   billingIdSchema,
   cancelBillingSchema,
@@ -67,6 +66,7 @@ import {
   updateItemsSchema,
   zodMessage,
 } from "./schemas";
+import { canOperateFinance } from "./access";
 
 type Failure = { ok: false; error: string };
 

@@ -37,7 +37,6 @@ import {
   addTaskSchema,
   assignTaskSchema,
   blockSchema,
-  canOperateImplementation,
   changePhaseSchema,
   completeTaskSchema,
   completeTrainingSchema,
@@ -55,6 +54,7 @@ import {
   waitingClientSchema,
   zodMessage,
 } from "./schemas";
+import { canOperateImplementation } from "./access";
 
 type Failure = { ok: false; error: string };
 

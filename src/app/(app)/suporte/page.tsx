@@ -7,7 +7,7 @@ import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getSupportOptions, getSupportOverview, getTicket, listArticles, type OverviewScope } from "@/server/support/queries";
 import { maybeRunSlaAlerts } from "@/server/support/service";
 import { getSupportChannelStatus } from "@/server/support/integrations";
-import { canEditArticles } from "@/server/support/schemas";
+import { canEditArticles } from "@/server/support/access";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";

@@ -29,7 +29,8 @@ import {
 } from "@/domain/types";
 import type { SlaState } from "@/domain/constants";
 import { csatPath, getSupportTeam, isOpenTicket, type SlaInstanceExtra, type SupportTicketExtra, type TicketInteractionExtra } from "./service";
-import { TICKET_PRIORITIES, canOperateSupport, type TicketPriority } from "./schemas";
+import { TICKET_PRIORITIES, type TicketPriority } from "./schemas";
+import { canOperateSupport } from "./access";
 import { normalizeText, plainText, rankArticles } from "./knowledge-search";
 
 // ---------------------------------------------------------------------------

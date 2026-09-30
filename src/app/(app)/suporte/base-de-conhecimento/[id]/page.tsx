@@ -5,7 +5,7 @@ import { AlertCircle, BookOpen, Boxes, Eye, FolderTree, KeyRound, Package, Penci
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getArticle, listArticles } from "@/server/support/queries";
 import { incrementArticleViews } from "@/server/support/service";
-import { canEditArticles } from "@/server/support/schemas";
+import { canEditArticles } from "@/server/support/access";
 import { formatDate, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";

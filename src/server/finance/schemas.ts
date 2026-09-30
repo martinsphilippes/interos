@@ -1,11 +1,10 @@
 import { z } from "zod";
 import type { Billing, Contract } from "@/domain/types";
-import type { EffectivePermissions } from "@/domain/permissions";
-import { can, type PermissionHolder } from "@/server/auth/permissions";
 
 /**
  * Esquemas (zod) e constantes puras do módulo Financeiro. Sem dependências de servidor: é importado
  * pelas Server Actions e pelos Client Components (mensagens em português exibidas na interface).
+ * Predicados de autorização ficam em ./access.ts (server-only), fora do bundle do cliente.
  */
 
 // ---------------------------------------------------------------------------
@@ -41,15 +40,6 @@ export interface ReleaseGate {
   ok: boolean;
   checks: ReleaseCheck[];
   settings: FinanceGateSettings;
-}
-
-/**
- * Quem opera o Financeiro (altera contratos e cobranças): equipe financeira, gestores, diretoria e admin — com o
- * módulo Financeiro. Fachada do catálogo (`financeiro.contratos.editar`; as operações de contrato e cobrança têm a
- * mesma regra padrão).
- */
-export function canOperateFinance(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string; permissions?: EffectivePermissions }): boolean {
-  return can(user as PermissionHolder, "financeiro.contratos.editar");
 }
 
 // ---------------------------------------------------------------------------

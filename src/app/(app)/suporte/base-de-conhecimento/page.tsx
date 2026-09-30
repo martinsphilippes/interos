@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { BookOpen, Eye, Layers, Plus, ThumbsUp } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getTicket, listArticles } from "@/server/support/queries";
-import { canEditArticles } from "@/server/support/schemas";
+import { canEditArticles } from "@/server/support/access";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
