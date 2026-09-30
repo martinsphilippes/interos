@@ -15,7 +15,7 @@ import { SettingsHealthScore } from "./settings-health-score";
 import { SettingsHolidays } from "./settings-holidays";
 import { SettingsLeadScoring } from "./settings-lead-scoring";
 import { SettingsOpportunity } from "./settings-opportunity";
-import { SettingsFinanceGate } from "./settings-finance-gate";
+import { SettingsFinanceAlerts, SettingsFinanceGate } from "./settings-finance-gate";
 import { SettingsDeliveryGates } from "./settings-delivery-gates";
 import { SettingsSlaRules } from "./settings-sla-rules";
 import { SettingsGamification, SettingsSalesPrizes, SettingsStreak } from "./settings-performance";
@@ -92,7 +92,10 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
         <SettingsOpportunity key={JSON.stringify(values.oportunidade)} value={values.oportunidade} stored={has("oportunidade")} />
       </TabsContent>
       <TabsContent value="gate-financeiro">
-        <SettingsFinanceGate key={JSON.stringify(values.gate_financeiro)} value={values.gate_financeiro} stored={has("gate_financeiro")} />
+        <div className="flex flex-col gap-4">
+          <SettingsFinanceGate key={JSON.stringify(values.gate_financeiro)} value={values.gate_financeiro} stored={has("gate_financeiro")} />
+          <SettingsFinanceAlerts key={JSON.stringify(values.financeiro_alertas)} value={values.financeiro_alertas} stored={has("financeiro_alertas")} />
+        </div>
       </TabsContent>
       <TabsContent value="entrega">
         <SettingsDeliveryGates key={JSON.stringify([values.go_live, values.cs_ativacao])} goLive={values.go_live} activation={values.cs_ativacao} storedGoLive={has("go_live")} storedActivation={has("cs_ativacao")} />

@@ -144,7 +144,7 @@ export const setProductActiveSchema = z.object({ id: idSchema, active: z.boolean
 // Configurações do sistema (coleção settings, um documento por key)
 // ---------------------------------------------------------------------------
 
-export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia"] as const;
+export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia", "financeiro_alertas"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const fraction = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(1, `${label} deve ser uma fração entre 0 e 1`);
@@ -221,6 +221,14 @@ export const gateFinanceiroSchema = z.object({
 });
 export type GateFinanceiroConfig = z.infer<typeof gateFinanceiroSchema>;
 
+/** Alertas do circuito de contratos (lido por src/server/finance/alerts.ts → getFinanceAlertSettings). */
+export const financeiroAlertasSchema = z.object({
+  diasSemAssinatura: z.number("Dias sem assinatura inválido").int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(90, "Máximo de 90 dias"),
+  horasPagoSemLiberacao: z.number("Horas pago sem liberação inválido").int("Use horas inteiras").min(1, "Mínimo de 1 hora").max(720, "Máximo de 720 horas"),
+  diasLiberadoSemInicio: z.number("Dias liberado sem início inválido").int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(90, "Máximo de 90 dias"),
+});
+export type FinanceiroAlertasConfig = z.infer<typeof financeiroAlertasSchema>;
+
 /** Aprovação do go-live (lido por src/server/implementation/service.ts → getGoLiveSettings). */
 export const goLiveSchema = z.object({
   exigeAprovacaoGestor: z.boolean("Informe se o go-live exige aprovação de gestor"),
@@ -273,6 +281,7 @@ export const SETTING_SCHEMAS = {
   gamificacao: gamificacaoSchema,
   premios_vendas: premiosVendasSchema,
   "gamificacao.sequencia": sequenciaSchema,
+  financeiro_alertas: financeiroAlertasSchema,
 } as const;
 
 export interface SettingValues {
@@ -288,6 +297,7 @@ export interface SettingValues {
   gamificacao: GamificacaoConfig;
   premios_vendas: PremiosVendasConfig;
   "gamificacao.sequencia": SequenciaConfig;
+  financeiro_alertas: FinanceiroAlertasConfig;
 }
 
 /** Valores usados quando o documento ainda não existe no banco (iguais ao seed). */
@@ -304,6 +314,7 @@ export const SETTING_DEFAULTS: SettingValues = {
   gamificacao: { pontos: { ...DEFAULT_GAMIFICATION.pontos }, multiplicadores: { ...DEFAULT_GAMIFICATION.multiplicadores }, niveis: DEFAULT_GAMIFICATION.niveis.map((n) => ({ ...n })) },
   premios_vendas: { ...DEFAULT_SALES_PRIZES },
   "gamificacao.sequencia": { ...DEFAULT_STREAK },
+  financeiro_alertas: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3 },
 };
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
@@ -319,6 +330,7 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   gamificacao: "Pontos por evento, multiplicadores de equivalência entre funções e níveis da gamificação.",
   premios_vendas: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.",
   "gamificacao.sequencia": "Regra da sequência em dias da gamificação (critério e janela máxima em dias úteis).",
+  financeiro_alertas: "Alertas de contratos parados: aguardando assinatura, pago sem liberação e liberado sem início da implantação.",
 };
 
 export const upsertSettingSchema = z.object({

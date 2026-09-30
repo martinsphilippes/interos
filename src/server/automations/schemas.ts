@@ -68,6 +68,8 @@ export const SWEEP_KEYS = [
   "tarefas_recorrentes",
   "kpi_snapshots",
   "processos_esperas",
+  "cobrancas_vencidas",
+  "contratos_alertas",
 ] as const;
 export type SweepKey = (typeof SWEEP_KEYS)[number];
 
@@ -81,6 +83,12 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   implantacoes_atrasadas: { label: "Implantações atrasadas", description: "Projetos com prazo vencido: avisa o responsável e o gestor de implantação uma vez por dia.", schedule: "diaria" },
   tarefas_recorrentes: { label: "Tarefas recorrentes", description: "Garante a próxima ocorrência das tarefas recorrentes concluídas que ficaram sem sucessora.", schedule: "diaria" },
   processos_esperas: { label: "Esperas dos processos", description: "Construtor de processos: libera as etapas de espera por horas úteis cujo prazo já passou e segue a execução.", schedule: "horaria" },
+  cobrancas_vencidas: { label: "Cobranças vencidas", description: "Financeiro: marca como vencidas todas as cobranças em aberto com vencimento passado e emite cobrança vencida (uma vez por cobrança), sem depender de alguém abrir as telas.", schedule: "diaria" },
+  contratos_alertas: {
+    label: "Contratos parados",
+    description: "Financeiro: contrato aguardando assinatura além do prazo gera follow-up ao vendedor; pago e não liberado gera tarefa ao gestor financeiro; liberado com implantação não iniciada avisa a Implantação (prazos em Configurações › Gate financeiro).",
+    schedule: "diaria",
+  },
   kpi_snapshots: { label: "Fotografia dos indicadores", description: "Grava os snapshots do motor de KPIs do mês corrente e, nos 3 primeiros dias do mês, o fechamento do mês anterior.", schedule: "diaria" },
 };
 

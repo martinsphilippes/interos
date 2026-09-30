@@ -412,6 +412,25 @@ async function processosEsperas(now: Date): Promise<SweepOutcome> {
   return { summary, data: { ...result } };
 }
 
+// ---------------------------------------------------------------------------
+// Financeiro: cobranças vencidas e contratos parados (src/server/finance/alerts.ts)
+// ---------------------------------------------------------------------------
+
+async function cobrancasVencidas(): Promise<SweepOutcome> {
+  const { sweepAllOpenBillings } = await import("@/server/finance/alerts");
+  const r = await sweepAllOpenBillings();
+  return { summary: `${r.open} cobrança(s) em aberto verificada(s) · ${r.flipped} marcada(s) como vencida(s)`, data: { ...r } };
+}
+
+async function contratosAlertas(now: Date): Promise<SweepOutcome> {
+  const { contractAlerts } = await import("@/server/finance/alerts");
+  const r = await contractAlerts(now);
+  return {
+    summary: `${r.awaitingSignature} aguardando assinatura (${r.followupTasks} follow-up) · ${r.paidNotReleased} pago(s) sem liberação (${r.releaseTasks} tarefa(s)) · ${r.releasedNotStarted} liberado(s) sem início (${r.implementationNotices} aviso(s))`,
+    data: { ...r },
+  };
+}
+
 export const SWEEPS: Record<SweepKey, SweepFn> = {
   sla_alerts: slaAlerts,
   followup_vendas: followupVendas,
@@ -423,6 +442,8 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   tarefas_recorrentes: tarefasRecorrentes,
   kpi_snapshots: kpiSnapshots,
   processos_esperas: processosEsperas,
+  cobrancas_vencidas: cobrancasVencidas,
+  contratos_alertas: contratosAlertas,
 };
 
 /** Campos antigos (dos módulos) que também contam como "última execução" da varredura. */

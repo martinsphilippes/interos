@@ -276,6 +276,7 @@ const SETTINGS: (SeedDoc<Settings> & { id: string })[] = [
   { id: "setting_go_live", key: "go_live", description: "Regras de aprovação do go-live da implantação.", value: { exigeAprovacaoGestor: true } },
   { id: "setting_cs_ativacao", key: "cs_ativacao", description: "Critérios do gate de ativação do cliente pelo Customer Success.", value: { adocaoMinimaPct: 30, exigePlano: true } },
   { id: "setting_gamificacao", key: "gamificacao", description: "Pontos por evento, multiplicadores de equivalência entre funções e níveis da gamificação.", value: { ...DEFAULT_GAMIFICATION } },
+  { id: "setting_financeiro_alertas", key: "financeiro_alertas", description: "Alertas de contratos parados: aguardando assinatura, pago sem liberação e liberado sem início da implantação.", value: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3 } },
   { id: "setting_premios_vendas", key: "premios_vendas", description: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.", value: { ...DEFAULT_SALES_PRIZES } },
 ];
 
