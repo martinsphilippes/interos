@@ -85,8 +85,9 @@ describe("repositório real", () => {
   const report = analyzeAccess(path.resolve(__dirname, "../.."));
   const count = (kind: FindingKind) => report.findings.filter((f) => f.kind === kind).length;
 
-  it("inventário: 88 páginas (7 isentas), 235 funções 'use server' (3 isentas), 9 handlers de API (8 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 88, pagesExempt: 7, serverFunctions: 235, serverFunctionsExempt: 3, apiHandlers: 9, apiExempt: 8 });
+  // 238 = 235 + savePermissionProfile/saveUserPermissionOverrides/saveActiveModules (futureGuards de admin.acessos.gerir).
+  it("inventário: 88 páginas (7 isentas), 238 funções 'use server' (3 isentas), 9 handlers de API (8 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 88, pagesExempt: 7, serverFunctions: 238, serverFunctionsExempt: 3, apiHandlers: 9, apiExempt: 8 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

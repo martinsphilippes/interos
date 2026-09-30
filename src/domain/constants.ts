@@ -437,6 +437,9 @@ export const EVENT_TYPES = [
   "contract.renewed",
   "supplier.created",
   "supplier.updated",
+  // autorização granular (etapa 6A): perfis, exceções individuais e módulos da empresa
+  "permissions.updated",
+  "permissions.blocked",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

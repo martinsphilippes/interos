@@ -73,3 +73,42 @@ export type SettingsTab = (typeof SETTINGS_TABS)[number];
 export function parseSettingsTab(value: string | undefined | null): SettingsTab {
   return value && (SETTINGS_TABS as readonly string[]).includes(value) ? (value as SettingsTab) : "horario";
 }
+
+/**
+ * Configurações gravadas por aba (A12). "saude-indice" e "sla" não gravam `settings` (motor de KPIs e coleção
+ * sla_rules). Uma aba aparece quando ao menos uma das suas configurações é visível para o perfil.
+ */
+export const SETTINGS_TAB_KEYS: Record<SettingsTab, readonly string[]> = {
+  horario: ["horario_comercial"],
+  feriados: ["feriados"],
+  metas: ["metas_referencia"],
+  "lead-scoring": ["lead_scoring"],
+  "health-score": ["health_score"],
+  oportunidades: ["oportunidade"],
+  "gate-financeiro": ["gate_financeiro", "financeiro_alertas"],
+  cobranca: ["regua_cobranca", "cobranca_canais", "financeiro_baixa"],
+  "contas-a-pagar": ["contas_a_pagar"],
+  entrega: ["go_live", "cs_ativacao"],
+  performance: ["gamificacao", "premios_vendas", "gamificacao.sequencia"],
+  "saude-indice": [],
+  sla: [],
+};
+
+/** O que o perfil vê e edita em /admin/configuracoes (calculado no servidor pelas chaves do catálogo). */
+export interface SettingsAccess {
+  /** Configurações visíveis (seção `.ver` da aba). */
+  visible: string[];
+  /** Configurações editáveis (chave de SETTING_PERMISSION). */
+  editable: string[];
+  saudeIndice: { visible: boolean; operationHealthEditable: boolean; performanceIndexEditable: boolean };
+  sla: { visible: boolean; edit: boolean; delete: boolean };
+}
+
+/** Abas visíveis, na ordem de SETTINGS_TABS. */
+export function visibleSettingsTabs(access: SettingsAccess): SettingsTab[] {
+  return SETTINGS_TABS.filter((tab) => {
+    if (tab === "saude-indice") return access.saudeIndice.visible;
+    if (tab === "sla") return access.sla.visible;
+    return SETTINGS_TAB_KEYS[tab].some((k) => access.visible.includes(k));
+  });
+}

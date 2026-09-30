@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { MODULE_KEYS, type PermissionKey } from "@/domain/permissions";
 import { can, canSeeHref, clampScope, defaultPermissionsFor, resolvePermissions } from "@/server/auth/permissions";
 import { visibleNavigation } from "@/server/auth/navigation";
-import { asCurrentUser, SEED_USERS } from "./fixtures";
+import { checkAccessInvariants, hasAccessAdministrator, withRoleProfile, withUser, withUserOverride, withoutUser, type AccessState } from "@/server/auth/invariants";
+import { asCurrentUser, SEED_DEPARTMENTS, SEED_USERS } from "./fixtures";
 
 const vinicius = SEED_USERS.find((u) => u.id === "user_vinicius")!; // vendas/vendas
 const anapaula = SEED_USERS.find((u) => u.id === "user_anapaula")!; // financeiro/financeiro
@@ -256,9 +257,33 @@ describe("ajustes gravados com chaves perigosas", () => {
 });
 
 describe("invariantes (A9) — fase de persistência", () => {
-  it.todo("admin sem chave protegida só por perfil negado é recusado pelos invariantes (I3) ao gravar");
-  it.todo("ninguém edita as próprias exceções nem retira de si chaves protegidas (I2)");
-  it.todo("sempre existe ≥ 1 usuário ativo com admin.acessos.gerir e admin.usuarios.editar (I1)");
+  const state: AccessState = {
+    users: SEED_USERS.map((u) => ({ id: u.id, name: u.name, role: u.role, departmentId: u.departmentId, active: true, managerId: u.managerId })),
+    departments: SEED_DEPARTMENTS,
+    roleProfiles: {},
+    userOverrides: {},
+  };
+
+  it("admin sem chave protegida só por perfil negado é recusado pelos invariantes (I3) ao gravar", () => {
+    const after = withRoleProfile(state, "admin", { grants: { "admin.usuarios.ver": false } });
+    const v = checkAccessInvariants({ actorId: "user_philippe", before: state, after, change: { kind: "profile", role: "admin" } });
+    expect(v.map((x) => x.code)).toContain("I3");
+  });
+
+  it("ninguém edita as próprias exceções nem retira de si chaves protegidas (I2)", () => {
+    const own = checkAccessInvariants({ actorId: "user_hercules", before: state, after: withUserOverride(state, "user_hercules", { grants: { "vendas.visitas.ver": false } }), change: { kind: "override", userId: "user_hercules" } });
+    expect(own.map((x) => x.code)).toContain("I2");
+    const viaProfile = checkAccessInvariants({ actorId: "user_hercules", before: state, after: withRoleProfile(state, "admin", { grants: { "admin.acessos.ver": false } }), change: { kind: "profile", role: "admin" } });
+    expect(viaProfile.map((x) => x.code)).toContain("I2");
+  });
+
+  it("sempre existe ≥ 1 usuário ativo com admin.acessos.gerir e admin.usuarios.editar (I1)", () => {
+    expect(hasAccessAdministrator(state)).toBe(true);
+    const onlyHercules = withoutUser(state, "user_philippe");
+    const hercules = onlyHercules.users.find((u) => u.id === "user_hercules")!;
+    const v = checkAccessInvariants({ actorId: "outro", before: onlyHercules, after: withUser(onlyHercules, { ...hercules, active: false }), change: { kind: "user.update", userId: "user_hercules" } });
+    expect(v.map((x) => x.code)).toContain("I1");
+  });
 
   it("hoje o resolvedor aplica o que estiver gravado (os invariantes barram a gravação, não a leitura)", () => {
     const perms = resolvePermissions(hercules, { roleProfile: { grants: { "admin.acessos.gerir": false } } });

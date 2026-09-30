@@ -81,6 +81,37 @@ export const resetPasswordSchema = z.object({ id: idSchema, password: passwordSc
 export const userIdSchema = z.object({ id: idSchema });
 
 // ---------------------------------------------------------------------------
+// Perfis, exceções individuais e módulos da empresa (A6/A8)
+// ---------------------------------------------------------------------------
+
+/**
+ * `grants`/`scopes` chegam como `unknown` e são validados por `validateAdjustments` (src/server/auth/access-admin.ts):
+ * só chaves próprias do catálogo, valores booleanos e escopos permitidos pela tela — nada de `__proto__`.
+ */
+export const savePermissionProfileSchema = z.object({
+  role: z.enum(ROLE_KEYS, { message: "Perfil inválido" }),
+  grants: z.unknown(),
+  scopes: z.unknown(),
+  reason: optionalText(500),
+});
+export type SavePermissionProfileInput = { role: (typeof ROLE_KEYS)[number]; grants: Record<string, boolean>; scopes: Record<string, string>; reason?: string };
+
+export const saveUserOverridesSchema = z.object({
+  userId: idSchema,
+  grants: z.unknown(),
+  scopes: z.unknown(),
+  reason: z.string("Informe o motivo").trim().min(5, "Informe o motivo da exceção (mínimo de 5 caracteres)").max(500, "Motivo muito longo (máx. 500)"),
+});
+export type SaveUserOverridesInput = { userId: string; grants: Record<string, boolean>; scopes: Record<string, string>; reason: string };
+
+export const saveActiveModulesSchema = z.object({
+  /** Módulos DESATIVADOS (ausente/vazio = todos ativos; módulo novo nasce ligado). */
+  inactive: z.unknown(),
+  reason: optionalText(500),
+});
+export type SaveActiveModulesInput = { inactive: string[]; reason?: string };
+
+// ---------------------------------------------------------------------------
 // Departamentos
 // ---------------------------------------------------------------------------
 

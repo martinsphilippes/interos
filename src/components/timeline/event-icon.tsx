@@ -29,6 +29,8 @@ import {
   Rocket,
   Route,
   Send,
+  ShieldAlert,
+  ShieldCheck,
   StickyNote,
   Target,
   Timer,
@@ -208,6 +210,8 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "notification.sent": Bell,
   "user.created": Users,
   "user.updated": Users,
+  "permissions.updated": ShieldCheck,
+  "permissions.blocked": ShieldAlert,
 };
 
 export type EventTone = "success" | "warning" | "danger" | "info" | "brand" | "muted";
@@ -257,6 +261,8 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "contract.cancelled": "danger",
   "workflow.gate.rejected": "danger",
   "bonus.blocked": "danger",
+  "permissions.blocked": "danger",
+  "permissions.updated": "brand",
   "lead.disqualified": "muted",
   "note.added": "brand",
   "comment.added": "brand",

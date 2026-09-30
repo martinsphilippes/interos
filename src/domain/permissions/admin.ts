@@ -225,8 +225,7 @@ export const ADMIN = {
           // PROTEGIDA (I1/I3). Anti-escalada I6: só concede chaves que tem efetivas; ninguém edita as próprias
           // exceções (I2).
           rule: { role: "admin" },
-          guards: [],
-          futureGuards: [
+          guards: [
             "src/server/admin/actions.ts#savePermissionProfile",
             "src/server/admin/actions.ts#saveUserPermissionOverrides",
             "src/server/admin/actions.ts#saveActiveModules",

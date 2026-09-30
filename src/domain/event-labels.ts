@@ -150,6 +150,8 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "contract.renewed": "Contrato renovado",
   "supplier.created": "Fornecedor cadastrado",
   "supplier.updated": "Fornecedor alterado",
+  "permissions.updated": "Acessos alterados",
+  "permissions.blocked": "Alteração de acesso bloqueada",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -171,6 +173,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   department: "Sistema",
   product: "Sistema",
   settings: "Sistema",
+  permissions: "Sistema",
   report: "Sistema",
   insight: "Sistema",
   ai: "Sistema",
