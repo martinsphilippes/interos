@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
+    "check:access": "tsx scripts/check-access.ts",
     "seed": "tsx --conditions=react-server --env-file=.env.local scripts/seed.ts",
     "seed:prod": "tsx --conditions=react-server --env-file=.env.production.local scripts/seed.ts",
     "test:e2e": "tsx --env-file=.env.local scripts/e2e.ts",

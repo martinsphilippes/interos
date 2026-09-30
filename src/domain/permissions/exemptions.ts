@@ -158,6 +158,10 @@ export const DELIBERATE_CORRECTIONS: readonly { title: string; detail: string }[
     detail: "admin.acessar = {manager:true}: gestor/diretoria passam a ver no menu 'Usuários' e 'Departamentos' (rotas que já abrem hoje).",
   },
   {
+    title: "Links internos seguem a tela de destino (A11)",
+    detail: "Barra do celular, atalhos da busca/ajuda/menu do usuário, hubs (Financeiro, Administração, Gestão) e atalhos do Meu Dia só mostram links para telas visíveis (ScreenLink/useCanSee, mapa calculado no servidor). No padrão só muda o atalho 'Caixa de entrada' do Meu Dia para quem não tem Marketing (ver 'Marketing exige o módulo'); os demais apontavam para rotas que já negavam o acesso.",
+  },
+  {
     title: "Catch-all considera a tela",
     detail: "[...slug] passa a exigir a tela do href (hoje só o módulo, l.39). Inalcançável hoje.",
   },

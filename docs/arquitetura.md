@@ -289,14 +289,28 @@ Resumo da etapa 6A (a versão completa, com invariantes e a tela de perfis, vem 
   páginas: `requireScreen(tela | seção, { redirectTo? })` / `requireScreenAny([...])` (padrão
   `/meu-dia?erro=sem-permissao`); actions: `requirePermission(chave)` → `PermissionError`, tratada por
   `failAction(error, fallback)` (relança redirect/notFound com `unstable_rethrow`; devolve o `ActionResult`);
-  APIs: `requireApiPermission(chave)` → usuário ou `Response` 401/403 JSON. Menu e atalhos: `visibleNavigation` e
-  `visibleQuickActions` (`src/server/auth/navigation.ts`). Predicados antigos (`canAccessModule`, `canOperateFinance`,
+  APIs: `requireApiPermission(chave)` → usuário ou `Response` 401/403 JSON. Predicados antigos (`canAccessModule`, `canOperateFinance`,
   `canOperateImplementation/Support`, `canEditArticles`, `canApprovePayables`… `canAccessReport`, `canApproveGoLive`,
   `canApproveStage`) mantêm nome e assinatura e delegam para `can`. `requireRole` continua até a migração.
+- **Navegação** (A11): `NAVIGATION`, `MOBILE_NAV` e `QUICK_ACTIONS` (em `constants.ts`, mesmos exports) DERIVAM de
+  `nav` das telas do catálogo (`src/domain/permissions/nav-table.ts`); o href é a chave de lookup. No servidor
+  (`src/server/auth/navigation.ts`): `filterNavigation` (layout, drawer e `/menu`), `filterMobileNav` (barra do
+  celular), `filterQuickActions` (atalhos "+"), `filterShellLinks` (atalhos da busca, criação sem resultado, menu de
+  ajuda e do usuário — listas em `constants.ts`, entregues filtradas por props), `visibleScreens` e `hrefAccessMap`.
+  O shell recebe `user.access` (visibilidade de cada rota do catálogo, já avaliada) e o `AccessProvider`
+  (`src/components/auth/access-provider.tsx`) oferece `useCanSee(href)`, `<ScreenLink>` e `<CanSee>` para **esconder**
+  links (hubs de Financeiro, Administração e Gestão; atalhos do Meu Dia). Nunca autorize operação por eles: páginas,
+  actions e APIs revalidam no servidor. `canSeeHref` (servidor) e `canSeeHrefIn` (cliente) usam o mesmo casamento de
+  rota (`src/domain/permissions/href.ts`). O catch-all `[...slug]` avalia a tela do href.
+- **Verificador de cobertura** (A15/A21): `npm run check:access` (estrito, sai 1 com pendência) ou
+  `npm run check:access -- --report` (só lista). Confere páginas com `requireScreen` da tela dona da rota, funções
+  `"use server"` com dono no catálogo (`guards`, `viewGuards`, qualificadores, `SETTING_PERMISSION`) e com
+  `requirePermission` (direto ou por helper local), handlers de API com `requireApiPermission` ou isenção, chaves
+  usadas no código existentes no catálogo, rotas de tela com página e guards apontando para funções existentes.
 - **Adicionar tela ou ação**: declare no arquivo do módulo em `src/domain/permissions/` (chave estável, rótulo de
   negócio, regra padrão, `routes` da página ou `guards` da action; `nav` se tiver item de menu); proteja a página com
   `requireScreen("<m>.<tela>")` e a action com `requirePermission("<chave>")` dentro do `try` + `failAction`; rode
-  `npm test` (integridade do catálogo, cobertura das páginas e equivalência).
+  `npm test` (integridade do catálogo, cobertura das páginas e equivalência) e `npm run check:access`.
 - **Testes**: `npm test` (vitest, puros — catálogo, DSL, precedência, T0 contra cópia congelada dos predicados antigos
   em `tests/permissions/legacy.ts`, escopo contra os resolvedores atuais com banco em memória) e `npm run test:rules`
   (regras do Firestore no emulador).
