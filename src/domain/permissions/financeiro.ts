@@ -1087,6 +1087,7 @@ export const FINANCEIRO = {
       sections: [
         {
           key: "financeiro.configuracoes.gate.ver",
+          tab: "gate-financeiro",
           label: "Gate financeiro",
           // Onde: ?aba=gate-financeiro — SettingsFinanceGate (settings-tabs.tsx:101-103; SettingKey
           // gate_financeiro) · Hoje: admin/configuracoes/page.tsx:25
@@ -1094,6 +1095,7 @@ export const FINANCEIRO = {
         },
         {
           key: "financeiro.configuracoes.alertas.ver",
+          tab: "gate-financeiro",
           label: "Alertas do Financeiro",
           // Onde: ?aba=gate-financeiro — SettingsFinanceAlerts (settings-tabs.tsx:104; financeiro_alertas) ·
           // Hoje: admin/configuracoes/page.tsx:25
@@ -1101,6 +1103,7 @@ export const FINANCEIRO = {
         },
         {
           key: "financeiro.configuracoes.regua.ver",
+          tab: "cobranca",
           label: "Régua de cobrança",
           // Onde: ?aba=cobranca — SettingsRegua (settings-tabs.tsx:109; regua_cobranca; prévia
           // previewBillingReminders page.tsx:28) · Hoje: admin/configuracoes/page.tsx:25
@@ -1108,6 +1111,7 @@ export const FINANCEIRO = {
         },
         {
           key: "financeiro.configuracoes.canais.ver",
+          tab: "cobranca",
           label: "Canais de cobrança",
           // Onde: ?aba=cobranca — SettingsCobrancaCanais (settings-tabs.tsx:110; cobranca_canais) · Hoje:
           // admin/configuracoes/page.tsx:25
@@ -1115,6 +1119,7 @@ export const FINANCEIRO = {
         },
         {
           key: "financeiro.configuracoes.integracao-bancaria.ver",
+          tab: "cobranca",
           label: "Integração bancária e baixa automática",
           // Onde: ?aba=cobranca — SettingsFinanceiroBaixa (settings-tabs.tsx:111; financeiro_baixa) + status
           // honesto do provedor (integrations/status.ts:205-228; billing-provider.ts: só manual) + conciliação
@@ -1124,6 +1129,7 @@ export const FINANCEIRO = {
         },
         {
           key: "financeiro.configuracoes.contas-a-pagar.ver",
+          tab: "contas-a-pagar",
           label: "Contas a pagar (parâmetros)",
           // Onde: ?aba=contas-a-pagar — SettingsContasAPagar (settings-tabs.tsx:114-116; contas_a_pagar) ·
           // Hoje: admin/configuracoes/page.tsx:25

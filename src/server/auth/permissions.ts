@@ -17,6 +17,7 @@ import {
   PERMISSION_NODES,
   SCOPE_KINDS,
   SCREENS,
+  SCREEN_BY_KEY,
   MODULE_KEYS,
   MODULE_BY_KEY,
   deriveSubject,
@@ -96,22 +97,47 @@ export function defaultScopeFor(scope: ScopeDef, subject: RuleSubject): ScopeKin
   return [...allowed].sort((a, b) => SCOPE_ORDER[a] - SCOPE_ORDER[b])[0] ?? "meus";
 }
 
+/**
+ * Ajustes saneados: só chaves PRÓPRIAS do documento (Object.keys ignora a cadeia de protótipos — um mapa gravado com
+ * a chave "__proto__" vira protótipo no SDK do Firestore e não pode conceder nada), só chaves do catálogo com valor
+ * booleano e só escopos válidos de telas existentes. Devolve objetos sem protótipo.
+ */
+export function sanitizeAdjustments(adjustments: PermissionAdjustments | null | undefined): { grants: Record<string, boolean>; scopes: Record<string, ScopeKind> } {
+  const grants = Object.create(null) as Record<string, boolean>;
+  const scopes = Object.create(null) as Record<string, ScopeKind>;
+  const rawGrants = adjustments?.grants;
+  if (rawGrants && typeof rawGrants === "object") {
+    for (const key of Object.keys(rawGrants)) {
+      const value = rawGrants[key];
+      if (NODE_BY_KEY.has(key) && typeof value === "boolean") grants[key] = value;
+    }
+  }
+  const rawScopes = adjustments?.scopes;
+  if (rawScopes && typeof rawScopes === "object") {
+    for (const key of Object.keys(rawScopes)) {
+      const value = rawScopes[key];
+      if (SCREEN_BY_KEY.has(key) && isScopeKind(value)) scopes[key] = value;
+    }
+  }
+  return { grants, scopes };
+}
+
 /** Resolve as permissões efetivas de um usuário (puro). */
 export function resolvePermissions(user: PermissionSubjectInput, options: ResolveOptions = {}): EffectivePermissions {
   const subject = deriveSubject({ id: user.id, role: user.role, departmentId: asDepartment(user.departmentId), managedDepartments: user.managedDepartments });
   const active = normalizeActiveModules(options.organization?.activeModules);
-  const exceptionGrants = options.userOverride?.grants ?? {};
-  const profileGrants = options.roleProfile?.grants ?? {};
+  const exception = sanitizeAdjustments(options.userOverride);
+  const profile = sanitizeAdjustments(options.roleProfile);
+  const exceptionGrants = exception.grants;
+  const profileGrants = profile.grants;
 
   const values = new Map<string, boolean>();
   const origins = new Map<string, PermissionOrigin>();
   const visiting = new Set<string>();
 
   const own = (key: string): { value: boolean; origin: PermissionOrigin } => {
-    const exception = exceptionGrants[key];
-    if (typeof exception === "boolean") return { value: exception, origin: "excecao" };
-    const profile = profileGrants[key];
-    if (typeof profile === "boolean") return { value: profile, origin: "perfil" };
+    if (Object.hasOwn(exceptionGrants, key)) return { value: exceptionGrants[key], origin: "excecao" };
+    if (Object.hasOwn(profileGrants, key)) return { value: profileGrants[key], origin: "perfil" };
     const node = NODE_BY_KEY.get(key);
     return { value: node ? evaluateRule(node.rule, subject, { can: effective }) : false, origin: "padrao" };
   };
@@ -168,9 +194,9 @@ export function resolvePermissions(user: PermissionSubjectInput, options: Resolv
     if (!def.allowed) return undefined;
     const fallback = defaultScopeFor(def, subject);
     if (def.fixed) return fallback;
-    const exception = options.userOverride?.scopes?.[screen.key];
-    const profile = options.roleProfile?.scopes?.[screen.key];
-    const chosen = isScopeKind(exception) ? exception : isScopeKind(profile) ? profile : fallback;
+    const fromException = Object.hasOwn(exception.scopes, screen.key) ? exception.scopes[screen.key] : undefined;
+    const fromProfile = Object.hasOwn(profile.scopes, screen.key) ? profile.scopes[screen.key] : undefined;
+    const chosen = fromException ?? fromProfile ?? fallback;
     return clampScope(chosen, def.allowed);
   };
   for (const screen of SCREENS) {
@@ -267,19 +293,56 @@ function matches(entry: RouteEntry, parts: string[]): boolean {
   return entry.segments.every((seg, i) => seg.startsWith("[") || seg === parts[i]);
 }
 
-/** Nó do catálogo dono de um href interno (sem query/hash), ou null. */
+function safeDecode(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/** Nó do catálogo dono de um href interno (a query e o hash não entram no casamento), ou null. */
 export function screenForHref(href: string): { pattern: string; keys: readonly PermissionKey[] } | null {
   const path = href.split(/[?#]/)[0] || "/";
   if (!path.startsWith("/")) return null;
-  const parts = path.split("/").filter(Boolean).map((p) => decodeURIComponent(p));
+  const parts: string[] = [];
+  for (const raw of path.split("/").filter(Boolean)) {
+    // Percent-encoding malformado ("/vendas/%") não é tela: não visível, sem derrubar a renderização.
+    const decoded = safeDecode(raw);
+    if (decoded === null) return null;
+    parts.push(decoded);
+  }
   routeTable ??= buildRouteTable();
   const entry = routeTable.find((e) => matches(e, parts));
   return entry ? { pattern: entry.pattern, keys: entry.keys } : null;
 }
 
-/** O usuário pode abrir este href interno? Href sem tela no catálogo = não visível. */
+/** Valor de `?aba=` do href (ou undefined). */
+function tabOf(href: string): string | undefined {
+  const query = href.split("#")[0].split("?")[1];
+  if (!query) return undefined;
+  return new URLSearchParams(query).get("aba") || undefined;
+}
+
+/** Seções (das telas aceitas pela rota) que controlam a aba informada. */
+function sectionKeysForTab(keys: readonly PermissionKey[], tab: string): PermissionKey[] {
+  const out: PermissionKey[] = [];
+  for (const key of keys) {
+    const screen = key.endsWith(".ver") ? SCREEN_BY_KEY.get(key.slice(0, -".ver".length)) : undefined;
+    for (const section of screen?.sections ?? []) if (section.tab === tab) out.push(section.key as PermissionKey);
+  }
+  return out;
+}
+
+/**
+ * O usuário pode abrir este href interno? Href sem tela no catálogo = não visível. Com `?aba=<x>`, quando a tela tem
+ * seção dessa aba (SectionDef.tab), exige também uma das seções; aba sem seção no catálogo vale como a própria tela.
+ */
 export function canSeeHref(user: PermissionHolder, href: string): boolean {
   const found = screenForHref(href);
-  if (!found) return false;
-  return canAny(user, found.keys);
+  if (!found || !canAny(user, found.keys)) return false;
+  const tab = tabOf(href);
+  if (!tab) return true;
+  const sections = sectionKeysForTab(found.keys, tab);
+  return sections.length === 0 || canAny(user, sections);
 }

@@ -99,6 +99,11 @@ export interface SectionDef {
   readonly rule: AccessRule;
   /** Páginas próprias da seção (ex.: /financeiro/comissoes/regras). */
   readonly routes?: readonly string[];
+  /**
+   * Aba da página da tela (`?aba=<tab>`) que esta seção controla. canSeeHref de um href com `?aba=` exige, além da
+   * tela, uma das seções daquela aba (várias seções podem dividir a mesma aba). Aba sem seção = só a tela.
+   */
+  readonly tab?: string;
   /** Destino da negação quando diferente do padrão. */
   readonly redirectTo?: string;
   readonly viewGuards?: readonly ViewGuard[];

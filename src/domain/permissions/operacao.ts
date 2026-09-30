@@ -272,12 +272,14 @@ export const OPERACAO = {
         },
         {
           key: "operacao.clientes.produtos.ver",
+          tab: "produtos",
           label: "Produtos contratados",
           // Onde: ?aba=produtos — TabProdutos (page.tsx:67) · Hoje: nenhuma
           rule: "all",
         },
         {
           key: "operacao.clientes.financeiro.ver",
+          tab: "financeiro",
           label: "Financeiro do cliente (contratos e cobranças)",
           // Onde: ?aba=financeiro — TabFinanceiro (page.tsx:68); valores sob financeiro.valores.ver (A13);
           // links para /financeiro/contratos/[id] por canSeeHref · Hoje: nenhuma: a aba renderiza até para
@@ -286,6 +288,7 @@ export const OPERACAO = {
         },
         {
           key: "operacao.clientes.suporte.ver",
+          tab: "suporte",
           label: "Atendimentos",
           // Onde: ?aba=suporte — TabSuporte (page.tsx:83) · Hoje: aba sem guarda; botão 'Novo atendimento' só
           // se canAccessModule(user,'suporte') (clientes/[id]/page.tsx:47-49, 83, 90) → passa a
@@ -294,24 +297,28 @@ export const OPERACAO = {
         },
         {
           key: "operacao.clientes.tarefas.ver",
+          tab: "tarefas",
           label: "Tarefas do cliente",
           // Onde: ?aba=tarefas — TabTarefas (page.tsx:85); listTasksByClient · Hoje: nenhuma
           rule: "all",
         },
         {
           key: "operacao.clientes.timeline.ver",
+          tab: "timeline",
           label: "Histórico",
           // Onde: ?aba=timeline — TabTimeline (page.tsx:65) · Hoje: nenhuma
           rule: "all",
         },
         {
           key: "operacao.clientes.documentos.ver",
+          tab: "documentos",
           label: "Documentos",
           // Onde: ?aba=documentos — TabDocumentos (page.tsx:84) · Hoje: nenhuma
           rule: "all",
         },
         {
           key: "operacao.clientes.comercial.ver",
+          tab: "comercial",
           label: "Comercial (oportunidades e propostas do cliente)",
           // Onde: ?aba=comercial — TabComercial (page.tsx:66) · Hoje: nenhuma; mostra todas as oportunidades
           // do cliente sem canSeeOpportunity (decidir se aplica o escopo de vendas.oportunidades)
@@ -319,12 +326,14 @@ export const OPERACAO = {
         },
         {
           key: "operacao.clientes.implantacao.ver",
+          tab: "implantacao",
           label: "Implantação",
           // Onde: ?aba=implantacao — TabImplantacao (page.tsx:69); getClientImplementation · Hoje: nenhuma
           rule: "all",
         },
         {
           key: "operacao.clientes.cs.ver",
+          tab: "cs",
           label: "CS (saúde, planos, painel de CS)",
           // Onde: ?aba=cs — TabCs + ClientCsPanel (page.tsx:70-82); sugestões de CS só com
           // cs.carteira.sugestoes.ver (hoje canAccessModule cs, page.tsx:76) · Hoje: aba sem guarda; ações do

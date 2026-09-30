@@ -205,6 +205,11 @@ async function main(): Promise<void> {
   for (const prof of profiles) {
     const okId = (prof.kind === "role" && prof.role && prof.id === `role_${prof.role}` && (ROLE_KEYS as readonly string[]).includes(prof.role)) || (prof.kind === "user" && prof.userId && prof.id === `user_${prof.userId}` && knownUsers.has(prof.userId));
     if (!okId) problems.push(`(s) perfil ${prof.id} com id/kind inconsistente`);
+    // Chave "__proto__" gravada no mapa vira protótipo ao decodificar (Object.entries não a enxerga): acusar.
+    for (const field of ["grants", "scopes"] as const) {
+      const value = prof[field];
+      if (value !== undefined && (typeof value !== "object" || value === null || Object.getPrototypeOf(value) !== Object.prototype)) problems.push(`(s) perfil ${prof.id}: ${field} com protótipo alterado ou tipo inválido`);
+    }
     for (const [key, value] of Object.entries(prof.grants ?? {})) {
       if (!isPermissionKey(key)) problems.push(`(s) perfil ${prof.id}: chave fora do catálogo ${key}`);
       if (typeof value !== "boolean") problems.push(`(s) perfil ${prof.id}: valor não booleano em ${key}`);

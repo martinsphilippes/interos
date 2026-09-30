@@ -224,3 +224,27 @@ describe("catálogo — cobertura de páginas", () => {
     }
   });
 });
+
+describe("catálogo — abas (?aba=) controladas por seção", () => {
+  it("cada `tab` existe na página da tela e as abas das telas com seções por aba estão todas modeladas", async () => {
+    const { SETTINGS_TABS } = await import("@/components/admin/admin-model");
+    const { CLIENT_TABS } = await import("@/components/clients/client-tabs");
+    const pageTabs: Record<string, readonly string[]> = {
+      "admin.configuracoes": SETTINGS_TABS,
+      "financeiro.configuracoes": SETTINGS_TABS,
+      "operacao.clientes": CLIENT_TABS.map((t) => t.key),
+    };
+    const modeled = new Set<string>();
+    for (const screen of SCREENS) {
+      for (const section of screen.sections) {
+        if (!section.tab) continue;
+        expect(pageTabs[screen.key], `${section.key}: tela sem lista de abas conhecida`).toBeDefined();
+        expect(pageTabs[screen.key], section.key).toContain(section.tab);
+        modeled.add(`${pageTabs[screen.key] === SETTINGS_TABS ? "configuracoes" : screen.key}:${section.tab}`);
+      }
+    }
+    // Toda aba das páginas acima tem seção (exceto a aba padrão "visao" do Cliente 360, que é a própria tela).
+    for (const tab of SETTINGS_TABS) expect(modeled.has(`configuracoes:${tab}`), `aba ${tab} de /admin/configuracoes sem seção`).toBe(true);
+    for (const { key } of CLIENT_TABS) if (key !== "visao") expect(modeled.has(`operacao.clientes:${key}`), `aba ${key} do Cliente 360 sem seção`).toBe(true);
+  });
+});

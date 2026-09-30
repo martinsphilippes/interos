@@ -191,6 +191,62 @@ describe("can/canSeeHref com e sem permissions anexadas", () => {
     expect(canSeeHref(finOnly, "/admin/produtos")).toBe(false);
   });
 
+  it("canSeeHref com ?aba= exige a seção da aba; aba sem seção vale como a tela", () => {
+    // Só Configurações Financeiras (gate): vê a aba do gate, não a de SLA nem a de cobrança.
+    const finGate = asCurrentUser(anapaula, { userOverride: { grants: { "admin.acessar": true, "financeiro.configuracoes.ver": true, "financeiro.configuracoes.gate.ver": true } } });
+    expect(canSeeHref(finGate, "/admin/configuracoes?aba=gate-financeiro")).toBe(true);
+    expect(canSeeHref(finGate, "/admin/configuracoes?aba=sla")).toBe(false);
+    expect(canSeeHref(finGate, "/admin/configuracoes?aba=cobranca")).toBe(false);
+    const admin = asCurrentUser(hercules);
+    expect(canSeeHref(admin, "/admin/configuracoes?aba=sla")).toBe(true);
+    // Cliente 360: aba negada por exceção some; as outras continuam.
+    const vend = asCurrentUser(vinicius, { userOverride: { grants: { "operacao.clientes.financeiro.ver": false } } });
+    expect(canSeeHref(vend, "/clientes/c1?aba=financeiro")).toBe(false);
+    expect(canSeeHref(vend, "/clientes/c1?aba=suporte#topo")).toBe(true);
+    expect(canSeeHref(vend, "/clientes/c1")).toBe(true);
+    // Aba que o catálogo não modela (a página ignora): decide a tela.
+    expect(canSeeHref(asCurrentUser(vinicius), "/financeiro/comissoes?aba=qualquer")).toBe(true);
+  });
+
+  it("canSeeHref com percent-encoding malformado devolve false (não lança)", () => {
+    const admin = asCurrentUser(hercules);
+    expect(canSeeHref(admin, "/vendas/%")).toBe(false);
+    expect(canSeeHref(admin, "/financeiro/contratos/%E0%A4%A")).toBe(false);
+    expect(canSeeHref(admin, "/financeiro/contratos/ctr%20001")).toBe(true);
+  });
+});
+
+describe("ajustes gravados com chaves perigosas", () => {
+  /** Monta o mapa como o SDK do Firestore decodifica (`obj[prop] = valor`): "__proto__" vira o protótipo. */
+  function decodedLikeFirestore(entries: Record<string, unknown>): Record<string, boolean> {
+    const obj: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(entries)) obj[k] = v;
+    return obj as Record<string, boolean>;
+  }
+
+  it("mapa com '__proto__' não concede nada (nem por perfil, nem por exceção)", () => {
+    const grants = decodedLikeFirestore({});
+    (grants as Record<string, unknown>)["__proto__"] = { "admin.acessar": true, "admin.acessos.gerir": true, "admin.usuarios.editar": true };
+    expect(Object.keys(grants)).toEqual([]);
+    expect((grants as Record<string, boolean>)["admin.acessar"]).toBe(true); // o perigo: leitura indexada enxerga
+    for (const options of [{ roleProfile: { grants } }, { userOverride: { grants } }]) {
+      const perms = resolvePermissions(vinicius, options);
+      expect([perms.has("admin.acessar"), perms.has("admin.acessos.gerir" as PermissionKey), perms.has("admin.usuarios.editar" as PermissionKey)]).toEqual([false, false, false]);
+      expect(perms.origin["admin.acessar"]).toBe("padrao");
+    }
+  });
+
+  it("escopo herdado do protótipo, valor não booleano ou tela desconhecida são ignorados", () => {
+    const scopes: Record<string, unknown> = {};
+    scopes["__proto__"] = { "vendas.oportunidades": "empresa" };
+    const perms = resolvePermissions(vinicius, {
+      userOverride: { grants: { "financeiro.contas-a-pagar.ver": "true" as unknown as boolean }, scopes: scopes as Record<string, "empresa"> },
+      roleProfile: { scopes: { "tela.inexistente": "empresa" } },
+    });
+    expect(perms.has("financeiro.contas-a-pagar.ver")).toBe(false);
+    expect(perms.scopes["vendas.oportunidades" as keyof typeof perms.scopes]).toBe(resolvePermissions(vinicius).scopes["vendas.oportunidades" as keyof typeof perms.scopes]);
+  });
+
   it("perfil negado some do menu na hora (T9 no nível do núcleo)", () => {
     const user = asCurrentUser(vinicius, { roleProfile: { grants: { "vendas.visitas.ver": false } } });
     const hrefs = visibleNavigation(user).flatMap((s) => s.items.map((i) => i.href));

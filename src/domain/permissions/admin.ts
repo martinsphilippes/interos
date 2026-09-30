@@ -342,42 +342,49 @@ export const ADMIN = {
       sections: [
         {
           key: "admin.configuracoes.horario.ver",
+          tab: "horario",
           label: "Horário comercial",
           // Onde: ?aba=horario (padrão) — horario_comercial · Hoje: admin/configuracoes/page.tsx:25
           rule: { role: "admin" },
         },
         {
           key: "admin.configuracoes.feriados.ver",
+          tab: "feriados",
           label: "Feriados",
           // Onde: ?aba=feriados — feriados · Hoje: admin/configuracoes/page.tsx:25
           rule: { role: "admin" },
         },
         {
           key: "admin.configuracoes.metas.ver",
+          tab: "metas",
           label: "Metas de referência",
           // Onde: ?aba=metas — metas_referencia · Hoje: admin/configuracoes/page.tsx:25
           rule: { role: "admin" },
         },
         {
           key: "admin.configuracoes.lead-scoring.ver",
+          tab: "lead-scoring",
           label: "Lead scoring",
           // Onde: ?aba=lead-scoring — lead_scoring · Hoje: admin/configuracoes/page.tsx:25
           rule: { role: "admin" },
         },
         {
           key: "admin.configuracoes.health-score.ver",
+          tab: "health-score",
           label: "Health score",
           // Onde: ?aba=health-score — health_score · Hoje: admin/configuracoes/page.tsx:25
           rule: { role: "admin" },
         },
         {
           key: "admin.configuracoes.oportunidades.ver",
+          tab: "oportunidades",
           label: "Oportunidades",
           // Onde: ?aba=oportunidades — oportunidade · Hoje: admin/configuracoes/page.tsx:25
           rule: { role: "admin" },
         },
         {
           key: "admin.configuracoes.entrega.ver",
+          tab: "entrega",
           label: "Go-live e ativação",
           // Onde: ?aba=entrega — go_live e cs_ativacao (writer paralelo de go_live:
           // implantacao.go-live.configurar) · Hoje: admin/configuracoes/page.tsx:25
@@ -385,6 +392,7 @@ export const ADMIN = {
         },
         {
           key: "admin.configuracoes.performance.ver",
+          tab: "performance",
           label: "Gamificação e prêmios",
           // Onde: ?aba=performance — gamificacao, premios_vendas, gamificacao.sequencia · Hoje:
           // admin/configuracoes/page.tsx:25
@@ -392,6 +400,7 @@ export const ADMIN = {
         },
         {
           key: "admin.configuracoes.saude-indice.ver",
+          tab: "saude-indice",
           label: "Saúde da operação e índice de desempenho",
           // Onde: ?aba=saude-indice — formulários que chamam kpis/actions.ts (salvar exige
           // gestao.cockpit.configurar / performance.meu-desempenho.configurar) · Hoje:
@@ -400,6 +409,7 @@ export const ADMIN = {
         },
         {
           key: "admin.configuracoes.sla.ver",
+          tab: "sla",
           label: "Regras de SLA",
           // Onde: ?aba=sla — settings-sla-rules.tsx (coleção sla_rules) · Hoje:
           // admin/configuracoes/page.tsx:25
