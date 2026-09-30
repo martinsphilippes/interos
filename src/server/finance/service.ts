@@ -382,6 +382,15 @@ export async function updateContractItems(contractId: string, items: ContractIte
   const audit = auditChanges<Contract>(contract, next, ["items", "setupTotal", "monthlyTotal", "hardwareTotal"]);
   // D4: produtos do cliente acompanham os itens do contrato de venda enquanto não estão ativos.
   const synced = contract.opportunityId || (await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["contractId", "==", contract.id]] })).length > 0 ? await syncClientProductsFromContract(next, actor) : null;
+  // D4: comissões ainda não adquiridas acompanham os itens do contrato (motor v2, idempotente).
+  if (contract.sellerId || contract.opportunityId) {
+    try {
+      const { reconcileContractCommissions } = await import("@/server/commissions/engine");
+      await reconcileContractCommissions(contract.id, actor);
+    } catch (error) {
+      console.error(`[financeiro] falha ao recalcular as comissões do contrato ${contract.id}`, error);
+    }
+  }
   if (!version.versioned) {
     await emitEvent({
       type: "client.updated",

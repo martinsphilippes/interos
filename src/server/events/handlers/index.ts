@@ -16,6 +16,10 @@
  * - customer.activated: Workflow conclui CS e abre Suporte.
  * - support.csat.received: Suporte (tarefa de investigação para nota baixa) e CS (recalcula a saúde).
  *
+ * Comissões v2 (circuito de receita): contract.signed, payment.approved, payment.overdue, contract.cancelled e
+ * financial.released reconciliam as comissões do contrato (motor idempotente em src/server/commissions/engine.ts),
+ * antes do construtor de processos e das automações.
+ *
  * Ondas 4 e 5 — gestão, performance e automações:
  * - KPIs: eventos que mudam números invalidam o cache do motor de indicadores, emitem `kpi.updated` (1x/min) e
  *   verificam as metas pessoais (`goal.achieved`).
@@ -35,6 +39,7 @@ import { registerCsHandlers } from "./cs";
 import { registerSupportHandlers } from "./support";
 import { registerKpiHandlers } from "./kpis";
 import { registerGamificationHandlers } from "./gamification";
+import { registerCommissionHandlers } from "./commissions";
 import { registerProcessEngineHandlers } from "./process-engine";
 import { registerAutomationHandlers } from "./automations";
 
@@ -54,6 +59,7 @@ export function ensureHandlersRegistered(): void {
   registerSupportHandlers(registerHandler);
   registerKpiHandlers(registerHandler);
   registerGamificationHandlers(registerHandler);
+  registerCommissionHandlers(registerHandler);
   registerProcessEngineHandlers(registerHandler);
   registerAutomationHandlers(registerHandler);
 }

@@ -431,6 +431,19 @@ async function contratosAlertas(now: Date): Promise<SweepOutcome> {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Comissões (src/server/commissions/engine.ts)
+// ---------------------------------------------------------------------------
+
+async function comissoes(now: Date): Promise<SweepOutcome> {
+  const { reconcileCommissions } = await import("@/server/commissions/engine");
+  const r = await reconcileCommissions({ now });
+  return {
+    summary: `${r.contracts} contrato(s) reavaliado(s) · ${r.created} comissão(ões) criada(s) · ${r.released} elegível(is) · ${r.inGrace} em carência · ${r.awaiting} aguardando recebimento · ${r.cancelled} cancelada(s) · ${r.payables} título(s) gerado(s)`,
+    data: { ...r, commissionIds: r.commissionIds.slice(0, 50) },
+  };
+}
+
 export const SWEEPS: Record<SweepKey, SweepFn> = {
   sla_alerts: slaAlerts,
   followup_vendas: followupVendas,
@@ -444,6 +457,7 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   processos_esperas: processosEsperas,
   cobrancas_vencidas: cobrancasVencidas,
   contratos_alertas: contratosAlertas,
+  comissoes,
 };
 
 /** Campos antigos (dos módulos) que também contam como "última execução" da varredura. */

@@ -70,6 +70,7 @@ export const SWEEP_KEYS = [
   "processos_esperas",
   "cobrancas_vencidas",
   "contratos_alertas",
+  "comissoes",
 ] as const;
 export type SweepKey = (typeof SWEEP_KEYS)[number];
 
@@ -87,6 +88,12 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   contratos_alertas: {
     label: "Contratos parados",
     description: "Financeiro: contrato aguardando assinatura além do prazo gera follow-up ao vendedor; pago e não liberado gera tarefa ao gestor financeiro; liberado com implantação não iniciada avisa a Implantação (prazos em Configurações › Gate financeiro).",
+    schedule: "diaria",
+  },
+  comissoes: {
+    label: "Comissões",
+    description:
+      "Motor de comissões: reavalia as comissões pendentes de todos os contratos de venda — carência cumprida vira Elegível (com título em Contas a Pagar), cobrança vencida deixa a comissão aguardando recebimento e contrato cancelado cancela o que não foi adquirido. Idempotente.",
     schedule: "diaria",
   },
   kpi_snapshots: { label: "Fotografia dos indicadores", description: "Grava os snapshots do motor de KPIs do mês corrente e, nos 3 primeiros dias do mês, o fechamento do mês anterior.", schedule: "diaria" },
@@ -340,6 +347,8 @@ const EVENT_DOMAIN_LABELS: Record<string, string> = {
   kpi: "Performance",
   goal: "Performance",
   commission: "Performance",
+  commission_rule: "Financeiro",
+  payable: "Financeiro",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",
