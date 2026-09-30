@@ -44,6 +44,8 @@ export interface ContractSummaryData {
   endDate?: string;
   cancelledAt?: string;
   cancelReason?: string;
+  /** Valores ocultos ("Visualizar valores", A13): os números chegam zerados e o card mostra "Restrito". */
+  valuesHidden?: boolean;
 }
 
 export interface SummaryContext {
@@ -100,5 +102,21 @@ export function buildContractSummary(contract: Contract, ctx: SummaryContext = {
     endDate: contract.endDate,
     cancelledAt: contract.cancelledAt,
     cancelReason: contract.cancelReason,
+  };
+}
+
+/**
+ * Resumo sem valores (A13): quem monta o resumo no servidor chama isto quando o usuário não tem "Visualizar valores"
+ * — os números não saem do servidor e o card mostra "Restrito". A condição de pagamento (texto livre) é omitida.
+ */
+export function redactContractSummary(summary: ContractSummaryData): ContractSummaryData {
+  return {
+    ...summary,
+    items: summary.items.map((i) => ({ ...i, setupValue: 0, monthlyValue: 0, hardwareValue: 0 })),
+    monthlyTotal: 0,
+    setupTotal: 0,
+    hardwareTotal: 0,
+    paymentCondition: summary.paymentCondition ? "Restrito" : undefined,
+    valuesHidden: true,
   };
 }

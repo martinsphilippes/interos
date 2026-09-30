@@ -70,8 +70,11 @@ registerFinanceHandlers(registerHandler);
 
 export { SYSTEM_ACTOR };
 
-/** Ator com papel (para exceções do gate, que só gestores/admin podem usar). */
-export type FinanceActor = UserRef & { role?: RoleKey; isManager?: boolean };
+/**
+ * Ator com papel (para exceções do gate). `canReleaseWithPendency` = chave `financeiro.contratos.liberar-com-pendencia`
+ * resolvida pela action; sem ela (chamadores antigos), vale `isManager` (regra padrão da chave).
+ */
+export type FinanceActor = UserRef & { role?: RoleKey; isManager?: boolean; canReleaseWithPendency?: boolean };
 
 const TYPE_LABEL: Record<Billing["type"], string> = { setup: "Adesão", mensalidade: "Mensalidade", hardware: "Hardware", servico: "Serviço" };
 const OPEN_TASK = new Set<Task["status"]>(["aberta", "em_andamento", "aguardando"]);
@@ -1793,7 +1796,7 @@ export async function releaseContract(contractId: string, actor: FinanceActor, e
     const missing = gate.checks.filter((c) => !c.ok).map((c) => c.label.toLowerCase());
     if (!reason) throw new Error(`Critérios do gate financeiro não cumpridos: ${missing.join(", ")}`);
     if (!settings.permiteExcecaoGestor) throw new Error("A configuração atual não permite liberar com pendência");
-    if (!actor.isManager) throw new Error("Só gestores ou administradores podem liberar com pendência");
+    if (!(actor.canReleaseWithPendency ?? actor.isManager)) throw new Error("Seu perfil não permite liberar com pendência");
     exception = true;
   }
 

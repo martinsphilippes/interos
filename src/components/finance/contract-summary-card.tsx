@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import Link from "next/link";
+import { ScreenLink } from "@/components/auth/access-provider";
 import { ClipboardList, FileText } from "lucide-react";
 import { SALE_PAYMENT_METHOD_LABELS, splitInstallments } from "@/domain/sale-closing";
 import { FINANCIAL_STATUS_LABELS, RECURRENCE_LABELS } from "@/server/finance/schemas";
@@ -9,6 +9,7 @@ import { CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "@/components/cl
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ContractSummaryData, SummaryBillingState } from "./contract-summary";
+import { RESTRICTED_HINT, RESTRICTED_LABEL } from "./values";
 
 export type { ContractSummaryData } from "./contract-summary";
 
@@ -53,10 +54,12 @@ function allRowsOf(s: ContractSummaryData, print: boolean): Row[] {
       ? `Assinado${s.signature.signedAt ? ` em ${formatDate(s.signature.signedAt)}` : ""}`
       : `Aguardando assinatura (${s.signature.signed} de ${s.signature.total})`;
   const implementation = s.implementationRequired === undefined ? NOT_INFORMED : s.implementationRequired ? "Sim" : "Não contratada";
+  // Sem "Visualizar valores" (A13) os números chegam zerados: mostra "Restrito" (nunca R$ 0,00).
+  const hidden = Boolean(s.valuesHidden);
   const rows: Row[] = [
-    { label: "Mensalidade", value: s.recurrence === "unico" ? "Sem recorrência" : `${formatCurrency(s.monthlyTotal)}/mês${s.recurrence === "anual" ? " (cobrança anual)" : ""}`, essential: true },
-    { label: "Adesão", value: s.setupTotal > 0 ? `${formatCurrency(s.setupTotal)}${parcels.length > 1 ? ` em ${parcels.length}x de ${formatCurrency(parcels[0])}` : " à vista"}` : formatCurrency(0), essential: true },
-    { label: "Hardware", value: formatCurrency(s.hardwareTotal), essential: s.hardwareTotal > 0 },
+    { label: "Mensalidade", value: s.recurrence === "unico" ? "Sem recorrência" : hidden ? RESTRICTED_LABEL : `${formatCurrency(s.monthlyTotal)}/mês${s.recurrence === "anual" ? " (cobrança anual)" : ""}`, essential: true },
+    { label: "Adesão", value: hidden ? RESTRICTED_LABEL : s.setupTotal > 0 ? `${formatCurrency(s.setupTotal)}${parcels.length > 1 ? ` em ${parcels.length}x de ${formatCurrency(parcels[0])}` : " à vista"}` : formatCurrency(0), essential: true },
+    { label: "Hardware", value: hidden ? RESTRICTED_LABEL : formatCurrency(s.hardwareTotal), essential: !hidden && s.hardwareTotal > 0 },
     { label: "Vencimento", value: `Todo dia ${s.billingDay}${s.nextDueDate ? ` · próximo ${formatDate(s.nextDueDate)}` : ""}`, essential: true },
     { label: "1º vencimento", value: s.firstDueDate ? formatDate(s.firstDueDate) : "Definido ao gerar as cobranças" },
     { label: "Forma de pagamento", value: s.paymentMethod ? SALE_PAYMENT_METHOD_LABELS[s.paymentMethod] : NOT_INFORMED, essential: true },
@@ -92,8 +95,8 @@ function Items({ summary, compact }: { summary: ContractSummaryData; compact?: b
             {i.productName}
             {i.discountPct > 0 ? <span className="text-xs font-normal text-muted"> · {i.discountPct}% desc.</span> : null}
           </span>
-          <span className="tabular-nums text-xs text-muted">
-            {[i.monthlyValue > 0 ? `${formatCurrency(i.monthlyValue)}/mês` : null, i.setupValue > 0 ? `adesão ${formatCurrency(i.setupValue)}` : null, i.hardwareValue > 0 ? `hardware ${formatCurrency(i.hardwareValue)}` : null].filter(Boolean).join(" · ") || "—"}
+          <span className="tabular-nums text-xs text-muted" title={summary.valuesHidden ? RESTRICTED_HINT : undefined}>
+            {summary.valuesHidden ? RESTRICTED_LABEL : [i.monthlyValue > 0 ? `${formatCurrency(i.monthlyValue)}/mês` : null, i.setupValue > 0 ? `adesão ${formatCurrency(i.setupValue)}` : null, i.hardwareValue > 0 ? `hardware ${formatCurrency(i.hardwareValue)}` : null].filter(Boolean).join(" · ") || "—"}
           </span>
         </li>
       ))}
@@ -127,9 +130,9 @@ export function ContractSummaryCard({ summary, variant = "card", title = "Resumo
       <span className="flex flex-wrap items-center gap-3">
         {footer}
         {(showDocumentLink ?? !print) ? (
-          <Link href={`/financeiro/contratos/${summary.id}/documento`} className="inline-flex items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
+          <ScreenLink href={`/financeiro/contratos/${summary.id}/documento`} className="inline-flex items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
             <FileText className="size-4" /> Ver documento
-          </Link>
+          </ScreenLink>
         ) : null}
       </span>
     ) : null;
