@@ -1,5 +1,6 @@
-import { NAVIGATION, QUICK_ACTIONS, type RoleKey } from "@/domain/constants";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import type { RoleKey } from "@/domain/constants";
+import { requireUser } from "@/server/auth/session";
+import { visibleNavigation, visibleQuickActions } from "@/server/auth/navigation";
 import { listNotifications } from "@/server/notifications";
 import { AppShell, type ShellUser } from "@/components/layout/app-shell";
 
@@ -8,13 +9,9 @@ const PRESENCE_ROLES: readonly RoleKey[] = ["vendas", "suporte", "cs", "implanta
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
-  const sections = NAVIGATION.filter((section) => canAccessModule(user, section.key)).map((section) => ({
-    ...section,
-    items: section.items.filter((item) => user.isAdmin || !item.roles || item.roles.includes(user.role)),
-  }));
-  const quickActions = QUICK_ACTIONS.filter(
-    (action) => canAccessModule(user, action.module) && (user.isAdmin || !action.roles || action.roles.includes(user.role)),
-  );
+  // Menu e atalhos pelas permissões efetivas (catálogo de acessos): tela visível ∧ regra do item/atalho.
+  const sections = visibleNavigation(user);
+  const quickActions = visibleQuickActions(user);
   const showPresence = user.isManager || PRESENCE_ROLES.includes(user.role);
 
   let unreadCount = 0;

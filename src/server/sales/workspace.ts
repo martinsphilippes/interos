@@ -9,7 +9,7 @@ import "server-only";
  * wa.me/mailto: com o texto. Ligações são sempre registro manual (não há adaptador VoIP). Cada registro
  * emite o evento correspondente (timeline do cliente, CS, automações).
  */
-import { canAccessModule } from "@/server/auth/session";
+import { resolvePermissionsForUser } from "@/server/auth/session";
 import { create, getById, list, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { MANUAL, recordCommunication, sendOrRecord } from "@/server/integrations/communications";
@@ -178,7 +178,9 @@ export async function transferOpportunity(input: { opportunityId: string; ownerI
     getById<Client>(COLLECTIONS.clients, opp.clientId),
   ]);
   if (!newOwner || newOwner.active === false) throw new Error("Vendedor não encontrado ou inativo");
-  if (!canAccessModule({ role: newOwner.role, isAdmin: newOwner.role === "admin" }, "vendas")) throw new Error(`${newOwner.name} não tem acesso ao módulo de Vendas`);
+  // Permissão de OUTRO usuário (A28): perfil, exceções e módulos ativos do novo responsável.
+  const newOwnerPermissions = await resolvePermissionsForUser(newOwner);
+  if (!newOwnerPermissions?.has("vendas.acessar")) throw new Error(`${newOwner.name} não tem acesso ao módulo de Vendas`);
 
   const now = nowIso();
   await update<Opportunity>(COLLECTIONS.opportunities, opp.id, { ownerId: newOwner.id, lastActivityAt: now });

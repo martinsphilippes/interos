@@ -3,7 +3,9 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
+import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile } from "../../src/domain/types";
+import { ROLE_KEYS } from "../../src/domain/constants";
+import { MODULE_KEYS, SCREEN_BY_KEY, isPermissionKey, type ScopeKind } from "../../src/domain/permissions";
 import { col, counterId, list } from "../../src/server/db";
 import { commissionIdFor } from "../../src/server/commissions/store";
 
@@ -197,12 +199,37 @@ async function main(): Promise<void> {
   for (const u of users) if (typeof u.active !== "boolean") problems.push(`(r) usuário ${u.id} sem active booleano`);
   console.log(`Usuários: ${users.length} (${users.filter((u) => u.active === true).length} ativos)`);
 
+  // (s) permission_profiles: id role_<papel>|user_<uid>, só chaves do catálogo e escopos permitidos pela tela.
+  const profiles = cache.get(COLLECTIONS.permissionProfiles) as PermissionProfile[];
+  const knownUsers = new Set(users.map((u) => u.id));
+  for (const prof of profiles) {
+    const okId = (prof.kind === "role" && prof.role && prof.id === `role_${prof.role}` && (ROLE_KEYS as readonly string[]).includes(prof.role)) || (prof.kind === "user" && prof.userId && prof.id === `user_${prof.userId}` && knownUsers.has(prof.userId));
+    if (!okId) problems.push(`(s) perfil ${prof.id} com id/kind inconsistente`);
+    for (const [key, value] of Object.entries(prof.grants ?? {})) {
+      if (!isPermissionKey(key)) problems.push(`(s) perfil ${prof.id}: chave fora do catálogo ${key}`);
+      if (typeof value !== "boolean") problems.push(`(s) perfil ${prof.id}: valor não booleano em ${key}`);
+    }
+    for (const [screen, kind] of Object.entries(prof.scopes ?? {})) {
+      const allowed = SCREEN_BY_KEY.get(screen)?.scope?.allowed;
+      if (!allowed || !allowed.includes(kind as ScopeKind)) problems.push(`(s) perfil ${prof.id}: escopo ${String(kind)} não permitido em ${screen}`);
+    }
+    if (prof.kind === "user" && !prof.reason) problems.push(`(s) exceção ${prof.id} sem motivo`);
+  }
+  // (t) organização: activeModules (quando presente) só com módulos conhecidos e sempre com inicio e admin.
+  const orgs = cache.get(COLLECTIONS.organizations) as Organization[];
+  for (const org of orgs) {
+    if (org.activeModules === undefined) continue;
+    for (const m of org.activeModules) if (!(MODULE_KEYS as readonly string[]).includes(m)) problems.push(`(t) organização ${org.id}: módulo desconhecido ${m}`);
+    for (const m of ["inicio", "admin"] as const) if (!org.activeModules.includes(m)) problems.push(`(t) organização ${org.id}: módulo ${m} precisa estar ativo`);
+  }
+  console.log(`Perfis de acesso: ${profiles.length} (${profiles.filter((p) => Object.keys(p.grants ?? {}).length || Object.keys(p.scopes ?? {}).length).length} com ajustes); módulos ativos: ${orgs.map((o) => (o.activeModules ? o.activeModules.length : "todos")).join(", ")}`);
+
   const activeSlas = slas.filter((s) => s.status !== "concluido");
   console.log(`SLA ativos: ${activeSlas.length}, violados: ${activeSlas.filter((s) => s.breachedAt).length}`);
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(r): OK");
+    console.log("\nInvariantes (a)-(t): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);

@@ -21,6 +21,7 @@ import type {
   TaskStatus,
   WorkflowStepStatus,
 } from "./constants";
+import type { EffectivePermissions, ModuleKey, PermissionKey, ScopeKind, ScreenKey } from "./permissions";
 
 export const COLLECTIONS = {
   organizations: "organizations",
@@ -94,6 +95,11 @@ export const COLLECTIONS = {
   contractAmendments: "contract_amendments",
   /** Fornecedores (credores de Contas a Pagar) — NÃO é cadastro de clientes. */
   suppliers: "suppliers",
+  /**
+   * Ajustes de acesso (A6): `role_<papel>` = ajustes do perfil; `user_<uid>` = exceções individuais. Somente
+   * servidor (regra `if false`); ausência de documento = regra padrão do catálogo.
+   */
+  permissionProfiles: "permission_profiles",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -143,6 +149,28 @@ export interface Organization extends BaseEntity {
   slug: string;
   timezone: string;
   logoUrl?: string;
+  /**
+   * Módulos ativos na empresa (A8). Ausente = todos. `inicio` e `admin` nunca são desativados. Módulo inativo nega
+   * todo o módulo a todos (admin incluído), sem apagar dados.
+   */
+  activeModules?: ModuleKey[];
+}
+
+/**
+ * Ajustes de acesso (A6), coleção `permission_profiles`. `grants` permite (true) ou nega (false) uma chave do
+ * catálogo; chave ausente = valor do nível mais geral (perfil → regra padrão). `scopes` fixa o escopo de dados de
+ * uma tela, sempre dentro dos escopos permitidos da tela.
+ */
+export interface PermissionProfile extends BaseEntity {
+  /** "role" = perfil (papel), id `role_<papel>`; "user" = exceções de um usuário, id `user_<uid>`. */
+  kind: "role" | "user";
+  role?: RoleKey;
+  userId?: string;
+  grants: Partial<Record<PermissionKey, boolean>>;
+  scopes: Partial<Record<ScreenKey, ScopeKind>>;
+  /** Motivo (obrigatório nas exceções individuais). */
+  reason?: string;
+  updatedBy?: UserRef;
 }
 
 export interface User extends BaseEntity {
@@ -1755,4 +1783,6 @@ export interface CurrentUser extends User {
   isAdmin: boolean;
   isManager: boolean;
   isDirector: boolean;
+  /** Permissões efetivas (catálogo + perfil + exceções + módulos ativos), resolvidas em getCurrentUser. */
+  permissions: EffectivePermissions;
 }

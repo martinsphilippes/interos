@@ -3,6 +3,8 @@
  * Fonte única para toda a aplicação. Não duplique estes valores em componentes.
  */
 
+import type { ModuleKey } from "./permissions/types";
+
 export const DEPARTMENT_KEYS = [
   "marketing",
   "vendas",
@@ -53,8 +55,12 @@ export const ROLE_LABELS: Record<RoleKey, string> = {
   colaborador: "Colaborador",
 };
 
-/** Módulos do sistema e papéis que podem acessá-los. `admin` sempre acessa tudo. */
-export const MODULE_ACCESS: Record<string, readonly RoleKey[] | "all"> = {
+/**
+ * Módulos do sistema e papéis que podem acessá-los (fachada histórica). A regra efetiva de cada módulo está no
+ * catálogo de acessos (`src/domain/permissions`, chave `<modulo>.acessar`), que inclui "admin" explicitamente e
+ * admite ajustes por perfil; `canAccessModule` delega para ele. Mantido para leitura e para os testes de equivalência.
+ */
+export const MODULE_ACCESS: Record<ModuleKey, readonly RoleKey[] | "all"> = {
   inicio: "all",
   operacao: "all",
   marketing: ["diretoria", "gestor", "marketing", "vendas"],

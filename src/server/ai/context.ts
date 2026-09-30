@@ -4,6 +4,7 @@ import "server-only";
  * estruturados (usados pelas regras determinísticas) e um AgentContext (resumo + fatos) enviado à IA.
  */
 import { getById, list } from "@/server/db";
+import { currentUserFor } from "@/server/auth/session";
 import { computeSlaState } from "@/server/sla";
 import { listOpportunities } from "@/server/sales/queries";
 import { getProject } from "@/server/implementation/queries";
@@ -14,7 +15,6 @@ import { OPPORTUNITY_STAGE_LABELS } from "@/components/sales/model";
 import {
   COLLECTIONS,
   type Client,
-  type CurrentUser,
   type DomainEvent,
   type Kpi,
   type KpiSnapshot,
@@ -36,15 +36,6 @@ export interface BuiltContext<T> {
   subject: { id: string; label: string; href?: string };
   data: T;
   context: AgentContext;
-}
-
-function asCurrentUser(user: User): CurrentUser {
-  return {
-    ...user,
-    isAdmin: user.role === "admin",
-    isManager: user.role === "gestor" || user.role === "admin" || user.role === "diretoria",
-    isDirector: user.role === "diretoria" || user.role === "admin",
-  };
 }
 
 const daysSince = (iso: string | undefined, now = Date.now()) => (iso ? Math.max(0, Math.floor((now - new Date(iso).getTime()) / DAY_MS)) : undefined);
@@ -82,7 +73,7 @@ export async function buildCommercialContext(userId: string): Promise<BuiltConte
   if (!user) return null;
   const nowIso = new Date().toISOString();
   const [opps, leads, tasks] = await Promise.all([
-    listOpportunities(asCurrentUser(user)),
+    currentUserFor(user).then((viewer) => listOpportunities(viewer)),
     list<Lead>(COLLECTIONS.leads, { where: [["ownerId", "==", userId]] }),
     list<Task>(COLLECTIONS.tasks, { where: [["assigneeId", "==", userId]] }),
   ]);

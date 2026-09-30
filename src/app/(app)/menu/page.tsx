@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import { CURRENT_WAVE, NAVIGATION } from "@/domain/constants";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { CURRENT_WAVE } from "@/domain/constants";
+import { requireUser } from "@/server/auth/session";
+import { visibleNavigation } from "@/server/auth/navigation";
 import { PageContainer } from "@/components/layout/page-container";
 import { NavIcon } from "@/components/layout/nav-icon";
 import { PageHeader } from "@/components/ui/page-header";
@@ -13,10 +14,7 @@ export const metadata: Metadata = { title: "Menu" };
 /** Página "Mais" (mobile): todas as seções e itens acessíveis. */
 export default async function MenuPage() {
   const user = await requireUser();
-  const sections = NAVIGATION.filter((section) => canAccessModule(user, section.key)).map((section) => ({
-    ...section,
-    items: section.items.filter((item) => user.isAdmin || !item.roles || item.roles.includes(user.role)),
-  }));
+  const sections = visibleNavigation(user);
 
   return (
     <PageContainer>
