@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { AlertTriangle, ArrowRight, CalendarClock, CircleDollarSign, FileSignature, Receipt, Wallet } from "lucide-react";
 import type { Client360 } from "@/server/clients/queries";
 import { formatCompetence, formatCurrency, formatDate, formatRelative } from "@/lib/format";
@@ -9,6 +8,8 @@ import { SectionTitle } from "@/components/ui/section-title";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ContractSummaryCard } from "@/components/finance/contract-summary-card";
+import { money, RESTRICTED_HINT } from "@/components/finance/values";
+import { ScreenLink } from "@/components/auth/access-provider";
 import { cn } from "@/lib/utils";
 import { UserCell } from "./client-badges";
 import { BILLING_STATUS_LABELS, BILLING_STATUS_VARIANT, BILLING_TYPE_LABELS, CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "./labels";
@@ -16,9 +17,15 @@ import { contractSummaryOf, currentContract } from "./overview-model";
 
 const RECENT_BILLS = 12;
 
-/** Aba Financeiro: resumo (MRR, em aberto, vencido, próximo vencimento, último pagamento), Resumo do contratado do contrato vigente, contratos e cobranças. */
+/**
+ * Aba Financeiro: resumo (MRR, em aberto, vencido, próximo vencimento, último pagamento), Resumo do contratado do
+ * contrato vigente, contratos e cobranças. Sem "Visualizar valores" (financeiro.valores.ver, A13) o resumo chega do
+ * servidor sem números (getClientFinancialSummary → valuesHidden) e todos os valores aparecem como "Restrito".
+ * Links para o contrato só para quem abre a tela Contratos.
+ */
 export function TabFinanceiro({ data }: { data: Client360 }) {
   const { client, contracts, billing, financial, users } = data;
+  const hidden = Boolean(financial.valuesHidden);
   const recent = billing.slice(0, RECENT_BILLS);
   const today = new Date().toISOString().slice(0, 10);
   const mrr = financial.mrr || client.mrr || 0;
@@ -29,11 +36,11 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard label="MRR" value={formatCurrency(mrr)} icon={<Wallet />} tone="success" hint="mensalidades dos contratos liberados" compact />
-        <StatCard label="Em aberto" value={formatCurrency(financial.openAmount)} icon={<Receipt />} tone="info" hint={`${financial.openCount} cobrança${financial.openCount === 1 ? "" : "s"} a vencer`} compact />
+        <StatCard label="MRR" value={money(mrr, hidden)} icon={<Wallet />} tone="success" hint={hidden ? RESTRICTED_HINT : "mensalidades dos contratos liberados"} compact />
+        <StatCard label="Em aberto" value={money(financial.openAmount, hidden)} icon={<Receipt />} tone="info" hint={`${financial.openCount} cobrança${financial.openCount === 1 ? "" : "s"} a vencer`} compact />
         <StatCard
           label="Vencido (inadimplência)"
-          value={formatCurrency(financial.overdueAmount)}
+          value={money(financial.overdueAmount, hidden)}
           icon={<AlertTriangle />}
           tone={financial.overdueCount > 0 ? "danger" : "neutral"}
           hint={financial.overdueCount > 0 ? `${financial.overdueCount} cobrança${financial.overdueCount === 1 ? "" : "s"} vencida${financial.overdueCount === 1 ? "" : "s"}` : "nenhuma cobrança vencida"}
@@ -44,7 +51,7 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
           value={financial.nextDue ? formatDate(financial.nextDue.dueDate) : "—"}
           icon={<CalendarClock />}
           tone={financial.nextDue && financial.nextDue.dueDate.slice(0, 10) < today ? "warning" : "neutral"}
-          hint={financial.nextDue ? `${formatCurrency(financial.nextDue.amount)} · ${BILLING_TYPE_LABELS[financial.nextDue.type]} · ${formatRelative(financial.nextDue.dueDate)}` : "sem cobranças em aberto"}
+          hint={financial.nextDue ? `${money(financial.nextDue.amount, hidden)} · ${BILLING_TYPE_LABELS[financial.nextDue.type]} · ${formatRelative(financial.nextDue.dueDate)}` : "sem cobranças em aberto"}
           compact
         />
         <StatCard
@@ -52,7 +59,7 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
           value={last ? formatDate(last.paidAt) : "—"}
           icon={<CircleDollarSign />}
           tone={last ? "brand" : "neutral"}
-          hint={last ? `${formatCurrency(last.amount)}${last.method ? ` · ${last.method}` : ""} · ${BILLING_TYPE_LABELS[last.type]}${last.installment ? ` ${last.installment}` : ""}` : "nenhum pagamento identificado"}
+          hint={last ? `${money(last.amount, hidden)}${last.method ? ` · ${last.method}` : ""} · ${BILLING_TYPE_LABELS[last.type]}${last.installment ? ` ${last.installment}` : ""}` : "nenhum pagamento identificado"}
           compact
         />
       </div>
@@ -64,9 +71,9 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
             title="Resumo do contratado"
             description={`Contrato vigente ${current.number} v${current.version}${current.saleNumber ? ` · venda ${current.saleNumber}` : ""}${current.status === "liberado" ? "" : ` · ${CONTRACT_STATUS_LABELS[current.status]}`}`}
             footer={
-              <Link href={`/financeiro/contratos/${current.id}`} className="text-sm font-medium text-brand-fg hover:underline">
+              <ScreenLink href={`/financeiro/contratos/${current.id}`} className="text-sm font-medium text-brand-fg hover:underline">
                 Abrir contrato
-              </Link>
+              </ScreenLink>
             }
           />
         </div>
@@ -79,14 +86,14 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
             Contrato <strong>{financial.pendingContract.number}</strong> em andamento no Financeiro: {CONTRACT_STATUS_LABELS[financial.pendingContract.status]}
             {financial.pendingContract.pendingReason ? ` · ${financial.pendingContract.pendingReason}` : ""}
           </p>
-          <Link href={`/financeiro/contratos/${financial.pendingContract.id}`} className="inline-flex min-h-[40px] items-center gap-1 text-sm font-medium text-secondary hover:underline">
+          <ScreenLink href={`/financeiro/contratos/${financial.pendingContract.id}`} className="inline-flex min-h-[40px] items-center gap-1 text-sm font-medium text-secondary hover:underline">
             Abrir contrato <ArrowRight className="size-4" aria-hidden />
-          </Link>
+          </ScreenLink>
         </Card>
       ) : null}
 
       <section>
-        <SectionTitle title="Contratos" count={contracts.length} description={financial.paidLast12Months > 0 ? `Recebido nos últimos 12 meses: ${formatCurrency(financial.paidLast12Months)}` : undefined} />
+        <SectionTitle title="Contratos" count={contracts.length} description={!hidden && financial.paidLast12Months > 0 ? `Recebido nos últimos 12 meses: ${formatCurrency(financial.paidLast12Months)}` : undefined} />
         <Card className="overflow-hidden">
           {contracts.length === 0 ? (
             <EmptyState size="sm" icon={<FileSignature />} title="Nenhum contrato" description="O contrato é gerado pelo Financeiro quando a venda é ganha." />
@@ -109,9 +116,9 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
                 {contracts.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="whitespace-nowrap font-medium">
-                      <Link href={`/financeiro/contratos/${c.id}`} className="hover:text-secondary hover:underline">
+                      <ScreenLink href={`/financeiro/contratos/${c.id}`} className="hover:text-secondary hover:underline" fallback={c.number}>
                         {c.number}
-                      </Link>{" "}
+                      </ScreenLink>{" "}
                       <span className="text-xs text-muted">v{c.version}</span>
                       <p className="text-xs font-normal text-muted">
                         {c.items.length} item{c.items.length === 1 ? "" : "s"} · {c.recurrence === "mensal" ? "mensal" : c.recurrence === "anual" ? "anual" : "único"} · {c.termMonths} meses · dia {c.billingDay}
@@ -123,9 +130,9 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
                       </Badge>
                       {c.pendingReason ? <p className="mt-1 max-w-[220px] text-xs text-danger-fg">{c.pendingReason}</p> : null}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(c.monthlyTotal)}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(c.setupTotal)}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(c.hardwareTotal)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{money(c.monthlyTotal, hidden)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{money(c.setupTotal, hidden)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{money(c.hardwareTotal, hidden)}</TableCell>
                     <TableCell className="whitespace-nowrap text-muted">
                       {c.signedAt ? formatDate(c.signedAt) : <span className="text-warning-fg">{c.signers.filter((s) => s.status === "pendente").length} pendente(s)</span>}
                     </TableCell>
@@ -169,7 +176,7 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
                         {BILLING_TYPE_LABELS[b.type]}
                         {b.installment ? <span className="text-xs text-muted"> · parcela {b.installment}</span> : null}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(b.amount)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">{money(b.amount, hidden)}</TableCell>
                       <TableCell className={cn("whitespace-nowrap", overdue ? "text-danger-fg" : "text-muted")}>
                         {formatDate(b.dueDate)}
                         {overdue ? <span className="ml-1 text-xs">({formatRelative(b.dueDate)})</span> : null}
@@ -184,7 +191,7 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
                           <>
                             {formatDate(b.paidAt)}
                             {b.method ? <span className="text-xs"> · {b.method}</span> : null}
-                            {b.paidAmount !== undefined && b.paidAmount !== b.amount ? <span className="text-xs"> · {formatCurrency(b.paidAmount)}</span> : null}
+                            {!hidden && b.paidAmount !== undefined && b.paidAmount !== b.amount ? <span className="text-xs"> · {formatCurrency(b.paidAmount)}</span> : null}
                           </>
                         ) : (
                           "—"

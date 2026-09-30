@@ -5,7 +5,7 @@
 import type { Client360, UserSummary } from "@/server/clients/queries";
 import type { Client, ClientProduct, Contract } from "@/domain/types";
 import { dateKey } from "@/lib/format";
-import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
+import { buildContractSummary, redactContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import { CONTRACT_STATUS_LABELS } from "./labels";
 
 // ---------------------------------------------------------------------------
@@ -17,8 +17,16 @@ export function currentContract(data: Pick<Client360, "contracts" | "financial">
   return data.contracts.find((c) => c.id === data.financial.currentContractId);
 }
 
-/** Resumo do contratado do contrato informado, montado com as cobranças, o vendedor e o contato já carregados na ficha. */
-export function contractSummaryOf(data: Pick<Client360, "billing" | "contacts" | "users" | "opportunities">, contract: Contract): ContractSummaryData {
+/**
+ * Resumo do contratado do contrato informado, montado com as cobranças, o vendedor e o contato já carregados na ficha.
+ * Sem "Visualizar valores" (resumo financeiro com `valuesHidden`, A13) o resumo sai sem números ("Restrito").
+ */
+export function contractSummaryOf(data: Pick<Client360, "billing" | "contacts" | "users" | "opportunities"> & { financial?: { valuesHidden?: boolean } }, contract: Contract): ContractSummaryData {
+  const summary = buildSummaryOf(data, contract);
+  return data.financial?.valuesHidden ? redactContractSummary(summary) : summary;
+}
+
+function buildSummaryOf(data: Pick<Client360, "billing" | "contacts" | "users" | "opportunities">, contract: Contract): ContractSummaryData {
   const sellerId = contract.sellerId ?? data.opportunities.find((o) => o.id === contract.opportunityId)?.ownerId;
   const contactId = contract.contactId ?? data.opportunities.find((o) => o.id === contract.opportunityId)?.closing?.contactId;
   const contact = contactId ? data.contacts.find((c) => c.id === contactId) : undefined;

@@ -47,6 +47,7 @@ import { BILLING_TYPE_LABELS, CLIENT_PRODUCT_STATUS_LABELS, TICKET_STATUS_LABELS
 import { buildPendencies, buildUpcoming, contractSummaryOf, currentContract, productRenewalDate, type Pendency, type UpcomingItem } from "./overview-model";
 import { productVisual } from "@/components/ui/product-visual";
 import { ContractSummaryCard } from "@/components/finance/contract-summary-card";
+import { money } from "@/components/finance/values";
 
 const OPEN_TASK = new Set<TaskStatus>(["aberta", "em_andamento", "aguardando"]);
 const TASK_STATUS_VARIANT: Record<TaskStatus, NonNullable<BadgeProps["variant"]>> = { aberta: "warning", em_andamento: "info", aguardando: "purple", concluida: "success", cancelada: "muted" };
@@ -244,7 +245,7 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
                 <p className="text-sm">
                   {lastPayment ? (
                     <>
-                      {formatDate(lastPayment.paidAt)} · <span className="font-medium tabular-nums">{formatCurrency(lastPayment.amount)}</span>
+                      {formatDate(lastPayment.paidAt)} · <span className="font-medium tabular-nums">{money(lastPayment.amount, data.financial.valuesHidden)}</span>
                       {lastPayment.method ? ` · ${lastPayment.method}` : ""} · {BILLING_TYPE_LABELS[lastPayment.type]}
                       {lastPayment.installment ? ` ${lastPayment.installment}` : ""}
                     </>
