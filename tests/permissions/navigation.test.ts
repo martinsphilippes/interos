@@ -8,7 +8,8 @@
  * mudam o menu (T9/T10 no nível puro).
  */
 import { describe, expect, it } from "vitest";
-import { HELP_LINKS, MOBILE_NAV, NAVIGATION, QUICK_ACTIONS, SEARCH_CREATE_LINKS, SEARCH_SHORTCUTS, USER_MENU_LINKS } from "@/domain/constants";
+import { HELP_LINKS, SEARCH_CREATE_LINKS, SEARCH_SHORTCUTS, USER_MENU_LINKS } from "@/domain/constants";
+import { MOBILE_NAV, NAVIGATION, QUICK_ACTIONS } from "@/domain/navigation";
 import { MODULE_KEYS, SCREENS, canSeeHrefIn, type ModuleKey } from "@/domain/permissions";
 import { canSeeHref } from "@/server/auth/permissions";
 import { filterMobileNav, filterNavigation, filterQuickActions, filterShellLinks, hrefAccessMap, visibleScreens } from "@/server/auth/navigation";

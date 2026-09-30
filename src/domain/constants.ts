@@ -4,7 +4,6 @@
  */
 
 import type { ModuleKey } from "./permissions/types";
-import { buildMobileNavTable, buildNavigationTable, buildQuickActionsTable } from "./permissions/nav-table";
 
 export const DEPARTMENT_KEYS = [
   "marketing",
@@ -104,19 +103,12 @@ export type NavSection = {
   items: NavItem[];
 };
 
-/**
- * Menu lateral e página /menu, DERIVADOS do catálogo de acessos (`nav` de cada tela em src/domain/permissions): seção
- * = módulo, na ordem do catálogo. O que cada usuário vê é filtrado no servidor (filterNavigation). Para incluir um
- * item, declare `nav` na tela do catálogo — não edite esta lista.
+/*
+ * NAVIGATION, MOBILE_NAV e QUICK_ACTIONS (valores) ficam em `src/domain/navigation.ts`, DERIVADOS do catálogo de
+ * acessos (`nav` de cada tela em src/domain/permissions); aqui ficam só os tipos. Mantê-los fora deste arquivo evita
+ * que Client Components que importam rótulos daqui carreguem o catálogo inteiro no navegador. Para incluir um item de
+ * menu, barra do celular ou atalho "+", declare `nav` na tela do catálogo.
  */
-export const NAVIGATION: NavSection[] = buildNavigationTable();
-
-/**
- * Itens da barra inferior no celular (derivados de `nav.mobile` do catálogo). São 4 links; o botão central "+" (ações
- * rápidas, QUICK_ACTIONS) é inserido pelo MobileNav no meio: Início · Tarefas · [+] · Clientes · Mais. Filtrados no
- * servidor (filterMobileNav).
- */
-export const MOBILE_NAV: NavItem[] = buildMobileNavTable();
 
 export type QuickAction = {
   key: string;
@@ -135,9 +127,6 @@ export type QuickAction = {
   /** Chave da ação de criação exigida (o atalho aparece com can(via) ∧ regra do atalho). */
   via?: string;
 };
-
-/** Ações rápidas do botão "+" (mobile), derivadas de `nav.quickAction` do catálogo e filtradas no servidor. */
-export const QUICK_ACTIONS: QuickAction[] = buildQuickActionsTable();
 
 /**
  * Link fixo do shell (atalhos da busca global, menu de ajuda, menu do usuário). O servidor entrega a cada usuário só

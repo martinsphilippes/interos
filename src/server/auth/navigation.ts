@@ -11,7 +11,8 @@
  * rotas (hrefAccessMap) vai ao cliente apenas para OCULTAR links (useCanSee/ScreenLink); nenhuma operação é
  * autorizada por ele.
  */
-import { MOBILE_NAV, NAVIGATION, QUICK_ACTIONS, type NavItem, type NavSection, type QuickAction, type ShellLink } from "@/domain/constants";
+import type { NavItem, NavSection, QuickAction, ShellLink } from "@/domain/constants";
+import { MOBILE_NAV, NAVIGATION, QUICK_ACTIONS } from "@/domain/navigation";
 import { SCREENS, deriveMobileNav, deriveNavigation, deriveQuickActions, deriveSubject, type PermissionKey, type ScreenKey } from "@/domain/permissions";
 import type { HrefAccessEntry, HrefAccessMap } from "@/domain/permissions/href";
 import type { CurrentUser } from "@/domain/types";

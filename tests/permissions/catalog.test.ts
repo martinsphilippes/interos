@@ -5,7 +5,8 @@
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { MOBILE_NAV, NAVIGATION, QUICK_ACTIONS, MODULE_ACCESS, ROLE_KEYS } from "@/domain/constants";
+import { MODULE_ACCESS, ROLE_KEYS } from "@/domain/constants";
+import { MOBILE_NAV, NAVIGATION, QUICK_ACTIONS } from "@/domain/navigation";
 import {
   EXEMPTIONS,
   MODULES,
