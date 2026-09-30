@@ -25,6 +25,8 @@ import { useAdminUrl } from "./use-admin-url";
 export interface ProductsWorkspaceProps {
   products: ProductRow[];
   templates: TemplateOption[];
+  /** O que o perfil pode fazer (calculado no servidor; as actions revalidam). Ausente = tudo. */
+  permissions?: { create: boolean; edit: boolean; toggle: boolean };
 }
 
 function pct(value: number): string {
@@ -32,7 +34,7 @@ function pct(value: number): string {
 }
 
 /** Catálogo de produtos: filtros na URL, tabela/cards, reordenação, ativar/desativar e drawer de edição. */
-export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProps) {
+export function ProductsWorkspace({ products, templates, permissions = { create: true, edit: true, toggle: true } }: ProductsWorkspaceProps) {
   const router = useRouter();
   const { searchParams, setLocal } = useAdminUrl();
   const [pending, startTransition] = React.useTransition();
@@ -53,7 +55,7 @@ export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProp
   }, [products, q, category, active]);
   const filtered = Boolean(q || category || active);
   // Reordenar só faz sentido sobre a lista completa (a posição é global).
-  const canReorder = !filtered;
+  const canReorder = !filtered && permissions.edit;
 
   const run = (action: () => Promise<ActionResult<unknown>>, successMessage?: string) =>
     startTransition(async () => {
@@ -97,13 +99,15 @@ export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProp
             ) : null}
           </div>
         </div>
-        <Button onClick={() => setDrawer({ mode: "new" })}>
-          <Plus /> Novo produto
-        </Button>
+        {permissions.create ? (
+          <Button onClick={() => setDrawer({ mode: "new" })}>
+            <Plus /> Novo produto
+          </Button>
+        ) : null}
       </div>
       <p className="text-xs text-muted tabular-nums" aria-live="polite">
         {items.length} produto{items.length === 1 ? "" : "s"}
-        {filtered ? " encontrados · limpe os filtros para reordenar" : ""}
+        {filtered && permissions.edit ? " encontrados · limpe os filtros para reordenar" : filtered ? " encontrados" : ""}
       </p>
 
       {items.length === 0 ? (
@@ -113,7 +117,7 @@ export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProp
             title={filtered ? "Nenhum produto com esses filtros" : "Catálogo vazio"}
             description={filtered ? "Ajuste a busca ou limpe os filtros." : "Cadastre o primeiro produto para que vendas e propostas possam usá-lo."}
             action={
-              !filtered ? (
+              !filtered && permissions.create ? (
                 <Button onClick={() => setDrawer({ mode: "new" })}>
                   <Plus /> Novo produto
                 </Button>
@@ -190,11 +194,11 @@ export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProp
                       )}
                     </TableCell>
                     <TableCell>
-                      <Switch size="sm" checked={p.active} onCheckedChange={(next) => toggle(p.id, next)} disabled={pending} aria-label={p.active ? `Desativar ${p.name}` : `Ativar ${p.name}`} />
+                      <Switch size="sm" checked={p.active} onCheckedChange={(next) => toggle(p.id, next)} disabled={pending || !permissions.toggle} aria-label={p.active ? `Desativar ${p.name}` : `Ativar ${p.name}`} />
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="outline" size="sm" onClick={() => setDrawer({ mode: "edit", id: p.id })}>
-                        <Pencil /> Editar
+                        <Pencil /> {permissions.edit ? "Editar" : "Ver"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -224,7 +228,7 @@ export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProp
                       {p.templateName ? ` · ${p.templateName}` : ""}
                     </p>
                   </div>
-                  <Switch size="sm" checked={p.active} onCheckedChange={(next) => toggle(p.id, next)} disabled={pending} aria-label={p.active ? `Desativar ${p.name}` : `Ativar ${p.name}`} />
+                  <Switch size="sm" checked={p.active} onCheckedChange={(next) => toggle(p.id, next)} disabled={pending || !permissions.toggle} aria-label={p.active ? `Desativar ${p.name}` : `Ativar ${p.name}`} />
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1">
@@ -240,7 +244,7 @@ export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProp
                     ) : null}
                   </div>
                   <Button variant="outline" size="sm" className="h-9" onClick={() => setDrawer({ mode: "edit", id: p.id })}>
-                    <Pencil /> Editar
+                    <Pencil /> {permissions.edit ? "Editar" : "Ver"}
                   </Button>
                 </div>
               </li>
@@ -249,7 +253,7 @@ export function ProductsWorkspace({ products, templates }: ProductsWorkspaceProp
         </>
       )}
 
-      <ProductDrawer state={drawer} product={selected} templates={templates} onClose={() => setDrawer(null)} />
+      <ProductDrawer state={drawer} product={selected} templates={templates} onClose={() => setDrawer(null)} readOnly={!permissions.edit} />
     </div>
   );
 }

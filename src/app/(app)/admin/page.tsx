@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChevronRight, Network, Package, Plug, Settings, Users, Workflow, Zap } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
 import { getAdminOverview } from "@/server/admin/queries";
 import { getIntegrationStatus } from "@/server/integrations/status";
 import { formatNumber } from "@/lib/format";
@@ -24,7 +24,7 @@ interface AreaCard {
 
 /** Índice da administração: um card por área com contagens reais do banco. */
 export default async function AdminPage() {
-  await requireRole("admin");
+  await requireScreen("admin.painel");
   const o = await getAdminOverview();
   const integrations = getIntegrationStatus();
   const connected = integrations.filter((i) => i.state === "conectado").length;

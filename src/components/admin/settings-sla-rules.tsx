@@ -30,7 +30,8 @@ function hoursLabel(hours: number | undefined): string {
 }
 
 /** Tabela editável das regras de SLA (sla_rules): cada linha salva pela própria action. */
-export function SettingsSlaRules({ rules }: { rules: SlaRule[] }) {
+/** `canEdit`/`canDelete` vêm do servidor (admin.configuracoes.sla.editar/excluir); as actions revalidam. */
+export function SettingsSlaRules({ rules, canEdit = true, canDelete = true }: { rules: SlaRule[]; canEdit?: boolean; canDelete?: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [editing, setEditing] = React.useState<{ rule: SlaRule | null } | null>(null);
@@ -74,9 +75,15 @@ export function SettingsSlaRules({ rules }: { rules: SlaRule[] }) {
           <CardTitle>Regras de SLA</CardTitle>
           <CardDescription>Prazos de resposta e resolução por tipo de entidade. A chave é referenciada por workflows, chamados e tarefas (ex.: suporte.critico).</CardDescription>
         </div>
-        <Button size="sm" onClick={() => setEditing({ rule: null })} className="shrink-0">
-          <Plus /> Nova regra
-        </Button>
+        {canEdit ? (
+          <Button size="sm" onClick={() => setEditing({ rule: null })} className="shrink-0">
+            <Plus /> Nova regra
+          </Button>
+        ) : (
+          <Badge variant="muted" size="sm" className="shrink-0">
+            Somente leitura
+          </Badge>
+        )}
       </CardHeader>
       <CardContent className="px-0 pb-0">
         {rules.length === 0 ? (
@@ -119,16 +126,20 @@ export function SettingsSlaRules({ rules }: { rules: SlaRule[] }) {
                       <TableCell className="text-right tabular-nums">{r.attentionPct}%</TableCell>
                       <TableCell className="text-right tabular-nums">{r.riskPct}%</TableCell>
                       <TableCell>
-                        <Switch size="sm" checked={r.active} onCheckedChange={(next) => toggle(r, next)} disabled={pending} aria-label={r.active ? `Desativar ${r.name}` : `Ativar ${r.name}`} />
+                        <Switch size="sm" checked={r.active} onCheckedChange={(next) => toggle(r, next)} disabled={pending || !canEdit} aria-label={r.active ? `Desativar ${r.name}` : `Ativar ${r.name}`} />
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Button variant="outline" size="sm" onClick={() => setEditing({ rule: r })}>
-                            <Pencil /> Editar
-                          </Button>
-                          <Button variant="ghost" size="icon" className="size-8 text-danger hover:bg-danger-soft hover:text-danger-fg" aria-label={`Excluir ${r.name}`} onClick={() => setToDelete(r)}>
-                            <Trash2 />
-                          </Button>
+                          {canEdit ? (
+                            <Button variant="outline" size="sm" onClick={() => setEditing({ rule: r })}>
+                              <Pencil /> Editar
+                            </Button>
+                          ) : null}
+                          {canDelete ? (
+                            <Button variant="ghost" size="icon" className="size-8 text-danger hover:bg-danger-soft hover:text-danger-fg" aria-label={`Excluir ${r.name}`} onClick={() => setToDelete(r)}>
+                              <Trash2 />
+                            </Button>
+                          ) : null}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -150,15 +161,19 @@ export function SettingsSlaRules({ rules }: { rules: SlaRule[] }) {
                         {r.department ? ` · ${DEPARTMENT_LABELS[r.department]}` : ""} · resposta {hoursLabel(r.responseHours)} · resolução {hoursLabel(r.resolutionHours)} · {r.businessHoursOnly ? "horas úteis" : "24×7"}
                       </p>
                     </div>
-                    <Switch size="sm" checked={r.active} onCheckedChange={(next) => toggle(r, next)} disabled={pending} aria-label={r.active ? `Desativar ${r.name}` : `Ativar ${r.name}`} />
+                    <Switch size="sm" checked={r.active} onCheckedChange={(next) => toggle(r, next)} disabled={pending || !canEdit} aria-label={r.active ? `Desativar ${r.name}` : `Ativar ${r.name}`} />
                   </div>
                   <div className="mt-2 flex items-center justify-end gap-2">
-                    <Button variant="ghost" size="sm" className="h-9 text-danger" onClick={() => setToDelete(r)}>
-                      <Trash2 /> Excluir
-                    </Button>
-                    <Button variant="outline" size="sm" className="h-9" onClick={() => setEditing({ rule: r })}>
-                      <Pencil /> Editar
-                    </Button>
+                    {canDelete ? (
+                      <Button variant="ghost" size="sm" className="h-9 text-danger" onClick={() => setToDelete(r)}>
+                        <Trash2 /> Excluir
+                      </Button>
+                    ) : null}
+                    {canEdit ? (
+                      <Button variant="outline" size="sm" className="h-9" onClick={() => setEditing({ rule: r })}>
+                        <Pencil /> Editar
+                      </Button>
+                    ) : null}
                   </div>
                 </li>
               ))}

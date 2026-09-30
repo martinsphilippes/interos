@@ -20,25 +20,41 @@ export interface SettingsSectionProps {
   hideFooter?: boolean;
 }
 
+/**
+ * Somente leitura (sem a chave de edição da configuração, SETTING_PERMISSION): campos desabilitados e sem botão
+ * salvar. Fornecido por SettingsTabs a partir das permissões calculadas no servidor; a action revalida.
+ */
+export const SettingsReadOnlyContext = React.createContext(false);
+
 /** Card padrão de uma seção de configurações: título, badge de origem, formulário e botão salvar. */
 export function SettingsSection({ title, description, stored, pending, error, onSubmit, children, submitLabel = "Salvar", hideFooter }: SettingsSectionProps) {
+  const readOnly = React.useContext(SettingsReadOnlyContext);
   return (
-    <form onSubmit={onSubmit}>
+    <form onSubmit={readOnly ? (e) => e.preventDefault() : onSubmit}>
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-3">
           <div className="min-w-0">
             <CardTitle>{title}</CardTitle>
             {description ? <CardDescription>{description}</CardDescription> : null}
           </div>
-          <Badge variant={stored ? "success" : "muted"} size="sm" className="shrink-0">
-            {stored ? "Gravado" : "Padrão (não gravado)"}
-          </Badge>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <Badge variant={stored ? "success" : "muted"} size="sm">
+              {stored ? "Gravado" : "Padrão (não gravado)"}
+            </Badge>
+            {readOnly ? (
+              <Badge variant="outline" size="sm">
+                Somente leitura
+              </Badge>
+            ) : null}
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          {children}
+          <fieldset disabled={readOnly} className="contents">
+            {children}
+          </fieldset>
           <FormError message={error} />
         </CardContent>
-        {!hideFooter ? (
+        {!hideFooter && !readOnly ? (
           <CardFooter className="justify-end">
             <Button type="submit" loading={pending}>
               {submitLabel}

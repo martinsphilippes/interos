@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Activity, CheckCircle2, Sigma, Target } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
 import { currentMonthKey, getKpiAdminData, listRecentMonths, monthPeriod } from "@/server/kpis/queries";
 import { formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Indicadores" };
 
 /** Administração das definições de KPI: fórmula do registro, meta, faixa, atenção, peso e ativação. */
 export default async function AdminIndicadoresPage() {
-  await requireRole("admin");
+  await requireScreen("admin.indicadores");
   const period = monthPeriod(currentMonthKey());
   const data = await getKpiAdminData(period);
 

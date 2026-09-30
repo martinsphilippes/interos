@@ -27,14 +27,16 @@ export interface ProductDrawerProps {
   product: Product | null;
   templates: TemplateOption[];
   onClose: () => void;
+  /** Sem permissão de editar (admin.produtos.editar): os campos ficam somente leitura e não há botão salvar. */
+  readOnly?: boolean;
 }
 
 /** Drawer de criação/edição de produto com todos os campos de Product. */
-export function ProductDrawer({ state, product, templates, onClose }: ProductDrawerProps) {
+export function ProductDrawer({ state, product, templates, onClose, readOnly = false }: ProductDrawerProps) {
   const open = state?.mode === "new" || (state?.mode === "edit" && product !== null);
   return (
     <Drawer open={open} onOpenChange={(next) => !next && onClose()}>
-      <DrawerContent size="lg">{open ? <ProductForm key={product ? `${product.id}-${product.updatedAt}` : "new"} product={state?.mode === "edit" ? product : null} templates={templates} onClose={onClose} /> : null}</DrawerContent>
+      <DrawerContent size="lg">{open ? <ProductForm key={product ? `${product.id}-${product.updatedAt}` : "new"} product={state?.mode === "edit" ? product : null} templates={templates} onClose={onClose} readOnly={readOnly && state?.mode === "edit"} /> : null}</DrawerContent>
     </Drawer>
   );
 }
@@ -77,7 +79,7 @@ function toForm(product: Product | null): FormState {
   };
 }
 
-function ProductForm({ product, templates, onClose }: { product: Product | null; templates: TemplateOption[]; onClose: () => void }) {
+function ProductForm({ product, templates, onClose, readOnly }: { product: Product | null; templates: TemplateOption[]; onClose: () => void; readOnly: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
@@ -136,10 +138,12 @@ function ProductForm({ product, templates, onClose }: { product: Product | null;
   return (
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
       <DrawerHeader>
-        <DrawerTitle>{product ? "Editar produto" : "Novo produto"}</DrawerTitle>
+        <DrawerTitle>{product ? (readOnly ? "Produto" : "Editar produto") : "Novo produto"}</DrawerTitle>
         <DrawerDescription>{product ? product.name : "Preços, comissão padrão e template de implantação usados em propostas, contratos e projetos."}</DrawerDescription>
       </DrawerHeader>
       <DrawerBody className="flex flex-col gap-5">
+        {readOnly ? <p className="rounded-md bg-surface-muted px-3 py-2 text-xs text-muted">Somente leitura: seu perfil não tem permissão para editar produtos.</p> : null}
+        <fieldset disabled={readOnly} className="contents">
         <section className="flex flex-col gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField label="Nome" htmlFor="pd-name" required className="sm:col-span-2">
@@ -228,15 +232,18 @@ function ProductForm({ product, templates, onClose }: { product: Product | null;
           </div>
         </section>
 
+        </fieldset>
         <FormError message={error} />
       </DrawerBody>
       <DrawerFooter>
         <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
-          Cancelar
+          {readOnly ? "Fechar" : "Cancelar"}
         </Button>
-        <Button type="submit" loading={pending}>
-          {product ? "Salvar" : "Criar produto"}
-        </Button>
+        {!readOnly ? (
+          <Button type="submit" loading={pending}>
+            {product ? "Salvar" : "Criar produto"}
+          </Button>
+        ) : null}
       </DrawerFooter>
     </form>
   );

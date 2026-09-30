@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireRole } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
 import { listDepartmentsForAdmin } from "@/server/admin/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -8,11 +8,11 @@ import { DepartmentsGrid } from "@/components/admin/departments-grid";
 
 export const metadata: Metadata = { title: "Departamentos" };
 
-/** Admin edita; gestor e diretoria veem em modo leitura. */
+/** Quem tem admin.departamentos.editar edita; os demais que veem a tela (gestor/diretoria, no padrão) só leem. */
 export default async function DepartamentosPage() {
-  const user = await requireRole("admin", "gestor", "diretoria");
+  const user = await requireScreen("admin.departamentos");
   const { departments, users } = await listDepartmentsForAdmin();
-  const canEdit = user.isAdmin;
+  const canEdit = can(user, "admin.departamentos.editar");
   // Só o necessário chega ao Client Component (nada de e-mail/telefone).
   const userOptions = users.map((u) => ({ id: u.id, name: u.name, active: u.active, departmentId: u.departmentId }));
 

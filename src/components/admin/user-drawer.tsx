@@ -6,6 +6,7 @@ import { Eye, EyeOff, KeyRound, Trash2, UserCheck, UserX } from "lucide-react";
 import { ROLE_KEYS, ROLE_LABELS, type DepartmentKey, type RoleKey } from "@/domain/constants";
 import type { ActionResult, Department } from "@/domain/types";
 import type { UserRow } from "@/server/admin/queries";
+import type { AccessCatalogView, UserAccessCapabilities, UserAccessView } from "@/server/admin/access";
 import type { UpdateUserInput } from "@/server/admin/schemas";
 import { deleteUser, resetUserPassword, setUserActive, updateUser } from "@/server/admin/actions";
 import { formatDateTime } from "@/lib/format";
@@ -23,23 +24,52 @@ import { FormError } from "./form-error";
 import { KeyValueEditor, recordToRows, rowsToRecord, type KeyValueRow } from "./key-value-editor";
 import { ActiveIndicator, RoleBadge } from "./users-table";
 import { useAdminUrl } from "./use-admin-url";
+import { UserAccessPanel } from "./user-access-panel";
+
+/** O que o perfil pode fazer no drawer (calculado no servidor; as actions revalidam cada item). */
+export interface UserAbilities {
+  /** admin.usuarios.editar */
+  edit: boolean;
+  /** admin.usuarios.alterar-papel */
+  changeRole: boolean;
+  /** admin.acessos.gerir: atribuir/retirar o papel Administrador */
+  assignAdmin: boolean;
+  /** admin.usuarios.ativar */
+  activate: boolean;
+  /** admin.usuarios.redefinir-senha */
+  resetPassword: boolean;
+  /** admin.usuarios.excluir */
+  remove: boolean;
+  /** admin.usuarios.remuneracao.ver / .editar */
+  seeSalary: boolean;
+  editSalary: boolean;
+}
+
+export interface UserAccessData {
+  view: UserAccessView;
+  catalog: AccessCatalogView;
+  caps: UserAccessCapabilities;
+  neverDenied: string[];
+}
 
 export interface UserDrawerProps {
   user: UserRow | null;
   users: UserRow[];
   departments: Department[];
-  canEdit: boolean;
+  abilities: UserAbilities;
   currentUserId: string;
+  /** Exceções, acesso efetivo e histórico (só quando o perfil pode ver). */
+  access?: UserAccessData | null;
 }
 
-/** Drawer de edição de usuário (?usuario=<id>). Em modo leitura (gestor/diretoria) só exibe os dados. */
-export function UserDrawer({ user, users, departments, canEdit, currentUserId }: UserDrawerProps) {
+/** Drawer de edição de usuário (?usuario=<id>). Sem permissão de editar (gestor/diretoria, no padrão) só exibe os dados. */
+export function UserDrawer({ user, users, departments, abilities, currentUserId, access }: UserDrawerProps) {
   const { navigate } = useAdminUrl();
   const close = () => navigate({ usuario: null }, { replace: true });
   return (
     <Drawer open={Boolean(user)} onOpenChange={(open) => !open && close()}>
       <DrawerContent size="lg">
-        {user ? <DrawerInner key={`${user.id}-${user.updatedAt}`} user={user} users={users} departments={departments} canEdit={canEdit} currentUserId={currentUserId} onClose={close} /> : null}
+        {user ? <DrawerInner key={`${user.id}-${user.updatedAt}`} user={user} users={users} departments={departments} abilities={abilities} currentUserId={currentUserId} access={access} onClose={close} /> : null}
       </DrawerContent>
     </Drawer>
   );
@@ -64,7 +94,7 @@ function goalSuggestions(users: UserRow[]): string[] {
   return Array.from(keys).sort();
 }
 
-function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose }: UserDrawerProps & { user: UserRow; onClose: () => void }) {
+function DrawerInner({ user, users, departments, abilities, currentUserId, access, onClose }: UserDrawerProps & { user: UserRow; onClose: () => void }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
@@ -83,7 +113,12 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
   });
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
   const isSelf = user.id === currentUserId;
+  const canEdit = abilities.edit;
   const readOnly = !canEdit;
+  // Papel: exige alterar-papel; o papel Administrador (atribuir ou retirar) exige gerir acessos; nunca o próprio.
+  const roleLocked = readOnly || isSelf || !abilities.changeRole || (user.role === "admin" && !abilities.assignAdmin);
+  const roleOptions = ROLE_KEYS.filter((r) => r === user.role || r !== "admin" || abilities.assignAdmin);
+  const hasActions = abilities.activate || abilities.resetPassword || abilities.remove;
   const managers = users.filter((u) => u.id !== user.id && u.active !== false);
   const suggestions = React.useMemo(() => goalSuggestions(users), [users]);
 
@@ -122,7 +157,7 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
       phone: form.phone || undefined,
       active: form.active,
       monthlyGoals: goals.value,
-      baseSalary: salary,
+      baseSalary: abilities.seeSalary ? salary : undefined,
     };
     startTransition(async () => {
       const result = await updateUser(input);
@@ -137,7 +172,7 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
 
   return (
     <>
-      <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <DrawerHeader>
           <div className="flex items-center gap-3">
             <Avatar name={user.name} src={user.avatarUrl} size="lg" />
@@ -154,8 +189,9 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
         </DrawerHeader>
 
         <DrawerBody className="flex flex-col gap-4">
-          {readOnly ? <p className="rounded-md bg-surface-muted px-3 py-2 text-xs text-muted">Modo leitura: apenas administradores editam usuários.</p> : null}
+          {readOnly ? <p className="rounded-md bg-surface-muted px-3 py-2 text-xs text-muted">Modo leitura: seu perfil não tem permissão para editar usuários.</p> : null}
 
+          <form id={`user-form-${user.id}`} onSubmit={submit} className="flex flex-col gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField label="Nome" htmlFor="ud-name" required className="sm:col-span-2">
               <Input id="ud-name" value={form.name} onChange={(e) => set("name", e.target.value)} required minLength={2} maxLength={120} disabled={readOnly} />
@@ -163,9 +199,14 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
             <FormField label="E-mail" htmlFor="ud-email" hint="O e-mail é o login e não pode ser alterado." className="sm:col-span-2">
               <Input id="ud-email" value={user.email} readOnly disabled />
             </FormField>
-            <FormField label="Papel" htmlFor="ud-role" required hint={isSelf ? "Você não pode alterar o próprio papel." : undefined}>
-              <Select id="ud-role" value={form.role} onChange={(e) => set("role", e.target.value as RoleKey)} disabled={readOnly || isSelf}>
-                {ROLE_KEYS.map((r) => (
+            <FormField
+              label="Papel"
+              htmlFor="ud-role"
+              required
+              hint={isSelf ? "Você não pode alterar o próprio papel." : !readOnly && roleLocked ? (user.role === "admin" ? "Retirar o papel Administrador exige a permissão de gerir acessos." : "Seu perfil não pode alterar o papel.") : undefined}
+            >
+              <Select id="ud-role" value={form.role} onChange={(e) => set("role", e.target.value as RoleKey)} disabled={roleLocked}>
+                {roleOptions.map((r) => (
                   <option key={r} value={r}>
                     {ROLE_LABELS[r]}
                   </option>
@@ -197,16 +238,18 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
             <FormField label="Telefone" htmlFor="ud-phone" hint="DDD + número, só dígitos.">
               <Input id="ud-phone" value={form.phone} onChange={(e) => set("phone", e.target.value)} inputMode="tel" placeholder="88999990000" disabled={readOnly} />
             </FormField>
-            <FormField label="Salário base (R$)" htmlFor="ud-salary" hint="Base do bônus. Visível só para o colaborador, o gestor e o admin.">
-              <Input id="ud-salary" value={form.baseSalary} onChange={(e) => set("baseSalary", e.target.value)} inputMode="decimal" placeholder="Ex.: 3200" disabled={readOnly} />
-            </FormField>
+            {abilities.seeSalary ? (
+              <FormField label="Salário base (R$)" htmlFor="ud-salary" hint="Base do bônus. Visível só para o colaborador, o gestor e o admin.">
+                <Input id="ud-salary" value={form.baseSalary} onChange={(e) => set("baseSalary", e.target.value)} inputMode="decimal" placeholder="Ex.: 3200" disabled={readOnly || !abilities.editSalary} />
+              </FormField>
+            ) : null}
             <div className="flex items-end">
               <Switch
                 label="Usuário ativo"
                 description={isSelf ? "Você não pode desativar a si mesmo." : "Inativo não consegue entrar no INTEROS."}
                 checked={form.active}
                 onCheckedChange={(v) => set("active", v)}
-                disabled={readOnly || isSelf}
+                disabled={readOnly || isSelf || !abilities.activate}
                 className="w-full rounded-lg border border-border px-3 py-2"
               />
             </div>
@@ -226,26 +269,35 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
           </dl>
 
           <FormError message={error} />
+          </form>
 
-          {canEdit ? (
+          {hasActions ? (
             <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-              {user.active !== false ? (
-                <Button type="button" variant="outline" size="sm" onClick={() => setConfirm("deactivate")} disabled={pending || isSelf}>
-                  <UserX /> Desativar
+              {abilities.activate ? (
+                user.active !== false ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setConfirm("deactivate")} disabled={pending || isSelf}>
+                    <UserX /> Desativar
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setConfirm("reactivate")} disabled={pending}>
+                    <UserCheck /> Reativar
+                  </Button>
+                )
+              ) : null}
+              {abilities.resetPassword ? (
+                <Button type="button" variant="outline" size="sm" onClick={() => setPasswordOpen(true)} disabled={pending}>
+                  <KeyRound /> Redefinir senha
                 </Button>
-              ) : (
-                <Button type="button" variant="outline" size="sm" onClick={() => setConfirm("reactivate")} disabled={pending}>
-                  <UserCheck /> Reativar
+              ) : null}
+              {abilities.remove ? (
+                <Button type="button" variant="ghost" size="sm" className="text-danger hover:bg-danger-soft hover:text-danger-fg" onClick={() => setConfirm("delete")} disabled={pending || isSelf}>
+                  <Trash2 /> Excluir
                 </Button>
-              )}
-              <Button type="button" variant="outline" size="sm" onClick={() => setPasswordOpen(true)} disabled={pending}>
-                <KeyRound /> Redefinir senha
-              </Button>
-              <Button type="button" variant="ghost" size="sm" className="text-danger hover:bg-danger-soft hover:text-danger-fg" onClick={() => setConfirm("delete")} disabled={pending || isSelf}>
-                <Trash2 /> Excluir
-              </Button>
+              ) : null}
             </div>
           ) : null}
+
+          {access ? <UserAccessPanel userName={user.name} view={access.view} catalog={access.catalog} caps={access.caps} neverDenied={access.neverDenied} /> : null}
         </DrawerBody>
 
         {canEdit ? (
@@ -253,12 +305,12 @@ function DrawerInner({ user, users, departments, canEdit, currentUserId, onClose
             <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
               Fechar
             </Button>
-            <Button type="submit" loading={pending}>
+            <Button type="submit" form={`user-form-${user.id}`} loading={pending}>
               Salvar alterações
             </Button>
           </DrawerFooter>
         ) : null}
-      </form>
+      </div>
 
       <ConfirmDialog
         open={confirm === "deactivate"}

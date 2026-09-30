@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { CheckCircle2, CircleDashed, PlugZap, TriangleAlert } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
 import { getIntegrationStatus } from "@/server/integrations/status";
 import { formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -18,7 +18,7 @@ export const metadata: Metadata = { title: "Integrações" };
  * onde configurar. Nenhuma integração aparece como conectada sem credencial e adaptador.
  */
 export default async function IntegrationsPage() {
-  await requireRole("admin");
+  await requireScreen("admin.integracoes");
   const integrations = getIntegrationStatus();
   const count = (state: string) => integrations.filter((i) => i.state === state).length;
 

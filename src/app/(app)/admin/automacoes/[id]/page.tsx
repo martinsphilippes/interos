@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import { requireRole } from "@/server/auth/session";
+import { notFound, redirect } from "next/navigation";
+import { can, getCurrentUser, requireScreen } from "@/server/auth/session";
 import { getEditorOptions, getRuleDetail, triggerLabel } from "@/server/automations/queries";
 import { groupedEventTypes } from "@/server/automations/schemas";
 import { formatNumber } from "@/lib/format";
@@ -16,15 +16,20 @@ type Params = Promise<{ id: string }>;
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { id } = await params;
   if (id === "nova") return { title: "Nova automação" };
+  // A30: sem acesso à tela, nada é lido (título genérico).
+  const user = await getCurrentUser();
+  if (!user || !can(user, "admin.automacoes.ver")) return { title: "Automação" };
   const detail = await getRuleDetail(id);
   return { title: detail ? detail.rule.name : "Automação não encontrada" };
 }
 
-/** Admin: criar (/admin/automacoes/nova) ou editar uma regra, testar e ver o histórico de execuções. */
+/** Criar (/admin/automacoes/nova) ou editar uma regra, testar e ver o histórico de execuções. */
 export default async function AutomationRulePage({ params }: { params: Params }) {
-  await requireRole("admin");
+  const user = await requireScreen("admin.automacoes");
   const { id } = await params;
   const isNew = id === "nova";
+  if (isNew && !can(user, "admin.automacoes.criar")) redirect("/admin/automacoes");
+  const showHistory = can(user, "admin.automacoes.historico.ver");
   const [detail, options] = await Promise.all([isNew ? Promise.resolve(null) : getRuleDetail(id), getEditorOptions()]);
   if (!isNew && !detail) notFound();
   const eventGroups = groupedEventTypes();
@@ -38,7 +43,7 @@ export default async function AutomationRulePage({ params }: { params: Params })
         badge={detail ? <Badge variant={detail.rule.active ? "success" : "muted"}>{detail.rule.active ? "Ativa" : "Inativa"}</Badge> : null}
       />
       <RuleEditor key={detail?.rule.updatedAt ?? "nova"} rule={detail?.rule ?? null} options={options} eventGroups={eventGroups} />
-      {detail ? (
+      {detail && showHistory ? (
         <section className="mt-8">
           <SectionTitle
             title="Histórico de execuções"
