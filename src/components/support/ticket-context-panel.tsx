@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { slaStateAt } from "./sla-live";
 import { ChannelIcon, TicketStatusBadge } from "./ticket-badges";
 import type { ChannelStatus } from "./ticket-composer";
+import { useCanSeeFn } from "@/components/auth/access-provider";
 import { contactTarget, formatElapsed, formatSlaClock, isRealRecording, telHref, whatsappTextHref } from "./workspace-model";
 
 const PRODUCT_STATUS: Record<string, { label: string; variant: "success" | "warning" | "muted" | "danger" }> = {
@@ -118,9 +119,15 @@ export interface TicketContextPanelProps {
 /**
  * Coluna de contexto do chamado: dados do cliente (link para o Cliente 360), canais com estado real, SLA,
  * produtos contratados, histórico de atendimentos e artigos sugeridos da base.
+ * Produtos/contrato/histórico só com a seção "Contexto do cliente" (detail.clientContext, decidido no servidor);
+ * links para outras telas só quando o usuário as vê.
  */
 export function TicketContextPanel({ detail, channels, now, className }: TicketContextPanelProps) {
   const { client, ticket } = detail;
+  const canSee = useCanSeeFn();
+  const clientHref = client ? `/clientes/${client.id}` : null;
+  const showClientLink = clientHref ? canSee(clientHref) : false;
+  const showContext = detail.clientContext !== false;
   const target = contactTarget(detail);
   const wa = whatsappTextHref(target.whatsapp);
   const tel = telHref(target.phone);
@@ -128,14 +135,18 @@ export function TicketContextPanel({ detail, channels, now, className }: TicketC
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
-      <SectionCard title="Dados do cliente" action={client ? <CardLink href={`/clientes/${client.id}`}>Cliente 360</CardLink> : null}>
+      <SectionCard title="Dados do cliente" action={client && showClientLink ? <CardLink href={`/clientes/${client.id}`}>Cliente 360</CardLink> : null}>
         {client ? (
           <div className="flex gap-3">
             <Avatar name={client.tradeName} size="lg" className="rounded-xl" />
             <div className="min-w-0 flex-1">
-              <Link href={`/clientes/${client.id}`} className="block truncate font-semibold text-foreground hover:text-brand-fg hover:underline">
-                {client.tradeName}
-              </Link>
+              {showClientLink ? (
+                <Link href={`/clientes/${client.id}`} className="block truncate font-semibold text-foreground hover:text-brand-fg hover:underline">
+                  {client.tradeName}
+                </Link>
+              ) : (
+                <p className="truncate font-semibold text-foreground">{client.tradeName}</p>
+              )}
               <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                 <Badge variant={client.status === "ativo" ? "success" : client.status === "cancelado" ? "muted" : "info"} size="sm">
                   {CLIENT_STATUS_LABELS[client.status]}
@@ -213,83 +224,94 @@ export function TicketContextPanel({ detail, channels, now, className }: TicketC
 
       <TicketSla detail={detail} now={now} />
 
-      <SectionCard title="Produtos contratados">
-        {detail.clientProducts.length === 0 ? (
-          <p className="text-sm text-muted">Nenhum produto registrado.</p>
-        ) : (
-          <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
-            {detail.clientProducts.map((p) => {
-              const st = PRODUCT_STATUS[p.status] ?? { label: p.status, variant: "muted" as const };
-              return (
-                <li key={p.id} className={cn("flex items-center justify-between gap-2 px-3 py-2 text-sm", p.productId === ticket.productId && "bg-brand-soft/40")}>
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Package className="size-4 shrink-0 text-brand-fg" aria-hidden />
-                    <span className="truncate">{p.productName}</span>
-                  </span>
-                  <span className={cn("text-xs font-medium", st.variant === "success" ? "text-success-fg" : st.variant === "warning" ? "text-warning-fg" : st.variant === "danger" ? "text-danger-fg" : "text-muted")}>{st.label}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {detail.contract ? (
-          <p className="mt-2 text-[11px] text-muted">
-            Contrato{" "}
-            <Link href={`/financeiro/contratos?contrato=${detail.contract.id}`} className="font-medium text-foreground hover:underline">
-              {detail.contract.number}
-            </Link>
-            {detail.contract.endDate ? ` · vigente até ${formatDate(detail.contract.endDate)}` : ""}
-          </p>
-        ) : null}
-      </SectionCard>
-
-      <SectionCard title="Histórico de atendimentos" action={client ? <CardLink href={`/clientes/${client.id}?aba=suporte`}>Ver todos</CardLink> : null}>
-        {detail.previous.length === 0 ? (
-          <p className="text-sm text-muted">Primeiro chamado deste cliente.</p>
-        ) : (
-          <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
-            {detail.previous.slice(0, 5).map((t) => (
-              <li key={t.id}>
-                <Link href={`/suporte?chamado=${t.id}`} scroll={false} className="flex min-h-[44px] items-center gap-2 px-3 py-2 text-xs hover:bg-surface-hover md:min-h-0">
-                  <span className="w-[92px] shrink-0 tabular-nums text-muted">{formatDate(t.openedAt, "dd/MM/yy HH:mm")}</span>
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                    <ChannelIcon channel={t.channel} />
-                    <span className="truncate text-foreground" title={t.subject}>
-                      {t.subject}
+      {showContext ? (
+        <SectionCard title="Produtos contratados">
+          {detail.clientProducts.length === 0 ? (
+            <p className="text-sm text-muted">Nenhum produto registrado.</p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
+              {detail.clientProducts.map((p) => {
+                const st = PRODUCT_STATUS[p.status] ?? { label: p.status, variant: "muted" as const };
+                return (
+                  <li key={p.id} className={cn("flex items-center justify-between gap-2 px-3 py-2 text-sm", p.productId === ticket.productId && "bg-brand-soft/40")}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Package className="size-4 shrink-0 text-brand-fg" aria-hidden />
+                      <span className="truncate">{p.productName}</span>
                     </span>
-                    {t.reopenedFromId ? <Repeat className="size-3 shrink-0 text-danger-fg" aria-label="reaberto" /> : null}
-                  </span>
-                  <TicketStatusBadge status={t.status} />
+                    <span className={cn("text-xs font-medium", st.variant === "success" ? "text-success-fg" : st.variant === "warning" ? "text-warning-fg" : st.variant === "danger" ? "text-danger-fg" : "text-muted")}>{st.label}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {detail.contract ? (
+            <p className="mt-2 text-[11px] text-muted">
+              Contrato{" "}
+              {canSee("/financeiro/contratos") ? (
+                <Link href={`/financeiro/contratos?contrato=${detail.contract.id}`} className="font-medium text-foreground hover:underline">
+                  {detail.contract.number}
                 </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mt-2 text-[11px] text-muted">
-          {detail.clientStats.total} chamado{detail.clientStats.total === 1 ? "" : "s"} · reincidência {Math.round(detail.clientStats.reopenRate * 100)}%
-          {detail.clientStats.csatAverage !== undefined ? ` · CSAT médio ${detail.clientStats.csatAverage.toFixed(1).replace(".", ",")}` : ""}
-        </p>
-      </SectionCard>
+              ) : (
+                <span className="font-medium text-foreground">{detail.contract.number}</span>
+              )}
+              {detail.contract.endDate ? ` · vigente até ${formatDate(detail.contract.endDate)}` : ""}
+            </p>
+          ) : null}
+        </SectionCard>
 
-      <SectionCard title="Artigos sugeridos" action={<CardLink href="/suporte/base-de-conhecimento">Base</CardLink>}>
-        {detail.suggestedArticles.length === 0 ? (
-          <p className="text-sm text-muted">Nenhum artigo relacionado ao assunto e ao produto deste chamado.</p>
-        ) : (
-          <ul className="flex flex-col gap-1">
-            {detail.suggestedArticles.map((a) => (
-              <li key={a.id}>
-                <Link href={`/suporte/base-de-conhecimento/${a.id}`} target="_blank" className="flex items-start gap-2 rounded-lg p-2 text-sm hover:bg-surface-hover">
-                  <BookOpen className="mt-0.5 size-4 shrink-0 text-accent-purple-fg" aria-hidden />
-                  <span className="min-w-0">
-                    <span className="block font-medium leading-snug text-foreground">{a.title}</span>
-                    <span className="block truncate text-xs text-muted">{[a.productName, a.module].filter(Boolean).join(" · ") || "Geral"}</span>
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </SectionCard>
+      ) : null}
+
+      {showContext ? (
+        <SectionCard title="Histórico de atendimentos" action={client && canSee(`/clientes/${client.id}?aba=suporte`) ? <CardLink href={`/clientes/${client.id}?aba=suporte`}>Ver todos</CardLink> : null}>
+          {detail.previous.length === 0 ? (
+            <p className="text-sm text-muted">Primeiro chamado deste cliente.</p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
+              {detail.previous.slice(0, 5).map((t) => (
+                <li key={t.id}>
+                  <Link href={`/suporte?chamado=${t.id}`} scroll={false} className="flex min-h-[44px] items-center gap-2 px-3 py-2 text-xs hover:bg-surface-hover md:min-h-0">
+                    <span className="w-[92px] shrink-0 tabular-nums text-muted">{formatDate(t.openedAt, "dd/MM/yy HH:mm")}</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                      <ChannelIcon channel={t.channel} />
+                      <span className="truncate text-foreground" title={t.subject}>
+                        {t.subject}
+                      </span>
+                      {t.reopenedFromId ? <Repeat className="size-3 shrink-0 text-danger-fg" aria-label="reaberto" /> : null}
+                    </span>
+                    <TicketStatusBadge status={t.status} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-2 text-[11px] text-muted">
+            {detail.clientStats.total} chamado{detail.clientStats.total === 1 ? "" : "s"} · reincidência {Math.round(detail.clientStats.reopenRate * 100)}%
+            {detail.clientStats.csatAverage !== undefined ? ` · CSAT médio ${detail.clientStats.csatAverage.toFixed(1).replace(".", ",")}` : ""}
+          </p>
+        </SectionCard>
+      ) : null}
+
+      {canSee("/suporte/base-de-conhecimento") ? (
+        <SectionCard title="Artigos sugeridos" action={<CardLink href="/suporte/base-de-conhecimento">Base</CardLink>}>
+          {detail.suggestedArticles.length === 0 ? (
+            <p className="text-sm text-muted">Nenhum artigo relacionado ao assunto e ao produto deste chamado.</p>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {detail.suggestedArticles.map((a) => (
+                <li key={a.id}>
+                  <Link href={`/suporte/base-de-conhecimento/${a.id}`} target="_blank" className="flex items-start gap-2 rounded-lg p-2 text-sm hover:bg-surface-hover">
+                    <BookOpen className="mt-0.5 size-4 shrink-0 text-accent-purple-fg" aria-hidden />
+                    <span className="min-w-0">
+                      <span className="block font-medium leading-snug text-foreground">{a.title}</span>
+                      <span className="block truncate text-xs text-muted">{[a.productName, a.module].filter(Boolean).join(" · ") || "Geral"}</span>
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      ) : null}
 
       {!client ? null : (
         <p className="flex items-center gap-1.5 px-1 text-[11px] text-muted">

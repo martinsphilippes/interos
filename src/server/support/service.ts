@@ -28,6 +28,7 @@ import { createTaskInternal } from "@/server/tasks/service";
 import { getDepartmentManager } from "@/server/workflow/service";
 import { createOpportunity } from "@/server/sales/service";
 import { dateKey, formatCurrency } from "@/lib/format";
+import { BusinessError } from "@/server/auth/errors";
 import {
   COLLECTIONS,
   type Client,
@@ -68,7 +69,16 @@ import {
 // Registro idempotente dos handlers do Suporte (ver src/server/events/handlers/support.ts).
 registerSupportHandlers(registerHandler);
 
-export class SupportError extends Error {}
+/**
+ * Erro de regra do Suporte (mensagem em português, escrita para o usuário). Estende BusinessError para que o
+ * tratamento único das actions (failAction) sempre exiba a mensagem; demais erros viram mensagem genérica + log.
+ */
+export class SupportError extends BusinessError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SupportError";
+  }
+}
 
 export const SUPPORT_SYSTEM_ACTOR: UserRef = { id: "system", name: "INTEROS (automação)" };
 const CUSTOMER_ACTOR: UserRef = { id: "cliente", name: "Cliente (avaliação)" };

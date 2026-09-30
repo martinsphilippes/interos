@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { contactTarget, mailtoHref, whatsappTextHref } from "./workspace-model";
+import type { SupportCapabilities } from "./access-model";
 
 /** Estado real das integrações (vem do servidor; nunca presuma conectado). */
 export interface ChannelStatus {
@@ -34,6 +35,9 @@ const CHANNEL_OPTIONS: { value: ComposerChannel; label: string }[] = [
   { value: "ligacao", label: "Ligação" },
 ];
 
+type ComposerCapabilities = Pick<SupportCapabilities, "reply" | "register" | "attach">;
+const FULL: ComposerCapabilities = { reply: true, register: true, attach: true };
+
 interface ManualSend {
   channel: "whatsapp" | "email";
   href: string | null;
@@ -44,14 +48,20 @@ interface ManualSend {
  * Composer do chamado: resposta ao cliente (WhatsApp, e-mail, portal), ligação, nota interna (switch) e anexo por
  * URL. Sem integração conectada a resposta vira REGISTRO MANUAL e o atendente recebe o atalho wa.me/mailto
  * com o texto para enviar pelo app.
+ *
+ * `can` (servidor): responder ao cliente (enviar), ligação/nota interna (registrar) e anexo (anexar); cada controle
+ * aparece só com a sua capacidade. Ausente = tudo liberado (chamadores antigos).
  */
-export function TicketComposer({ detail, channels, className, onSent }: { detail: TicketDetail; channels: ChannelStatus; className?: string; onSent?: () => void }) {
+export function TicketComposer({ detail, channels, className, onSent, can = FULL }: { detail: TicketDetail; channels: ChannelStatus; className?: string; onSent?: () => void; can?: ComposerCapabilities }) {
   const router = useRouter();
   const { ticket } = detail;
   const target = contactTarget(detail);
-  const defaultChannel: ComposerChannel = ticket.channel === "email" ? "email" : ticket.channel === "portal" || ticket.channel === "interno" ? "portal" : ticket.channel === "telefone" ? "ligacao" : "whatsapp";
+  const channelOptions = CHANNEL_OPTIONS.filter((o) => (o.value === "ligacao" ? can.register : can.reply));
+  const preferred: ComposerChannel = ticket.channel === "email" ? "email" : ticket.channel === "portal" || ticket.channel === "interno" ? "portal" : ticket.channel === "telefone" ? "ligacao" : "whatsapp";
+  const defaultChannel: ComposerChannel = channelOptions.some((o) => o.value === preferred) ? preferred : (channelOptions[0]?.value ?? preferred);
   const [channel, setChannel] = React.useState<ComposerChannel>(defaultChannel);
-  const [internal, setInternal] = React.useState(false);
+  // Só registrar (sem responder ao cliente): começa como nota interna.
+  const [internal, setInternal] = React.useState(!can.reply && can.register);
   const [text, setText] = React.useState("");
   const [minutes, setMinutes] = React.useState("5");
   const [direction, setDirection] = React.useState<"saida" | "entrada">("saida");
@@ -175,17 +185,21 @@ export function TicketComposer({ detail, channels, className, onSent }: { detail
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2 px-1">
-          <AttachButton ticketId={ticket.id} onDone={() => router.refresh()} />
-          <Select
-            aria-label="Canal da resposta"
-            size="sm"
-            value={channel}
-            onChange={(e) => setChannel(e.target.value as ComposerChannel)}
-            disabled={internal}
-            options={CHANNEL_OPTIONS}
-            className="w-[140px]"
-          />
-          <Switch size="sm" label={<span className="text-xs font-medium text-muted">Nota interna</span>} checked={internal} onCheckedChange={setInternal} className="min-h-[40px] gap-2 md:min-h-0" />
+          {can.attach ? <AttachButton ticketId={ticket.id} onDone={() => router.refresh()} /> : null}
+          {channelOptions.length > 0 ? (
+            <Select
+              aria-label="Canal da resposta"
+              size="sm"
+              value={channel}
+              onChange={(e) => setChannel(e.target.value as ComposerChannel)}
+              disabled={internal}
+              options={channelOptions}
+              className="w-[140px]"
+            />
+          ) : null}
+          {can.register ? (
+            <Switch size="sm" label={<span className="text-xs font-medium text-muted">Nota interna</span>} checked={internal} onCheckedChange={setInternal} className="min-h-[40px] gap-2 md:min-h-0" />
+          ) : null}
           <div className="ml-auto flex items-center gap-2">
             <span className="hidden text-[11px] text-muted 2xl:inline">Ctrl + Enter</span>
             <Button type="submit" size="sm" variant={internal ? "secondary" : "primary"} loading={pending} disabled={!canSend} className="min-h-[40px] md:min-h-8">

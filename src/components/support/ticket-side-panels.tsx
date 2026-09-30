@@ -17,6 +17,7 @@ import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { TicketStatusBadge } from "./ticket-badges";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { useCanSeeFn } from "@/components/auth/access-provider";
 
 const PRODUCT_STATUS_LABELS: Record<string, string> = { ativo: "Ativo", em_implantacao: "Em implantação", suspenso: "Suspenso", cancelado: "Cancelado" };
 const CONTRACT_STATUS_LABELS: Record<string, string> = {
@@ -30,10 +31,16 @@ const CONTRACT_STATUS_LABELS: Record<string, string> = {
   cancelado: "Cancelado",
 };
 
-/** Cliente: produtos contratados, contrato e histórico de chamados (reincidência e CSAT). */
+/**
+ * Cliente: produtos contratados, contrato e histórico de chamados (reincidência e CSAT). A página só monta o card com
+ * a seção "Contexto do cliente"; o valor do contrato vem do servidor só com financeiro.valores.ver ("Restrito").
+ */
 export function TicketClientCard({ detail }: { detail: TicketDetail }) {
   const { client, contact, clientProducts, contract, previous, clientStats } = detail;
+  const canSee = useCanSeeFn();
   if (!client) return null;
+  const clientHref = `/clientes/${client.id}?aba=suporte`;
+  const showClientLink = canSee(clientHref);
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -43,9 +50,13 @@ export function TicketClientCard({ detail }: { detail: TicketDetail }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-0">
         <div>
-          <Link href={`/clientes/${client.id}?aba=suporte`} className="font-semibold hover:text-brand hover:underline">
-            {client.tradeName}
-          </Link>
+          {showClientLink ? (
+            <Link href={clientHref} className="font-semibold hover:text-brand hover:underline">
+              {client.tradeName}
+            </Link>
+          ) : (
+            <p className="font-semibold">{client.tradeName}</p>
+          )}
           <p className="text-xs text-muted">{[client.address?.city, client.segment].filter(Boolean).join(" · ")}</p>
           {contact ? (
             <p className="mt-1 text-sm">
@@ -77,12 +88,16 @@ export function TicketClientCard({ detail }: { detail: TicketDetail }) {
           <div className="flex items-start gap-2 text-sm">
             <FileSignature className="mt-0.5 size-4 shrink-0 text-muted" />
             <div>
-              <Link href={`/financeiro/contratos?contrato=${contract.id}`} className="font-medium hover:underline">
-                Contrato {contract.number}
-              </Link>
+              {canSee("/financeiro/contratos") ? (
+                <Link href={`/financeiro/contratos?contrato=${contract.id}`} className="font-medium hover:underline">
+                  Contrato {contract.number}
+                </Link>
+              ) : (
+                <p className="font-medium">Contrato {contract.number}</p>
+              )}
               <p className="text-xs text-muted">
                 {CONTRACT_STATUS_LABELS[contract.status] ?? contract.status}
-                {contract.monthlyTotal ? ` · ${formatCurrency(contract.monthlyTotal)}/mês` : ""}
+                {detail.valuesRestricted ? " · valor restrito" : contract.monthlyTotal ? ` · ${formatCurrency(contract.monthlyTotal)}/mês` : ""}
                 {contract.endDate ? ` · até ${formatDate(contract.endDate)}` : ""}
               </p>
             </div>
@@ -127,8 +142,8 @@ export function TicketClientCard({ detail }: { detail: TicketDetail }) {
               ))}
             </ul>
           )}
-          {previous.length > 6 ? (
-            <Link href={`/clientes/${client.id}?aba=suporte`} className="mt-1 inline-block text-xs font-medium text-secondary-fg hover:underline">
+          {previous.length > 6 && showClientLink ? (
+            <Link href={clientHref} className="mt-1 inline-block text-xs font-medium text-secondary-fg hover:underline">
               Ver todos os {previous.length + 1} chamados
             </Link>
           ) : null}
@@ -288,6 +303,9 @@ export function TicketAttachments({ detail, canOperate }: { detail: TicketDetail
 
 /** Artigos da base sugeridos pelas palavras do assunto e pelo produto. */
 export function SuggestedArticles({ detail }: { detail: TicketDetail }) {
+  // Sem a Base de Conhecimento o servidor não envia sugestões; o card inteiro some.
+  const canSeeKb = useCanSeeFn()("/suporte/base-de-conhecimento");
+  if (!canSeeKb) return null;
   return (
     <Card>
       <CardHeader className="pb-2">

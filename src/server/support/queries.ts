@@ -30,7 +30,10 @@ import {
 import type { SlaState } from "@/domain/constants";
 import { csatPath, getSupportTeam, isOpenTicket, type SlaInstanceExtra, type SupportTicketExtra, type TicketInteractionExtra } from "./service";
 import { TICKET_PRIORITIES, type TicketPriority } from "./schemas";
-import { canOperateSupport } from "./access";
+import { can } from "@/server/auth/permissions";
+import { filterByScope, resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
+import { canOperateSupport, canSeeTicket, supportCapabilities, ticketOwners, type SupportScreen } from "./access";
+import type { SupportCapabilities } from "@/components/support/access-model";
 import { normalizeText, plainText, rankArticles } from "./knowledge-search";
 
 // ---------------------------------------------------------------------------
@@ -212,7 +215,10 @@ export interface SupportOptions {
   categories: string[];
   /** Prazos das regras suporte.<criticidade> (exibidos no formulário). */
   slaRules: { priority: TicketPriority; responseHours?: number; resolutionHours: number; businessHoursOnly: boolean }[];
+  /** Fachada histórica (= capabilities.assume). */
   canOperate: boolean;
+  /** Botões e controles do Suporte (calculados no servidor pelo catálogo). */
+  capabilities: SupportCapabilities;
 }
 
 export async function getSupportOptions(user: CurrentUser): Promise<SupportOptions> {
@@ -240,6 +246,7 @@ export async function getSupportOptions(user: CurrentUser): Promise<SupportOptio
       return rule ? [{ priority, responseHours: rule.responseHours, resolutionHours: rule.resolutionHours, businessHoursOnly: rule.businessHoursOnly }] : [];
     }),
     canOperate: canOperateSupport(user),
+    capabilities: supportCapabilities(user),
   };
 }
 
@@ -265,6 +272,22 @@ export async function getClientTicketContext(clientId: string): Promise<ClientTi
 }
 
 // ---------------------------------------------------------------------------
+// Escopo (A7/A29): dono do chamado = atendente; sem atendente = fila (visível dentro da tela)
+// ---------------------------------------------------------------------------
+
+/** Filtra chamados pelo escopo do usuário na tela (sem usuário: sem recorte, compatível com chamadores antigos). */
+async function ticketsInScope<T extends Pick<SupportTicket, "assigneeId">>(tickets: T[], viewer: CurrentUser | undefined, screen: SupportScreen = "suporte.chamados"): Promise<T[]> {
+  if (!viewer) return tickets;
+  return filterByScope(tickets, (t) => ({ owners: ticketOwners(t) }), await resolveDataScope(viewer, screen));
+}
+
+/** O escopo contém esta pessoa? (indicadores por atendente: CSAT, SLA) — sem recorte por pessoa = todos. */
+function scopeHasPerson(scope: Pick<DataScope, "userIds"> | null, userId: string | undefined): boolean {
+  if (!scope?.userIds) return true;
+  return Boolean(userId && scope.userIds.has(userId));
+}
+
+// ---------------------------------------------------------------------------
 // Lista de chamados
 // ---------------------------------------------------------------------------
 
@@ -279,10 +302,11 @@ export interface TicketFilters {
   openOnly?: boolean;
 }
 
-export async function listTickets(filters: TicketFilters = {}): Promise<TicketRow[]> {
+/** Chamados com filtros. Com `viewer`, aplica o escopo de Chamados (A7). */
+export async function listTickets(filters: TicketFilters = {}, viewer?: CurrentUser): Promise<TicketRow[]> {
   const now = new Date();
   const base = await loadBase();
-  let tickets = base.tickets;
+  let tickets = await ticketsInScope(base.tickets, viewer);
   if (filters.openOnly) tickets = tickets.filter(isOpenTicket);
   if (filters.status?.length) tickets = tickets.filter((t) => filters.status!.includes(t.status));
   if (filters.priority) tickets = tickets.filter((t) => t.priority === filters.priority);
@@ -302,6 +326,8 @@ export type OverviewScope = "minha" | "equipe";
 
 export interface SupportOverview {
   scope: OverviewScope;
+  /** A visão "Equipe" está disponível? (limite do escopo mais amplo que "meus") */
+  teamAvailable: boolean;
   /** Instante do cálculo (ms): referência dos relógios de SLA no navegador até a hidratação. */
   generatedAt: number;
   rows: TicketRow[];
@@ -350,22 +376,27 @@ async function getTargets(): Promise<Targets> {
 
 /**
  * Fila e indicadores da Central. Escopo "minha": chamados do atendente e os sem atendente (que ele pode
- * assumir). Escopo "equipe": todos (padrão de gestores).
+ * assumir). Escopo "equipe": todos os chamados dentro do limite do escopo da Central (A7: padrão empresa; visão
+ * inicial "equipe" para gestores e "minha" para os demais — `initialView` do catálogo). Com limite "meus", só a
+ * visão "minha" existe.
  */
-export async function getSupportOverview(user: Pick<CurrentUser, "id" | "isManager">, scope?: OverviewScope): Promise<SupportOverview> {
-  const effective: OverviewScope = scope ?? (user.isManager ? "equipe" : "minha");
+export async function getSupportOverview(user: CurrentUser, scope?: OverviewScope): Promise<SupportOverview> {
+  const limit = await resolveDataScope(user, "suporte.central");
+  const teamAvailable = limit.kind !== "meus";
+  const effective: OverviewScope = !teamAvailable ? "minha" : (scope ?? (limit.initialKind === "meus" ? "minha" : "equipe"));
   const now = new Date();
   const [base, csat, targets] = await Promise.all([loadBase(), list<CsatResponse>(COLLECTIONS.csatResponses), getTargets()]);
-  const inScope = (t: SupportTicket) => effective === "equipe" || t.assigneeId === user.id || (!t.assigneeId && isOpenTicket(t));
+  const inLimit = (t: SupportTicket) => scopeAllows(limit, ticketOwners(t));
+  const inScope = (t: SupportTicket) => inLimit(t) && (effective === "equipe" || t.assigneeId === user.id || (!t.assigneeId && isOpenTicket(t)));
   const tickets = base.tickets.filter(inScope);
   const rows = tickets.map((t) => toRow(t, base, now));
   const open = rows.filter((r) => r.open);
   const today = dateKey(now);
   const month = monthKey(now.toISOString());
 
-  const csatMonth = csat.filter((c) => monthKey(c.respondedAt) === month && (effective === "equipe" || c.attendantId === user.id));
+  const csatMonth = csat.filter((c) => monthKey(c.respondedAt) === month && (effective === "equipe" ? scopeHasPerson(limit, c.attendantId) : c.attendantId === user.id));
   // Reincidência do mês: chamados reabertos no mês / chamados resolvidos no mês.
-  const mine = (t: SupportTicket) => effective === "equipe" || t.assigneeId === user.id;
+  const mine = (t: SupportTicket) => (effective === "equipe" ? inLimit(t) : t.assigneeId === user.id);
   const reopenedMonth = base.tickets.filter((t) => t.reopenedFromId && monthKey(t.openedAt) === month && mine(t)).length;
   const resolvedMonth = base.tickets.filter((t) => t.resolvedAt && monthKey(t.resolvedAt) === month && mine(t)).length;
   // SLA de solução do mês: mesma regra do relatório de SLA (resolvidos no mês no prazo + vencidos no mês em aberto).
@@ -375,6 +406,7 @@ export async function getSupportOverview(user: Pick<CurrentUser, "id" | "isManag
 
   return {
     scope: effective,
+    teamAvailable,
     generatedAt: now.getTime(),
     rows: open.sort(compareQueue),
     stats: {
@@ -427,19 +459,48 @@ export interface TicketDetail {
   availableProducts: { id: string; name: string; category: Product["category"]; monthlyPrice: number; setupPrice: number }[];
   catalog: { id: string; name: string }[];
   team: SupportUser[];
-  /** Link público de avaliação (só para quem opera o suporte e chamado resolvido/fechado). */
+  /** Link público de avaliação (só com suporte.chamados.csat.ver e chamado resolvido/fechado). */
   csatLink?: string;
+  /**
+   * Seção "Contexto do cliente no chamado" (suporte.chamados.cliente.ver). false = contrato, produtos e histórico do
+   * cliente não foram lidos nem enviados (a interface esconde os blocos). Ausente = liberado (chamadores antigos).
+   */
+  clientContext?: boolean;
+  /** Sem financeiro.valores.ver o valor mensal do contrato não é enviado (a interface mostra "Restrito"). */
+  valuesRestricted?: boolean;
 }
 
-/** Leitura leve para metadados (título da aba). */
-export async function getTicketTitle(id: string): Promise<string | null> {
+/**
+ * Leitura leve para metadados (título da aba). Com `viewer` (A30), só devolve o título se ele vê a tela de Chamados
+ * e o chamado está no seu escopo; senão null (título genérico).
+ */
+export async function getTicketTitle(id: string, viewer?: CurrentUser): Promise<string | null> {
+  if (viewer && !can(viewer, "suporte.chamados.ver")) return null;
   const ticket = await getById<SupportTicket>(COLLECTIONS.supportTickets, id);
-  return ticket ? `${ticket.number} · ${ticket.subject}` : null;
+  if (!ticket) return null;
+  if (viewer && !(await canSeeTicket(viewer, ticket))) return null;
+  return `${ticket.number} · ${ticket.subject}`;
 }
 
-export async function getTicket(id: string, user?: CurrentUser): Promise<TicketDetail | null> {
+export interface GetTicketOptions {
+  /** Tela pela qual o chamado é aberto (escopo e permissão de visualização). Padrão: Chamados. */
+  screen?: SupportScreen;
+}
+
+/**
+ * Chamado completo. Com `user`: fora da tela/escopo → null (A29); a seção "Contexto do cliente" e os valores do
+ * contrato só são lidos/enviados com as chaves correspondentes; o histórico do cliente respeita o escopo.
+ */
+export async function getTicket(id: string, user?: CurrentUser, options: GetTicketOptions = {}): Promise<TicketDetail | null> {
+  const screen = options.screen ?? "suporte.chamados";
+  if (user && !can(user, `${screen}.ver`)) return null;
   const ticket = await getById<SupportTicketExtra>(COLLECTIONS.supportTickets, id);
   if (!ticket) return null;
+  if (user && !(await canSeeTicket(user, ticket, screen))) return null;
+  const clientContext = !user || can(user, "suporte.chamados.cliente.ver");
+  const showValues = !user || can(user, "financeiro.valores.ver");
+  const showArticles = !user || can(user, "suporte.base-de-conhecimento.ver");
+  const none = <T,>(): Promise<T[]> => Promise.resolve([]);
   const now = new Date();
   const [client, interactions, clientTickets, slas, contacts, clientProducts, contracts, documents, csatList, catalog, team, articles] = await Promise.all([
     getById<Client>(COLLECTIONS.clients, ticket.clientId),
@@ -447,13 +508,14 @@ export async function getTicket(id: string, user?: CurrentUser): Promise<TicketD
     list<SupportTicketExtra>(COLLECTIONS.supportTickets, { where: [["clientId", "==", ticket.clientId]] }),
     list<SlaInstanceExtra>(COLLECTIONS.slaInstances, { where: [["clientId", "==", ticket.clientId]] }),
     list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", ticket.clientId]] }),
+    // Produtos do cliente: também alimentam "Gerar oportunidade" (produtos que ele ainda não tem).
     list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["clientId", "==", ticket.clientId]] }),
-    list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", ticket.clientId]] }),
+    clientContext ? list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", ticket.clientId]] }) : none<Contract>(),
     list<Document>(COLLECTIONS.documents, { where: [["entityId", "==", ticket.id]] }),
     list<CsatResponse>(COLLECTIONS.csatResponses, { where: [["ticketId", "==", ticket.id]] }),
     list<Product>(COLLECTIONS.products),
     getSupportTeam(),
-    list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles),
+    showArticles ? list<KnowledgeArticle>(COLLECTIONS.knowledgeArticles) : none<KnowledgeArticle>(),
   ]);
   const opportunity = ticket.originatedOpportunityId ? await getById<Opportunity>(COLLECTIONS.opportunities, ticket.originatedOpportunityId) : null;
 
@@ -469,12 +531,14 @@ export async function getTicket(id: string, user?: CurrentUser): Promise<TicketD
   const base: SupportBase = { tickets: clientTickets, slaByTicket, clients: new Map(client ? [[client.id, client]] : []), users, products };
 
   const row = toRow(ticket, base, now);
-  const previous = clientTickets
+  // Histórico do cliente: só com a seção de contexto, e dentro do escopo do usuário na tela.
+  const visibleClientTickets = clientContext ? await ticketsInScope(clientTickets, user, screen) : [];
+  const previous = visibleClientTickets
     .filter((t) => t.id !== ticket.id)
     .map((t) => toRow(t, base, now))
     .sort((a, b) => (a.openedAt < b.openedAt ? 1 : -1));
-  const reopened = clientTickets.filter((t) => t.reopenedFromId).length;
-  const clientCsat = clientTickets.map((t) => t.csatScore).filter((s): s is number => typeof s === "number");
+  const reopened = visibleClientTickets.filter((t) => t.reopenedFromId).length;
+  const clientCsat = visibleClientTickets.map((t) => t.csatScore).filter((s): s is number => typeof s === "number");
 
   interactions.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
   contracts.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -497,13 +561,13 @@ export async function getTicket(id: string, user?: CurrentUser): Promise<TicketD
     contacts,
     interactions,
     users: usersRecord,
-    clientProducts: clientProducts.sort((a, b) => a.productName.localeCompare(b.productName, "pt-BR")),
-    contract: contract ? { id: contract.id, number: contract.number, status: contract.status, monthlyTotal: contract.monthlyTotal, endDate: contract.endDate, startDate: contract.startDate } : null,
+    clientProducts: clientContext ? clientProducts.sort((a, b) => a.productName.localeCompare(b.productName, "pt-BR")) : [],
+    contract: contract ? { id: contract.id, number: contract.number, status: contract.status, monthlyTotal: showValues ? contract.monthlyTotal : 0, endDate: contract.endDate, startDate: contract.startDate } : null,
     previous,
     clientStats: {
-      total: clientTickets.length,
+      total: visibleClientTickets.length,
       reopened,
-      reopenRate: clientTickets.length > 0 ? reopened / clientTickets.length : 0,
+      reopenRate: visibleClientTickets.length > 0 ? reopened / visibleClientTickets.length : 0,
       csatAverage: avg(clientCsat),
     },
     documents: documents.filter((d) => d.entityType === "ticket").sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
@@ -515,7 +579,9 @@ export async function getTicket(id: string, user?: CurrentUser): Promise<TicketD
     availableProducts: activeCatalog.filter((p) => !ownedIds.has(p.id)).map((p) => ({ id: p.id, name: p.name, category: p.category, monthlyPrice: p.monthlyPrice, setupPrice: p.setupPrice })),
     catalog: activeCatalog.map((p) => ({ id: p.id, name: p.name })),
     team: team.map(toUser),
-    csatLink: resolvedOrClosed && user && canOperateSupport(user) ? csatPath(ticket.id) : undefined,
+    csatLink: resolvedOrClosed && user && can(user, "suporte.chamados.csat.ver") ? csatPath(ticket.id) : undefined,
+    clientContext,
+    valuesRestricted: !showValues,
   };
 }
 
@@ -584,12 +650,14 @@ function add(c: SlaCompliance, e: { response?: boolean; resolution?: boolean }) 
   }
 }
 
-export async function getSlaReport(month?: string): Promise<SlaReport> {
+/** Relatório de SLA dos chamados. Com `viewer`, só os chamados do escopo dele em Chamados (A7). */
+export async function getSlaReport(month?: string, viewer?: CurrentUser): Promise<SlaReport> {
   const now = new Date();
   const nowIso = now.toISOString();
   const months = lastMonths(6, now);
   const selected = month && months.includes(month) ? month : months[months.length - 1];
-  const [base, rules, targets, team] = await Promise.all([loadBase(), listSlaRules(), getTargets(), getSupportTeam()]);
+  const [loaded, rules, targets, team] = await Promise.all([loadBase(), listSlaRules(), getTargets(), getSupportTeam()]);
+  const base: SupportBase = { ...loaded, tickets: await ticketsInScope(loaded.tickets, viewer) };
 
   const overall = { ...emptyCompliance(), resolved: 0, opened: 0 };
   const responseMinutes: number[] = [];
@@ -713,11 +781,18 @@ function bucket(items: CsatResponse[]): CsatBucket {
   };
 }
 
-export async function getCsatReport(month?: string): Promise<CsatReport> {
+/** Relatório de CSAT. Com `viewer`, só as avaliações de atendentes dentro do escopo dele em Chamados (A7). */
+export async function getCsatReport(month?: string, viewer?: CurrentUser): Promise<CsatReport> {
   const now = new Date();
   const months = lastMonths(6, now);
   const selected = month && months.includes(month) ? month : months[months.length - 1];
-  const [responses, targets, products] = await Promise.all([list<CsatResponse>(COLLECTIONS.csatResponses), getTargets(), list<Product>(COLLECTIONS.products)]);
+  const [allResponses, targets, products, scope] = await Promise.all([
+    list<CsatResponse>(COLLECTIONS.csatResponses),
+    getTargets(),
+    list<Product>(COLLECTIONS.products),
+    viewer ? resolveDataScope(viewer, "suporte.chamados") : Promise.resolve(null),
+  ]);
+  const responses = allResponses.filter((r) => scopeHasPerson(scope, r.attendantId));
   const inMonth = responses.filter((r) => monthKey(r.respondedAt) === selected);
 
   const byAttendant = new Map<string, CsatResponse[]>();
@@ -927,15 +1002,22 @@ export interface ClientSupport {
   recentCsat: CsatResponse[];
 }
 
-export async function getClientSupport(clientId: string): Promise<ClientSupport> {
+/**
+ * Aba Suporte do Cliente 360. Com `viewer`, só os chamados dentro do escopo dele em Chamados (A29) e as avaliações
+ * desses chamados. Quem decide se a aba aparece é a página do Cliente 360.
+ */
+export async function getClientSupport(clientId: string, viewer?: CurrentUser): Promise<ClientSupport> {
   const now = new Date();
-  const [tickets, slas, csat, client, products] = await Promise.all([
+  const [allTickets, slas, allCsat, client, products] = await Promise.all([
     list<SupportTicketExtra>(COLLECTIONS.supportTickets, { where: [["clientId", "==", clientId]] }),
     list<SlaInstanceExtra>(COLLECTIONS.slaInstances, { where: [["clientId", "==", clientId]] }),
     list<CsatResponse>(COLLECTIONS.csatResponses, { where: [["clientId", "==", clientId]] }),
     getById<Client>(COLLECTIONS.clients, clientId),
     list<Product>(COLLECTIONS.products),
   ]);
+  const tickets = await ticketsInScope(allTickets, viewer);
+  const visibleIds = new Set(tickets.map((t) => t.id));
+  const csat = viewer ? allCsat.filter((c) => visibleIds.has(c.ticketId)) : allCsat;
   const slaById = new Map(slas.filter((s) => s.entityType === "chamado").map((s) => [s.id, s]));
   const slaByTicket = new Map<string, SlaInstanceExtra>();
   for (const t of tickets) {

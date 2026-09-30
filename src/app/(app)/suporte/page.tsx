@@ -1,19 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { AlertTriangle, CircleCheckBig, ClipboardList, Clock3, Gauge, Headset, LayoutGrid, User, Users } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, canSeeHref, requireScreen } from "@/server/auth/session";
 import { getSupportOptions, getSupportOverview, getTicket, listArticles, type OverviewScope } from "@/server/support/queries";
 import { maybeRunSlaAlerts } from "@/server/support/service";
 import { getSupportChannelStatus } from "@/server/support/integrations";
-import { canEditArticles } from "@/server/support/access";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
 import { KpiStrip } from "@/components/ui/kpi-strip";
 import { PageHeader } from "@/components/ui/page-header";
+import { EmptyState } from "@/components/ui/empty-state";
 import { StatCard } from "@/components/ui/stat-card";
 import { NewTicketDialog } from "@/components/support/new-ticket-dialog";
 import { SupportPanel } from "@/components/support/support-panel";
@@ -28,11 +27,12 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
-function ScopeToggle({ scope, view }: { scope: OverviewScope; view?: string }) {
+function ScopeToggle({ scope, view, teamAvailable }: { scope: OverviewScope; view?: string; teamAvailable: boolean }) {
   const extra = view ? `&view=${view}` : "";
+  // Com o escopo limitado a "meus" (perfil/exceção), a visão da equipe não existe.
   const options = [
     { value: "minha", label: "Minha fila", icon: <User />, href: `/suporte?escopo=minha${extra}` },
-    { value: "equipe", label: "Equipe", icon: <Users />, href: `/suporte?escopo=equipe${extra}` },
+    ...(teamAvailable ? [{ value: "equipe", label: "Equipe", icon: <Users />, href: `/suporte?escopo=equipe${extra}` }] : []),
   ];
   return (
     <div role="radiogroup" aria-label="Escopo da fila" className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-muted p-0.5">
@@ -57,14 +57,28 @@ function ScopeToggle({ scope, view }: { scope: OverviewScope; view?: string }) {
  * cliente), com seleção por ?chamado=<id> e aba da fila por ?fila=. ?view=painel mostra o painel de qualidade
  * (indicadores de SLA, CSAT, reincidência e a fila em tabela). Ao abrir, roda a varredura de alertas de SLA
  * (no máximo a cada 10 minutos).
+ *
+ * Acesso (catálogo suporte.central): workspace e painel são seções próprias; a fila respeita o escopo da Central
+ * (limite + visão inicial); o chamado de ?chamado= só abre dentro do escopo; botões seguem as capacidades.
  */
 export default async function SupportCentralPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "suporte")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("suporte.central");
   const sp = await searchParams;
   const scopeParam = first(sp.escopo);
   const scope: OverviewScope | undefined = scopeParam === "minha" || scopeParam === "equipe" ? scopeParam : undefined;
-  const view = first(sp.view) === "painel" ? "painel" : undefined;
+  const canWorkspace = can(user, "suporte.central.workspace.ver");
+  const canPanel = can(user, "suporte.central.painel.ver");
+  // Seção negada: abre a outra; sem nenhuma das duas, só o aviso (nenhum dado é lido).
+  const view = (first(sp.view) === "painel" && canPanel) || (!canWorkspace && canPanel) ? "painel" : undefined;
+
+  if (!canWorkspace && !canPanel) {
+    return (
+      <PageContainer>
+        <PageHeader title="Central de Suporte" description="Atenda, acompanhe e resolva chamados em todos os canais." />
+        <EmptyState icon={<Headset />} title="Sem acesso às seções da Central" description="Seu perfil não inclui o workspace do atendente nem o painel de qualidade. Fale com a administração se precisar." />
+      </PageContainer>
+    );
+  }
 
   // Chamados: alertas de SLA a cada 10 minutos (serviço do Suporte). Demais SLAs: varredura central depois da resposta.
   try {
@@ -76,6 +90,7 @@ export default async function SupportCentralPage({ searchParams }: { searchParam
 
   const [overview, options] = await Promise.all([getSupportOverview(user, scope), getSupportOptions(user)]);
   const { stats } = overview;
+  const caps = options.capabilities;
   const scopeQuery = scope ? `escopo=${scope}&` : "";
 
   const header = (compactOnMobile: boolean) => (
@@ -85,21 +100,23 @@ export default async function SupportCentralPage({ searchParams }: { searchParam
       className={compactOnMobile ? "hidden lg:flex" : undefined}
       actions={
         <>
-          <ScopeToggle scope={overview.scope} view={view} />
+          <ScopeToggle scope={overview.scope} view={view} teamAvailable={overview.teamAvailable} />
           {view ? (
-            <Button asChild variant="outline" className="min-h-[44px] md:min-h-0">
-              <Link href={`/suporte${scope ? `?escopo=${scope}` : ""}`}>
-                <Headset /> Workspace
-              </Link>
-            </Button>
-          ) : (
+            canWorkspace ? (
+              <Button asChild variant="outline" className="min-h-[44px] md:min-h-0">
+                <Link href={`/suporte${scope ? `?escopo=${scope}` : ""}`}>
+                  <Headset /> Workspace
+                </Link>
+              </Button>
+            ) : null
+          ) : canPanel ? (
             <Button asChild variant="outline" className="min-h-[44px] md:min-h-0">
               <Link href={`/suporte?${scopeQuery}view=painel`}>
                 <LayoutGrid /> Painel de qualidade
               </Link>
             </Button>
-          )}
-          <NewTicketDialog options={options} openAfterCreate openOnUrlFlag={!view} />
+          ) : null}
+          {caps.createTicket ? <NewTicketDialog options={options} openAfterCreate openOnUrlFlag={!view} /> : null}
         </>
       }
     />
@@ -109,7 +126,13 @@ export default async function SupportCentralPage({ searchParams }: { searchParam
     return (
       <PageContainer>
         {header(false)}
-        <SupportPanel overview={overview} options={options} currentUserId={user.id} filters={readTicketFilters(sp)} />
+        <SupportPanel
+          overview={overview}
+          options={options}
+          currentUserId={user.id}
+          filters={readTicketFilters(sp)}
+          links={{ tickets: canSeeHref(user, "/suporte/chamados"), csat: canSeeHref(user, "/sla?tipo=chamado") }}
+        />
       </PageContainer>
     );
   }
@@ -119,7 +142,12 @@ export default async function SupportCentralPage({ searchParams }: { searchParam
   const selectedId = chosen ?? overview.rows[0]?.id;
   const filaParam = first(sp.fila);
   const initialTab: QueueTab = isQueueTab(filaParam) ? filaParam : "todos";
-  const [detail, kb, channels] = await Promise.all([selectedId ? getTicket(selectedId, user) : Promise.resolve(null), listArticles({ includeDrafts: true }), getSupportChannelStatus()]);
+  // O chamado escolhido só abre dentro do escopo da Central (fora dele = como se não existisse na fila).
+  const [detail, kb, channels] = await Promise.all([
+    selectedId ? getTicket(selectedId, user, { screen: "suporte.central" }) : Promise.resolve(null),
+    listArticles({ includeDrafts: caps.createArticle || caps.editArticle }),
+    getSupportChannelStatus(),
+  ]);
   const explicit = Boolean(chosen && detail);
   const riskTotal = stats.atRisk + stats.breached;
   const drill = (fila: QueueTab) => `/suporte?${scopeQuery}fila=${fila}`;
@@ -147,7 +175,7 @@ export default async function SupportCentralPage({ searchParams }: { searchParam
           value={stats.slaCompliance !== undefined ? formatPercent(stats.slaCompliance) : "—"}
           icon={stats.slaCompliance !== undefined && stats.slaCompliance < stats.slaTarget ? <Gauge /> : <CircleCheckBig />}
           tone={stats.slaCompliance === undefined ? "neutral" : stats.slaCompliance >= stats.slaTarget ? "success" : stats.slaCompliance >= stats.slaTarget * 0.9 ? "warning" : "danger"}
-          href={`/suporte?${scopeQuery}view=painel`}
+          href={canPanel ? `/suporte?${scopeQuery}view=painel` : undefined}
           hint={stats.slaEvaluated > 0 ? `${stats.slaMet}/${stats.slaEvaluated} no prazo · meta ${formatPercent(stats.slaTarget)}` : "sem chamados avaliados no mês"}
         />
       </KpiStrip>
@@ -160,8 +188,7 @@ export default async function SupportCentralPage({ searchParams }: { searchParam
         baseQuery={scope ? { escopo: scope } : {}}
         channels={channels}
         currentUserId={user.id}
-        canOperate={options.canOperate}
-        canWriteArticles={canEditArticles(user)}
+        capabilities={caps}
         articleCategories={kb.categories}
         articleModules={kb.modules}
         renderedAt={overview.generatedAt}

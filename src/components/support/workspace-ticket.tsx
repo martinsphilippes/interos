@@ -39,6 +39,8 @@ import { TicketPriorityBadge, TicketStatusBadge } from "./ticket-badges";
 import { TicketComposer, type ChannelStatus } from "./ticket-composer";
 import { TicketClassification } from "./ticket-side-panels";
 import { contactTarget, telHref } from "./workspace-model";
+import { useCanSeeFn } from "@/components/auth/access-provider";
+import { canCompose, canOperateAny, type SupportCapabilities } from "./access-model";
 
 type DialogKey = "transferir" | "resolver" | "aguardar" | "reabrir" | "oportunidade" | "classificar" | "fechar" | "artigo" | null;
 
@@ -48,8 +50,8 @@ export interface WorkspaceTicketProps {
   detail: TicketDetail;
   channels: ChannelStatus;
   currentUserId: string;
-  canOperate: boolean;
-  canWriteArticles: boolean;
+  /** Capacidades calculadas no servidor (catálogo): cada ação aparece só com a sua. */
+  capabilities: SupportCapabilities;
   articleCategories: string[];
   articleModules: string[];
   /** Volta para a fila (celular). */
@@ -63,8 +65,11 @@ export interface WorkspaceTicketProps {
  * Centro do workspace: cabeçalho do chamado com ações (Transferir, Encerrar atendimento, menu), conversa
  * completa e composer. No celular e em telas médias alterna entre Conversa e Detalhes.
  */
-export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, canWriteArticles, articleCategories, articleModules, backHref, tab, onTabChange, className }: WorkspaceTicketProps) {
+export function WorkspaceTicket({ detail, channels, currentUserId, capabilities: can, articleCategories, articleModules, backHref, tab, onTabChange, className }: WorkspaceTicketProps) {
   const router = useRouter();
+  const canSee = useCanSeeFn();
+  // Menu de ações: aparece para quem opera o chamado (antes: canOperateSupport), cada item pela sua capacidade.
+  const showMenu = canOperateAny(can) || can.createArticle;
   const { ticket, row } = detail;
   const [dialog, setDialog] = React.useState<DialogKey>(null);
   const [pending, startTransition] = React.useTransition();
@@ -100,16 +105,20 @@ export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, c
             <ArrowLeft className="size-5" />
           </Link>
           <p className="min-w-0 flex-1 truncate font-mono text-lg font-semibold tracking-wide text-foreground md:text-xl">#{ticket.number}</p>
-          {canOperate ? (
+          {showMenu ? (
             <div className="flex shrink-0 items-center gap-2">
               {isOpen ? (
                 <>
-                  <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={open("transferir")}>
-                    <ArrowRightLeft /> Transferir
-                  </Button>
-                  <Button size="sm" className="hidden md:inline-flex" onClick={open("resolver")}>
-                    <CircleStop /> Encerrar<span className="hidden 2xl:inline"> atendimento</span>
-                  </Button>
+                  {can.assign ? (
+                    <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={open("transferir")}>
+                      <ArrowRightLeft /> Transferir
+                    </Button>
+                  ) : null}
+                  {can.resolve ? (
+                    <Button size="sm" className="hidden md:inline-flex" onClick={open("resolver")}>
+                      <CircleStop /> Encerrar<span className="hidden 2xl:inline"> atendimento</span>
+                    </Button>
+                  ) : null}
                 </>
               ) : null}
               <DropdownMenu>
@@ -120,52 +129,56 @@ export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, c
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-60">
                   <DropdownMenuLabel>Chamado {ticket.number}</DropdownMenuLabel>
-                  {isOpen && ticket.assigneeId !== currentUserId ? (
+                  {can.assume && isOpen && ticket.assigneeId !== currentUserId ? (
                     <DropdownMenuItem disabled={pending} onSelect={() => run(() => assumeTicketAction({ ticketId: ticket.id }), "Chamado assumido")}>
                       <Hand /> Assumir chamado
                     </DropdownMenuItem>
                   ) : null}
-                  {isOpen ? (
+                  {can.assign && isOpen ? (
                     <DropdownMenuItem className="md:hidden" onSelect={open("transferir")}>
                       <ArrowRightLeft /> Transferir
                     </DropdownMenuItem>
                   ) : null}
-                  {ticket.status === "em_atendimento" || ticket.status === "aberto" || ticket.status === "reaberto" ? (
+                  {can.pause && (ticket.status === "em_atendimento" || ticket.status === "aberto" || ticket.status === "reaberto") ? (
                     <DropdownMenuItem onSelect={open("aguardar")}>
                       <PauseCircle /> Aguardar cliente (pausar SLA)
                     </DropdownMenuItem>
                   ) : null}
-                  {ticket.status === "aguardando_cliente" ? (
+                  {can.pause && ticket.status === "aguardando_cliente" ? (
                     <DropdownMenuItem disabled={pending} onSelect={() => run(() => resumeTicketAction({ ticketId: ticket.id }), "Atendimento retomado · SLA voltou a contar")}>
                       <PlayCircle /> Retomar atendimento
                     </DropdownMenuItem>
                   ) : null}
-                  <DropdownMenuItem onSelect={open("classificar")}>
-                    <Tags /> Classificar
-                  </DropdownMenuItem>
-                  {closedOrResolved ? (
+                  {can.classify ? (
+                    <DropdownMenuItem onSelect={open("classificar")}>
+                      <Tags /> Classificar
+                    </DropdownMenuItem>
+                  ) : null}
+                  {can.reopen && closedOrResolved ? (
                     <DropdownMenuItem onSelect={open("reabrir")}>
                       <RotateCcw /> Reabrir (reincidência)
                     </DropdownMenuItem>
                   ) : null}
-                  {ticket.status === "resolvido" ? (
+                  {can.close && ticket.status === "resolvido" ? (
                     <DropdownMenuItem onSelect={open("fechar")}>
                       <Lock /> Fechar chamado
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuSeparator />
                   {!detail.opportunity ? (
-                    <DropdownMenuItem onSelect={open("oportunidade")}>
-                      <TrendingUp /> Gerar oportunidade
-                    </DropdownMenuItem>
-                  ) : (
+                    can.createOpportunity ? (
+                      <DropdownMenuItem onSelect={open("oportunidade")}>
+                        <TrendingUp /> Gerar oportunidade
+                      </DropdownMenuItem>
+                    ) : null
+                  ) : canSee("/vendas/oportunidades") ? (
                     <DropdownMenuItem asChild>
                       <Link href={`/vendas/oportunidades?oportunidade=${detail.opportunity.id}`}>
                         <TrendingUp /> Ver oportunidade gerada
                       </Link>
                     </DropdownMenuItem>
-                  )}
-                  {canWriteArticles ? (
+                  ) : null}
+                  {can.createArticle ? (
                     <DropdownMenuItem onSelect={open("artigo")}>
                       <BookPlus /> Criar artigo da base
                     </DropdownMenuItem>
@@ -177,12 +190,16 @@ export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, c
                       </a>
                     </DropdownMenuItem>
                   ) : null}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem asChild>
-                    <Link href={`/suporte/chamados/${ticket.id}`}>
-                      <ExternalLink /> Abrir página do chamado
-                    </Link>
-                  </DropdownMenuItem>
+                  {canSee("/suporte/chamados") ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem asChild>
+                        <Link href={`/suporte/chamados/${ticket.id}`}>
+                          <ExternalLink /> Abrir página do chamado
+                        </Link>
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -237,9 +254,9 @@ export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, c
         <div ref={threadRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-5">
           <ConversationThread detail={detail} />
         </div>
-        {canOperate ? (
+        {canCompose(can) || (isOpen && can.resolve) ? (
           <div className="sticky bottom-[calc(var(--spacing-mobile-nav)+env(safe-area-inset-bottom)+8px)] z-10 border-t border-border bg-surface px-3 pb-3 pt-3 md:bottom-0 md:px-4 lg:static">
-            <TicketComposer detail={detail} channels={channels} onSent={() => threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" })} />
+            {canCompose(can) ? <TicketComposer detail={detail} channels={channels} can={can} onSent={() => threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" })} /> : null}
             {isOpen ? (
               <div className="mt-2 grid grid-cols-2 gap-2 lg:hidden">
                 {tel ? (
@@ -249,9 +266,11 @@ export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, c
                     </a>
                   </Button>
                 ) : null}
-                <Button className="min-h-[44px]" onClick={open("resolver")}>
-                  Resolver chamado
-                </Button>
+                {can.resolve ? (
+                  <Button className="min-h-[44px]" onClick={open("resolver")}>
+                    Resolver chamado
+                  </Button>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -270,7 +289,7 @@ export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, c
             <DialogDescription>Criticidade (recalcula o SLA), fila, produto e categoria.</DialogDescription>
           </DialogHeader>
           <DialogBody className="py-2">
-            <TicketClassification key={ticket.updatedAt} detail={detail} canOperate={canOperate} bare onSaved={() => setDialog(null)} />
+            <TicketClassification key={ticket.updatedAt} detail={detail} canOperate={can.classify} bare onSaved={() => setDialog(null)} />
           </DialogBody>
         </DialogContent>
       </Dialog>
@@ -287,7 +306,7 @@ export function WorkspaceTicket({ detail, channels, currentUserId, canOperate, c
         }}
       />
       {/* Montado só ao abrir: o rascunho sempre reflete o chamado atual (inclusive a solução recém-registrada). */}
-      {canWriteArticles && dialog === "artigo" ? (
+      {can.createArticle && dialog === "artigo" ? (
         <ArticleEditor
           {...dialogProps("artigo")}
           products={detail.catalog}
