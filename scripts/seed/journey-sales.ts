@@ -10,6 +10,7 @@ import {
   type Counter,
   type Lead,
   type Opportunity,
+  type OpportunityClosing,
   type OpportunityProduct,
   type Proposal,
   type ProposalItem,
@@ -20,6 +21,7 @@ import {
 import { CITIES, NOW, addDays, businessTime, cnpj, competence, dayInCompetence, daysAgo, daysFromNow, emailFor, hoursAgo, id, isPast, minIso, pad, pastOnly, personName, phone, pickCity, rng, type SeedDoc } from "./lib";
 import { clientById, type SeedContext, type SeededClient } from "./context";
 import { counterId } from "../../src/server/db";
+import { closingPaymentConditionText } from "../../src/domain/sale-closing";
 import { LEAD_SCORING, LEAD_SOURCE_KEYS, PRODUCT_IDS, splitOrigin } from "./catalog";
 
 const INTERESTS: Record<string, string> = {
@@ -221,6 +223,8 @@ function seedOpportunities(ctx: SeedContext): void {
       lossCompetitor: input.lossCompetitor,
       lossNotes: input.lossNotes,
       contractId: input.contractId,
+      saleNumber: input.saleNumber,
+      closing: input.closing,
       createdAt: input.createdAt,
       updatedAt: input.lastActivityAt ?? input.createdAt,
     } satisfies SeedDoc<Opportunity>);
@@ -252,11 +256,22 @@ function seedOpportunities(ctx: SeedContext): void {
     if (i >= 1) addProposal(opp, client, i === 1 ? "enviada" : "negociacao", client.journey.opportunityAt!);
   });
 
-  // 4-7: ganhas (prospects em Financeiro e dois clientes em implantação)
+  // 4-7: ganhas (prospects em Financeiro e dois clientes em implantação), com número da venda (VEN) e
+  // fechamento estruturado — os contratos delas herdam as condições. Os demais contratos do seed (clientes
+  // antigos, sem venda no CRM) ficam SEM os campos novos, para provar a compatibilidade com dados históricos.
+  const CLOSINGS: Omit<OpportunityClosing, "closedAt" | "closedBy" | "contactId" | "contactName">[] = [
+    { paymentMethod: "boleto", billingDay: 10, termMonths: 12, recurrence: "mensal", setupInstallments: 2, implementationRequired: true, implementationNotes: "Migrar cadastro de produtos da planilha; treinamento do caixa no sábado.", commercialNotes: "Adesão em 2x combinada na negociação." },
+    { paymentMethod: "pix", billingDay: 15, termMonths: 24, recurrence: "mensal", setupInstallments: 1, implementationRequired: false, commercialNotes: "Cliente fará a configuração por conta própria com o suporte; implantação não contratada." },
+    { paymentMethod: "boleto", billingDay: 5, termMonths: 12, recurrence: "mensal", setupInstallments: 1, implementationRequired: true, implementationNotes: "Integração TEF com duas maquininhas no caixa principal." },
+    { paymentMethod: "cartao", billingDay: 20, termMonths: 12, recurrence: "mensal", setupInstallments: 1, implementationRequired: true },
+  ];
   [36, 37, 27, 28].forEach((cn, i) => {
     const client = clientById(ctx, id("client", cn));
     const products = client.products.map((p) => productLine(ctx, p.productId, p.quantity));
+    const contact = client.contacts.find((c) => c.isPrimary) ?? client.contacts[0];
     const opp = make(i + 4, client, {
+      saleNumber: `VEN-${client.journey.wonAt!.slice(0, 4)}-${pad(i + 1, 4)}`,
+      closing: { ...CLOSINGS[i], contactId: contact?.id, contactName: contact?.name, closedAt: client.journey.wonAt!, closedBy: client.doc.ownerSalesId ?? users.igor.id },
       stage: "ganho",
       stageChangedAt: client.journey.wonAt,
       kind: "nova_venda",
@@ -378,10 +393,13 @@ function seedContracts(ctx: SeedContext): void {
     const signedAt = signed ? j.signedAt ?? businessTime(addDays(j.contractAt!, 2)) : undefined;
     const releasedAt = released ? j.releasedAt ?? businessTime(addDays(signedAt!, 1)) : undefined;
     const startDate = releasedAt ? releasedAt.slice(0, 10) + "T12:00:00.000Z" : undefined;
-    const billingDay = rng.pick([5, 10, 10, 15, 20]);
-    const primary = client.contacts.find((c) => c.isPrimary)!;
-    const endDate = startDate ? (status === "ativo" ? nextAnniversary(startDate) : addDays(startDate, 365)) : undefined;
     const opp = ctx.opportunities.find((o) => o.clientId === client.doc.id && o.stage === "ganho");
+    const closing = opp?.closing;
+    const pickedDay = rng.pick([5, 10, 10, 15, 20]); // sorteio mantido: preserva a sequência do gerador
+    const billingDay = closing?.billingDay ?? pickedDay;
+    const primary = client.contacts.find((c) => c.isPrimary)!;
+    const termMonths = closing?.termMonths ?? 12;
+    const endDate = startDate ? (status === "ativo" ? nextAnniversary(startDate) : addDays(startDate, termMonths === 12 ? 365 : Math.round(termMonths * 30.5))) : undefined;
 
     const contract = store.add(COLLECTIONS.contracts, id("ctr", n), {
       clientId: client.doc.id,
@@ -394,8 +412,8 @@ function seedContracts(ctx: SeedContext): void {
       ...t,
       billingDay,
       firstDueDate: startDate ? dayInCompetence(competence(1, new Date(startDate)), billingDay) : undefined,
-      recurrence: "mensal",
-      termMonths: 12,
+      recurrence: closing?.recurrence ?? "mensal",
+      termMonths,
       startDate,
       endDate,
       // Sem provedor de assinatura conectado: documento gerado pelo INTEROS e assinatura registrada pelo
@@ -408,13 +426,26 @@ function seedContracts(ctx: SeedContext): void {
       signatureEnvelopeId: cStatus === "aguardando_contrato" ? undefined : `DOC-CT-${j.contractAt!.slice(0, 4)}-${pad(n, 4)}-v1`,
       signedAt,
       documentHash: signed ? `sha256:${cnpj()}${pad(n, 4)}` : undefined,
-      paymentCondition: "Adesão à vista; mensalidade por boleto/PIX",
+      paymentCondition: closing ? closingPaymentConditionText(closing, t) : "Adesão à vista; mensalidade por boleto/PIX",
       financialStatus: override?.financialStatus ?? (released ? "aprovado" : "pendente"),
       releasedAt,
       releasedBy: releasedAt ? users.karem.id : undefined,
       pendingReason: override?.pendingReason,
       ownerId: users.karem.id,
       documentIds: [],
+      // Campos do fechamento: só contratos nascidos de venda com fechamento estruturado.
+      ...(closing && opp
+        ? {
+            paymentMethod: closing.paymentMethod,
+            setupInstallments: closing.setupInstallments,
+            implementationRequired: closing.implementationRequired,
+            commercialNotes: closing.commercialNotes,
+            implementationNotes: closing.implementationNotes,
+            saleNumber: opp.saleNumber,
+            sellerId: opp.ownerId,
+            contactId: closing.contactId,
+          }
+        : {}),
       createdAt: j.contractAt!,
       updatedAt: releasedAt ?? signedAt ?? j.contractAt!,
     } satisfies SeedDoc<Contract>);

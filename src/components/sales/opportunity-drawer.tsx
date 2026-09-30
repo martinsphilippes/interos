@@ -161,7 +161,7 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
           </Button>
         </div>
         {opp.stage === "ganho" ? (
-          <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success-fg">Ganha em {formatDateTime(opp.wonAt)}. Contrato, produtos e comissões foram gerados; a jornada segue no Financeiro.</p>
+          <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success-fg">Ganha em {formatDateTime(opp.wonAt)}{opp.saleNumber ? ` · venda ${opp.saleNumber}` : ""}. Contrato, produtos e comissões foram gerados; a jornada segue no Financeiro.</p>
         ) : null}
         {opp.stage === "perdido" ? (
           <p className="mt-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger-fg">

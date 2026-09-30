@@ -3,8 +3,8 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Client, type ClientProduct, type SlaInstance, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
-import { list } from "../../src/server/db";
+import { COLLECTIONS, type Client, type ClientProduct, type Contract, type Counter, type Opportunity, type Proposal, type SlaInstance, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
+import { counterId, list } from "../../src/server/db";
 
 const ENTITY_COLLECTION: Record<SlaInstance["entityType"], CollectionName> = {
   tarefa: COLLECTIONS.tasks,
@@ -62,12 +62,35 @@ async function main(): Promise<void> {
   // (e) todo timeline_event tem clientId existente.
   for (const t of timeline) if (!clientIds.has(t.clientId)) problems.push(`(e) ${t.id} clientId inexistente: ${t.clientId}`);
 
+  // (f) contadores de numeração nunca abaixo do maior número gravado (senão nextNumber repetiria números).
+  const counters = cache.get(COLLECTIONS.counters) as Counter[];
+  const opportunities = cache.get(COLLECTIONS.opportunities) as Opportunity[];
+  const contracts = cache.get(COLLECTIONS.contracts) as Contract[];
+  const numbered = [
+    ...contracts.map((c) => c.number),
+    ...(cache.get(COLLECTIONS.proposals) as Proposal[]).map((p) => p.number),
+    ...opportunities.map((o) => o.saleNumber),
+  ];
+  for (const n of numbered) {
+    const m = n?.match(/^([A-Z]+)-(\d{4})-(\d+)$/);
+    if (!m) continue;
+    const counter = counters.find((c) => c.id === counterId(m[1], m[2]));
+    if (!counter || counter.value < Number(m[3])) problems.push(`(f) contador ${m[1]}-${m[2]} (${counter?.value ?? "ausente"}) abaixo de ${n}`);
+  }
+  // (g) número da venda único; contrato com saleNumber aponta para a venda de mesmo número.
+  const saleNumbers = opportunities.map((o) => o.saleNumber).filter(Boolean);
+  if (new Set(saleNumbers).size !== saleNumbers.length) problems.push("(g) saleNumber duplicado em oportunidades");
+  for (const c of contracts.filter((x) => x.saleNumber)) {
+    const opp = opportunities.find((o) => o.id === c.opportunityId);
+    if (!opp || opp.saleNumber !== c.saleNumber) problems.push(`(g) ${c.id} saleNumber ${c.saleNumber} sem venda correspondente`);
+  }
+
   const activeSlas = slas.filter((s) => s.status !== "concluido");
   console.log(`SLA ativos: ${activeSlas.length}, violados: ${activeSlas.filter((s) => s.breachedAt).length}`);
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(e): OK");
+    console.log("\nInvariantes (a)-(g): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);

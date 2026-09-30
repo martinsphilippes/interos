@@ -136,7 +136,7 @@ function OpportunityHeader({ detail, currentUserId, isManager, className }: { de
         </span>
       </div>
       <OpportunityActions detail={detail} currentUserId={currentUserId} isManager={isManager} />
-      {opp.stage === "ganho" ? <p className="rounded-md bg-success-soft px-3 py-1.5 text-sm text-success-fg">Ganha em {formatDateTime(opp.wonAt)}. Contrato e comissões gerados; a jornada segue no Financeiro.</p> : null}
+      {opp.stage === "ganho" ? <p className="rounded-md bg-success-soft px-3 py-1.5 text-sm text-success-fg">Ganha em {formatDateTime(opp.wonAt)}{opp.saleNumber ? ` · venda ${opp.saleNumber}` : ""}. Contrato e comissões gerados; a jornada segue no Financeiro.</p> : null}
       {opp.stage === "perdido" ? (
         <p className="rounded-md bg-danger-soft px-3 py-1.5 text-sm text-danger-fg">
           Perdida em {formatDateTime(opp.lostAt)} · {lossReasonLabel(opp.lossReason)}
