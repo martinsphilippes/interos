@@ -128,6 +128,17 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "opportunity.reassigned": "Oportunidade transferida",
   "email.sent": "E-mail enviado/registrado",
   "settings.updated": "Configuração alterada",
+  "commission.paid": "Comissão paga",
+  "commission.cancelled": "Comissão cancelada",
+  "commission.reversed": "Comissão estornada",
+  "commission.updated": "Comissão atualizada",
+  "commission_rule.changed": "Regra de comissão alterada",
+  "payable.created": "Título a pagar criado",
+  "payable.approved": "Título a pagar aprovado",
+  "payable.scheduled": "Título programado para pagamento",
+  "payable.paid": "Título pago",
+  "payable.cancelled": "Título a pagar cancelado",
+  "payable.updated": "Título a pagar alterado",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -173,6 +184,8 @@ const DOMAIN_LABELS: Record<string, string> = {
   kpi: "Performance",
   goal: "Performance",
   commission: "Performance",
+  commission_rule: "Financeiro",
+  payable: "Financeiro",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",

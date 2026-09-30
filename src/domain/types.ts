@@ -86,6 +86,8 @@ export const COLLECTIONS = {
   processRuns: "process_runs",
   /** Contadores transacionais de numeração (VEN, CT, PR…): um documento por prefixo e ano. Ver `nextNumber` em db.ts. */
   counters: "counters",
+  /** Contas a pagar (títulos): comissões elegíveis, bônus e lançamentos manuais do Financeiro. */
+  payables: "payables",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -1101,15 +1103,96 @@ export interface BonusBlock extends BaseEntity {
   status: "aberto" | "confirmado" | "revogado";
 }
 
+export type CommissionRevenueType = "setup" | "recorrencia" | "hardware";
+/** Abrangência da regra (precedência: contrato > vendedor > produto > padrão). Regras antigas (sem campo) = "padrao". */
+export type CommissionRuleScope = "padrao" | "vendedor" | "contrato";
+/** Quando a comissão fica elegível. Regras antigas derivam do `releaseCondition` (ver src/server/commissions/rules.ts). */
+export type CommissionTrigger = "venda" | "contrato_assinado" | "primeiro_pagamento" | "pagamento" | "permanencia" | "pagamento_e_permanencia" | "mensalidade_n";
+/** Base de cálculo: valor contratado (itens líquidos do contrato) ou valor efetivamente recebido na cobrança. */
+export type CommissionBaseSource = "contratado" | "recebido";
+
 export interface CommissionRule extends BaseEntity {
   name: string;
   productId?: string;
-  revenueType: "setup" | "recorrencia" | "hardware";
+  revenueType: CommissionRevenueType;
   mode: "percentual" | "valor";
   value: number;
   releaseCondition: "venda" | "contrato_assinado" | "pagamento" | "parcela";
+  /**
+   * N-ésima mensalidade paga. Recorrência: 1ª mensalidade que gera comissão (padrão 1; regras antigas "parcela": a N-ésima).
+   * Gatilho "mensalidade_n": a comissão (de qualquer tipo) só é adquirida quando a N-ésima mensalidade é paga.
+   */
   releaseInstallment?: number;
   active: boolean;
+  // Motor v2 (D10) — todos opcionais: regras antigas continuam valendo como "padrão".
+  scope?: CommissionRuleScope;
+  /** Vendedor (scope "vendedor"). */
+  userId?: string;
+  /** Contrato da exceção (scope "contrato"). */
+  contractId?: string;
+  clientId?: string;
+  /** Categoria de produto (alternativa ao productId). */
+  productCategory?: ProductCategory;
+  trigger?: CommissionTrigger;
+  /** Carência em dias a partir do início do contrato (startDate, ou releasedAt). */
+  minTenureDays?: number;
+  /** Recorrência: quantas competências geram comissão a partir de `releaseInstallment` (null/ausente = enquanto ativo). */
+  recurringCompetences?: number | null;
+  baseSource?: CommissionBaseSource;
+  /** Vigência (AAAA-MM-DD) comparada com a data da venda. */
+  validFrom?: string;
+  validTo?: string;
+  /** true (padrão): substitui as regras de nível inferior para o tipo de receita; false: soma-se a elas. */
+  overridesDefault?: boolean;
+  /** Motivo (obrigatório em exceção por contrato). */
+  reason?: string;
+  approvedBy?: string;
+  updatedBy?: string;
+}
+
+/**
+ * Situação da comissão: prevista (projeção) → em_carencia / aguardando_recebimento → liberada ("Elegível") →
+ * titulo_gerado → paga. cancelada (não adquirida), estornada (revertida manualmente) e bloqueada (retida pelo Financeiro).
+ */
+export type CommissionStatus = "prevista" | "em_carencia" | "aguardando_recebimento" | "liberada" | "titulo_gerado" | "paga" | "cancelada" | "bloqueada" | "estornada";
+
+/** Passo da memória de cálculo (padrão do BonusBreakdown). */
+export interface CommissionCalcStep {
+  label: string;
+  value: string;
+  date?: string;
+}
+
+/** Regra efetiva congelada no documento da comissão. */
+export interface CommissionRuleSnapshot {
+  id: string;
+  name: string;
+  scope: CommissionRuleScope | "produto";
+  revenueType: CommissionRevenueType;
+  mode: "percentual" | "valor";
+  value: number;
+  trigger: CommissionTrigger;
+  baseSource: CommissionBaseSource;
+  minTenureDays: number;
+  recurringCompetences: number | null;
+  releaseInstallment: number;
+  overridesDefault: boolean;
+  userId?: string;
+  contractId?: string;
+  productId?: string;
+  productCategory?: string;
+  reason?: string;
+  /** Origem da regra: documento em commission_rules ou padrão do cadastro do produto. */
+  source: "regra" | "produto";
+}
+
+export interface CommissionHistoryEntry {
+  at: string;
+  by: string;
+  byName?: string;
+  from?: CommissionStatus;
+  to: CommissionStatus;
+  note?: string;
 }
 
 export interface Commission extends BaseEntity {
@@ -1118,14 +1201,100 @@ export interface Commission extends BaseEntity {
   contractId?: string;
   opportunityId?: string;
   productId?: string;
-  revenueType: "setup" | "recorrencia" | "hardware";
+  revenueType: CommissionRevenueType;
   baseAmount: number;
   amount: number;
   competence: string;
-  status: "prevista" | "liberada" | "paga" | "cancelada";
+  status: CommissionStatus;
   releaseAt?: string;
   paidAt?: string;
   ruleId?: string;
+  // Motor v2 (D11) — opcionais: comissões antigas não têm.
+  /** COM-AAAA-NNNNN (numeração transacional). */
+  code?: string;
+  /** Chave de idempotência: contractId|revenueType|productId|parcela|ruleId (o id é com_<hash>). */
+  sourceKey?: string;
+  /** Parcela da chave: "s1".."sN" (adesão), "hw" (hardware), "m<N>" (N-ésima mensalidade). */
+  slot?: string;
+  saleNumber?: string;
+  productName?: string;
+  ruleSnapshot?: CommissionRuleSnapshot;
+  calc?: { steps: CommissionCalcStep[]; formula: string };
+  /** Cobrança que originou/libera a comissão. */
+  billingId?: string;
+  installment?: number;
+  /** Data em que ficou (ou fica, na carência) elegível. */
+  eligibleAt?: string;
+  payableId?: string;
+  /** Títulos anteriores cancelados (a comissão voltou a Elegível). */
+  previousPayableIds?: string[];
+  cancelledAt?: string;
+  cancelReason?: string;
+  blockedReason?: string;
+  reversedAt?: string;
+  reverseReason?: string;
+  reversedBy?: string;
+  /** Título negativo que registra o estorno de uma comissão já paga. */
+  reversalPayableId?: string;
+  history?: CommissionHistoryEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Contas a pagar (D13)
+// ---------------------------------------------------------------------------
+
+export type PayableStatus = "previsto" | "aprovado" | "a_pagar" | "pago" | "cancelado";
+export type PayableCategory = "comissao_comercial" | "bonus" | "outros" | "estorno_comissao";
+export type PayableOrigin = "comissao_automatica" | "bonus" | "manual" | "estorno";
+
+export interface PayableHistoryEntry {
+  at: string;
+  by: string;
+  byName?: string;
+  action: string;
+  from?: PayableStatus;
+  to?: PayableStatus;
+  reason?: string;
+  changes?: Record<string, { from: unknown; to: unknown }>;
+}
+
+export interface Payable extends BaseEntity {
+  /** PAG-AAAA-NNNNN (numeração transacional). */
+  code?: string;
+  creditorType: "colaborador" | "fornecedor";
+  creditorId?: string;
+  creditorName: string;
+  category: PayableCategory;
+  description: string;
+  /** Negativo no estorno de comissão já paga (valor a recuperar). */
+  amount: number;
+  competence: string;
+  dueDate: string;
+  status: PayableStatus;
+  origin: PayableOrigin;
+  sourceIds: {
+    commissionIds: string[];
+    contractId?: string;
+    opportunityId?: string;
+    saleNumber?: string;
+    billingId?: string;
+    clientId?: string;
+    /** Título original quando este registra um estorno. */
+    reversalOf?: string;
+  };
+  approvedBy?: string;
+  approvedAt?: string;
+  scheduledBy?: string;
+  scheduledAt?: string;
+  paidAt?: string;
+  paidBy?: string;
+  paymentMethod?: string;
+  receiptUrl?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+  notes?: string;
+  history: PayableHistoryEntry[];
 }
 
 export interface GamificationPoints extends BaseEntity {

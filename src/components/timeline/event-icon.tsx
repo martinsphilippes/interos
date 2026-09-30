@@ -113,6 +113,8 @@ const PREFIX_CATEGORY: Record<string, EventCategory> = {
   kpi: "performance",
   goal: "performance",
   commission: "performance",
+  commission_rule: "financeiro",
+  payable: "financeiro",
   bonus: "performance",
   gamification: "performance",
   achievement: "performance",

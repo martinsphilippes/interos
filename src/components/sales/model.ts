@@ -28,7 +28,8 @@ export const VISIT_STATUS_VARIANT: Record<Visit["status"], Variant> = { agendada
 export const REVENUE_TYPE_LABELS: Record<CommissionRule["revenueType"], string> = { setup: "Adesão/setup", recorrencia: "Recorrência", hardware: "Hardware" };
 export const REVENUE_TYPES: CommissionRule["revenueType"][] = ["setup", "recorrencia", "hardware"];
 
-export const COMMISSION_STATUS_LABELS = { prevista: "Prevista", liberada: "Liberada", paga: "Paga", cancelada: "Cancelada" } as const;
+/** Rótulos das situações da comissão ("liberada" é exibida como "Elegível"). */
+export { COMMISSION_STATUS_LABELS } from "@/domain/commissions";
 
 export function isOpenStage(stage: Opportunity["stage"]): boolean {
   return stage !== "ganho" && stage !== "perdido";
@@ -102,12 +103,21 @@ export function effectiveProposalStatus(p: Pick<Proposal, "status" | "validUntil
 // ---------------------------------------------------------------------------
 
 /** Campos da regra que o cliente precisa (serializável). */
-export type CommissionRuleView = Pick<CommissionRule, "id" | "name" | "productId" | "revenueType" | "mode" | "value" | "releaseCondition" | "releaseInstallment">;
+export type CommissionRuleView = Pick<CommissionRule, "id" | "name" | "productId" | "revenueType" | "mode" | "value" | "releaseCondition" | "releaseInstallment"> &
+  Partial<Pick<CommissionRule, "scope" | "userId" | "trigger" | "baseSource" | "minTenureDays" | "recurringCompetences" | "productCategory">>;
 
-/** Regra aplicável: a específica do produto quando houver; senão a padrão (sem produto) do tipo de receita. */
+/**
+ * Regra aplicável na simulação: a do vendedor (quando carregada) antes da padrão; dentro de cada nível, a específica
+ * do produto antes da genérica. Exceções por contrato não entram na simulação.
+ */
 export function pickCommissionRule<T extends CommissionRuleView>(rules: T[], revenueType: CommissionRule["revenueType"], productId?: string): T | undefined {
-  const ofType = rules.filter((r) => r.revenueType === revenueType);
-  return (productId ? ofType.find((r) => r.productId === productId) : undefined) ?? ofType.find((r) => !r.productId);
+  const ofType = rules.filter((r) => r.revenueType === revenueType && r.scope !== "contrato" && !r.productCategory);
+  const levels = [ofType.filter((r) => r.scope === "vendedor"), ofType.filter((r) => r.scope !== "vendedor")];
+  for (const level of levels) {
+    const found = (productId ? level.find((r) => r.productId === productId) : undefined) ?? level.find((r) => !r.productId);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /** Valor da comissão: percentual sobre a base ou valor fixo por unidade. */
@@ -141,6 +151,16 @@ export function estimateCommission(rules: CommissionRuleView[], input: { setup: 
 /** Descrição curta da regra ("25% na venda", "100% na 3ª parcela"). */
 export function describeRule(rule: CommissionRuleView): string {
   const value = rule.mode === "percentual" ? `${String(rule.value).replace(".", ",")}%` : `R$ ${String(rule.value).replace(".", ",")} por unidade`;
+  if (rule.trigger) {
+    const trigger = { venda: "na venda", contrato_assinado: "na assinatura", primeiro_pagamento: "no 1º pagamento", pagamento: "no recebimento", permanencia: "após a carência", pagamento_e_permanencia: "no recebimento + carência", mensalidade_n: `na ${rule.releaseInstallment ?? 3}ª mensalidade paga` }[rule.trigger];
+    const recurring =
+      rule.revenueType === "recorrencia"
+        ? `${(rule.releaseInstallment ?? 1) > 1 && rule.trigger !== "mensalidade_n" ? ` · a partir da ${rule.releaseInstallment}ª mensalidade` : ""}${rule.recurringCompetences === null || rule.recurringCompetences === undefined ? " · enquanto ativo" : ` · ${rule.recurringCompetences} competência(s)`}`
+        : "";
+    const base = rule.baseSource === "recebido" ? " sobre o recebido" : "";
+    const grace = rule.minTenureDays ? ` · carência ${rule.minTenureDays} dias` : "";
+    return `${value}${base} · ${trigger}${recurring}${grace}${rule.scope === "vendedor" ? " (sua regra)" : ""}`;
+  }
   const when =
     rule.releaseCondition === "parcela"
       ? `liberada na ${rule.releaseInstallment ?? 3}ª mensalidade paga`

@@ -4,7 +4,7 @@ import "server-only";
  * Números vêm do motor de KPIs (src/server/kpis), das comissões (src/server/sales/commissions.ts), do motor
  * de bônus (./bonus) e da gamificação (./gamification, ./ranking). Nada é calculado na UI.
  */
-import { create, getById, list } from "@/server/db";
+import { create, getById, list, stripUndefined } from "@/server/db";
 import { COLLECTIONS, type Achievement, type BonusRule, type CurrentUser, type DomainEvent, type GamificationCampaign, type Settings, type Task, type User } from "@/domain/types";
 import { DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
 import {
@@ -118,7 +118,7 @@ export interface SalesPerformance {
 }
 
 async function getSalesPerformance(userId: string, comp: string): Promise<SalesPerformance> {
-  const [summary, rules, settings] = await Promise.all([getCommissionSummary(userId, comp), listActiveCommissionRules(), getSalesPrizeSettings()]);
+  const [summary, rules, settings] = await Promise.all([getCommissionSummary(userId, comp), listActiveCommissionRules(userId), getSalesPrizeSettings()]);
   const spec = { setup: settings.adesao, recorrencia: settings.recorrencia, hardware: settings.hardware } as const;
   const prizes: SalesPrizeLine[] = REVENUE_TYPES.map((type) => {
     const prize = prizeValue(spec[type], settings.salarioMinimo);
@@ -129,7 +129,25 @@ async function getSalesPerformance(userId: string, comp: string): Promise<SalesP
   return {
     competence: comp,
     summary,
-    rules: rules.map((r) => ({ id: r.id, name: r.name, productId: r.productId, revenueType: r.revenueType, mode: r.mode, value: r.value, releaseCondition: r.releaseCondition, releaseInstallment: r.releaseInstallment })),
+    rules: rules.map((r) =>
+      stripUndefined({
+        id: r.id,
+        name: r.name,
+        productId: r.productId,
+        revenueType: r.revenueType,
+        mode: r.mode,
+        value: r.value,
+        releaseCondition: r.releaseCondition,
+        releaseInstallment: r.releaseInstallment,
+        scope: r.scope,
+        userId: r.userId,
+        trigger: r.trigger,
+        baseSource: r.baseSource,
+        minTenureDays: r.minTenureDays,
+        recurringCompetences: r.recurringCompetences,
+        productCategory: r.productCategory,
+      }),
+    ),
     prizes,
     prizeTotal: prizes.filter((p) => p.earned).reduce((s, p) => s + p.prize, 0),
     minimumWage: settings.salarioMinimo,

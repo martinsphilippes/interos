@@ -493,6 +493,18 @@ export const EVENT_TYPES = [
   "opportunity.reassigned",
   "email.sent",
   "settings.updated",
+  // comissões v2 e contas a pagar (circuito de receita, etapa 2)
+  "commission.paid",
+  "commission.cancelled",
+  "commission.reversed",
+  "commission.updated",
+  "commission_rule.changed",
+  "payable.created",
+  "payable.approved",
+  "payable.scheduled",
+  "payable.paid",
+  "payable.cancelled",
+  "payable.updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

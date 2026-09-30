@@ -7,7 +7,7 @@ import "server-only";
  * são donos ou originaram (ex.: suporte/CS que abriram upsell). A Central tem escopo "meu" ou
  * "equipe" (gestor: ele + liderados diretos; diretoria/admin: todo o time de vendas).
  */
-import { getById, getManyByIds, list } from "@/server/db";
+import { getById, getManyByIds, list, stripUndefined } from "@/server/db";
 import { ORG_ID } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { dateKey, formatCompetence } from "@/lib/format";
@@ -378,7 +378,8 @@ export async function getSalesOverview(user: CurrentUser, escopo?: string): Prom
     list<Opportunity>(COLLECTIONS.opportunities),
     getOpportunitySettings(),
     getPipelineStages(),
-    listActiveCommissionRules(),
+    // Simulador: regras padrão + as do próprio vendedor (no escopo "Minhas vendas").
+    listActiveCommissionRules(scope.kind === "meu" ? user.id : undefined),
     getLastSweep(),
   ]);
   const ids = new Set(scope.userIds);
@@ -470,7 +471,23 @@ export async function getSalesOverview(user: CurrentUser, escopo?: string): Prom
 }
 
 function ruleView(r: CommissionRule): CommissionRuleView {
-  return { id: r.id, name: r.name, productId: r.productId, revenueType: r.revenueType, mode: r.mode, value: r.value, releaseCondition: r.releaseCondition, releaseInstallment: r.releaseInstallment };
+  return stripUndefined({
+    id: r.id,
+    name: r.name,
+    productId: r.productId,
+    revenueType: r.revenueType,
+    mode: r.mode,
+    value: r.value,
+    releaseCondition: r.releaseCondition,
+    releaseInstallment: r.releaseInstallment,
+    scope: r.scope,
+    userId: r.userId,
+    trigger: r.trigger,
+    baseSource: r.baseSource,
+    minTenureDays: r.minTenureDays,
+    recurringCompetences: r.recurringCompetences,
+    productCategory: r.productCategory,
+  });
 }
 
 // ---------------------------------------------------------------------------

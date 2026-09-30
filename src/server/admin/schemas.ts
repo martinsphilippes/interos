@@ -144,7 +144,7 @@ export const setProductActiveSchema = z.object({ id: idSchema, active: z.boolean
 // Configurações do sistema (coleção settings, um documento por key)
 // ---------------------------------------------------------------------------
 
-export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia", "financeiro_alertas"] as const;
+export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia", "financeiro_alertas", "comissoes_pagamento"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const fraction = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(1, `${label} deve ser uma fração entre 0 e 1`);
@@ -229,6 +229,12 @@ export const financeiroAlertasSchema = z.object({
 });
 export type FinanceiroAlertasConfig = z.infer<typeof financeiroAlertasSchema>;
 
+/** Pagamento de comissões (lido por src/server/commissions/payables.ts): dia do vencimento dos títulos no mês seguinte à competência da elegibilidade. */
+export const comissoesPagamentoSchema = z.object({
+  diaPagamento: z.number("Dia de pagamento inválido").int("Use um dia inteiro").min(1, "Dia mínimo é 1").max(28, "Dia máximo é 28"),
+});
+export type ComissoesPagamentoConfig = z.infer<typeof comissoesPagamentoSchema>;
+
 /** Aprovação do go-live (lido por src/server/implementation/service.ts → getGoLiveSettings). */
 export const goLiveSchema = z.object({
   exigeAprovacaoGestor: z.boolean("Informe se o go-live exige aprovação de gestor"),
@@ -282,6 +288,7 @@ export const SETTING_SCHEMAS = {
   premios_vendas: premiosVendasSchema,
   "gamificacao.sequencia": sequenciaSchema,
   financeiro_alertas: financeiroAlertasSchema,
+  comissoes_pagamento: comissoesPagamentoSchema,
 } as const;
 
 export interface SettingValues {
@@ -298,6 +305,7 @@ export interface SettingValues {
   premios_vendas: PremiosVendasConfig;
   "gamificacao.sequencia": SequenciaConfig;
   financeiro_alertas: FinanceiroAlertasConfig;
+  comissoes_pagamento: ComissoesPagamentoConfig;
 }
 
 /** Valores usados quando o documento ainda não existe no banco (iguais ao seed). */
@@ -315,6 +323,7 @@ export const SETTING_DEFAULTS: SettingValues = {
   premios_vendas: { ...DEFAULT_SALES_PRIZES },
   "gamificacao.sequencia": { ...DEFAULT_STREAK },
   financeiro_alertas: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3 },
+  comissoes_pagamento: { diaPagamento: 10 },
 };
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
@@ -331,6 +340,7 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   premios_vendas: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.",
   "gamificacao.sequencia": "Regra da sequência em dias da gamificação (critério e janela máxima em dias úteis).",
   financeiro_alertas: "Alertas de contratos parados: aguardando assinatura, pago sem liberação e liberado sem início da implantação.",
+  comissoes_pagamento: "Pagamento de comissões: dia do vencimento dos títulos no mês seguinte à competência da elegibilidade.",
 };
 
 export const upsertSettingSchema = z.object({

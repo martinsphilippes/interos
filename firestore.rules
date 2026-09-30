@@ -34,6 +34,10 @@ service cloud.firestore {
     match /counters/{docId} {
       allow read, write: if false;
     }
+    // Contas a pagar (títulos de comissão, bônus e lançamentos manuais): valores e credores, só pelo servidor.
+    match /payables/{docId} {
+      allow read, write: if false;
+    }
 
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {
