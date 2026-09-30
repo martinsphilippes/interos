@@ -49,7 +49,7 @@ export function CommissionSimulator({ rules }: { rules: CommissionRuleView[] }) 
           <span className="text-base font-bold tabular-nums">{formatCurrency(estimate.total)}</span>
         </li>
       </ul>
-      <p className="text-xs text-muted">Estimativa com as regras padrão por tipo de receita. Regras específicas de produto são aplicadas no cálculo real ao ganhar o negócio.</p>
+      <p className="text-xs text-muted">Estimativa com as suas regras de vendedor (ou as padrão) por tipo de receita. No cálculo real valem também as regras de produto e as exceções do contrato; o detalhe fica em Financeiro › Comissões.</p>
     </div>
   );
 }

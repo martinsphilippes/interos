@@ -26,8 +26,8 @@ export function CommissionStatusBadge({ status, size = "sm" }: { status: Commiss
 export function PayableStatusBadge({ status, overdue, size = "sm" }: { status: PayableStatus; overdue?: boolean; size?: "sm" | "md" }) {
   if (overdue) {
     return (
-      <Badge variant="danger" size={size}>
-        Vencido · {PAYABLE_STATUS_LABELS[status]}
+      <Badge variant="danger" size={size} title={`Vencido · ${PAYABLE_STATUS_LABELS[status]}`}>
+        Vencido
       </Badge>
     );
   }

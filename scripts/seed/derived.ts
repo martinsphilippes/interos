@@ -25,7 +25,7 @@ export interface CommissionSeedResult {
 
 /**
  * Comissões pelo motor (data de referência = NOW do seed) e títulos em estados variados pelo fluxo real:
- * elegíveis de meses anteriores → metade paga no vencimento e o resto programado (vencido se o dia já passou);
+ * elegíveis de meses anteriores → pagos no vencimento (menos os 2 mais recentes, que ficam vencidos a pagar);
  * elegíveis do mês → metade aprovada, metade prevista.
  */
 export async function seedCommissionEngine(): Promise<CommissionSeedResult> {
@@ -39,12 +39,15 @@ export async function seedCommissionEngine(): Promise<CommissionSeedResult> {
   const out: CommissionSeedResult = { commissions: r.created, payables: payables.length, paid: 0, scheduled: 0, approved: 0 };
   const past = payables.filter((p) => p.competence < month);
   const current = payables.filter((p) => p.competence >= month);
-  for (const [i, p] of past.entries()) {
+  const due = past.filter((p) => dateKey(p.dueDate) <= today);
+  // Todos os vencidos são pagos no vencimento, menos os 2 mais recentes (exemplo de título vencido a pagar).
+  const unpaid = new Set(due.slice(-2).map((p) => p.id));
+  for (const p of past) {
     const approvedAt = addDays(p.createdAt, 2) < NOW.toISOString() ? addDays(p.createdAt, 2) : NOW.toISOString();
     await approvePayable(p.id, karem, undefined, { emit: false, at: approvedAt });
     await schedulePayable(p.id, {}, karem, { emit: false, at: approvedAt });
     out.scheduled++;
-    if (i % 2 === 0 && dateKey(p.dueDate) <= today) {
+    if (dateKey(p.dueDate) <= today && !unpaid.has(p.id)) {
       await payPayable(p.id, { paidAt: dateKey(p.dueDate), paymentMethod: "folha" }, karem, { emit: false, at: p.dueDate });
       out.paid++;
     }

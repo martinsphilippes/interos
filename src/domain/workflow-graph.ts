@@ -342,6 +342,11 @@ export const TRIGGER_ENTITY_TYPES: Partial<Record<EventType, string>> = {
   "lead.qualified": "lead",
   "client.created": "client",
   "renewal.due": "renewal",
+  "commission.released": "commission",
+  "commission.paid": "commission",
+  "commission.reversed": "commission",
+  "payable.created": "payable",
+  "payable.paid": "payable",
 };
 
 // ---------------------------------------------------------------------------
