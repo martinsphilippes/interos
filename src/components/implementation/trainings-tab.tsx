@@ -4,7 +4,7 @@ import * as React from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TrainingDialog, type TrainingProjectOption } from "./training-dialog";
-import { TrainingsList, type TrainingItem } from "./trainings-list";
+import { TrainingsList, type TrainingItem, type TrainingPermissions } from "./trainings-list";
 
 export interface TrainingsTabProps {
   items: TrainingItem[];
@@ -14,14 +14,15 @@ export interface TrainingsTabProps {
   products: { id: string; name: string }[];
   users: { id: string; name: string }[];
   defaultInstructorId: string;
-  canOperate: boolean;
+  /** Ações permitidas (calculadas no servidor pelo catálogo; as actions revalidam). */
+  permissions: TrainingPermissions;
   showProject?: boolean;
   /** Botão "novo" desabilitado (projeto concluído/cancelado). */
   allowNew?: boolean;
 }
 
 /** Treinamentos com o botão de agendar/registrar (aba do projeto e tela /implantacao/treinamentos). */
-export function TrainingsTab({ items, project, projects, products, users, defaultInstructorId, canOperate, showProject, allowNew = true }: TrainingsTabProps) {
+export function TrainingsTab({ items, project, projects, products, users, defaultInstructorId, permissions, showProject, allowNew = true }: TrainingsTabProps) {
   const [open, setOpen] = React.useState(false);
   const done = items.filter((t) => t.status === "realizado").length;
   return (
@@ -30,14 +31,14 @@ export function TrainingsTab({ items, project, projects, products, users, defaul
         <p className="text-sm text-muted">
           {done} realizado(s) · {items.filter((t) => t.status === "agendado").length} agendado(s). O go-live exige pelo menos um treinamento realizado.
         </p>
-        {canOperate && allowNew ? (
+        {permissions.schedule && allowNew ? (
           <Button className="h-11 md:h-9" onClick={() => setOpen(true)}>
             <Plus /> Agendar ou registrar
           </Button>
         ) : null}
       </div>
       <div className="rounded-lg border border-border bg-surface">
-        <TrainingsList items={items} canOperate={canOperate} showProject={showProject} />
+        <TrainingsList items={items} permissions={permissions} showProject={showProject} />
       </div>
       {open ? <TrainingDialog open onOpenChange={setOpen} project={project} projects={projects} products={products} users={users} defaultInstructorId={defaultInstructorId} /> : null}
     </div>

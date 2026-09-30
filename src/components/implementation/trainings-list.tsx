@@ -22,8 +22,18 @@ export interface TrainingItem extends Pick<Training, "id" | "subject" | "status"
   projectName?: string;
 }
 
+/** Ações de treinamento permitidas ao usuário (servidor, pelo catálogo). */
+export interface TrainingPermissions {
+  /** Agendar ou registrar treinamento. */
+  schedule: boolean;
+  /** Registrar realizado (presença e evidência). */
+  complete: boolean;
+  /** Cancelar agendado. */
+  cancel: boolean;
+}
+
 /** Lista de treinamentos em cards: agendados podem ser concluídos (com evidência) ou cancelados. */
-export function TrainingsList({ items, canOperate, showProject, emptyDescription }: { items: TrainingItem[]; canOperate: boolean; showProject?: boolean; emptyDescription?: string }) {
+export function TrainingsList({ items, permissions, showProject, emptyDescription }: { items: TrainingItem[]; permissions: Pick<TrainingPermissions, "complete" | "cancel">; showProject?: boolean; emptyDescription?: string }) {
   const [completing, setCompleting] = React.useState<TrainingItem | null>(null);
   const [cancelling, setCancelling] = React.useState<TrainingItem | null>(null);
   const { run } = useImplementationAction();
@@ -68,14 +78,18 @@ export function TrainingsList({ items, canOperate, showProject, emptyDescription
                   </a>
                 ) : null}
               </div>
-              {canOperate && t.status === "agendado" ? (
+              {(permissions.complete || permissions.cancel) && t.status === "agendado" ? (
                 <div className="flex shrink-0 gap-2">
-                  <Button size="sm" className="h-11 md:h-8" onClick={() => setCompleting(t)}>
-                    <CheckCircle2 /> Concluir
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-11 md:h-8" onClick={() => setCancelling(t)}>
-                    <XCircle /> Cancelar
-                  </Button>
+                  {permissions.complete ? (
+                    <Button size="sm" className="h-11 md:h-8" onClick={() => setCompleting(t)}>
+                      <CheckCircle2 /> Concluir
+                    </Button>
+                  ) : null}
+                  {permissions.cancel ? (
+                    <Button size="sm" variant="ghost" className="h-11 md:h-8" onClick={() => setCancelling(t)}>
+                      <XCircle /> Cancelar
+                    </Button>
+                  ) : null}
                 </div>
               ) : null}
             </li>

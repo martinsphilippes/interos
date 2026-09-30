@@ -20,8 +20,11 @@ import { useImplementationAction } from "./use-implementation-action";
 /** Aba do projeto onde cada exigência do gate é resolvida. */
 const FIX_TAB: Record<GoLiveCheck["key"], string> = { status: "pendencias", checklist: "checklist", tarefas: "plano", treinamento: "treinamentos", validacao: "go-live", aceite: "go-live" };
 
-/** Card de um candidato a go-live: gate com o que falta e aprovação direta quando tudo está atendido. */
-export function GoLiveCandidateCard({ candidate, canOperate }: { candidate: GoLiveCandidate; canOperate: boolean }) {
+/**
+ * Card de um candidato a go-live: gate com o que falta e aprovação direta quando tudo está atendido. `canApprove` do
+ * candidato vem do servidor (implantacao.go-live.aprovar ∧ canApproveGoLive); a action revalida.
+ */
+export function GoLiveCandidateCard({ candidate }: { candidate: GoLiveCandidate }) {
   const { row, gate, canApprove } = candidate;
   const { run } = useImplementationAction();
   const [confirm, setConfirm] = React.useState(false);
@@ -48,7 +51,7 @@ export function GoLiveCandidateCard({ candidate, canOperate }: { candidate: GoLi
             {gate.ok ? "Abrir go-live" : "Resolver pendências"} <ArrowRight />
           </Link>
         </Button>
-        {canOperate && gate.ok && canApprove ? (
+        {gate.ok && canApprove ? (
           <Button size="sm" className="h-11 md:h-8" onClick={() => setConfirm(true)}>
             <Rocket /> Aprovar go-live
           </Button>

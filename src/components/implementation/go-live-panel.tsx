@@ -23,7 +23,13 @@ export interface GoLivePanelProps {
   goLiveAt?: string;
   validation?: { validatedBy: string; validatedAt: string; notes?: string };
   acceptance?: { acceptedBy: string; acceptedAt: string; notes?: string };
-  editable: boolean;
+  /** Registrar a validação interna (servidor: implantacao.go-live.validar). */
+  canValidate: boolean;
+  /** Registrar o aceite do cliente (servidor: implantacao.go-live.registrar-aceite). */
+  canAccept: boolean;
+  /** Mostrar o botão de aprovação (servidor: implantacao.go-live.aprovar). */
+  showApprove: boolean;
+  /** Pode aprovar ESTE projeto (aprovar ∧ canApproveGoLive: aprovar-qualquer ou responsável quando a regra permite). */
   canApprove: boolean;
   requiresManager: boolean;
   currentUserName: string;
@@ -55,7 +61,7 @@ export function GateChecklist({ gate, compact }: { gate: GoLiveGate; compact?: b
  * validação interna e do aceite do cliente e a aprovação (gestor/admin, ou o responsável quando a
  * configuração "go_live" permitir). A aprovação ativa o cliente e faz o handoff para o CS.
  */
-export function GoLivePanel({ projectId, clientName, gate, status, goLiveAt, validation, acceptance, editable, canApprove, requiresManager, currentUserName, defaultContactName, today }: GoLivePanelProps) {
+export function GoLivePanel({ projectId, clientName, gate, status, goLiveAt, validation, acceptance, canValidate, canAccept, showApprove, canApprove, requiresManager, currentUserName, defaultContactName, today }: GoLivePanelProps) {
   const { pending, run } = useImplementationAction();
   const [confirm, setConfirm] = React.useState(false);
   const [validatedBy, setValidatedBy] = React.useState(validation?.validatedBy ?? currentUserName);
@@ -65,7 +71,9 @@ export function GoLivePanel({ projectId, clientName, gate, status, goLiveAt, val
   const [acceptedAt, setAcceptedAt] = React.useState(isoToDateValue(acceptance?.acceptedAt) || today);
   const [acceptanceNotes, setAcceptanceNotes] = React.useState(acceptance?.notes ?? "");
   const done = status === "concluida";
-  const formsEnabled = editable && !done && status !== "cancelada";
+  const inProgress = !done && status !== "cancelada";
+  const validationEnabled = canValidate && inProgress;
+  const acceptanceEnabled = canAccept && inProgress;
 
   if (done) {
     return (
@@ -96,12 +104,12 @@ export function GoLivePanel({ projectId, clientName, gate, status, goLiveAt, val
             Aprovação: {requiresManager ? "somente gestores ou administradores." : "gestores, administradores ou o responsável pelo projeto."} Ao aprovar: projeto concluído, produtos ativos, cliente ativo em
             Customer Success e handoff (conta de CS, health score inicial e tarefa de onboarding em 3 dias úteis).
           </div>
-          {editable ? (
+          {showApprove ? (
             <Button className="h-11 self-start" disabled={!gate.ok || !canApprove} onClick={() => setConfirm(true)}>
               <Rocket /> Aprovar go-live
             </Button>
           ) : null}
-          {editable && gate.ok && !canApprove ? <p className="text-xs text-muted">Aguardando aprovação de um gestor.</p> : null}
+          {showApprove && gate.ok && !canApprove ? <p className="text-xs text-muted">Aguardando aprovação de um gestor.</p> : null}
         </CardContent>
       </Card>
 
@@ -120,15 +128,15 @@ export function GoLivePanel({ projectId, clientName, gate, status, goLiveAt, val
               }}
             >
               <FormField label="Validado por" htmlFor="gl-vby" required>
-                <Input id="gl-vby" value={validatedBy} onChange={(e) => setValidatedBy(e.target.value)} disabled={!formsEnabled} required maxLength={120} className="h-11 md:h-9" />
+                <Input id="gl-vby" value={validatedBy} onChange={(e) => setValidatedBy(e.target.value)} disabled={!validationEnabled} required maxLength={120} className="h-11 md:h-9" />
               </FormField>
               <FormField label="Data" htmlFor="gl-vat" required>
-                <DateInput id="gl-vat" value={validatedAt} onChange={(e) => setValidatedAt(e.target.value)} disabled={!formsEnabled} required className="h-11 md:h-9" />
+                <DateInput id="gl-vat" value={validatedAt} onChange={(e) => setValidatedAt(e.target.value)} disabled={!validationEnabled} required className="h-11 md:h-9" />
               </FormField>
               <FormField label="Observações" htmlFor="gl-vnotes" className="sm:col-span-2">
-                <Input id="gl-vnotes" value={validationNotes} onChange={(e) => setValidationNotes(e.target.value)} disabled={!formsEnabled} maxLength={1000} className="h-11 md:h-9" />
+                <Input id="gl-vnotes" value={validationNotes} onChange={(e) => setValidationNotes(e.target.value)} disabled={!validationEnabled} maxLength={1000} className="h-11 md:h-9" />
               </FormField>
-              {formsEnabled ? (
+              {validationEnabled ? (
                 <Button type="submit" variant="outline" loading={pending} className="h-11 sm:col-span-2 sm:justify-self-start md:h-9">
                   {validation ? "Atualizar validação" : "Registrar validação"}
                 </Button>
@@ -151,15 +159,15 @@ export function GoLivePanel({ projectId, clientName, gate, status, goLiveAt, val
               }}
             >
               <FormField label="Quem aceitou" htmlFor="gl-aby" required>
-                <Input id="gl-aby" value={acceptedBy} onChange={(e) => setAcceptedBy(e.target.value)} disabled={!formsEnabled} required maxLength={120} className="h-11 md:h-9" />
+                <Input id="gl-aby" value={acceptedBy} onChange={(e) => setAcceptedBy(e.target.value)} disabled={!acceptanceEnabled} required maxLength={120} className="h-11 md:h-9" />
               </FormField>
               <FormField label="Data do aceite" htmlFor="gl-aat" required>
-                <DateInput id="gl-aat" value={acceptedAt} onChange={(e) => setAcceptedAt(e.target.value)} disabled={!formsEnabled} required className="h-11 md:h-9" />
+                <DateInput id="gl-aat" value={acceptedAt} onChange={(e) => setAcceptedAt(e.target.value)} disabled={!acceptanceEnabled} required className="h-11 md:h-9" />
               </FormField>
               <FormField label="Observação" htmlFor="gl-anotes" className="sm:col-span-2">
-                <Textarea id="gl-anotes" value={acceptanceNotes} onChange={(e) => setAcceptanceNotes(e.target.value)} disabled={!formsEnabled} maxLength={1000} className="min-h-[64px]" />
+                <Textarea id="gl-anotes" value={acceptanceNotes} onChange={(e) => setAcceptanceNotes(e.target.value)} disabled={!acceptanceEnabled} maxLength={1000} className="min-h-[64px]" />
               </FormField>
-              {formsEnabled ? (
+              {acceptanceEnabled ? (
                 <Button type="submit" variant="outline" loading={pending} className="h-11 sm:col-span-2 sm:justify-self-start md:h-9">
                   {acceptance ? "Atualizar aceite" : "Registrar aceite"}
                 </Button>

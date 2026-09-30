@@ -23,7 +23,10 @@ export interface PendingTabProps {
   externalDelayDays: number;
   internalDelayDays: number;
   users: { id: string; name: string }[];
-  editable: boolean;
+  /** Registrar pendência do cliente ou bloqueio (servidor: ação do catálogo e projeto em andamento). */
+  canRegister: boolean;
+  /** Retomar o projeto ou resolver o bloqueio. */
+  canResolve: boolean;
 }
 
 /**
@@ -31,7 +34,7 @@ export interface PendingTabProps {
  * (BLOQUEADA: SLA segue correndo, atraso interno). Separar as duas causas é o que permite medir o
  * SLA da equipe sem punir atrasos do cliente.
  */
-export function PendingTab({ projectId, clientName, status, ownerId, waitingClient, blocked, externalDelayDays, internalDelayDays, users, editable }: PendingTabProps) {
+export function PendingTab({ projectId, clientName, status, ownerId, waitingClient, blocked, externalDelayDays, internalDelayDays, users, canRegister, canResolve }: PendingTabProps) {
   const { pending, run } = useImplementationAction();
   const [waitingOpen, setWaitingOpen] = React.useState(false);
   const [blockOpen, setBlockOpen] = React.useState(false);
@@ -61,7 +64,7 @@ export function PendingTab({ projectId, clientName, status, ownerId, waitingClie
           ) : (
             <p className="text-sm text-muted">Nenhuma pendência do cliente em aberto.</p>
           )}
-          {editable && active ? (
+          {active && (waitingClient ? canResolve : canRegister) ? (
             waitingClient ? (
               <Button className="h-11 self-start md:h-9" loading={pending} onClick={() => run(() => resumeWaitingProject({ projectId }), "Implantação retomada: SLA voltou a contar")}>
                 <Play /> Cliente respondeu: retomar
@@ -94,7 +97,7 @@ export function PendingTab({ projectId, clientName, status, ownerId, waitingClie
           ) : (
             <p className="text-sm text-muted">Nenhum bloqueio interno.</p>
           )}
-          {editable && active ? (
+          {active && (status === "bloqueada" ? canResolve : canRegister) ? (
             status === "bloqueada" ? (
               <Button className="h-11 self-start md:h-9" loading={pending} onClick={() => run(() => resolveBlock({ projectId }), "Bloqueio resolvido")}>
                 <ShieldCheck /> Resolver bloqueio

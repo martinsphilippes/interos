@@ -66,14 +66,21 @@ function toDraft(t?: TemplateRow): Draft {
   };
 }
 
+/** Ações de template permitidas ao usuário (servidor, pelo catálogo; as actions revalidam). */
+export interface TemplatePermissions {
+  create: boolean;
+  edit: boolean;
+  toggle: boolean;
+}
+
 /** Templates de checklist por produto: lista, ativar/desativar e edição em drawer. */
-export function TemplatesManager({ templates, products, canOperate }: { templates: TemplateRow[]; products: ProductLite[]; canOperate: boolean }) {
+export function TemplatesManager({ templates, products, permissions }: { templates: TemplateRow[]; products: ProductLite[]; permissions: TemplatePermissions }) {
   const [editing, setEditing] = React.useState<{ draft: Draft } | null>(null);
   const { pending, run } = useImplementationAction();
 
   return (
     <div className="flex flex-col gap-4">
-      {canOperate ? (
+      {permissions.create ? (
         <Button className="h-11 self-start md:h-9" onClick={() => setEditing({ draft: toDraft() })}>
           <Plus /> Novo template
         </Button>
@@ -106,18 +113,22 @@ export function TemplatesManager({ templates, products, canOperate }: { template
                   ))}
                 </div>
                 {t.linkedProducts.length > 0 ? <p className="text-xs text-muted">Vinculado a: {t.linkedProducts.join(", ")}</p> : null}
-                {canOperate ? (
+                {permissions.toggle || permissions.edit ? (
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Switch
-                      size="sm"
-                      label="Ativo"
-                      checked={t.active}
-                      disabled={pending}
-                      onCheckedChange={(active) => run(() => toggleImplementationTemplate({ templateId: t.id, active }), active ? "Template ativado" : "Template desativado")}
-                    />
-                    <Button variant="outline" size="sm" className="h-11 md:h-8" onClick={() => setEditing({ draft: toDraft(t) })}>
-                      <Pencil /> Editar
-                    </Button>
+                    {permissions.toggle ? (
+                      <Switch
+                        size="sm"
+                        label="Ativo"
+                        checked={t.active}
+                        disabled={pending}
+                        onCheckedChange={(active) => run(() => toggleImplementationTemplate({ templateId: t.id, active }), active ? "Template ativado" : "Template desativado")}
+                      />
+                    ) : null}
+                    {permissions.edit ? (
+                      <Button variant="outline" size="sm" className="ml-auto h-11 md:h-8" onClick={() => setEditing({ draft: toDraft(t) })}>
+                        <Pencil /> Editar
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
               </CardContent>

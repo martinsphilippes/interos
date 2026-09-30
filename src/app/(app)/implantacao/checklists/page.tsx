@@ -1,20 +1,19 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 import { Info } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
 import { listTemplates } from "@/server/implementation/queries";
-import { canOperateImplementation } from "@/server/implementation/access";
+import { implementationCapabilities } from "@/server/implementation/access";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { TemplatesManager } from "@/components/implementation/templates-manager";
 
 export const metadata: Metadata = { title: "Checklists de implantação" };
 
-/** Templates de implantação por produto (fases, tarefas e checklist). */
+/** Templates de implantação por produto (fases, tarefas e checklist). Criar/editar/ativar pelas ações do catálogo. */
 export default async function ChecklistsPage() {
-  const user = await requireUser();
-  if (!canAccessModule(user, "implantacao")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("implantacao.checklists");
   const { templates, products } = await listTemplates();
+  const caps = implementationCapabilities(user);
 
   return (
     <PageContainer>
@@ -31,7 +30,7 @@ export default async function ChecklistsPage() {
           é o maior prazo de implantação entre os produtos. Alterar um template não muda projetos já criados.
         </p>
       </div>
-      <TemplatesManager templates={templates} products={products} canOperate={canOperateImplementation(user)} />
+      <TemplatesManager templates={templates} products={products} permissions={{ create: caps.createTemplate, edit: caps.editTemplate, toggle: caps.toggleTemplate }} />
     </PageContainer>
   );
 }

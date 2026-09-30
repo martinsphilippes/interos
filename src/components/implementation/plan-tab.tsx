@@ -26,10 +26,22 @@ export interface PlanTabProps {
   currentPhase: ImplementationPhase;
   users: { id: string; name: string }[];
   ownerId: string;
-  canOperate: boolean;
+  /** Ações do plano permitidas ao usuário (calculadas no servidor pelo catálogo; as actions revalidam). */
+  permissions: PlanPermissions;
   /** Projeto concluído ou cancelado: plano só leitura. */
   readOnly: boolean;
   now: string;
+}
+
+export interface PlanPermissions {
+  /** Adicionar tarefa avulsa. */
+  add: boolean;
+  /** Concluir tarefa. */
+  complete: boolean;
+  /** Reabrir tarefa concluída. */
+  reopen: boolean;
+  /** Atribuir responsável da tarefa. */
+  assign: boolean;
 }
 
 const STATUS_VARIANT: Record<ImplementationTask["status"], "success" | "info" | "warning" | "muted" | "danger"> = {
@@ -49,13 +61,14 @@ const STATUS_VARIANT: Record<ImplementationTask["status"], "success" | "info" | 
  * (aviso "some attributes of the server rendered HTML didn't match"). Cliques feitos antes da hidratação são
  * repetidos pelo React ao hidratar.
  */
-export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOperate, readOnly, now }: PlanTabProps) {
+export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, permissions, readOnly, now }: PlanTabProps) {
   const [completing, setCompleting] = React.useState<ImplementationTask | null>(null);
   const [adding, setAdding] = React.useState(false);
   const phases = IMPLEMENTATION_PHASES.filter((ph) => ph === currentPhase || tasks.some((t) => t.phase === ph));
   const currentIdx = IMPLEMENTATION_PHASES.indexOf(currentPhase);
   const titles = new Map(tasks.map((t) => [t.id, t.title]));
-  const editable = canOperate && !readOnly;
+  // Projeto encerrado: nada editável, qualquer que seja a permissão.
+  const allowed: PlanPermissions = readOnly ? { add: false, complete: false, reopen: false, assign: false } : permissions;
   // Fases abertas: a fase atual começa aberta; o usuário abre/fecha as outras (estado por fase, reinicia se a fase mudar).
   const [openPhases, setOpenPhases] = React.useState<Record<string, boolean>>({});
   const isOpen = (ph: ImplementationPhase) => openPhases[ph] ?? ph === currentPhase;
@@ -68,7 +81,7 @@ export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOpe
           {tasks.filter((t) => t.status === "concluida").length}/{tasks.length} tarefas concluídas · {tasks.filter((t) => t.required && t.status !== "concluida" && t.status !== "cancelada").length} obrigatória(s) em aberto. Tarefas da fase Go-live
           são concluídas na aprovação do go-live.
         </p>
-        {editable ? (
+        {allowed.add ? (
           <Button variant="outline" className="h-11 md:h-9" onClick={() => setAdding(true)}>
             <Plus /> Tarefa avulsa
           </Button>
@@ -112,7 +125,7 @@ export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOpe
                 ) : (
                   <ul className="divide-y divide-border border-t border-border">
                     {phaseTasks.map((t) => (
-                      <TaskRow key={t.id} task={t} users={users} titles={titles} editable={editable} now={now} onComplete={() => setCompleting(t)} />
+                      <TaskRow key={t.id} task={t} users={users} titles={titles} allowed={allowed} now={now} onComplete={() => setCompleting(t)} />
                     ))}
                   </ul>
                 )}
@@ -127,7 +140,7 @@ export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOpe
   );
 }
 
-function TaskRow({ task, users, titles, editable, now, onComplete }: { task: ImplementationTask; users: { id: string; name: string }[]; titles: Map<string, string>; editable: boolean; now: string; onComplete: () => void }) {
+function TaskRow({ task, users, titles, allowed, now, onComplete }: { task: ImplementationTask; users: { id: string; name: string }[]; titles: Map<string, string>; allowed: PlanPermissions; now: string; onComplete: () => void }) {
   const { pending, run } = useImplementationAction();
   const done = task.status === "concluida";
   const overdue = !done && task.dueAt && task.dueAt < now;
@@ -156,7 +169,7 @@ function TaskRow({ task, users, titles, editable, now, onComplete }: { task: Imp
         </div>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {editable ? (
+        {allowed.assign ? (
           <Select
             aria-label={`Responsável por ${task.title}`}
             value={task.assigneeId ?? ""}
@@ -177,12 +190,12 @@ function TaskRow({ task, users, titles, editable, now, onComplete }: { task: Imp
         ) : (
           <span className="text-xs text-muted">{users.find((u) => u.id === task.assigneeId)?.name ?? "Sem responsável"}</span>
         )}
-        {editable && !done && task.status !== "cancelada" ? (
+        {allowed.complete && !done && task.status !== "cancelada" ? (
           <Button size="sm" className="h-11 md:h-8" onClick={onComplete} disabled={pending}>
             <CheckCircle2 /> Concluir
           </Button>
         ) : null}
-        {editable && done ? (
+        {allowed.reopen && done ? (
           <Button size="sm" variant="ghost" className="h-11 md:h-8" loading={pending} onClick={() => run(() => reopenProjectTask({ taskId: task.id }), "Tarefa reaberta")}>
             <RotateCcw /> Reabrir
           </Button>

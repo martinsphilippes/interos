@@ -3,8 +3,14 @@ import "server-only";
  * Leituras do módulo de Implantação. Filtros de igualdade via list() e agregação em memória.
  * Reutilizáveis: listProjects, getProject, getImplementationOverview, listTemplates,
  * getClientImplementation (ficha 360) e getPostGoLiveTickets (qualidade da implantação).
+ *
+ * Visibilidade (A7/A23): o LIMITE é o escopo efetivo da tela (resolveDataScope, catálogo
+ * src/domain/permissions/implantacao.ts; dono = responsável ou equipe do projeto); a VISÃO da URL (?escopo=
+ * todos/equipe/meus) só estreita dentro dele. Padrão = comportamento anterior: limite "empresa" para todos.
  */
 import { getById, getManyByIds, list } from "@/server/db";
+import { computeDataScope, filterByScope, resolveDataScope, type DataScope } from "@/server/auth/scope";
+import { can } from "@/server/auth/permissions";
 import { computeSlaState } from "@/server/sla";
 import { dateKey } from "@/lib/format";
 import {
@@ -15,6 +21,7 @@ import {
   type Contact,
   type Contract,
   type CurrentUser,
+  type Department,
   type Document,
   type ImplementationPhase,
   type ImplementationStatus,
@@ -33,7 +40,8 @@ import {
 } from "@/domain/types";
 import type { RoleKey } from "@/domain/constants";
 import { buildSaleSnapshot, canApproveGoLive, getGoLiveSettings } from "./service";
-import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
+import { buildContractSummary, redactContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
+import { projectOwners, trainingOwners, type ImplementationScreen } from "./access";
 import {
   ACTIVE_PROJECT_STATUSES,
   evaluateGoLiveGate,
@@ -115,26 +123,48 @@ export async function listAssignableUsers(): Promise<UserLite[]> {
   return users.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, "pt-BR")).map(toUserLite);
 }
 
+interface ResolvedScope {
+  info: ScopeInfo;
+  /** Limite efetivo da tela (nunca ampliado pela visão da URL). */
+  limit: DataScope;
+}
+
+const isUnrestricted = (scope: Pick<DataScope, "userIds" | "departmentKeys">) => !scope.userIds && !scope.departmentKeys;
+
 /**
- * Escopo da lista: "meus" (responsável ou equipe do projeto), "equipe" (gestor: ele + liderados;
- * diretoria/admin: departamento de implantação) ou "todos". Padrão: equipe para gestores de implantação.
+ * Visão da lista dentro do limite da tela: "meus" (responsável ou equipe do projeto), "equipe" (gestor: ele +
+ * liderados diretos; diretoria/admin: departamento de implantação — scope.variants do catálogo) ou "todos" (= o
+ * limite). Visão inicial: equipe para gestores de implantação (initialView do catálogo).
  */
-export async function resolveScope(user: CurrentUser, requested: ProjectScope | undefined): Promise<ScopeInfo> {
-  const canTeam = user.isManager;
-  const kind: ProjectScope = requested ?? (user.isManager && !user.isDirector && user.departmentId === "implantacao" ? "equipe" : "todos");
-  if (kind === "meus") return { kind, label: "Meus projetos", userIds: [user.id], canTeam };
+async function resolveScopeWithLimit(user: CurrentUser, requested: ProjectScope | undefined, screen: ImplementationScreen): Promise<ResolvedScope> {
+  const limit = await resolveDataScope(user, screen);
+  const canTeam = user.isManager && limit.kind !== "meus";
+  const initial: ProjectScope = limit.initialKind === "meus" ? "meus" : limit.initialKind === "equipe" && canTeam ? "equipe" : "todos";
+  const kind: ProjectScope = requested ?? initial;
+  const within = (ids: Iterable<string>) => Array.from(new Set(ids)).filter((id) => !limit.userIds || limit.userIds.has(id));
+  if (kind === "meus") return { info: { kind, label: "Meus projetos", userIds: [user.id], canTeam }, limit };
   if (kind === "equipe" && canTeam) {
-    const users = (await list<User>(COLLECTIONS.users)).filter((u) => u.active !== false);
-    const ids = user.isDirector ? users.filter((u) => u.departmentId === "implantacao").map((u) => u.id) : [user.id, ...users.filter((u) => u.managerId === user.id).map((u) => u.id)];
-    return { kind: "equipe", label: user.isDirector ? "Equipe de implantação" : "Minha equipe", userIds: Array.from(new Set(ids)), canTeam };
+    const [users, departments] = await Promise.all([list<User>(COLLECTIONS.users), list<Department>(COLLECTIONS.departments)]);
+    const team = computeDataScope(user, screen, user.isDirector ? "departamento" : "equipe", { users, departments });
+    return { info: { kind: "equipe", label: user.isDirector ? "Equipe de implantação" : "Minha equipe", userIds: within(team.userIds ?? []), canTeam }, limit };
   }
-  return { kind: "todos", label: "Todos os projetos", userIds: null, canTeam };
+  return { info: { kind: "todos", label: isUnrestricted(limit) ? "Todos os projetos" : "Todos do seu acesso", userIds: null, canTeam }, limit };
+}
+
+/** Escopo da visão (ver resolveScopeWithLimit). O limite da tela é aplicado à parte, por filterByScope. */
+export async function resolveScope(user: CurrentUser, requested: ProjectScope | undefined, screen: ImplementationScreen = "implantacao.projetos"): Promise<ScopeInfo> {
+  return (await resolveScopeWithLimit(user, requested, screen)).info;
 }
 
 function inScope(p: Pick<ProjectRecord, "ownerId" | "teamIds">, scope: ScopeInfo): boolean {
   if (!scope.userIds) return true;
   const ids = new Set(scope.userIds);
   return ids.has(p.ownerId) || (p.teamIds ?? []).some((id) => ids.has(id));
+}
+
+/** Projetos dentro do limite da tela (escopo efetivo) e da visão escolhida. */
+function visibleProjects<T extends Pick<ProjectRecord, "ownerId" | "teamIds">>(projects: readonly T[], { info, limit }: ResolvedScope): T[] {
+  return filterByScope(projects, (p) => ({ owners: projectOwners(p) }), limit).filter((p) => inScope(p, info));
 }
 
 function daysBetween(from: string, to: string): number {
@@ -206,8 +236,9 @@ function monthKey(iso: string | undefined): string {
 
 /** Lista de projetos com filtros da URL e escopo. Abertos primeiro (bloqueados/aguardando no topo), depois por prazo. */
 export async function listProjects(user: CurrentUser, filters: ProjectFilters = {}): Promise<{ rows: ProjectRow[]; scope: ScopeInfo; total: number }> {
-  const [all, scope] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), resolveScope(user, filters.scope)]);
-  const scoped = all.filter((p) => inScope(p, scope));
+  const [all, resolved] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), resolveScopeWithLimit(user, filters.scope, "implantacao.projetos")]);
+  const scope = resolved.info;
+  const scoped = visibleProjects(all, resolved);
   const rows = await buildRows(scoped);
   const thisMonth = monthKey(new Date().toISOString());
   const filtered = rows.filter((r) => {
@@ -254,8 +285,9 @@ export interface ImplementationOverview {
 }
 
 export async function getImplementationOverview(user: CurrentUser, requestedScope?: ProjectScope): Promise<ImplementationOverview> {
-  const [all, scope] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), resolveScope(user, requestedScope)]);
-  const projects = all.filter((p) => inScope(p, scope));
+  const [all, resolved] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), resolveScopeWithLimit(user, requestedScope, "implantacao.projetos")]);
+  const scope = resolved.info;
+  const projects = visibleProjects(all, resolved);
   const now = new Date();
   const nowIso = now.toISOString();
   const thisMonth = monthKey(nowIso);
@@ -304,10 +336,10 @@ export async function getImplementationOverview(user: CurrentUser, requestedScop
 
 /** Kanban: projetos ativos do escopo. */
 export async function listKanbanProjects(user: CurrentUser, requestedScope?: ProjectScope): Promise<{ rows: ProjectRow[]; scope: ScopeInfo }> {
-  const [all, scope] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), resolveScope(user, requestedScope)]);
-  const rows = await buildRows(all.filter((p) => isActiveProject(p.status) && inScope(p, scope)));
+  const [all, resolved] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), resolveScopeWithLimit(user, requestedScope, "implantacao.kanban")]);
+  const rows = await buildRows(visibleProjects(all.filter((p) => isActiveProject(p.status)), resolved));
   rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  return { rows, scope };
+  return { rows, scope: resolved.info };
 }
 
 // ---------------------------------------------------------------------------
@@ -335,21 +367,45 @@ export interface ProjectDetail {
   sale: { snapshot: SaleSnapshot; summary: ContractSummaryData; sellerName?: string } | null;
 }
 
-export async function getProject(id: string): Promise<ProjectDetail | null> {
-  const project = await getById<ProjectRecord>(COLLECTIONS.implementationProjects, id);
+/** Documento do projeto (para checar tela e escopo antes de montar o detalhe). */
+export async function getProjectRecord(id: string): Promise<ProjectRecord | null> {
+  return getById<ProjectRecord>(COLLECTIONS.implementationProjects, id);
+}
+
+export interface ProjectDetailOptions {
+  /** Documento já lido (evita a segunda leitura depois da checagem de escopo). */
+  project?: ProjectRecord;
+  /**
+   * Seções negadas NÃO são lidas (nem enviadas ao navegador): `sale` (dados da venda), `documents` (aba Documentos)
+   * e `history` (aba Histórico: timeline e chamados pós-go-live). Ausente = todas.
+   */
+  include?: { sale?: boolean; documents?: boolean; history?: boolean };
+  /** Sem "Visualizar valores" (financeiro.valores.ver, A13): os valores da venda saem zerados e marcados "Restrito". */
+  hideValues?: boolean;
+}
+
+/** Fotografia da venda sem valores (A13). */
+function redactSaleSnapshot(snapshot: SaleSnapshot): SaleSnapshot {
+  return { ...snapshot, items: snapshot.items.map((i) => ({ ...i, setupValue: 0, monthlyValue: 0, hardwareValue: 0 })), monthlyTotal: 0, setupTotal: 0, hardwareTotal: 0 };
+}
+
+export async function getProject(id: string, options: ProjectDetailOptions = {}): Promise<ProjectDetail | null> {
+  const project = options.project ?? (await getById<ProjectRecord>(COLLECTIONS.implementationProjects, id));
   if (!project) return null;
+  const include = { sale: options.include?.sale ?? true, documents: options.include?.documents ?? true, history: options.include?.history ?? true };
+  const none = <T,>(): Promise<T[]> => Promise.resolve([]);
   const [rows, client, contract, tasks, trainings, projectDocs, timeline, users, sla, settings, postGoLiveTickets, contacts] = await Promise.all([
     buildRows([project]),
     getById<Client>(COLLECTIONS.clients, project.clientId),
     project.contractId ? getById<Contract>(COLLECTIONS.contracts, project.contractId) : Promise.resolve(null),
     list<ImplementationTask>(COLLECTIONS.implementationTasks, { where: [["projectId", "==", id]] }),
     list<Training>(COLLECTIONS.trainings, { where: [["projectId", "==", id]] }),
-    list<Document>(COLLECTIONS.documents, { where: [["entityId", "==", id]] }),
-    list<TimelineEvent>(COLLECTIONS.timelineEvents, { where: [["clientId", "==", project.clientId]] }),
+    include.documents ? list<Document>(COLLECTIONS.documents, { where: [["entityId", "==", id]] }) : none<Document>(),
+    include.history ? list<TimelineEvent>(COLLECTIONS.timelineEvents, { where: [["clientId", "==", project.clientId]] }) : none<TimelineEvent>(),
     listAssignableUsers(),
     project.slaInstanceId ? getById<SlaInstance>(COLLECTIONS.slaInstances, project.slaInstanceId) : Promise.resolve(null),
     getGoLiveSettings(),
-    getPostGoLiveTickets(project),
+    include.history ? getPostGoLiveTickets(project) : none<SupportTicket>(),
     list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", project.clientId]] }),
   ]);
   const instance = client?.workflowInstanceId ? await getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId) : null;
@@ -359,8 +415,9 @@ export async function getProject(id: string): Promise<ProjectDetail | null> {
   trainings.sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt));
   // Dados da venda: fotografia do projeto (ou montada do contrato para projetos anteriores ao handoff).
   let sale: ProjectDetail["sale"] = null;
-  if (contract) {
-    const snapshot = project.saleSnapshot ?? (await buildSaleSnapshot(contract));
+  if (contract && include.sale) {
+    const original = project.saleSnapshot ?? (await buildSaleSnapshot(contract));
+    const snapshot = options.hideValues ? redactSaleSnapshot(original) : original;
     const [billings, seller] = await Promise.all([
       list<Billing>(COLLECTIONS.billing, { where: [["contractId", "==", contract.id]] }),
       snapshot.sellerId ? getById<User>(COLLECTIONS.users, snapshot.sellerId) : Promise.resolve(null),
@@ -369,7 +426,7 @@ export async function getProject(id: string): Promise<ProjectDetail | null> {
       { ...contract, implementationRequired: contract.implementationRequired ?? snapshot.implementationRequired, implementationNotes: contract.implementationNotes ?? snapshot.implementationNotes, commercialNotes: contract.commercialNotes ?? snapshot.commercialNotes, paymentMethod: contract.paymentMethod ?? snapshot.paymentMethod, saleNumber: contract.saleNumber ?? snapshot.saleNumber },
       { billings, sellerName: seller?.name, contact: snapshot.contactName ? { name: snapshot.contactName, phone: snapshot.contactPhone, email: snapshot.contactEmail } : null },
     );
-    sale = { snapshot, summary, sellerName: seller?.name };
+    sale = { snapshot, summary: options.hideValues ? redactContractSummary(summary) : summary, sellerName: seller?.name };
   }
 
   // Histórico: eventos do cliente desde a criação do projeto (inclui workflow, financeiro e suporte do período).
@@ -418,8 +475,11 @@ export interface GoLiveCandidate {
 
 /** Projetos prontos para go-live e os que faltam pouco (progresso >= 80%), com o gate avaliado. */
 export async function listGoLiveCandidates(user: CurrentUser, requestedScope?: ProjectScope): Promise<{ ready: GoLiveCandidate[]; almost: GoLiveCandidate[]; recent: ProjectRow[]; scope: ScopeInfo; settings: GoLiveSettings }> {
-  const [all, scope, settings] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), resolveScope(user, requestedScope), getGoLiveSettings()]);
-  const scoped = all.filter((p) => inScope(p, scope));
+  const [all, resolved, settings] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), resolveScopeWithLimit(user, requestedScope, "implantacao.go-live"), getGoLiveSettings()]);
+  const scope = resolved.info;
+  const scoped = visibleProjects(all, resolved);
+  // Guarda de borda (implantacao.go-live.aprovar) ∧ helper único por projeto (aprovar-qualquer ou responsável, A22).
+  const mayApprove = can(user, "implantacao.go-live.aprovar");
   const candidates = scoped.filter((p) => isActiveProject(p.status) && (p.status === "pronta_para_go_live" || (p.progress ?? 0) >= 80));
   const ids = candidates.map((p) => p.id);
   const since30 = new Date(Date.now() - 30 * DAY_MS).toISOString();
@@ -439,7 +499,7 @@ export async function listGoLiveCandidates(user: CurrentUser, requestedScope?: P
       tasks.filter((t) => t.projectId === row.id),
       projectTrainings,
     );
-    const canApprove = canApproveGoLive(project, user, settings);
+    const canApprove = mayApprove && canApproveGoLive(project, user, settings);
     return { row, gate, trainingsDone: projectTrainings.filter((t) => t.status === "realizado").length, canApprove };
   });
   const byMissing = (a: GoLiveCandidate, b: GoLiveCandidate) => a.gate.missing.length - b.gate.missing.length || a.row.dueDate.localeCompare(b.row.dueDate);
@@ -464,13 +524,18 @@ export interface TrainingRow extends Training {
   productName?: string;
 }
 
-export async function listTrainings(): Promise<{ rows: TrainingRow[]; projects: { id: string; name: string; clientName: string; productIds: string[] }[]; users: UserLite[]; products: ProductLite[] }> {
-  const [trainings, projects, users, products] = await Promise.all([
+/** Treinamentos do escopo da tela (instrutor ou donos do projeto) e os projetos ativos do escopo (para agendar). */
+export async function listTrainings(user: CurrentUser): Promise<{ rows: TrainingRow[]; projects: { id: string; name: string; clientName: string; productIds: string[] }[]; users: UserLite[]; products: ProductLite[] }> {
+  const [allTrainings, allProjects, users, products, limit] = await Promise.all([
     list<Training>(COLLECTIONS.trainings),
     list<ProjectRecord>(COLLECTIONS.implementationProjects),
     listAssignableUsers(),
     list<Product>(COLLECTIONS.products),
+    resolveDataScope(user, "implantacao.treinamentos"),
   ]);
+  const allById = new Map(allProjects.map((p) => [p.id, p]));
+  const trainings = filterByScope(allTrainings, (t) => ({ owners: trainingOwners(t, t.projectId ? allById.get(t.projectId) : null) }), limit);
+  const projects = filterByScope(allProjects, (p) => ({ owners: projectOwners(p) }), limit);
   const clients = await getManyByIds<Client>(COLLECTIONS.clients, [...trainings.map((t) => t.clientId), ...projects.map((p) => p.clientId)]);
   const projectById = new Map(projects.map((p) => [p.id, p]));
   const userNames = new Map(users.map((u) => [u.id, u.name]));
@@ -539,22 +604,33 @@ export interface ClientImplementation {
   current: ProjectRecord | null;
 }
 
-export async function getClientImplementation(clientId: string): Promise<ClientImplementation> {
+/**
+ * Implantação de um cliente (ficha 360). Com `user`, aplica o escopo da tela de projetos (A29): projetos fora do
+ * escopo — e as tarefas e treinamentos deles — não entram. Sem `user` (chamadores de sistema), tudo.
+ */
+export async function getClientImplementation(clientId: string, user?: CurrentUser): Promise<ClientImplementation> {
   const byClient = { where: [["clientId", "==", clientId]] as [string, "==", unknown][] };
-  const [projects, tasks, trainings] = await Promise.all([
+  const [allProjects, allTasks, allTrainings, limit] = await Promise.all([
     list<ProjectRecord>(COLLECTIONS.implementationProjects, byClient),
     list<ImplementationTask>(COLLECTIONS.implementationTasks, byClient),
     list<Training>(COLLECTIONS.trainings, byClient),
+    user ? resolveDataScope(user, "implantacao.projetos") : Promise.resolve(null),
   ]);
+  const projects = limit ? filterByScope(allProjects, (p) => ({ owners: projectOwners(p) }), limit) : allProjects;
+  const visibleIds = new Set(projects.map((p) => p.id));
+  const byId = new Map(allProjects.map((p) => [p.id, p]));
+  const tasks = limit ? allTasks.filter((t) => visibleIds.has(t.projectId)) : allTasks;
+  const trainings = limit ? filterByScope(allTrainings, (t) => ({ owners: trainingOwners(t, t.projectId ? byId.get(t.projectId) : null) }), limit) : allTrainings;
   projects.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   tasks.sort((a, b) => IMPLEMENTATION_PHASES.indexOf(a.phase) - IMPLEMENTATION_PHASES.indexOf(b.phase) || (a.dueAt ?? "").localeCompare(b.dueAt ?? ""));
   trainings.sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt));
   return { projects, tasks, trainings, current: projects.find((p) => isActiveProject(p.status)) ?? projects[0] ?? null };
 }
 
-/** Filtros disponíveis na lista (responsáveis com projeto e produtos presentes). */
-export async function listFilterOptions(): Promise<{ owners: UserLite[]; products: ProductLite[] }> {
-  const [projects, products] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), list<Product>(COLLECTIONS.products)]);
+/** Filtros disponíveis na lista (responsáveis com projeto e produtos presentes, dentro do escopo da tela). */
+export async function listFilterOptions(user: CurrentUser): Promise<{ owners: UserLite[]; products: ProductLite[] }> {
+  const [allProjects, products, limit] = await Promise.all([list<ProjectRecord>(COLLECTIONS.implementationProjects), list<Product>(COLLECTIONS.products), resolveDataScope(user, "implantacao.projetos")]);
+  const projects = filterByScope(allProjects, (p) => ({ owners: projectOwners(p) }), limit);
   const ownerIds = Array.from(new Set(projects.flatMap((p) => [p.ownerId, ...(p.teamIds ?? [])])));
   const owners = await getManyByIds<User>(COLLECTIONS.users, ownerIds);
   const used = new Set(projects.flatMap((p) => p.productIds));

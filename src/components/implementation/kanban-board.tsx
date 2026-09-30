@@ -37,10 +37,20 @@ import { WaitingClientDialog } from "./waiting-client-dialog";
 
 const WAITING_ZONE = "zona:aguardando";
 
+/** Ações do kanban permitidas ao usuário (servidor, pelo catálogo; as actions revalidam). */
+export interface KanbanPermissions {
+  /** Mudar a fase arrastando o card (implantacao.kanban.editar). */
+  move: boolean;
+  /** Soltar na zona "Aguardando cliente" = registrar pendência (implantacao.projetos.pendencias.criar). */
+  registerWaiting: boolean;
+  /** Retomar projeto parado pelo cliente (implantacao.projetos.pendencias.concluir). */
+  resume: boolean;
+}
+
 export interface KanbanBoardProps {
   rows: ProjectRow[];
   users: UserLite[];
-  canOperate: boolean;
+  permissions: KanbanPermissions;
 }
 
 /**
@@ -48,7 +58,9 @@ export interface KanbanBoardProps {
  * tarefas obrigatórias concluídas; o erro lista o que falta). A zona lateral "Aguardando cliente"
  * concentra os projetos pausados: soltar um card nela abre o registro da pendência.
  */
-export function KanbanBoard({ rows, users, canOperate }: KanbanBoardProps) {
+export function KanbanBoard({ rows, users, permissions }: KanbanBoardProps) {
+  // O card só é arrastável quando há algum destino permitido (outra fase ou a zona de pendência).
+  const canDrag = permissions.move || permissions.registerWaiting;
   const router = useRouter();
   const dndId = React.useId();
   const [overrides, setOverrides] = React.useState<Record<string, ImplementationPhase>>({});
@@ -78,11 +90,12 @@ export function KanbanBoard({ rows, users, canOperate }: KanbanBoardProps) {
     const target = e.over ? String(e.over.id) : null;
     if (!row || !target) return;
     if (target === WAITING_ZONE) {
+      if (!permissions.registerWaiting) return;
       if (row.status === "bloqueada") return void toast.error("Resolva o bloqueio interno antes de registrar pendência do cliente");
       return setWaitingFor(row);
     }
     const phase = target.replace("col:", "") as ImplementationPhase;
-    if (phase === phaseOf(row)) return;
+    if (!permissions.move || phase === phaseOf(row)) return;
     setOverrides((o) => ({ ...o, [row.id]: phase }));
     startTransition(async () => {
       const result = await changeProjectPhase({ projectId: row.id, phase });
@@ -114,10 +127,10 @@ export function KanbanBoard({ rows, users, canOperate }: KanbanBoardProps) {
         <div className="flex flex-col gap-3 lg:flex-row">
           <div className="relative -mx-4 flex min-w-0 flex-1 snap-x gap-3 overflow-x-auto px-4 pb-3 scrollbar-thin md:mx-0 md:px-0">
             {IMPLEMENTATION_PHASES.map((phase) => (
-              <Column key={phase} id={`col:${phase}`} label={IMPLEMENTATION_PHASE_LABELS[phase]} rows={onBoard.filter((r) => phaseOf(r) === phase)} canOperate={canOperate} />
+              <Column key={phase} id={`col:${phase}`} label={IMPLEMENTATION_PHASE_LABELS[phase]} rows={onBoard.filter((r) => phaseOf(r) === phase)} canDrop={permissions.move} canDrag={canDrag} />
             ))}
           </div>
-          <WaitingZone rows={waiting} canOperate={canOperate} />
+          <WaitingZone rows={waiting} canDrop={permissions.registerWaiting} canResume={permissions.resume} />
         </div>
         <DragOverlay dropAnimation={null}>{active ? <ProjectCard row={active} overlay /> : null}</DragOverlay>
       </DndContext>
@@ -135,8 +148,8 @@ export function KanbanBoard({ rows, users, canOperate }: KanbanBoardProps) {
   );
 }
 
-function Column({ id, label, rows, canOperate }: { id: string; label: string; rows: ProjectRow[]; canOperate: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id, disabled: !canOperate });
+function Column({ id, label, rows, canDrop, canDrag }: { id: string; label: string; rows: ProjectRow[]; canDrop: boolean; canDrag: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id, disabled: !canDrop });
   const late = rows.filter((r) => r.overdue).length;
   return (
     <section ref={setNodeRef} aria-label={label} className={cn("flex w-[82vw] shrink-0 snap-start flex-col rounded-lg border border-border border-t-[3px] border-t-secondary bg-surface-muted sm:w-64", isOver && "ring-2 ring-brand/30")}>
@@ -148,15 +161,15 @@ function Column({ id, label, rows, canOperate }: { id: string; label: string; ro
         {late > 0 ? <p className="mt-0.5 text-xs font-medium text-danger-fg">{late} atrasado(s)</p> : <p className="mt-0.5 text-xs text-muted">Sem atrasos</p>}
       </header>
       <div className="flex min-h-[140px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-300px)] md:overflow-y-auto md:scrollbar-thin [&>*]:shrink-0">
-        {rows.map((r) => (canOperate ? <DraggableCard key={r.id} row={r} /> : <ProjectCard key={r.id} row={r} />))}
-        {rows.length === 0 ? <p className="rounded-md border border-dashed border-border-strong px-3 py-6 text-center text-xs text-muted">{canOperate ? "Solte aqui" : "Vazio"}</p> : null}
+        {rows.map((r) => (canDrag ? <DraggableCard key={r.id} row={r} /> : <ProjectCard key={r.id} row={r} />))}
+        {rows.length === 0 ? <p className="rounded-md border border-dashed border-border-strong px-3 py-6 text-center text-xs text-muted">{canDrop ? "Solte aqui" : "Vazio"}</p> : null}
       </div>
     </section>
   );
 }
 
-function WaitingZone({ rows, canOperate }: { rows: ProjectRow[]; canOperate: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id: WAITING_ZONE, disabled: !canOperate });
+function WaitingZone({ rows, canDrop, canResume }: { rows: ProjectRow[]; canDrop: boolean; canResume: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id: WAITING_ZONE, disabled: !canDrop });
   return (
     <aside
       ref={setNodeRef}
@@ -168,7 +181,7 @@ function WaitingZone({ rows, canOperate }: { rows: ProjectRow[]; canOperate: boo
         <h3 className="text-sm font-semibold">Aguardando cliente</h3>
         <span className="ml-auto rounded-full bg-surface px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{rows.length}</span>
       </header>
-      <p className="px-3 text-xs text-muted">{canOperate ? "Solte um card aqui para registrar a pendência do cliente (pausa o SLA)." : "Projetos com SLA pausado por pendência do cliente."}</p>
+      <p className="px-3 text-xs text-muted">{canDrop ? "Solte um card aqui para registrar a pendência do cliente (pausa o SLA)." : "Projetos com SLA pausado por pendência do cliente."}</p>
       <div className="flex flex-col gap-2 p-2">
         {rows.map((r) => (
           <div key={r.id} className="rounded-lg border border-border bg-surface p-2.5 shadow-card">
@@ -178,7 +191,7 @@ function WaitingZone({ rows, canOperate }: { rows: ProjectRow[]; canOperate: boo
             <p className="mt-0.5 line-clamp-2 text-xs text-muted">{r.waitingReason}</p>
             <div className="mt-2 flex items-center justify-between gap-2">
               <span className="text-xs text-muted">{IMPLEMENTATION_PHASE_LABELS[r.currentPhase]}</span>
-              {canOperate ? <ResumeButton projectId={r.id} clientName={r.clientName} /> : null}
+              {canResume ? <ResumeButton projectId={r.id} clientName={r.clientName} /> : null}
             </div>
           </div>
         ))}

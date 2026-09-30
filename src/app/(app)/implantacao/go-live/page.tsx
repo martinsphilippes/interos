@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { CalendarCheck, PartyPopper, Rocket } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
 import { listGoLiveCandidates } from "@/server/implementation/queries";
 import { readProjectFilters } from "@/server/implementation/schemas";
-import { canOperateImplementation } from "@/server/implementation/access";
+import { implementationCapabilities } from "@/server/implementation/access";
 import { formatDate } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,17 +18,21 @@ export const metadata: Metadata = { title: "Go-live" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Projetos prontos para go-live e os que faltam pouco (>= 80%), com o que falta em cada um. */
+/**
+ * Projetos prontos para go-live e os que faltam pouco (>= 80%), com o que falta em cada um. A aprovação direta no
+ * card segue implantacao.go-live.aprovar ∧ canApproveGoLive (calculado por projeto no servidor); a regra "exige
+ * gestor" aparece com a seção de configuração e só é editável com implantacao.go-live.configurar.
+ */
 export default async function GoLivePage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "implantacao")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("implantacao.go-live");
   const params = await searchParams;
   const filters = readProjectFilters((key) => {
     const v = params[key];
     return Array.isArray(v) ? v[0] : v;
   });
   const { ready, almost, recent, scope, settings } = await listGoLiveCandidates(user, filters.scope);
-  const canOperate = canOperateImplementation(user);
+  const caps = implementationCapabilities(user);
+  const showSettings = can(user, "implantacao.go-live.configuracao.ver");
 
   return (
     <PageContainer>
@@ -40,7 +43,7 @@ export default async function GoLivePage({ searchParams }: { searchParams: Searc
       >
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <ProjectFilterBar owners={[]} products={[]} statuses={[]} scope={scope.kind} canTeam={scope.canTeam} showListFilters={false} />
-          <GoLiveSettingsSwitch value={settings.exigeAprovacaoGestor} canEdit={user.isManager} />
+          {showSettings ? <GoLiveSettingsSwitch value={settings.exigeAprovacaoGestor} canEdit={caps.configureGoLive} /> : null}
         </div>
       </PageHeader>
 
@@ -55,7 +58,7 @@ export default async function GoLivePage({ searchParams }: { searchParams: Searc
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {ready.map((c) => (
-              <GoLiveCandidateCard key={c.row.id} candidate={c} canOperate={canOperate} />
+              <GoLiveCandidateCard key={c.row.id} candidate={c} />
             ))}
           </div>
         )}
@@ -72,7 +75,7 @@ export default async function GoLivePage({ searchParams }: { searchParams: Searc
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {almost.map((c) => (
-              <GoLiveCandidateCard key={c.row.id} candidate={c} canOperate={canOperate} />
+              <GoLiveCandidateCard key={c.row.id} candidate={c} />
             ))}
           </div>
         )}
