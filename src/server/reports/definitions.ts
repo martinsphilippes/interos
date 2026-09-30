@@ -347,9 +347,14 @@ export const REPORT_DEFINITIONS: Record<ReportKey, ReportDefinition> = {
     filters: ["periodo_mes", "colaborador", "cliente", "produto", "status"],
     statusOptions: [
       { value: "prevista", label: "Prevista" },
-      { value: "liberada", label: "Liberada" },
+      { value: "em_carencia", label: "Em carência" },
+      { value: "aguardando_recebimento", label: "Aguardando recebimento" },
+      { value: "liberada", label: "Elegível" },
+      { value: "titulo_gerado", label: "Título gerado" },
       { value: "paga", label: "Paga" },
+      { value: "bloqueada", label: "Bloqueada" },
       { value: "cancelada", label: "Cancelada" },
+      { value: "estornada", label: "Estornada" },
     ],
     columns: [
       { key: "colaborador", label: "Colaborador", type: "texto", width: 18 },
@@ -360,7 +365,7 @@ export const REPORT_DEFINITIONS: Record<ReportKey, ReportDefinition> = {
       { key: "valor", label: "Comissão", type: "moeda", total: "soma" },
       { key: "competencia", label: "Competência", type: "texto", width: 11 },
       { key: "status", label: "Situação", type: "texto", width: 10 },
-      { key: "liberacao", label: "Liberação", type: "data" },
+      { key: "liberacao", label: "Elegível em", type: "data" },
     ],
   },
 };

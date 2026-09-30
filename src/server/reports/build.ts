@@ -17,6 +17,9 @@ import { CLIENT_STATUS_LABELS, DEPARTMENT_KEYS, DEPARTMENT_LABELS, PRIORITY_LABE
 import { formatCompetence } from "@/lib/format";
 import { ORIGIN_LABELS } from "@/components/tasks/task-model";
 import { REPORT_DEFINITIONS, type ReportDefinition, type ReportFilters, type ReportKey, type ReportValue } from "./definitions";
+import { COMMISSION_STATUS_LABELS } from "@/domain/commissions";
+import { canViewAllCommissions } from "@/server/commissions/permissions";
+import { resolveCommissionScope } from "@/server/commissions/queries";
 
 export type { ReportValue } from "./definitions";
 
@@ -59,25 +62,32 @@ const OPERATIONAL_OWNER: Partial<Record<ReportKey, DepartmentKey>> = { oportunid
 // Acesso
 // ---------------------------------------------------------------------------
 
-/** Gestores, diretoria e admin acessam tudo; os demais, os relatórios do próprio departamento (e Tarefas). */
-export function canAccessReport(user: Pick<CurrentUser, "isManager" | "departmentId">, key: ReportKey): boolean {
+type ReportUser = Pick<CurrentUser, "isManager" | "departmentId"> & Partial<Pick<CurrentUser, "id" | "role" | "isAdmin" | "isDirector">>;
+
+/**
+ * Gestores, diretoria e admin acessam tudo; os demais, os relatórios do próprio departamento (e Tarefas). Comissões
+ * também para a equipe financeira (que paga as comissões). O CONTEÚDO de Comissões é recortado por escopo em
+ * buildReport (D15): financeiro/admin/diretoria veem todos; gestor, só a equipe; vendedor, só as próprias.
+ */
+export function canAccessReport(user: ReportUser, key: ReportKey): boolean {
   if (user.isManager) return true;
   const def = REPORT_DEFINITIONS[key];
   if (key === "tarefas") return true;
+  if (key === "comissoes" && (user.role === "financeiro" || user.departmentId === "financeiro")) return true;
   if (key === "diretoria") return false;
   const owner = def.department ?? OPERATIONAL_OWNER[key];
   return owner === user.departmentId;
 }
 
-export function listReportsForUser(user: Pick<CurrentUser, "isManager" | "departmentId">): ReportDefinition[] {
+export function listReportsForUser(user: ReportUser): ReportDefinition[] {
   return Object.values(REPORT_DEFINITIONS).filter((d) => canAccessReport(user, d.key));
 }
 
-/** Restrições para quem não é gestor: Tarefas só do próprio departamento; Comissões só as próprias. */
-function forcedFilters(user: Pick<CurrentUser, "id" | "isManager" | "departmentId">, key: ReportKey): ReportFilters {
+/** Restrições para quem não é gestor: Tarefas só do próprio departamento; Comissões só as próprias (exceto equipe financeira). */
+function forcedFilters(user: Pick<CurrentUser, "id" | "isManager" | "departmentId" | "role" | "isAdmin" | "isDirector">, key: ReportKey): ReportFilters {
   if (user.isManager) return {};
   if (key === "tarefas") return { departamento: user.departmentId };
-  if (key === "comissoes") return { colaborador: user.id };
+  if (key === "comissoes" && !canViewAllCommissions(user)) return { colaborador: user.id };
   return {};
 }
 
@@ -585,13 +595,19 @@ async function buildClients({ filters, bundle }: OperationalInput): Promise<Repo
 }
 
 const REVENUE_LABELS: Record<string, string> = { setup: "Adesão", recorrencia: "Recorrência", hardware: "Hardware" };
-const COMMISSION_STATUS: Record<string, string> = { prevista: "Prevista", liberada: "Liberada", paga: "Paga", cancelada: "Cancelada" };
+const COMMISSION_STATUS: Record<string, string> = COMMISSION_STATUS_LABELS;
 
-async function buildCommissions(months: Period[], filters: ReportFilters, bundle: DataBundle, products: Map<string, Product>): Promise<ReportRow[]> {
+/** `allowedUserIds` null = todos (equipe financeira/admin/diretoria); gestor = equipe; demais = só as próprias. */
+async function buildCommissions(months: Period[], filters: ReportFilters, bundle: DataBundle, products: Map<string, Product>, allowedUserIds: string[] | null): Promise<ReportRow[]> {
   const keys = new Set(months.map((m) => m.key));
-  const commissions = await list<Commission>(COLLECTIONS.commissions, filters.colaborador ? { where: [["userId", "==", filters.colaborador]] } : {});
+  if (allowedUserIds && filters.colaborador && !allowedUserIds.includes(filters.colaborador)) return [];
+  const commissions = await list<Commission>(
+    COLLECTIONS.commissions,
+    filters.colaborador ? { where: [["userId", "==", filters.colaborador]] } : allowedUserIds ? { where: [["userId", "in", allowedUserIds]] } : {},
+  );
   return commissions
     .filter((c) => keys.has(c.competence))
+    .filter((c) => !allowedUserIds || allowedUserIds.includes(c.userId))
     .filter((c) => (!filters.cliente || c.clientId === filters.cliente) && (!filters.produto || c.productId === filters.produto) && (!filters.status || c.status === filters.status))
     .sort((a, b) => a.competence.localeCompare(b.competence) || (userName(bundle, a.userId) ?? "").localeCompare(userName(bundle, b.userId) ?? "", "pt-BR"))
     .map((c) => ({
@@ -604,9 +620,9 @@ async function buildCommissions(months: Period[], filters: ReportFilters, bundle
         valor: c.amount,
         competencia: formatCompetence(c.competence),
         status: COMMISSION_STATUS[c.status] ?? c.status,
-        liberacao: c.releaseAt ?? null,
+        liberacao: c.eligibleAt ?? c.releaseAt ?? null,
       },
-      href: `/clientes/${c.clientId}?aba=comercial`,
+      href: `/financeiro/comissoes?comissao=${c.id}`,
     }));
 }
 
@@ -664,7 +680,7 @@ function sanitize(def: ReportDefinition, filters: ReportFilters, users: Map<stri
  * Monta o relatório (linhas, totais, filtros aplicados e nome do período) respeitando o acesso do usuário.
  * Lança ReportAccessError quando o usuário não pode ver o relatório.
  */
-export async function buildReport(key: ReportKey, rawFilters: ReportFilters, user: Pick<CurrentUser, "id" | "isManager" | "departmentId">): Promise<ReportData> {
+export async function buildReport(key: ReportKey, rawFilters: ReportFilters, user: CurrentUser): Promise<ReportData> {
   if (!canAccessReport(user, key)) throw new ReportAccessError("Você não tem acesso a este relatório.");
   const def = REPORT_DEFINITIONS[key];
   const monthly = def.filters.includes("periodo_mes");
@@ -745,9 +761,13 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
     case "clientes":
       rows = await buildClients(op);
       break;
-    case "comissoes":
-      rows = await buildCommissions(range!.months, filters, bundle, products);
+    case "comissoes": {
+      // D15: o gestor só vê a equipe (antes qualquer gestor via todas); equipe financeira/admin/diretoria, todas.
+      const scope = await resolveCommissionScope(user);
+      rows = await buildCommissions(range!.months, filters, bundle, products, scope.kind === "all" ? null : scope.userIds);
+      if (scope.kind === "team") notes.push("Gestor: comissões da sua equipe.");
       break;
+    }
   }
   if (def.group === "departamental" && range && range.months.some((m) => m.key !== currentMonthKey())) {
     notes.push("Indicadores de estado (saúde, backlog, clientes ativos, MRR) de meses fechados usam o snapshot gravado quando o cálculo não é reconstruível.");
