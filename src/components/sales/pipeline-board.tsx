@@ -28,6 +28,7 @@ import type { OpenStage } from "@/server/sales/schemas";
 import { LostDialog } from "./lost-dialog";
 import { NextActionLabel, ProposalIcon, TemperatureDot } from "./opportunity-bits";
 import { OpportunityFilterBar, applyFilters, readFilters } from "./opportunity-filters";
+import { useSalesAccess } from "./sales-access";
 import { useSalesUrl } from "./use-sales-url";
 import { WonDialog } from "./won-dialog";
 
@@ -46,10 +47,17 @@ const LOST_ZONE = "zona:perdido";
 /**
  * Kanban do funil: colunas do setting "pipeline_stages" + zonas fixas Ganho/Perdido no fim.
  * Soltar em outra coluna chama changeOpportunityStage (opportunity.stage_changed); soltar em
- * Ganho/Perdido abre o diálogo correspondente. Clique no card abre o drawer (?oportunidade=).
+ * Ganho/Perdido abre o diálogo correspondente. Clique no card abre o drawer (?oportunidade=). Arrastar entre etapas
+ * exige vendas.oportunidades.editar; as zonas Ganho/Perdido só aparecem com ganhar/perder; sem nenhuma das três o
+ * quadro é somente leitura (sem alça de arrasto).
  */
 export function PipelineBoard({ rows, stages, sellers, products, currentUserId, competence }: PipelineBoardProps) {
   const router = useRouter();
+  const caps = useSalesAccess();
+  const canMove = caps.opportunities.edit;
+  const canWin = caps.opportunities.win;
+  const canLose = caps.opportunities.lose;
+  const canDrag = canMove || canWin || canLose;
   const { searchParams, navigate } = useSalesUrl();
   const dndId = React.useId();
   const filters = React.useMemo(() => readFilters((k) => searchParams.get(k)), [searchParams]);
@@ -85,8 +93,9 @@ export function PipelineBoard({ rows, stages, sellers, products, currentUserId, 
     const row = filtered.find((r) => r.id === String(e.active.id));
     const target = e.over ? String(e.over.id) : null;
     if (!row || !target) return;
-    if (target === WON_ZONE) return setDialog({ kind: "ganho", row });
-    if (target === LOST_ZONE) return setDialog({ kind: "perdido", row });
+    if (target === WON_ZONE) return canWin ? setDialog({ kind: "ganho", row }) : undefined;
+    if (target === LOST_ZONE) return canLose ? setDialog({ kind: "perdido", row }) : undefined;
+    if (!canMove) return;
     const stage = target.replace("col:", "");
     if (stage === columnOf(row)) return;
     const label = stages.find((s) => s.key === stage)?.label ?? stage;
@@ -119,12 +128,14 @@ export function PipelineBoard({ rows, stages, sellers, products, currentUserId, 
           <div className="relative -mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 scrollbar-thin md:mx-0 md:px-0">
             {stages.map((s) => {
               const cards = filtered.filter((r) => columnOf(r) === s.key);
-              return <Column key={s.key} id={`col:${s.key}`} label={s.label} rows={cards} onOpen={(id) => navigate({ oportunidade: id })} />;
+              return <Column key={s.key} id={`col:${s.key}`} label={s.label} rows={cards} draggable={canDrag} dropHint={canMove} onOpen={(id) => navigate({ oportunidade: id })} />;
             })}
-            <div className="flex w-[70vw] shrink-0 snap-start flex-col gap-3 sm:w-56">
-              <OutcomeZone id={WON_ZONE} label="Ganho" icon={<Trophy />} tone="success" />
-              <OutcomeZone id={LOST_ZONE} label="Perdido" icon={<XCircle />} tone="danger" />
-            </div>
+            {canWin || canLose ? (
+              <div className="flex w-[70vw] shrink-0 snap-start flex-col gap-3 sm:w-56">
+                {canWin ? <OutcomeZone id={WON_ZONE} label="Ganho" icon={<Trophy />} tone="success" /> : null}
+                {canLose ? <OutcomeZone id={LOST_ZONE} label="Perdido" icon={<XCircle />} tone="danger" /> : null}
+              </div>
+            ) : null}
           </div>
           <DragOverlay dropAnimation={null}>{active ? <Card row={active} overlay /> : null}</DragOverlay>
         </DndContext>
@@ -143,7 +154,7 @@ export function PipelineBoard({ rows, stages, sellers, products, currentUserId, 
   );
 }
 
-function Column({ id, label, rows, onOpen }: { id: string; label: string; rows: OpportunityRow[]; onOpen: (id: string) => void }) {
+function Column({ id, label, rows, draggable, dropHint, onOpen }: { id: string; label: string; rows: OpportunityRow[]; draggable: boolean; dropHint: boolean; onOpen: (id: string) => void }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   const monthly = rows.reduce((s, r) => s + r.monthlyTotal, 0);
   const setup = rows.reduce((s, r) => s + r.setupTotal, 0);
@@ -159,10 +170,8 @@ function Column({ id, label, rows, onOpen }: { id: string; label: string; rows: 
         </p>
       </header>
       <div className="flex min-h-[140px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-330px)] md:overflow-y-auto md:scrollbar-thin [&>*]:shrink-0">
-        {rows.map((r) => (
-          <DraggableCard key={r.id} row={r} onOpen={onOpen} />
-        ))}
-        {rows.length === 0 ? <p className="rounded-md border border-dashed border-border-strong px-3 py-6 text-center text-xs text-muted">Solte aqui</p> : null}
+        {rows.map((r) => (draggable ? <DraggableCard key={r.id} row={r} onOpen={onOpen} /> : <Card key={r.id} row={r} onOpen={onOpen} />))}
+        {rows.length === 0 ? <p className="rounded-md border border-dashed border-border-strong px-3 py-6 text-center text-xs text-muted">{dropHint ? "Solte aqui" : "Nenhuma oportunidade"}</p> : null}
       </div>
     </section>
   );
@@ -210,16 +219,18 @@ function Card({ row, onOpen, handleRef, handleProps, overlay }: { row: Opportuni
         }
       }}
     >
-      <button
-        ref={handleRef}
-        type="button"
-        aria-label={`Arrastar ${row.clientName}`}
-        className="-ml-1 flex w-7 shrink-0 cursor-grab touch-none items-center justify-center self-stretch rounded-md text-muted-light hover:bg-surface-hover hover:text-muted active:cursor-grabbing"
-        onClick={(e) => e.stopPropagation()}
-        {...handleProps}
-      >
-        <GripVertical className="size-4" />
-      </button>
+      {handleProps || overlay ? (
+        <button
+          ref={handleRef}
+          type="button"
+          aria-label={`Arrastar ${row.clientName}`}
+          className="-ml-1 flex w-7 shrink-0 cursor-grab touch-none items-center justify-center self-stretch rounded-md text-muted-light hover:bg-surface-hover hover:text-muted active:cursor-grabbing"
+          onClick={(e) => e.stopPropagation()}
+          {...handleProps}
+        >
+          <GripVertical className="size-4" />
+        </button>
+      ) : null}
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
           <p className="truncate text-sm font-semibold leading-snug">{row.clientName}</p>

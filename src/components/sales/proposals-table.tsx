@@ -14,6 +14,7 @@ import type { ProductOption, ProposalRow } from "@/server/sales/queries";
 import { PROPOSAL_STATUS_LABELS } from "./model";
 import { ProposalStatusBadge } from "./opportunity-bits";
 import { ProposalEditorDialog } from "./proposal-editor-dialog";
+import { useSalesAccess } from "./sales-access";
 import { useSalesUrl } from "./use-sales-url";
 
 const STATUSES: Proposal["status"][] = ["rascunho", "enviada", "visualizada", "negociacao", "aceita", "recusada", "vencida"];
@@ -31,9 +32,10 @@ export interface ProposalsTableProps {
   products: ProductOption[];
 }
 
-/** Lista de propostas com filtro por status (efetivo, inclui vencida) e busca; vira cards no celular. */
+/** Lista de propostas com filtro por status (efetivo, inclui vencida) e busca; vira cards no celular. "Nova proposta" só com vendas.propostas.criar. */
 export function ProposalsTable({ rows, opportunityOptions, products }: ProposalsTableProps) {
   const { searchParams, setLocal, navigate } = useSalesUrl();
+  const caps = useSalesAccess();
   const [creating, setCreating] = React.useState(false);
   const q = searchParams.get("q") ?? "";
   const status = searchParams.get("status") ?? "";
@@ -63,9 +65,11 @@ export function ProposalsTable({ rows, opportunityOptions, products }: Proposals
         <span className="text-xs text-muted tabular-nums md:ml-auto">
           {filtered.length} de {rows.length}
         </span>
-        <Button onClick={() => setCreating(true)} disabled={opportunityOptions.length === 0} className="min-h-[44px] md:min-h-0">
-          <Plus /> Nova proposta
-        </Button>
+        {caps.proposals.create ? (
+          <Button onClick={() => setCreating(true)} disabled={opportunityOptions.length === 0} className="min-h-[44px] md:min-h-0">
+            <Plus /> Nova proposta
+          </Button>
+        ) : null}
       </div>
 
       {filtered.length === 0 ? (
@@ -129,7 +133,7 @@ export function ProposalsTable({ rows, opportunityOptions, products }: Proposals
           </ul>
         </>
       )}
-      {creating ? <ProposalEditorDialog open onOpenChange={setCreating} opportunityOptions={opportunityOptions} products={products} onSaved={(id) => navigate({ proposta: id })} /> : null}
+      {creating && caps.proposals.create ? <ProposalEditorDialog open onOpenChange={setCreating} opportunityOptions={opportunityOptions} products={products} onSaved={(id) => navigate({ proposta: id })} /> : null}
     </div>
   );
 }

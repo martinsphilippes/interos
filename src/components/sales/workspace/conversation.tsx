@@ -18,6 +18,7 @@ import { telHref, whatsappHref } from "@/components/clients/contact-links";
 import { cn } from "@/lib/utils";
 import { attachOpportunityDocumentAction, registerCallAction, registerInternalNoteAction, registerWorkspaceMessageAction } from "@/server/sales/actions";
 import type { ConversationItem, WorkspaceDetail } from "@/server/sales/workspace-queries";
+import { useSalesAccess } from "../sales-access";
 
 // ---------------------------------------------------------------------------
 // Linha do tempo em formato de conversa (componente único: @/components/ui/conversation-thread)
@@ -91,12 +92,18 @@ function mailtoHref(email: string | undefined, subject: string, body: string): s
  * Composer do workspace. Sem integração conectada, "Enviar" grava a mensagem como REGISTRO MANUAL e
  * oferece abrir o WhatsApp (wa.me) ou o e-mail (mailto:) com o texto já preenchido. "Ligação" registra
  * duração e resumo (call.completed). "Nota interna" não sai para o cliente.
+ *
+ * Acesso: mensagem ao cliente = vendas.oportunidades.enviar; ligação e nota interna = vendas.oportunidades.registrar;
+ * anexo = vendas.oportunidades.anexar. Sem nenhuma delas o composer fica somente leitura.
  */
 export function Composer({ detail }: { detail: WorkspaceDetail }) {
   const router = useRouter();
   const id = React.useId();
   const opp = detail.opportunity;
-  const [channel, setChannel] = React.useState<ComposerChannel>("whatsapp");
+  const caps = useSalesAccess();
+  const canSend = caps.opportunities.send;
+  const canRegister = caps.opportunities.register;
+  const [channel, setChannel] = React.useState<ComposerChannel>(canSend || !canRegister ? "whatsapp" : "ligacao");
   const [internal, setInternal] = React.useState(false);
   const [text, setText] = React.useState("");
   const [outcome, setOutcome] = React.useState<"atendeu" | "nao_atendeu">("atendeu");
@@ -107,10 +114,11 @@ export function Composer({ detail }: { detail: WorkspaceDetail }) {
   const contact = detail.primaryContact;
   const wa = whatsappHref(contact.whatsapp ?? contact.phone);
   const tel = telHref(contact.phone ?? contact.whatsapp);
-  const disabled = !detail.canEdit;
+  const disabled = !canSend && !canRegister;
   const isCall = !internal && channel === "ligacao";
+  const allowed = internal || isCall ? canRegister : canSend;
   const durationSeconds = (Number(minutes) || 0) * 60 + (Number(seconds) || 0);
-  const canSubmit = !disabled && (isCall ? outcome === "nao_atendeu" || (durationSeconds > 0 && text.trim().length >= 3) : text.trim().length >= (internal ? 2 : 1));
+  const canSubmit = !disabled && allowed && (isCall ? outcome === "nao_atendeu" || (durationSeconds > 0 && text.trim().length >= 3) : text.trim().length >= (internal ? 2 : 1));
 
   const done = (message: string) => {
     toast.success(message);
@@ -219,20 +227,20 @@ export function Composer({ detail }: { detail: WorkspaceDetail }) {
           </div>
         ) : null}
         <div className="flex flex-wrap items-center gap-2 px-1">
-          <AttachButton opportunityId={opp.id} disabled={disabled} />
+          {caps.opportunities.attach ? <AttachButton opportunityId={opp.id} disabled={false} /> : null}
           <SegmentedControl<ComposerChannel>
             size="sm"
             aria-label="Canal"
             value={channel}
             onChange={setChannel}
             options={[
-              { value: "whatsapp", label: "WhatsApp", icon: <MessageCircle />, disabled: internal },
-              { value: "email", label: "E-mail", icon: <Mail />, disabled: internal },
-              { value: "ligacao", label: "Ligação", icon: <Phone />, disabled: internal },
+              { value: "whatsapp", label: "WhatsApp", icon: <MessageCircle />, disabled: internal || !canSend },
+              { value: "email", label: "E-mail", icon: <Mail />, disabled: internal || !canSend },
+              { value: "ligacao", label: "Ligação", icon: <Phone />, disabled: internal || !canRegister },
             ]}
           />
           <div className="ml-auto flex items-center gap-3">
-            <Switch size="sm" checked={internal} onCheckedChange={setInternal} label={<span className="text-[13px] font-normal text-muted">Adicionar nota interna</span>} disabled={disabled} className="gap-2" />
+            <Switch size="sm" checked={internal} onCheckedChange={setInternal} label={<span className="text-[13px] font-normal text-muted">Adicionar nota interna</span>} disabled={!canRegister} className="gap-2" />
             <Button size="sm" onClick={submit} loading={pending} disabled={!canSubmit} className="min-h-[40px] md:min-h-0" variant={internal ? "secondary" : "primary"}>
               {internal ? (
                 <>
@@ -253,7 +261,7 @@ export function Composer({ detail }: { detail: WorkspaceDetail }) {
       </div>
       <p className="mt-1.5 text-[11px] text-muted-light max-md:hidden">
         {disabled
-          ? "Somente o vendedor responsável, quem originou ou gestores registram interações."
+          ? "Seu perfil não permite registrar interações nesta oportunidade."
           : `${channelHint(detail.channels, internal ? null : channel)} Ctrl+Enter envia.`}
       </p>
     </div>

@@ -24,7 +24,9 @@ import type { CommunicationRecord } from "@/domain/sales-extra";
 import { effectiveProposalStatus, isOpenStage, opportunityCode } from "@/components/sales/model";
 import { getSalesChannelStatus, type SalesChannelStatus } from "./channels";
 import { HEADQUARTERS, formatAddressLine, geocode, googleMapsDirectionsUrl, googleMapsEmbedUrl, googleMapsSearchUrl, route } from "./maps";
-import { canSeeOpportunity, getOpportunityDetail, listSalesUsers, resolveScope, toLite, toVisitRows, todayKey, type OpportunityDetail, type SalesScope, type UserLite, type VisitRow } from "./queries";
+import { can, resolvePermissionsForUser } from "@/server/auth/session";
+import { SALES_SCREENS, opportunityInScope, opportunityScope, visitInScope, visitScope } from "./access";
+import { getOpportunityDetail, listSalesUsers, resolveScope, toLite, toVisitRows, todayKey, type OpportunityDetail, type SalesScope, type UserLite, type VisitRow } from "./queries";
 import { getPipelineStages, type PipelineStage } from "./service";
 
 // ---------------------------------------------------------------------------
@@ -120,13 +122,13 @@ function lastChannelOf(comms: CommunicationRecord[] | undefined, hasPendingVisit
 }
 
 /**
- * Fila do workspace no escopo pedido ("meu": dono ou quem originou; "equipe": gestor e liderados, ou o
- * time de vendas para diretoria/admin) e KPIs do topo, com os mesmos dados da fila.
+ * Fila do workspace na visão pedida ("meu": dono ou quem originou; "equipe": o escopo efetivo da Central — padrão
+ * gestor e liderados, ou o time de vendas para diretoria/admin) e KPIs do topo, com os mesmos dados da fila.
  */
 export async function getSalesWorkspace(user: CurrentUser, escopo?: string): Promise<SalesWorkspaceData> {
   // Mesma varredura central de follow-up disparada pela Central (automações, no máximo na frequência configurada).
   await runDueSweeps(["followup_vendas"]);
-  const scope = await resolveScope(user, escopo);
+  const scope = await resolveScope(user, escopo, SALES_SCREENS.central);
   const ids = new Set(scope.userIds);
   const [all, stages, visits, comms, proposals] = await Promise.all([
     list<Opportunity>(COLLECTIONS.opportunities),
@@ -300,7 +302,15 @@ export interface WorkspaceDetail extends OpportunityDetail {
   transferTargets: UserLite[];
   /** Contato principal (para os botões WhatsApp/Ligar/E-mail). */
   primaryContact: { name?: string; role?: string; phone?: string; whatsapp?: string; email?: string };
+  /** O usuário pode editar a oportunidade (vendas.oportunidades.editar; o escopo já foi conferido na leitura). */
   canEdit: boolean;
+}
+
+/** Destinos de transferência: time de vendas ativo, sem o dono atual, com acesso efetivo ao módulo (A28). */
+async function transferTargetsFor(sellers: Awaited<ReturnType<typeof listSalesUsers>>, ownerId: string): Promise<UserLite[]> {
+  const candidates = sellers.filter((s) => s.id !== ownerId);
+  const perms = await Promise.all(candidates.map((s) => resolvePermissionsForUser(s)));
+  return candidates.filter((_, i) => perms[i]?.has("vendas.acessar")).map(toLite);
 }
 
 const CONTACT_EVENT_TYPES = new Set<EventType>(["whatsapp.message.sent", "whatsapp.message.received", "call.completed", "email.sent"]);
@@ -361,6 +371,7 @@ function buildConversation(events: DomainEvent[], comms: CommunicationRecord[], 
   return items.slice(-200);
 }
 
+/** Oportunidade selecionada no workspace, no escopo da tela dona (vendas.oportunidades); fora dele = null. */
 export async function getWorkspaceOpportunity(user: CurrentUser, id: string): Promise<WorkspaceDetail | null> {
   const detail = await getOpportunityDetail(user, id);
   if (!detail) return null;
@@ -398,7 +409,8 @@ export async function getWorkspaceOpportunity(user: CurrentUser, id: string): Pr
     ? { at: lastVoip.createdAt, durationSeconds: lastVoip.durationSeconds, answered: lastVoip.status !== "falha" && (lastVoip.durationSeconds ?? 1) > 0, authorName: lastVoip.direction === "entrada" ? contactName : (lastCallAuthor ?? "Equipe") }
     : null;
 
-  const clientVisits = (await toVisitRows(relevantVisits)).sort((a, b) => (a.scheduledAt < b.scheduledAt ? 1 : -1));
+  const [clientVisitRows, transferTargets] = await Promise.all([toVisitRows(relevantVisits), transferTargetsFor(sellers, opp.ownerId)]);
+  const clientVisits = clientVisitRows.sort((a, b) => (a.scheduledAt < b.scheduledAt ? 1 : -1));
   const pendingVisits = clientVisits.filter((v) => PENDING_VISIT.has(v.status)).sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
 
   // Localização: endereço da próxima visita pendente; senão o do cadastro.
@@ -469,7 +481,7 @@ export async function getWorkspaceOpportunity(user: CurrentUser, id: string): Pr
     nextActions,
     interests,
     clientVisits,
-    transferTargets: sellers.filter((s) => s.id !== opp.ownerId).map(toLite),
+    transferTargets,
     primaryContact: {
       name: primary?.name,
       role: primary?.role,
@@ -477,7 +489,7 @@ export async function getWorkspaceOpportunity(user: CurrentUser, id: string): Pr
       whatsapp: primary?.whatsapp ?? fullClient?.whatsapp ?? primary?.phone ?? fullClient?.phone,
       email: primary?.email ?? fullClient?.email,
     },
-    canEdit: user.isManager || opp.ownerId === user.id || opp.originUserId === user.id,
+    canEdit: can(user, "vendas.oportunidades.editar"),
   };
 }
 
@@ -491,21 +503,25 @@ export async function getWorkspaceOpportunity(user: CurrentUser, id: string): Pr
  */
 /**
  * Visitas (comerciais e técnicas) de um cliente: a ÚNICA leitura de visitas por cliente, usada pelo workspace de
- * Vendas (com `user`, filtrada pela carteira do vendedor) e pelo Cliente 360º (`user` null: quem vê o cliente vê
- * todas as visitas). Pendentes primeiro (mais próxima antes), depois as encerradas (mais recente antes).
+ * Vendas (com `user`: visita no escopo de Visitas ou da oportunidade dela no escopo de Oportunidades) e pelo
+ * Cliente 360º (`user` null: quem vê o cliente vê todas as visitas; o recorte da aba é do Cliente 360).
+ * Pendentes primeiro (mais próxima antes), depois as encerradas (mais recente antes).
  */
-export async function getClientVisits(user: Pick<CurrentUser, "id" | "isManager"> | null, clientId: string): Promise<VisitRow[]> {
-  const [visits, opps] = await Promise.all([
+export async function getClientVisits(user: CurrentUser | null, clientId: string): Promise<VisitRow[]> {
+  const [visits, opps, vScope, oScope] = await Promise.all([
     list<Visit>(COLLECTIONS.visits, { where: [["clientId", "==", clientId]] }),
     list<Opportunity>(COLLECTIONS.opportunities, { where: [["clientId", "==", clientId]] }),
+    user ? visitScope(user) : Promise.resolve(null),
+    user ? opportunityScope(user) : Promise.resolve(null),
   ]);
   const oppById = new Map(opps.map((o) => [o.id, o]));
-  const visible = !user || user.isManager
-    ? visits
-    : visits.filter((v) => {
-        const opp = v.opportunityId ? oppById.get(v.opportunityId) : undefined;
-        return v.sellerId === user.id || v.createdBy === user.id || (opp ? canSeeOpportunity(user, opp) : false);
-      });
+  const visible =
+    !vScope || !oScope
+      ? visits
+      : visits.filter((v) => {
+          const opp = v.opportunityId ? oppById.get(v.opportunityId) : undefined;
+          return visitInScope(vScope, v) || (opp ? opportunityInScope(oScope, opp) : false);
+        });
   const rows = await toVisitRows(visible);
   const pending = (v: Visit) => PENDING_VISIT.has(v.status);
   return rows.sort((a, b) => {

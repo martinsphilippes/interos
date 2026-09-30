@@ -1,13 +1,14 @@
 "use server";
 /**
- * Server Actions do módulo de Vendas. Padrão: requireUser() → validação zod → serviço (regras e
- * eventos) → revalidatePath. Todas devolvem ActionResult com mensagem em português.
+ * Server Actions do módulo de Vendas. Padrão: requirePermission(chave do catálogo, src/domain/permissions/vendas.ts)
+ * → validação zod → escopo do registro (assert*Access: fora do escopo = PermissionError) → serviço (regras e eventos)
+ * → revalidatePath. Todas devolvem ActionResult com mensagem em português; falhas pelo tratamento único (failAction,
+ * que relança redirect/notFound do Next).
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { canAccessModule, requireUser } from "@/server/auth/session";
-import { getById } from "@/server/db";
-import { COLLECTIONS, type ActionResult, type CurrentUser, type Opportunity, type UserRef } from "@/domain/types";
+import { failAction, requirePermission } from "@/server/auth/session";
+import type { ActionResult, CurrentUser, Opportunity, UserRef } from "@/domain/types";
 import {
   cancelVisitSchema,
   changeStageSchema,
@@ -32,6 +33,8 @@ import {
   workspaceMessageSchema,
   zodMessage,
 } from "./schemas";
+import { assertOpportunityAccess, assertProposalAccess, assertVisitAccess, opportunityInScope, opportunityScope } from "./access";
+import { proposalSaveKey, proposalTransitionKey } from "./permission-keys";
 import { getWonContext, type WonContext } from "./queries";
 import { attachOpportunityDocument, registerCall, registerInternalNote, sendOrRegisterMessage, transferOpportunity, type MessageResult } from "./workspace";
 import {
@@ -57,31 +60,18 @@ import {
 
 type Failure = { ok: false; error: string };
 
+/** Validação: a primeira mensagem do zod (como antes); o resto pelo tratamento único (failAction). */
 function fail(error: unknown, fallback: string): Failure {
   if (error instanceof z.ZodError) return { ok: false, error: zodMessage(error) };
-  if (error instanceof Error && error.message) {
-    // Erros de regra do serviço já vêm em português; erros técnicos ficam no log.
-    if (!/firestore|firebase|ECONN|deadline|permission/i.test(error.message)) return { ok: false, error: error.message };
-  }
-  console.error(`[vendas] ${fallback}`, error);
-  return { ok: false, error: fallback };
+  return failAction(error, fallback, "vendas");
 }
 
 const actorOf = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
 
-async function requireSalesUser(): Promise<CurrentUser> {
-  const user = await requireUser();
-  if (!canAccessModule(user, "vendas")) throw new Error("Seu perfil não tem acesso ao módulo de Vendas");
-  return user;
-}
-
-/** Só o dono, quem originou, ou gestores/admin alteram a oportunidade. */
-async function requireOpportunityAccess(user: CurrentUser, opportunityId: string): Promise<Opportunity> {
-  const opp = await getById<Opportunity>(COLLECTIONS.opportunities, opportunityId);
-  if (!opp) throw new Error("Oportunidade não encontrada");
-  if (!user.isManager && opp.ownerId !== user.id && opp.originUserId !== user.id) throw new Error("Você não tem permissão para alterar esta oportunidade");
-  return opp;
-}
+/** Mensagens das negações (as mesmas de antes do catálogo, quando existiam). */
+const OWNER_DENIED = "Seu perfil não permite criar oportunidades para outro vendedor";
+const VISIT_SELLER_DENIED = "Você só pode agendar visitas para você mesmo";
+const SWEEP_DENIED = "Só gestores e administradores executam a varredura";
 
 function revalidateSales(clientId?: string) {
   revalidatePath("/vendas", "layout");
@@ -107,8 +97,10 @@ const createOpportunitySchema = z.object({
 
 export async function createOpportunityAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.criar");
     const data = createOpportunitySchema.parse(input);
+    // Em nome de outro vendedor: exige também a chave de atribuição (catálogo: checkedIn de atribuir).
+    if (data.ownerId !== user.id) await requirePermission("vendas.oportunidades.atribuir", OWNER_DENIED);
     const opp = await createOpportunity({ ...data, nextActionAt: new Date(data.nextActionAt).toISOString() }, { ...actorOf(user), departmentId: user.departmentId });
     revalidateSales(opp.clientId);
     return { ok: true, data: { id: opp.id } };
@@ -119,9 +111,9 @@ export async function createOpportunityAction(input: unknown): Promise<ActionRes
 
 export async function changeOpportunityStage(input: unknown): Promise<ActionResult<{ stage: Opportunity["stage"] }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.editar");
     const data = changeStageSchema.parse(input);
-    await requireOpportunityAccess(user, data.opportunityId);
+    await assertOpportunityAccess(user, data.opportunityId);
     const opp = await changeStage(data.opportunityId, data.stage, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: { stage: opp.stage } };
@@ -132,9 +124,9 @@ export async function changeOpportunityStage(input: unknown): Promise<ActionResu
 
 export async function updateOpportunity(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.editar");
     const data = updateOpportunitySchema.parse(input);
-    await requireOpportunityAccess(user, data.opportunityId);
+    await assertOpportunityAccess(user, data.opportunityId);
     const opp = await updateOpportunityData(data, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: { id: opp.id } };
@@ -145,9 +137,9 @@ export async function updateOpportunity(input: unknown): Promise<ActionResult<{ 
 
 export async function scheduleOpportunityNextAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.editar");
     const data = scheduleNextActionSchema.parse(input);
-    await requireOpportunityAccess(user, data.opportunityId);
+    await assertOpportunityAccess(user, data.opportunityId);
     const opp = await scheduleNextAction(data.opportunityId, data.nextAction, data.nextActionAt, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: { id: opp.id } };
@@ -158,9 +150,9 @@ export async function scheduleOpportunityNextAction(input: unknown): Promise<Act
 
 export async function registerOpportunityContactAction(input: unknown): Promise<ActionResult<{ eventId: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.registrar");
     const data = registerContactSchema.parse(input);
-    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const opp = await assertOpportunityAccess(user, data.opportunityId);
     const event = await registerOpportunityContact(data, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: { eventId: event.id } };
@@ -171,9 +163,9 @@ export async function registerOpportunityContactAction(input: unknown): Promise<
 
 export async function createOpportunityTaskAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.criar-tarefa");
     const data = createOpportunityTaskSchema.parse(input);
-    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const opp = await assertOpportunityAccess(user, data.opportunityId);
     const task = await createOpportunityTask(data, actorOf(user));
     revalidateSales(opp.clientId);
     revalidatePath("/tarefas");
@@ -185,9 +177,9 @@ export async function createOpportunityTaskAction(input: unknown): Promise<Actio
 
 export async function markOpportunityWonAction(input: unknown): Promise<ActionResult<{ id: string; contractId?: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.ganhar");
     const data = markWonSchema.parse(input);
-    await requireOpportunityAccess(user, data.opportunityId);
+    await assertOpportunityAccess(user, data.opportunityId);
     const opp = await markOpportunityWon(data, actorOf(user));
     revalidateSales(opp.clientId);
     revalidatePath("/workflow");
@@ -202,9 +194,9 @@ export async function markOpportunityWonAction(input: unknown): Promise<ActionRe
 /** Contexto do diálogo de ganho: contatos do cliente e proposta aceita (pré-preenchimento do fechamento). */
 export async function getWonContextAction(input: unknown): Promise<ActionResult<WonContext>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.ganhar");
     const { opportunityId } = opportunityIdSchema.parse(input);
-    await requireOpportunityAccess(user, opportunityId);
+    await assertOpportunityAccess(user, opportunityId);
     const context = await getWonContext(opportunityId);
     if (!context) return { ok: false, error: "Oportunidade não encontrada" };
     return { ok: true, data: context };
@@ -215,9 +207,9 @@ export async function getWonContextAction(input: unknown): Promise<ActionResult<
 
 export async function markOpportunityLostAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.perder");
     const data = markLostSchema.parse(input);
-    await requireOpportunityAccess(user, data.opportunityId);
+    await assertOpportunityAccess(user, data.opportunityId);
     const opp = await markOpportunityLost(data, actorOf(user));
     revalidateSales(opp.clientId);
     revalidatePath("/marketing", "layout");
@@ -229,9 +221,9 @@ export async function markOpportunityLostAction(input: unknown): Promise<ActionR
 
 export async function reopenOpportunityAction(input: unknown): Promise<ActionResult<{ stage: Opportunity["stage"] }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.reabrir");
     const data = opportunityIdSchema.parse(input);
-    await requireOpportunityAccess(user, data.opportunityId);
+    await assertOpportunityAccess(user, data.opportunityId);
     const opp = await reopenOpportunity(data.opportunityId, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: { stage: opp.stage } };
@@ -247,9 +239,9 @@ export async function reopenOpportunityAction(input: unknown): Promise<ActionRes
 /** Envia pelo provedor quando o canal está conectado; senão registra manualmente (delivery "manual"). */
 export async function registerWorkspaceMessageAction(input: unknown): Promise<ActionResult<MessageResult>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.enviar");
     const data = workspaceMessageSchema.parse(input);
-    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const opp = await assertOpportunityAccess(user, data.opportunityId);
     const result = await sendOrRegisterMessage(data, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: result };
@@ -260,9 +252,9 @@ export async function registerWorkspaceMessageAction(input: unknown): Promise<Ac
 
 export async function registerInternalNoteAction(input: unknown): Promise<ActionResult<{ eventId: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.registrar");
     const data = internalNoteSchema.parse(input);
-    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const opp = await assertOpportunityAccess(user, data.opportunityId);
     const event = await registerInternalNote(data, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: { eventId: event.id } };
@@ -273,9 +265,9 @@ export async function registerInternalNoteAction(input: unknown): Promise<Action
 
 export async function registerCallAction(input: unknown): Promise<ActionResult<{ communicationId: string; eventId: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.registrar");
     const data = registerCallSchema.parse(input);
-    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const opp = await assertOpportunityAccess(user, data.opportunityId);
     const result = await registerCall(data, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: result };
@@ -286,9 +278,9 @@ export async function registerCallAction(input: unknown): Promise<ActionResult<{
 
 export async function attachOpportunityDocumentAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.anexar");
     const data = attachDocumentSchema.parse(input);
-    const opp = await requireOpportunityAccess(user, data.opportunityId);
+    const opp = await assertOpportunityAccess(user, data.opportunityId);
     const doc = await attachOpportunityDocument(data, actorOf(user));
     revalidateSales(opp.clientId);
     return { ok: true, data: { id: doc.id } };
@@ -297,16 +289,20 @@ export async function attachOpportunityDocumentAction(input: unknown): Promise<A
   }
 }
 
-/** Transferir para outro vendedor: dono ou gestores. Quem transfere perde o acesso se não for gestor. */
+/**
+ * Transferir para outro vendedor: exige a chave de atribuição e a oportunidade no escopo; o NOVO responsável precisa
+ * ter acesso efetivo ao módulo (resolvePermissionsForUser em transferOpportunity, A28). `stillVisible` diz se quem
+ * transferiu continua vendo a oportunidade no próprio escopo.
+ */
 export async function transferOpportunityAction(input: unknown): Promise<ActionResult<{ ownerId: string; stillVisible: boolean }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.oportunidades.atribuir");
     const data = transferOpportunitySchema.parse(input);
-    const current = await requireOpportunityAccess(user, data.opportunityId);
+    const current = await assertOpportunityAccess(user, data.opportunityId);
     const opp = await transferOpportunity(data, actorOf(user));
     revalidateSales(opp.clientId);
     revalidatePath("/tarefas");
-    const stillVisible = user.isManager || opp.ownerId === user.id || current.originUserId === user.id;
+    const stillVisible = opportunityInScope(await opportunityScope(user), { ownerId: opp.ownerId, originUserId: current.originUserId });
     return { ok: true, data: { ownerId: opp.ownerId, stillVisible } };
   } catch (error) {
     return fail(error, "Não foi possível transferir a oportunidade");
@@ -319,8 +315,7 @@ export async function transferOpportunityAction(input: unknown): Promise<ActionR
 
 export async function runFollowupSweep(): Promise<ActionResult<SweepResult>> {
   try {
-    const user = await requireSalesUser();
-    if (!user.isManager) return { ok: false, error: "Só gestores e administradores executam a varredura" };
+    const user = await requirePermission("vendas.central.executar-varredura", SWEEP_DENIED);
     const result = await detectStalledOpportunities(actorOf(user));
     revalidateSales();
     revalidatePath("/tarefas");
@@ -334,11 +329,16 @@ export async function runFollowupSweep(): Promise<ActionResult<SweepResult>> {
 // Propostas
 // ---------------------------------------------------------------------------
 
+/** Criar (sem proposalId) ou editar rascunho (com proposalId): a chave sai do argumento (permission-keys.ts). */
 export async function saveProposalAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = proposalSaveKey(input) === "vendas.propostas.editar" ? await requirePermission("vendas.propostas.editar") : await requirePermission("vendas.propostas.criar");
     const data = saveProposalSchema.parse(input);
-    await requireOpportunityAccess(user, data.opportunityId);
+    await assertOpportunityAccess(user, data.opportunityId);
+    if (data.proposalId) {
+      const { proposal } = await assertProposalAccess(user, data.proposalId);
+      if (proposal.opportunityId !== data.opportunityId) return { ok: false, error: "A proposta não pertence a esta oportunidade" };
+    }
     const proposal = await saveProposal(data, actorOf(user));
     revalidateSales(proposal.clientId);
     return { ok: true, data: { id: proposal.id } };
@@ -349,11 +349,10 @@ export async function saveProposalAction(input: unknown): Promise<ActionResult<{
 
 export async function transitionProposalAction(input: unknown): Promise<ActionResult<{ id: string; status: string; opportunityId: string }>> {
   try {
-    const user = await requireSalesUser();
+    // enviar/visualizada/negociação → enviar; aceitar/recusar → aprovar (permission-keys.ts).
+    const user = proposalTransitionKey(input) === "vendas.propostas.aprovar" ? await requirePermission("vendas.propostas.aprovar") : await requirePermission("vendas.propostas.enviar");
     const data = proposalTransitionSchema.parse(input);
-    const current = await getById<{ id: string; organizationId: string; createdAt: string; updatedAt: string; opportunityId: string }>(COLLECTIONS.proposals, data.proposalId);
-    if (!current) return { ok: false, error: "Proposta não encontrada" };
-    await requireOpportunityAccess(user, current.opportunityId);
+    await assertProposalAccess(user, data.proposalId);
     const proposal = await transitionProposal(data.proposalId, data.transition, actorOf(user), data.reason);
     revalidateSales(proposal.clientId);
     return { ok: true, data: { id: proposal.id, status: proposal.status, opportunityId: proposal.opportunityId } };
@@ -364,11 +363,9 @@ export async function transitionProposalAction(input: unknown): Promise<ActionRe
 
 export async function newProposalVersionAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.propostas.criar");
     const data = proposalIdSchema.parse(input);
-    const current = await getById<{ id: string; organizationId: string; createdAt: string; updatedAt: string; opportunityId: string }>(COLLECTIONS.proposals, data.proposalId);
-    if (!current) return { ok: false, error: "Proposta não encontrada" };
-    await requireOpportunityAccess(user, current.opportunityId);
+    await assertProposalAccess(user, data.proposalId);
     const proposal = await newProposalVersion(data.proposalId, actorOf(user));
     revalidateSales(proposal.clientId);
     return { ok: true, data: { id: proposal.id } };
@@ -381,18 +378,12 @@ export async function newProposalVersionAction(input: unknown): Promise<ActionRe
 // Visitas
 // ---------------------------------------------------------------------------
 
-async function requireVisitAccess(user: CurrentUser, visitId: string) {
-  const visit = await getById<{ id: string; organizationId: string; createdAt: string; updatedAt: string; sellerId: string; createdBy?: string; clientId?: string }>(COLLECTIONS.visits, visitId);
-  if (!visit) throw new Error("Visita não encontrada");
-  if (!user.isManager && visit.sellerId !== user.id && visit.createdBy !== user.id) throw new Error("Você não tem permissão para alterar esta visita");
-  return visit;
-}
-
 export async function createVisitAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.visitas.criar");
     const data = createVisitSchema.parse(input);
-    if (!user.isManager && data.sellerId !== user.id) return { ok: false, error: "Você só pode agendar visitas para você mesmo" };
+    // Para outro vendedor: exige também a chave de atribuição (catálogo: checkedIn de vendas.visitas.atribuir).
+    if (data.sellerId !== user.id) await requirePermission("vendas.visitas.atribuir", VISIT_SELLER_DENIED);
     const visit = await createVisit(data, actorOf(user));
     revalidateSales(visit.clientId);
     return { ok: true, data: { id: visit.id } };
@@ -403,9 +394,9 @@ export async function createVisitAction(input: unknown): Promise<ActionResult<{ 
 
 export async function completeVisitAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.visitas.concluir");
     const data = completeVisitSchema.parse(input);
-    await requireVisitAccess(user, data.visitId);
+    await assertVisitAccess(user, data.visitId);
     const visit = await completeVisit(data, actorOf(user));
     revalidateSales(visit.clientId);
     return { ok: true, data: { id: visit.id } };
@@ -416,9 +407,9 @@ export async function completeVisitAction(input: unknown): Promise<ActionResult<
 
 export async function cancelVisitAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.visitas.cancelar");
     const data = cancelVisitSchema.parse(input);
-    await requireVisitAccess(user, data.visitId);
+    await assertVisitAccess(user, data.visitId);
     const visit = await cancelVisit(data, actorOf(user));
     revalidateSales(visit.clientId);
     return { ok: true, data: { id: visit.id } };
@@ -429,9 +420,9 @@ export async function cancelVisitAction(input: unknown): Promise<ActionResult<{ 
 
 export async function rescheduleVisitAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireSalesUser();
+    const user = await requirePermission("vendas.visitas.editar");
     const data = rescheduleVisitSchema.parse(input);
-    await requireVisitAccess(user, data.visitId);
+    await assertVisitAccess(user, data.visitId);
     const visit = await rescheduleVisit(data, actorOf(user));
     revalidateSales(visit.clientId);
     return { ok: true, data: { id: visit.id } };

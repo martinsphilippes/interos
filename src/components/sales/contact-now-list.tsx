@@ -8,11 +8,13 @@ import type { ContactNowItem } from "@/server/sales/queries";
 import { ContactButtons } from "./contact-buttons";
 import { NextActionPopover } from "./next-action-popover";
 import { NextActionLabel, StageBadge, TemperatureDot } from "./opportunity-bits";
+import { useSalesAccess } from "./sales-access";
 import { useSalesUrl } from "./use-sales-url";
 
 /** "Contatar agora": oportunidades por urgência, com WhatsApp, Ligar e Agendar próxima ação inline. O clique abre a oportunidade no workspace. */
 export function ContactNowList({ items, showOwner }: { items: ContactNowItem[]; showOwner?: boolean }) {
   const { navigate } = useSalesUrl();
+  const caps = useSalesAccess();
   if (items.length === 0) {
     return <EmptyState size="sm" icon={<PhoneOutgoing />} title="Nada urgente agora" description="Todas as oportunidades têm próxima ação em dia." />;
   }
@@ -41,7 +43,7 @@ export function ContactNowList({ items, showOwner }: { items: ContactNowItem[]; 
           </button>
           <div className="flex shrink-0 items-center gap-1.5">
             <ContactButtons opportunityId={row.id} phone={row.contactPhone} whatsapp={row.contactWhatsapp} iconOnly />
-            <NextActionPopover opportunityId={row.id} currentAction={row.nextAction} />
+            {caps.opportunities.edit ? <NextActionPopover opportunityId={row.id} currentAction={row.nextAction} /> : null}
           </div>
         </li>
       ))}

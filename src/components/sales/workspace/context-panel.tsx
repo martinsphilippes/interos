@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { ScreenLink, useCanSeeFn } from "@/components/auth/access-provider";
 import { CalendarClock, Car, CheckSquare, Clock, ExternalLink, FileText, Mail, MapPin, MessageCircle, Navigation, Package, Phone, User } from "lucide-react";
 import { avatarColor } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -68,9 +69,9 @@ function LeadCard({ detail }: { detail: WorkspaceDetail }) {
             {initials(client.tradeName)}
           </span>
           <div className="min-w-0 flex-1">
-            <Link href={`/clientes/${client.id}`} className="block truncate font-semibold hover:text-brand-fg hover:underline" title="Abrir ficha do cliente">
+            <ScreenLink href={`/clientes/${client.id}`} className="block truncate font-semibold hover:text-brand-fg hover:underline" title="Abrir ficha do cliente" fallback={<span className="block truncate font-semibold">{client.legalName || client.tradeName}</span>}>
               {client.legalName || client.tradeName}
-            </Link>
+            </ScreenLink>
             <ul className="mt-1 flex flex-col gap-1 text-xs text-muted">
               <li className="flex min-w-0 items-center gap-1.5">
                 <User className="size-3.5 shrink-0" aria-hidden />
@@ -205,9 +206,9 @@ function LocationCard({ detail, className }: { detail: WorkspaceDetail; classNam
         ) : (
           <p className="text-sm text-muted">
             Sem endereço no cadastro.{" "}
-            <Link href={`/clientes/${detail.client.id}`} className="text-brand-fg hover:underline">
+            <ScreenLink href={`/clientes/${detail.client.id}`} className="text-brand-fg hover:underline">
               Completar na ficha do cliente
-            </Link>
+            </ScreenLink>
           </p>
         )}
       </CardContent>
@@ -224,6 +225,7 @@ const ACTION_STYLE: Record<WorkspaceNextAction["kind"], { icon: React.ReactNode;
 
 export function NextActionsList({ detail, limit }: { detail: WorkspaceDetail; limit?: number }) {
   const { navigate } = useSalesUrl();
+  const canSee = useCanSeeFn();
   const items = limit ? detail.nextActions.slice(0, limit) : detail.nextActions;
   if (items.length === 0) return <p className="text-sm text-muted">Nenhuma ação agendada. Use “Agendar” para marcar visita ou próxima ação.</p>;
   return (
@@ -249,7 +251,7 @@ export function NextActionsList({ detail, limit }: { detail: WorkspaceDetail; li
               <button type="button" className={cls} onClick={() => navigate({ visita: a.visitId })}>
                 {body}
               </button>
-            ) : a.href ? (
+            ) : a.href && canSee(a.href) ? (
               <Link href={a.href} className={cls}>
                 {body}
               </Link>

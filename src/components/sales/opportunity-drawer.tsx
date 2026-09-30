@@ -35,6 +35,18 @@ import { ProductsEditor, toEditableLines, toPayloadLines, type EditableLine } fr
 import { ProposalEditorDialog } from "./proposal-editor-dialog";
 import { useSalesUrl } from "./use-sales-url";
 import { WonDialog } from "./won-dialog";
+import { useSalesAccess } from "./sales-access";
+import { ScreenLink, useCanSeeFn } from "@/components/auth/access-provider";
+
+/** Link quando o usuário vê a tela de destino; senão o mesmo bloco sem navegação. */
+function MaybeLink({ href, visible, className, children, target }: { href: string; visible: boolean; className?: string; children: React.ReactNode; target?: string }) {
+  if (!visible) return <div className={className}>{children}</div>;
+  return (
+    <Link href={href} className={className} target={target}>
+      {children}
+    </Link>
+  );
+}
 
 export interface OpportunityDrawerProps {
   detail: OpportunityDetail | null;
@@ -42,7 +54,8 @@ export interface OpportunityDrawerProps {
 
 /**
  * Drawer da oportunidade (?oportunidade=<id>), reutilizado pela Central, Pipeline e Oportunidades.
- * Recebe tudo do servidor; cada ação chama uma Server Action e faz router.refresh().
+ * Recebe tudo do servidor; cada ação chama uma Server Action e faz router.refresh(). Controles conforme as chaves
+ * (useSalesAccess): sem edição, o resumo fica somente leitura; links só para telas que o usuário vê.
  */
 export function OpportunityDrawer({ detail }: OpportunityDrawerProps) {
   const { navigate } = useSalesUrl();
@@ -58,6 +71,8 @@ type TabKey = "resumo" | "atividades" | "propostas" | "tarefas";
 
 function DrawerInner({ detail }: { detail: OpportunityDetail }) {
   const router = useRouter();
+  const caps = useSalesAccess();
+  const canSee = useCanSeeFn();
   const { opportunity: opp, client, sla, users } = detail;
   const open = isOpenStage(opp.stage);
   const [tab, setTab] = React.useState<TabKey>("resumo");
@@ -106,10 +121,18 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
         </DrawerTitle>
         <DrawerDescription asChild>
           <div className="flex flex-col gap-2">
-            <Link href={`/clientes/${client.id}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-secondary hover:underline">
+            <ScreenLink
+              href={`/clientes/${client.id}`}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-secondary hover:underline"
+              fallback={
+                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <Building2 className="size-4" /> {client.tradeName}
+                </span>
+              }
+            >
               <Building2 className="size-4" /> {client.tradeName}
               <ExternalLink className="size-3.5" />
-            </Link>
+            </ScreenLink>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-foreground">
               <ValueLine opp={opp} className="font-semibold" />
               <TemperatureDot temperature={opp.temperature} />
@@ -129,24 +152,28 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
                 aria-label="Etapa"
                 value={opp.stage}
                 onChange={(e) => moveStage(e.target.value)}
-                disabled={stagePending}
+                disabled={stagePending || !caps.opportunities.edit}
                 className="w-auto min-w-[160px]"
                 options={detail.stages.map((s) => ({ value: s.key, label: s.label }))}
               />
-              <Button size="sm" className="min-h-[44px] bg-success-strong hover:bg-success-hover md:min-h-0" onClick={() => setDialog("ganho")}>
-                <Trophy /> Marcar como ganho
-              </Button>
-              <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setDialog("perdido")}>
-                <XCircle className="text-danger" /> Perdido
-              </Button>
+              {caps.opportunities.win ? (
+                <Button size="sm" className="min-h-[44px] bg-success-strong hover:bg-success-hover md:min-h-0" onClick={() => setDialog("ganho")}>
+                  <Trophy /> Marcar como ganho
+                </Button>
+              ) : null}
+              {caps.opportunities.lose ? (
+                <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setDialog("perdido")}>
+                  <XCircle className="text-danger" /> Perdido
+                </Button>
+              ) : null}
             </>
           ) : null}
-          {opp.stage === "perdido" ? (
+          {opp.stage === "perdido" && caps.opportunities.reopen ? (
             <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setDialog("reabrir")}>
               <RotateCcw /> Reabrir
             </Button>
           ) : null}
-          {opp.stage === "ganho" && opp.contractId ? (
+          {opp.stage === "ganho" && opp.contractId && canSee(`/financeiro/contratos?contrato=${opp.contractId}`) ? (
             <Button size="sm" variant="outline" asChild className="min-h-[44px] md:min-h-0">
               <Link href={`/financeiro/contratos?contrato=${opp.contractId}`}>
                 <FileSignature /> Ver contrato
@@ -154,11 +181,13 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
             </Button>
           ) : null}
           <ContactButtons opportunityId={opp.id} phone={opp.contactPhone} whatsapp={opp.contactWhatsapp} />
-          <Button size="sm" variant="ghost" asChild className="min-h-[44px] md:min-h-0">
-            <Link href={workspaceHref(opp.id)}>
-              <MessagesSquare /> Abrir no workspace
-            </Link>
-          </Button>
+          {canSee(workspaceHref(opp.id)) ? (
+            <Button size="sm" variant="ghost" asChild className="min-h-[44px] md:min-h-0">
+              <Link href={workspaceHref(opp.id)}>
+                <MessagesSquare /> Abrir no workspace
+              </Link>
+            </Button>
+          ) : null}
         </div>
         {opp.stage === "ganho" ? (
           <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success-fg">Ganha em {formatDateTime(opp.wonAt)}{opp.saleNumber ? ` · venda ${opp.saleNumber}` : ""}. Contrato, produtos e comissões foram gerados; a jornada segue no Financeiro.</p>
@@ -232,8 +261,10 @@ function DrawerInner({ detail }: { detail: OpportunityDetail }) {
 
 function SummaryTab({ detail }: { detail: OpportunityDetail }) {
   const router = useRouter();
+  const caps = useSalesAccess();
   const { opportunity: opp, products } = detail;
-  const editable = isOpenStage(opp.stage);
+  // Sem vendas.oportunidades.editar: resumo somente leitura.
+  const editable = isOpenStage(opp.stage) && caps.opportunities.edit;
   const id = React.useId();
   const [diagnosis, setDiagnosis] = React.useState(opp.diagnosis ?? "");
   const [need, setNeed] = React.useState(opp.need ?? "");
@@ -373,6 +404,8 @@ function SummaryTab({ detail }: { detail: OpportunityDetail }) {
 
 function ActivitiesTab({ detail }: { detail: OpportunityDetail }) {
   const router = useRouter();
+  const caps = useSalesAccess();
+  const canSee = useCanSeeFn();
   const { opportunity: opp } = detail;
   const id = React.useId();
   const [channel, setChannel] = React.useState<"nota" | "whatsapp" | "ligacao">("nota");
@@ -396,6 +429,7 @@ function ActivitiesTab({ detail }: { detail: OpportunityDetail }) {
   const visitParams = new URLSearchParams({ nova: "1", cliente: opp.clientId, oportunidade: opp.id });
   return (
     <div className="flex flex-col gap-5">
+      {caps.opportunities.register ? (
       <section className="grid gap-3 rounded-lg border border-border p-3">
         <h4 className="text-sm font-semibold">Registrar contato ou nota</h4>
         <div className="grid grid-cols-2 gap-3">
@@ -415,11 +449,12 @@ function ActivitiesTab({ detail }: { detail: OpportunityDetail }) {
           </Button>
         </div>
       </section>
+      ) : null}
 
       <section>
         <div className="mb-2 flex items-center justify-between gap-2">
           <h4 className="text-sm font-semibold">Visitas ({detail.visits.length})</h4>
-          {isOpenStage(opp.stage) ? (
+          {isOpenStage(opp.stage) && caps.visits.create ? (
             <Button variant="outline" size="sm" asChild>
               <Link href={`/vendas/visitas?${visitParams.toString()}`}>
                 <CalendarPlus /> Agendar visita
@@ -433,7 +468,7 @@ function ActivitiesTab({ detail }: { detail: OpportunityDetail }) {
           <ul className="flex flex-col gap-2">
             {detail.visits.map((v) => (
               <li key={v.id}>
-                <Link href={visitHref(v.id)} className="flex items-center gap-3 rounded-lg border border-border p-2.5 hover:bg-surface-hover">
+                <MaybeLink href={visitHref(v.id)} visible={canSee(visitHref(v.id))} className="flex items-center gap-3 rounded-lg border border-border p-2.5 hover:bg-surface-hover">
                   <MapPin className="size-4 shrink-0 text-muted" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{v.objective}</span>
@@ -442,7 +477,7 @@ function ActivitiesTab({ detail }: { detail: OpportunityDetail }) {
                   <Badge variant={VISIT_STATUS_VARIANT[v.status]} size="sm">
                     {VISIT_STATUS_LABELS[v.status]}
                   </Badge>
-                </Link>
+                </MaybeLink>
               </li>
             ))}
           </ul>
@@ -462,7 +497,8 @@ function ActivitiesTab({ detail }: { detail: OpportunityDetail }) {
 // ---------------------------------------------------------------------------
 
 function ProposalsTab({ detail, onNew }: { detail: OpportunityDetail; onNew: () => void }) {
-  const canCreate = isOpenStage(detail.opportunity.stage);
+  const caps = useSalesAccess();
+  const canCreate = isOpenStage(detail.opportunity.stage) && caps.proposals.create;
   return (
     <div className="flex flex-col gap-3">
       {canCreate ? (
@@ -478,7 +514,7 @@ function ProposalsTab({ detail, onNew }: { detail: OpportunityDetail; onNew: () 
         <ul className="flex flex-col gap-2">
           {detail.proposals.map((p) => (
             <li key={p.id} className="flex flex-col gap-2 rounded-lg border border-border p-3 sm:flex-row sm:items-center">
-              <Link href={proposalHref(p.id)} className="min-w-0 flex-1 hover:underline">
+              <MaybeLink href={proposalHref(p.id)} visible={caps.proposals.view} className="min-w-0 flex-1 hover:underline">
                 <span className="flex items-center gap-2">
                   <span className="font-medium tabular-nums">
                     {p.number} v{p.version}
@@ -488,12 +524,14 @@ function ProposalsTab({ detail, onNew }: { detail: OpportunityDetail; onNew: () 
                 <span className="mt-0.5 block text-xs text-muted tabular-nums">
                   {formatCurrency(p.monthlyTotal)}/mês · {formatCurrency(p.setupTotal)} adesão{p.discountTotal > 0 ? ` · desconto ${formatCurrency(p.discountTotal)}` : ""} · válida até {formatDate(p.validUntil)}
                 </span>
-              </Link>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href={`/vendas/propostas/${p.id}`} target="_blank">
-                  <Printer /> Imprimir
-                </Link>
-              </Button>
+              </MaybeLink>
+              {caps.proposals.view ? (
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href={`/vendas/propostas/${p.id}`} target="_blank">
+                    <Printer /> Imprimir
+                  </Link>
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -508,6 +546,8 @@ function ProposalsTab({ detail, onNew }: { detail: OpportunityDetail; onNew: () 
 
 function TasksTab({ detail }: { detail: OpportunityDetail }) {
   const router = useRouter();
+  const caps = useSalesAccess();
+  const canSee = useCanSeeFn();
   const id = React.useId();
   const [title, setTitle] = React.useState("");
   const [dueAt, setDueAt] = React.useState("");
@@ -536,6 +576,7 @@ function TasksTab({ detail }: { detail: OpportunityDetail }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {caps.opportunities.createTask ? (
       <section className="grid gap-3 rounded-lg border border-border p-3">
         <h4 className="text-sm font-semibold">Nova tarefa</h4>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: Enviar contrato modelo ao cliente" aria-label="Título da tarefa" />
@@ -553,6 +594,7 @@ function TasksTab({ detail }: { detail: OpportunityDetail }) {
           </Button>
         </div>
       </section>
+      ) : null}
       {detail.tasks.length === 0 ? (
         <EmptyState size="sm" icon={<CheckSquare />} title="Nenhuma tarefa vinculada" />
       ) : (
@@ -562,7 +604,7 @@ function TasksTab({ detail }: { detail: OpportunityDetail }) {
             const late = !done && t.dueAt && t.dueAt < nowIso;
             return (
               <li key={t.id}>
-                <Link href={`/tarefas?tarefa=${t.id}`} className="flex items-center gap-3 rounded-lg border border-border p-2.5 hover:bg-surface-hover">
+                <MaybeLink href={`/tarefas?tarefa=${t.id}`} visible={canSee(`/tarefas?tarefa=${t.id}`)} className="flex items-center gap-3 rounded-lg border border-border p-2.5 hover:bg-surface-hover">
                   <CheckSquare className={cn("size-4 shrink-0", done ? "text-success" : "text-muted")} />
                   <span className="min-w-0 flex-1">
                     <span className={cn("block truncate text-sm", done && "text-muted line-through")}>{t.title}</span>
@@ -574,7 +616,7 @@ function TasksTab({ detail }: { detail: OpportunityDetail }) {
                   <Badge variant={done ? "muted" : "info"} size="sm">
                     {TASK_STATUS_LABELS[t.status]}
                   </Badge>
-                </Link>
+                </MaybeLink>
               </li>
             );
           })}
