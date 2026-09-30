@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { Avatar } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { PeriodSelect } from "@/components/kpis/period-select";
@@ -67,11 +67,11 @@ export default async function TeamMemberPage({ params, searchParams }: { params:
           <>
             <PeriodSelect options={periodOptions()} value={period.key} />
             <RedistributeButton size="md" from={{ id: member.id, name: member.name }} tasks={openTasks} targets={view.reassignTargets} />
-            <Button asChild variant="outline" className="h-11 md:h-9">
-              <Link href={`/performance?usuario=${member.id}`}>
-                <Gauge /> Desempenho
-              </Link>
-            </Button>
+            {/* Link estilizado como botão (sem Slot/asChild): com o payload grande desta página, o filho do Slot
+                chegava como referência lazy do stream RSC e o Radix lançava "Slot failed to slot onto its children". */}
+            <Link href={`/performance?usuario=${member.id}`} className={cn(buttonVariants({ variant: "outline" }), "h-11 md:h-9")}>
+              <Gauge /> Desempenho
+            </Link>
           </>
         }
       />
@@ -129,9 +129,9 @@ export default async function TeamMemberPage({ params, searchParams }: { params:
           {view.bonus ? (
             <FocusCard id="bonus" active={false} title="Bônus projetado" icon={<Award />} description={period.label}>
               <BonusSummary bonus={view.bonus} />
-              <Button asChild variant="link" className="mt-3">
-                <Link href="/performance/bonus">Ver detalhamento</Link>
-              </Button>
+              <Link href="/performance/bonus" className={cn(buttonVariants({ variant: "link" }), "mt-3")}>
+                Ver detalhamento
+              </Link>
             </FocusCard>
           ) : null}
 
