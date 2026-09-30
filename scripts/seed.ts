@@ -21,7 +21,7 @@ import { seedSupport } from "./seed/journey-support";
 import { seedWorkflowAndTasks } from "./seed/journey-workflow";
 import { seedEventsAndNotifications } from "./seed/journey-events";
 import { seedPerformance } from "./seed/journey-performance";
-import { seedDerived } from "./seed/derived";
+import { seedCommissionEngine, seedDerived } from "./seed/derived";
 
 function elapsed(from: number): string {
   return `${((Date.now() - from) / 1000).toFixed(1)}s`;
@@ -74,6 +74,11 @@ async function main(): Promise<void> {
     console.log(`  ${name.padEnd(26)} ${String(count).padStart(5)}`);
   }
   // 5. Derivados calculados pelos motores sobre os dados gravados.
+  const tCommissions = Date.now();
+  const commissions = await seedCommissionEngine();
+  total += commissions.commissions + commissions.payables;
+  console.log(`  ${"commissions (motor)".padEnd(26)} ${String(commissions.commissions).padStart(5)}`);
+  console.log(`  ${"payables (motor)".padEnd(26)} ${String(commissions.payables).padStart(5)}  (${commissions.paid} pagos, ${commissions.scheduled - commissions.paid} a pagar, ${commissions.approved} aprovados · ${elapsed(tCommissions)})`);
   const tDerived = Date.now();
   const derived = await seedDerived();
   total += derived.snapshots + derived.bonus;

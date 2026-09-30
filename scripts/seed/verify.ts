@@ -3,8 +3,9 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Client, type ClientProduct, type Contract, type Counter, type Opportunity, type Proposal, type SlaInstance, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
+import { COLLECTIONS, type Client, type ClientProduct, type Commission, type Contract, type Counter, type Opportunity, type Payable, type Proposal, type SlaInstance, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
 import { counterId, list } from "../../src/server/db";
+import { commissionIdFor } from "../../src/server/commissions/store";
 
 const ENTITY_COLLECTION: Record<SlaInstance["entityType"], CollectionName> = {
   tarefa: COLLECTIONS.tasks,
@@ -70,6 +71,8 @@ async function main(): Promise<void> {
     ...contracts.map((c) => c.number),
     ...(cache.get(COLLECTIONS.proposals) as Proposal[]).map((p) => p.number),
     ...opportunities.map((o) => o.saleNumber),
+    ...(cache.get(COLLECTIONS.commissions) as Commission[]).map((c) => c.code),
+    ...(cache.get(COLLECTIONS.payables) as Payable[]).map((p) => p.code),
   ];
   for (const n of numbered) {
     const m = n?.match(/^([A-Z]+)-(\d{4})-(\d+)$/);
@@ -85,12 +88,47 @@ async function main(): Promise<void> {
     if (!opp || opp.saleNumber !== c.saleNumber) problems.push(`(g) ${c.id} saleNumber ${c.saleNumber} sem venda correspondente`);
   }
 
+  // (h) comissões do motor: sem duplicidade por chave de idempotência e id = com_<hash da chave>; código único.
+  const commissions = cache.get(COLLECTIONS.commissions) as Commission[];
+  const payables = cache.get(COLLECTIONS.payables) as Payable[];
+  const keys = new Map<string, string>();
+  for (const c of commissions.filter((x) => x.sourceKey)) {
+    const dup = keys.get(c.sourceKey!);
+    if (dup) problems.push(`(h) sourceKey duplicada: ${c.id} e ${dup}`);
+    keys.set(c.sourceKey!, c.id);
+    if (c.id !== commissionIdFor(c.sourceKey!)) problems.push(`(h) ${c.id} não corresponde à chave ${c.sourceKey}`);
+  }
+  const codes = commissions.map((c) => c.code).filter(Boolean);
+  if (new Set(codes).size !== codes.length) problems.push("(h) código COM duplicado");
+  const payableCodes = payables.map((p) => p.code).filter(Boolean);
+  if (new Set(payableCodes).size !== payableCodes.length) problems.push("(h) código PAG duplicado");
+  // (i) todo título de comissão (não cancelado) aponta para comissão "título gerado"/"paga" que aponta de volta.
+  const commissionById = new Map(commissions.map((c) => [c.id, c]));
+  const payableById = new Map(payables.map((p) => [p.id, p]));
+  for (const p of payables.filter((x) => x.origin === "comissao_automatica" && x.status !== "cancelado")) {
+    const c = commissionById.get(p.sourceIds.commissionIds[0] ?? "");
+    if (!c) problems.push(`(i) ${p.id} aponta para comissão inexistente`);
+    else if (c.payableId !== p.id || !(c.status === "titulo_gerado" || c.status === "paga" || (c.status === "estornada" && p.status === "pago"))) problems.push(`(i) ${p.id} → ${c.id} com status ${c.status} / payableId ${c.payableId}`);
+  }
+  // (j) comissão paga ⇔ título pago.
+  for (const c of commissions.filter((x) => x.status === "paga")) {
+    const p = c.payableId ? payableById.get(c.payableId) : undefined;
+    if (!p || p.status !== "pago") problems.push(`(j) comissão paga ${c.id} com título ${c.payableId ?? "ausente"} ${p?.status ?? ""}`);
+  }
+  for (const p of payables.filter((x) => x.origin === "comissao_automatica" && x.status === "pago")) {
+    const c = commissionById.get(p.sourceIds.commissionIds[0] ?? "");
+    if (!c || !(c.status === "paga" || c.status === "estornada")) problems.push(`(j) título pago ${p.id} com comissão ${c?.status ?? "ausente"}`);
+  }
+  // (k) título existe só para comissão que já foi elegível; elegível sem título só depois de título cancelado.
+  for (const c of commissions.filter((x) => x.status === "liberada" && !x.payableId && !(x.previousPayableIds?.length))) problems.push(`(k) comissão elegível ${c.id} sem título`);
+  console.log(`Comissões: ${commissions.length} (${commissions.filter((c) => c.sourceKey).length} do motor); títulos: ${payables.length} (${payables.filter((p) => p.status === "pago").length} pagos)`);
+
   const activeSlas = slas.filter((s) => s.status !== "concluido");
   console.log(`SLA ativos: ${activeSlas.length}, violados: ${activeSlas.filter((s) => s.breachedAt).length}`);
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(g): OK");
+    console.log("\nInvariantes (a)-(k): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);

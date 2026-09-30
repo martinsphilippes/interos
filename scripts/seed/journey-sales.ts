@@ -433,6 +433,9 @@ function seedContracts(ctx: SeedContext): void {
       pendingReason: override?.pendingReason,
       ownerId: users.karem.id,
       documentIds: [],
+      // Vendedor dos contratos recentes (últimos 6 meses) sem oportunidade no seed: o dono comercial do cliente.
+      // Contratos mais antigos ficam sem vendedor (o histórico de cobranças do seed não cobre o início deles).
+      ...(!opp && client.doc.ownerSalesId && j.contractAt! >= `${competence(-5)}-01` ? { sellerId: client.doc.ownerSalesId } : {}),
       // Campos do fechamento: só contratos nascidos de venda com fechamento estruturado.
       ...(closing && opp
         ? {
