@@ -17,6 +17,7 @@ import { UserChip } from "@/components/ui/user-chip";
 import { Timeline } from "@/components/timeline/timeline";
 import { CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "@/components/clients/labels";
 import { BillingDataCard } from "@/components/finance/billing-data-card";
+import { CancelContractButton } from "@/components/finance/cancel-contract-button";
 import { ContractBillingCard } from "@/components/finance/contract-billing-card";
 import { ContractConditionsCard } from "@/components/finance/contract-conditions-card";
 import { buildFlow, ContractFlow } from "@/components/finance/contract-flow";
@@ -91,9 +92,18 @@ export default async function ContractPage({ params }: { params: Params }) {
                 </Link>
               </Button>
             ) : null}
+            {canOperate && !closed ? <CancelContractButton contractId={contract.id} number={contract.number} openBillings={billings.filter((b) => b.status === "aberta" || b.status === "vencida").length} /> : null}
           </>
         }
       />
+
+      {contract.status === "cancelado" ? (
+        <p className="mb-4 rounded-lg border border-danger/35 bg-danger-soft px-4 py-3 text-sm text-danger-fg">
+          Contrato cancelado{contract.cancelledAt ? ` em ${formatDate(contract.cancelledAt)}` : ""}
+          {contract.cancelledBy && users[contract.cancelledBy] ? ` por ${users[contract.cancelledBy].name}` : ""}
+          {contract.cancelReason ? ` · Motivo: ${contract.cancelReason}` : ""}
+        </p>
+      ) : null}
 
       {/* Resumo */}
       <Card className="mb-4">

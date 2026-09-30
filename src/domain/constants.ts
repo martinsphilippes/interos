@@ -418,6 +418,7 @@ export const EVENT_TYPES = [
   "contract.sent_for_signature",
   "contract.signed",
   "contract.version_created",
+  "contract.cancelled",
   "billing.created",
   "payment.pending",
   "payment.approved",

@@ -60,6 +60,7 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "contract.sent_for_signature": "Documento enviado para assinatura",
   "contract.signed": "Contrato assinado",
   "contract.version_created": "Nova versão do contrato",
+  "contract.cancelled": "Contrato cancelado",
   "billing.created": "Cobrança gerada",
   "payment.pending": "Pagamento pendente",
   "payment.approved": "Pagamento aprovado",

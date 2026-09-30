@@ -1076,7 +1076,10 @@ export async function registerChurn(data: ChurnData, actor: UserRef): Promise<Ch
     const linked = products.some((p) => p.contractId === c.id);
     const cancel = fullChurn || (linked ? !remainingByContract.has(c.id) && selected.some((p) => p.contractId === c.id) : c.items.length > 0 && c.items.every((i) => cancelledProductIds.has(i.productId)));
     if (!cancel) continue;
-    await update<Contract>(COLLECTIONS.contracts, c.id, { status: "cancelado" });
+    // Caminho único do cancelamento de contrato (Financeiro): status, data/motivo/autor, cobranças em aberto
+    // canceladas e evento contract.cancelled. Import dinâmico para evitar ciclo de módulos.
+    const { cancelContract } = await import("@/server/finance/service");
+    await cancelContract({ contractId: c.id, reason: `Cancelamento do cliente (${CHURN_REASON_LABELS[data.reasonCategory]}): ${data.reason}` }, actor, { source: "churn", cancelledAt });
     cancelledContractIds.push(c.id);
   }
   for (const r of renewals.filter((x) => OPEN_RENEWAL.has(x.status) && (fullChurn || cancelledContractIds.includes(x.contractId)))) {

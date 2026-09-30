@@ -191,6 +191,7 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "opportunity.lost": "danger",
   "proposal.rejected": "danger",
   "churn.registered": "danger",
+  "contract.cancelled": "danger",
   "workflow.gate.rejected": "danger",
   "bonus.blocked": "danger",
   "lead.disqualified": "muted",

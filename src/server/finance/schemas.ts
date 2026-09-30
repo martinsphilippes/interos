@@ -207,6 +207,8 @@ export const contractDocumentSchema = z.object({
   category: z.string().trim().max(60).optional(),
 });
 
+export const cancelContractSchema = z.object({ contractId: id("Contrato"), reason: z.string().trim().min(5, "Descreva o motivo do cancelamento (mín. 5 caracteres)").max(500, "Motivo muito longo") });
+
 export const releaseSchema = z.object({ contractId: id("Contrato"), exceptionReason: z.string().trim().max(500, "Motivo muito longo").optional() });
 
 export const billingContactSchema = z.object({ billingId: id("Cobrança"), notes: z.string().trim().max(500, "Texto muito longo").optional() });

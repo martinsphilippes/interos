@@ -13,6 +13,7 @@ import {
   addContractDocument,
   addSigner,
   cancelBilling,
+  cancelContract,
   completeBillingData,
   createManualContract,
   ensureContractForOpportunity,
@@ -37,6 +38,7 @@ import {
   billingDataSchema,
   billingIdSchema,
   cancelBillingSchema,
+  cancelContractSchema,
   contractDocumentSchema,
   contractIdSchema,
   manualContractSchema,
@@ -349,5 +351,22 @@ export async function releaseContractAction(input: unknown): Promise<ActionResul
     return { ok: true, data: { projectId: result.projectId, exception: result.exception } };
   } catch (error) {
     return fail(error, "Não foi possível liberar o contrato");
+  }
+}
+
+/**
+ * Cancela o contrato (antes da liberação) com motivo: cobranças em aberto são canceladas e o evento
+ * contract.cancelled vai para a timeline. Equipe financeira, gestores, diretoria e admin.
+ */
+export async function cancelContractAction(input: unknown): Promise<ActionResult<{ cancelledBillings: number }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const data = cancelContractSchema.parse(input);
+    const result = await cancelContract(data, actorOf(user), { source: "financeiro" });
+    revalidateFinance(result.contract.clientId, data.contractId);
+    revalidatePath("/vendas", "layout");
+    return { ok: true, data: { cancelledBillings: result.cancelledBillingIds.length } };
+  } catch (error) {
+    return fail(error, "Não foi possível cancelar o contrato");
   }
 }

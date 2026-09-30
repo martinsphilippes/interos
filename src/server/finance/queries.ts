@@ -380,6 +380,8 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
   const users = await usersMap([
     contract.ownerId,
     contract.releasedBy,
+    contract.cancelledBy,
+    contract.sellerId,
     contract.createdBy,
     opportunity?.ownerId,
     client.ownerSalesId,

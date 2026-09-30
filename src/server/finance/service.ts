@@ -17,7 +17,7 @@ import { registerHandler } from "@/server/events/emit";
 import { registerFinanceHandlers } from "@/server/events/handlers/finance";
 import { notify } from "@/server/notifications";
 import { addBusinessHours, getHolidays } from "@/server/sla";
-import { completeTaskInternal, createTaskInternal } from "@/server/tasks/service";
+import { cancelTaskInternal, completeTaskInternal, createTaskInternal } from "@/server/tasks/service";
 import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
@@ -985,6 +985,114 @@ export async function addContractDocument(input: { contractId: string; name: str
     payload: { contractId: contract.id, documentId: doc.id, url: input.url, category: doc.category },
   });
   return doc.id;
+}
+
+// ---------------------------------------------------------------------------
+// Cancelamento do contrato (D6)
+// ---------------------------------------------------------------------------
+
+export interface CancelContractOptions {
+  /** "financeiro": ação na página do contrato; "churn": chamado pelo registro de cancelamento do CS. */
+  source?: "financeiro" | "churn";
+  /** Data do cancelamento (padrão: agora). */
+  cancelledAt?: string;
+}
+
+export interface CancelContractResult {
+  contract: Contract;
+  cancelledBillingIds: string[];
+  cancelledProductIds: string[];
+}
+
+/**
+ * Cancela o contrato: status "cancelado" com data, motivo e autor; cobranças em aberto/vencidas passam a
+ * "cancelada"; tarefas abertas do processo do contrato são canceladas; emite `contract.cancelled`
+ * ({ contractId, reason, cancelledBillingIds }) — ponto de entrada para os efeitos em comissões (etapa 2).
+ *
+ * Pelo Financeiro só antes da liberação (a venda não se concretizou): produtos do cliente ainda em implantação
+ * ligados ao contrato são cancelados. Contrato liberado é cancelado pelo CS (churn), que encerra produtos,
+ * MRR e jornada e chama este mesmo serviço com `source: "churn"`.
+ */
+export async function cancelContract(input: { contractId: string; reason: string }, actor: UserRef, options: CancelContractOptions = {}): Promise<CancelContractResult> {
+  const source = options.source ?? "financeiro";
+  const reason = input.reason.trim();
+  if (reason.length < 5) throw new Error("Descreva o motivo do cancelamento");
+  const contract = await loadContract(input.contractId);
+  if (contract.status === "cancelado") throw new Error("Este contrato já está cancelado");
+  if (source === "financeiro" && contract.status === "liberado") {
+    throw new Error("Contrato já liberado: registre o cancelamento no Customer Success (churn), que encerra produtos, receita e jornada do cliente");
+  }
+  const cancelledAt = options.cancelledAt ?? nowIso();
+  const [billings, products, tasks] = await Promise.all([
+    list<Billing>(COLLECTIONS.billing, { where: [["contractId", "==", contract.id]] }),
+    list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["contractId", "==", contract.id]] }),
+    list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", contract.id]] }),
+  ]);
+
+  const patch: Partial<Contract> = { status: "cancelado", cancelledAt, cancelReason: reason, cancelledBy: actor.id };
+  await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
+
+  // Cobranças em aberto/vencidas deixam de ser devidas (pagas ficam como estão).
+  const open = billings.filter((b) => b.status === "aberta" || b.status === "vencida");
+  const stamp = nowIso();
+  await batchSet(open.map((b) => ({ collection: COLLECTIONS.billing, id: b.id, data: { status: "cancelada", updatedAt: stamp }, merge: true })));
+  const cancelledBillingIds = open.map((b) => b.id);
+
+  // Antes da liberação, os produtos ainda em implantação não serão entregues.
+  const cancelledProductIds: string[] = [];
+  if (source === "financeiro") {
+    for (const p of products.filter((x) => x.status === "em_implantacao")) {
+      await update<ClientProduct>(COLLECTIONS.clientProducts, p.id, { status: "cancelado", cancelledAt });
+      cancelledProductIds.push(p.id);
+    }
+  }
+
+  for (const task of tasks.filter((t) => t.processType === "contract" && OPEN_TASK.has(t.status))) {
+    try {
+      await cancelTaskInternal(task, actor, `Contrato ${contract.number} cancelado: ${reason}`);
+    } catch (error) {
+      console.error(`[financeiro] falha ao cancelar a tarefa ${task.id}`, error);
+    }
+  }
+
+  const openAmount = open.reduce((s, b) => s + b.amount, 0);
+  const opp = contract.opportunityId ? await getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : null;
+  const sellerId = contract.sellerId ?? opp?.ownerId;
+  const event = await emitEvent({
+    type: "contract.cancelled",
+    actor,
+    clientId: contract.clientId,
+    entity: { type: "contract", id: contract.id },
+    title: `Contrato ${contract.number} cancelado`,
+    description: [reason, cancelledBillingIds.length > 0 ? `${cancelledBillingIds.length} cobrança(s) em aberto cancelada(s) (${formatCurrency(openAmount)})` : "sem cobranças em aberto", source === "churn" ? "cancelamento do cliente registrado pelo CS" : null].filter(Boolean).join(" · "),
+    department: "financeiro",
+    payload: {
+      contractId: contract.id,
+      reason,
+      cancelledBillingIds,
+      cancelledProductIds,
+      previousStatus: contract.status,
+      source,
+      cancelledAt,
+      opportunityId: contract.opportunityId,
+      saleNumber: contract.saleNumber ?? opp?.saleNumber,
+      sellerId,
+      ...auditChanges<Contract>(contract, { ...contract, ...patch }, ["status", "cancelReason"], reason),
+    },
+  });
+
+  const financeManager = await getDepartmentManager("financeiro");
+  const client = await getById<Client>(COLLECTIONS.clients, contract.clientId);
+  await notify({
+    userIds: [sellerId, contract.ownerId, financeManager?.id].filter((id, i, arr): id is string => Boolean(id) && id !== actor.id && arr.indexOf(id) === i),
+    kind: "atencao",
+    title: `Contrato cancelado: ${client?.tradeName ?? contract.number}`,
+    body: `${contract.number} · ${reason}`,
+    href: `/financeiro/contratos/${contract.id}`,
+    entity: { type: "contract", id: contract.id },
+    eventId: event.id,
+  });
+  return { contract: { ...contract, ...patch }, cancelledBillingIds, cancelledProductIds };
 }
 
 // ---------------------------------------------------------------------------
