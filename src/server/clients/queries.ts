@@ -4,10 +4,12 @@ import { getById, getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { listBillingsSwept } from "@/server/finance/billing";
 import { getClientFinancialSummary, type ClientFinancialSummary } from "@/server/finance/queries";
-import { getClientImplementation } from "@/server/implementation/queries";
-import { getClientSupport } from "@/server/support/queries";
+import { getClientImplementation, type ClientImplementation } from "@/server/implementation/queries";
+import { getClientSupport, type ClientSupport } from "@/server/support/queries";
 import { getClientVisits } from "@/server/sales/workspace-queries";
 import type { VisitRow } from "@/server/sales/queries";
+import { filterByScope, type DataScope } from "@/server/auth/scope";
+import { ALL_CLIENT_SECTIONS, type ClientSectionAccess } from "@/components/clients/access-model";
 import {
   COLLECTIONS,
   type Billing,
@@ -191,10 +193,18 @@ function matchesSearch(client: Client, contactNames: string[], term: string, ter
   return false;
 }
 
-export async function listClients(filters: ClientListFilters = {}): Promise<ClientListResult> {
-  const clients = await list<Client>(COLLECTIONS.clients);
+/** Donos de um cliente para o escopo (mesma regra de src/server/clients/access.ts). */
+const ownersOf = (c: Client) => ({ owners: [c.ownerSalesId, c.ownerCsId, c.ownerImplementationId] });
 
-  // Indicadores do topo são sempre sobre a base inteira (o filtro só afeta a tabela).
+/**
+ * Lista da base de clientes. `scope` (resolveDataScope de operacao.clientes) recorta a base ANTES dos indicadores:
+ * quem tem escopo restrito vê números só dos clientes do escopo. Sem `scope` = base inteira.
+ */
+export async function listClients(filters: ClientListFilters = {}, scope?: DataScope): Promise<ClientListResult> {
+  const all = await list<Client>(COLLECTIONS.clients);
+  const clients = scope ? filterByScope(all, ownersOf, scope) : all;
+
+  // Indicadores do topo são sempre sobre a base do escopo (o filtro só afeta a tabela).
   const stats: ClientStats = {
     total: clients.length,
     active: clients.filter((c) => c.status === "ativo").length,
@@ -289,11 +299,12 @@ export interface ClientSearchResult {
   href: string;
 }
 
-export async function searchClients(term: string, limit = 10): Promise<ClientSearchResult[]> {
+export async function searchClients(term: string, limit = 10, scope?: DataScope): Promise<ClientSearchResult[]> {
   const normalized = normalizeText(term);
   const termDigits = digits(term);
   if (!normalized && termDigits.length < 4) return [];
-  const clients = await list<Client>(COLLECTIONS.clients);
+  const all = await list<Client>(COLLECTIONS.clients);
+  const clients = scope ? filterByScope(all, ownersOf, scope) : all;
   const matches = clients.filter((c) => matchesSearch(c, [], normalized, termDigits));
   // Prioriza quem começa com o termo, depois clientes ativos.
   matches.sort((a, b) => {
@@ -467,12 +478,31 @@ export interface Client360 {
 
 const OPEN_TASK_STATUSES = new Set(["aberta", "em_andamento", "aguardando"]);
 
-/** Agrega tudo que a Ficha 360º mostra em uma única chamada (leituras em paralelo). */
-export async function getClient360(id: string): Promise<Client360 | null> {
+/** Resumos vazios das seções de Implantação e Suporte quando negadas (nada é lido). */
+const EMPTY_IMPLEMENTATION: ClientImplementation = { projects: [], tasks: [], trainings: [], current: null };
+const EMPTY_SUPPORT: ClientSupport = { tickets: [], total: 0, open: 0, reopened: 0, reopenRate: 0, csatCount: 0, recentCsat: [] };
+
+/** O que a ficha carrega: seções visíveis ao usuário (abas `?aba=`) e se precisa do catálogo para gerar oportunidade. */
+export interface Client360Access {
+  sections?: ClientSectionAccess;
+  /** Produtos disponíveis para upsell (ação "Gerar oportunidade") mesmo sem a seção de produtos. */
+  withAvailableProducts?: boolean;
+}
+
+/**
+ * Agrega tudo que a Ficha 360º mostra em uma única chamada (leituras em paralelo). Seção negada (A29): os dados dela
+ * NÃO são lidos (lista vazia / resumo zerado) — nada sai do servidor e a Visão geral não os deriva.
+ * Sem `access` = todas as seções (comportamento anterior).
+ */
+export async function getClient360(id: string, access: Client360Access = {}): Promise<Client360 | null> {
   const client = await getClient(id);
   if (!client) return null;
 
   const byClient = (field = "clientId") => ({ where: [[field, "==", id]] as [string, "==", unknown][] });
+  const sec = access.sections ?? ALL_CLIENT_SECTIONS;
+  const wantsCatalog = sec.produtos || access.withAvailableProducts !== false;
+  const none = <T,>(): Promise<T[]> => Promise.resolve([]);
+  const when = <T,>(on: boolean, load: () => Promise<T[]>): Promise<T[]> => (on ? load() : none<T>());
 
   const [
     contacts,
@@ -499,30 +529,30 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     slas,
     visits,
   ] = await Promise.all([
-    list<Contact>(COLLECTIONS.contacts, byClient()),
-    list<ClientProduct>(COLLECTIONS.clientProducts, byClient()),
-    list<Product>(COLLECTIONS.products),
-    list<TimelineEvent>(COLLECTIONS.timelineEvents, byClient()),
-    client.leadId ? getById<Lead>(COLLECTIONS.leads, client.leadId) : Promise.resolve(null),
-    client.campaignId ? getById<Campaign>(COLLECTIONS.campaigns, client.campaignId) : Promise.resolve(null),
-    list<Opportunity>(COLLECTIONS.opportunities, byClient()),
-    list<Proposal>(COLLECTIONS.proposals, byClient()),
-    list<Contract>(COLLECTIONS.contracts, byClient()),
-    listBillingsSwept(byClient()),
+    when(sec.contatos, () => list<Contact>(COLLECTIONS.contacts, byClient())),
+    when(wantsCatalog, () => list<ClientProduct>(COLLECTIONS.clientProducts, byClient())),
+    when(wantsCatalog, () => list<Product>(COLLECTIONS.products)),
+    when(sec.timeline, () => list<TimelineEvent>(COLLECTIONS.timelineEvents, byClient())),
+    sec.comercial && client.leadId ? getById<Lead>(COLLECTIONS.leads, client.leadId) : Promise.resolve(null),
+    sec.comercial && client.campaignId ? getById<Campaign>(COLLECTIONS.campaigns, client.campaignId) : Promise.resolve(null),
+    when(sec.comercial, () => list<Opportunity>(COLLECTIONS.opportunities, byClient())),
+    when(sec.comercial, () => list<Proposal>(COLLECTIONS.proposals, byClient())),
+    when(sec.financeiro, () => list<Contract>(COLLECTIONS.contracts, byClient())),
+    when(sec.financeiro, () => listBillingsSwept(byClient())),
     // Implantação e Suporte: fonte é o próprio módulo.
-    getClientImplementation(id),
-    list<CsAccount>(COLLECTIONS.csAccounts, byClient()),
-    list<HealthScore>(COLLECTIONS.healthScores, byClient()),
-    list<SuccessPlan>(COLLECTIONS.successPlans, byClient()),
-    list<Renewal>(COLLECTIONS.renewals, byClient()),
-    list<SupportTicket>(COLLECTIONS.supportTickets, byClient()),
-    getClientSupport(id),
-    list<Document>(COLLECTIONS.documents, byClient()),
-    list<Task>(COLLECTIONS.tasks, byClient()),
+    sec.implantacao ? getClientImplementation(id) : Promise.resolve(EMPTY_IMPLEMENTATION),
+    when(sec.cs, () => list<CsAccount>(COLLECTIONS.csAccounts, byClient())),
+    when(sec.cs, () => list<HealthScore>(COLLECTIONS.healthScores, byClient())),
+    when(sec.cs, () => list<SuccessPlan>(COLLECTIONS.successPlans, byClient())),
+    when(sec.cs, () => list<Renewal>(COLLECTIONS.renewals, byClient())),
+    when(sec.suporte, () => list<SupportTicket>(COLLECTIONS.supportTickets, byClient())),
+    sec.suporte ? getClientSupport(id) : Promise.resolve(EMPTY_SUPPORT),
+    when(sec.documentos, () => list<Document>(COLLECTIONS.documents, byClient())),
+    when(sec.tarefas, () => list<Task>(COLLECTIONS.tasks, byClient())),
     client.workflowInstanceId ? getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId) : Promise.resolve(null),
     list<WorkflowStep>(COLLECTIONS.workflowSteps, byClient()),
     list<SlaInstance>(COLLECTIONS.slaInstances, byClient()),
-    getClientVisits(null, id),
+    when(sec.comercial, () => getClientVisits(null, id)),
   ]);
 
   const { projects, tasks: implementationTasks, trainings } = implementation;
@@ -582,7 +612,8 @@ export async function getClient360(id: string): Promise<Client360 | null> {
   const financeSummary = await getClientFinancialSummary(id, { contracts, billings: billing });
   const financial: FinancialSummary = {
     ...financeSummary,
-    mrr: financeSummary.mrr || products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0),
+    // Sem a seção Financeiro o resumo fica zerado (inclusive o MRR estimado pelos produtos).
+    mrr: sec.financeiro ? financeSummary.mrr || products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0) : 0,
   };
 
   // Resumo de suporte (fonte: módulo de Suporte): reincidência e CSAT.
@@ -626,10 +657,11 @@ export async function getClient360(id: string): Promise<Client360 | null> {
   return {
     client,
     contacts,
-    products,
-    availableProducts,
-    catalog: activeCatalog,
-    ownedCategories,
+    // Produtos só com a seção; o catálogo/disponíveis só para a ação "Gerar oportunidade".
+    products: sec.produtos ? products : [],
+    availableProducts: access.withAvailableProducts === false ? [] : availableProducts,
+    catalog: sec.produtos ? activeCatalog : [],
+    ownedCategories: access.withAvailableProducts === false ? [] : ownedCategories,
     timeline,
     lead,
     campaign,

@@ -12,7 +12,8 @@ import { CLIENT_PRODUCT_STATUS_LABELS, CLIENT_PRODUCT_STATUS_VARIANT } from "./l
 import { UpsellDialog } from "./upsell-dialog";
 
 /** Aba Produtos: contratados (com MRR calculado) e disponíveis no catálogo para gerar oportunidade. */
-export function TabProdutos({ data }: { data: Client360 }) {
+/** `canCreateOpportunity` (calculado no servidor): sem a ação o botão "Gerar oportunidade" não aparece. */
+export function TabProdutos({ data, canCreateOpportunity = true }: { data: Client360; canCreateOpportunity?: boolean }) {
   const { client, products, availableProducts, ownedCategories, contracts } = data;
   const activeMrr = products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0);
   const pendingMrr = products.filter((p) => p.status === "em_implantacao").reduce((s, p) => s + p.monthlyValue, 0);
@@ -111,18 +112,20 @@ export function TabProdutos({ data }: { data: Client360 }) {
                         <dd className="font-medium tabular-nums">{formatCurrency(p.hardwarePrice)}</dd>
                       </div>
                     </dl>
-                    <UpsellDialog
-                      clientId={client.id}
-                      clientName={client.tradeName}
-                      products={availableProducts}
-                      ownedCategories={ownedCategories}
-                      defaultProductId={p.id}
-                      trigger={
-                        <Button variant="outline" size="sm" className="w-full">
-                          <TrendingUp /> Gerar oportunidade
-                        </Button>
-                      }
-                    />
+                    {canCreateOpportunity ? (
+                      <UpsellDialog
+                        clientId={client.id}
+                        clientName={client.tradeName}
+                        products={availableProducts}
+                        ownedCategories={ownedCategories}
+                        defaultProductId={p.id}
+                        trigger={
+                          <Button variant="outline" size="sm" className="w-full">
+                            <TrendingUp /> Gerar oportunidade
+                          </Button>
+                        }
+                      />
+                    ) : null}
                   </CardContent>
                 </Card>
               </li>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { requireUser } from "@/server/auth/session";
+import { redirect } from "next/navigation";
+import { ACCESS_DENIED_REDIRECT, can, requireScreen } from "@/server/auth/session";
 import { getClientFormOptions } from "@/server/clients/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -8,7 +9,9 @@ import { ClientForm } from "@/components/clients/client-form";
 export const metadata: Metadata = { title: "Novo cliente" };
 
 export default async function NovoClientePage() {
-  const user = await requireUser();
+  const user = await requireScreen("operacao.clientes");
+  // Cadastro exige também a ação de criar (catálogo: /clientes/novo passa a exigir operacao.clientes.criar).
+  if (!can(user, "operacao.clientes.criar")) redirect(ACCESS_DENIED_REDIRECT);
   const options = await getClientFormOptions();
   // Vendedor cadastrando já entra como responsável comercial.
   const ownerSalesId = user.departmentId === "vendas" && options.sellers.some((s) => s.id === user.id) ? user.id : "";

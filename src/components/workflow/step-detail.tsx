@@ -85,7 +85,7 @@ export function StepDetail({ detail, users, currentUserId, variant = "drawer", o
           <Label htmlFor={`step-assignee-${step.id}`}>Responsável</Label>
           <div className="flex items-center gap-2">
             <Avatar name={step.assigneeName ?? "?"} src={detail.assigneeAvatarUrl ?? assignee?.avatarUrl} size="sm" />
-            {isOpen ? (
+            {isOpen && detail.canReassign ? (
               <Select id={`step-assignee-${step.id}`} size="sm" value={step.assigneeId ?? ""} placeholder="Sem responsável" disabled={pending} onChange={(e) => e.target.value && run(() => reassignStepAction({ stepId: step.id, assigneeId: e.target.value }), "Responsável atualizado")}>
                 {users
                   .filter((u) => u.departmentId === step.department || u.id === step.assigneeId || u.id === currentUserId)
@@ -174,22 +174,24 @@ export function StepDetail({ detail, users, currentUserId, variant = "drawer", o
                 </li>
               ))}
             </ul>
-            <form
-              className="flex flex-col gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const body = note.trim();
-                if (!body) return;
-                run(() => addStepNoteAction({ stepId: step.id, note: body }), "Nota adicionada", () => setNote(""));
-              }}
-            >
-              <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Registrar uma nota nesta etapa…" aria-label="Nova nota" disabled={pending} className="min-h-[64px]" />
-              <div className="flex justify-end">
-                <Button type="submit" size="sm" variant="secondary" disabled={pending || !note.trim()}>
-                  Adicionar nota
-                </Button>
-              </div>
-            </form>
+            {detail.canEdit ? (
+              <form
+                className="flex flex-col gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const body = note.trim();
+                  if (!body) return;
+                  run(() => addStepNoteAction({ stepId: step.id, note: body }), "Nota adicionada", () => setNote(""));
+                }}
+              >
+                <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Registrar uma nota nesta etapa…" aria-label="Nova nota" disabled={pending} className="min-h-[64px]" />
+                <div className="flex justify-end">
+                  <Button type="submit" size="sm" variant="secondary" disabled={pending || !note.trim()}>
+                    Adicionar nota
+                  </Button>
+                </div>
+              </form>
+            ) : null}
           </section>
           <section className="flex flex-col gap-2">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
@@ -213,7 +215,8 @@ export function StepDetail({ detail, users, currentUserId, variant = "drawer", o
 
         <TabsContent value="acoes" className="flex flex-col gap-4">
           {!isOpen ? <p className="text-sm text-muted">Etapa encerrada: não há ações disponíveis.</p> : null}
-          {step.status === "em_andamento" ? (
+          {isOpen && !detail.canPause && !detail.canReassign ? <p className="text-sm text-muted">Seu perfil pode consultar esta etapa, mas não alterá-la.</p> : null}
+          {step.status === "em_andamento" && detail.canPause ? (
             <section className="flex flex-col gap-2 rounded-lg border border-border p-3">
               <h3 className="flex items-center gap-2 text-sm font-semibold">
                 <Hourglass className="size-4 text-warning-fg" /> Aguardando cliente
@@ -227,7 +230,7 @@ export function StepDetail({ detail, users, currentUserId, variant = "drawer", o
               </div>
             </section>
           ) : null}
-          {step.status === "aguardando_cliente" ? (
+          {step.status === "aguardando_cliente" && detail.canPause ? (
             <section className="flex flex-col gap-2 rounded-lg border border-border p-3">
               <h3 className="flex items-center gap-2 text-sm font-semibold">
                 <Play className="size-4 text-success-fg" /> Retomar etapa
@@ -240,7 +243,7 @@ export function StepDetail({ detail, users, currentUserId, variant = "drawer", o
               </div>
             </section>
           ) : null}
-          {isOpen ? (
+          {isOpen && detail.canReassign ? (
             <section className="flex flex-col gap-2 rounded-lg border border-border p-3">
               <h3 className="text-sm font-semibold">Reatribuir</h3>
               <p className="text-xs text-muted">Use o seletor de responsável no cabeçalho. O novo responsável recebe notificação e passa a ser o dono do SLA.</p>

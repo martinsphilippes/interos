@@ -30,15 +30,18 @@ export interface ClientTabsProps {
   active: ClientTab;
   /** Contadores exibidos ao lado do rótulo (só quando > 0). */
   counts?: Partial<Record<ClientTab, number>>;
+  /** Abas visíveis ao usuário (seções liberadas, calculadas no servidor). Ausente = todas. */
+  visible?: readonly ClientTab[];
   className?: string;
 }
 
 /** Abas da Ficha 360º controladas pela URL (?aba=), para links diretos entre módulos. */
-export function ClientTabs({ clientId, active, counts = {}, className }: ClientTabsProps) {
+export function ClientTabs({ clientId, active, counts = {}, visible, className }: ClientTabsProps) {
+  const tabs = visible ? CLIENT_TABS.filter((t) => visible.includes(t.key)) : CLIENT_TABS;
   return (
     <nav aria-label="Seções da ficha do cliente" className={cn("-mx-4 overflow-x-auto border-b border-border px-4 scrollbar-none md:mx-0 md:px-0", className)}>
       <ul className="flex min-w-max items-center gap-1">
-        {CLIENT_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const isActive = tab.key === active;
           const count = counts[tab.key];
           return (

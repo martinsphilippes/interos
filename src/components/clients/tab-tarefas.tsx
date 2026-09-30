@@ -16,7 +16,8 @@ const STATUS_VARIANT: Record<TaskStatus, NonNullable<BadgeProps["variant"]>> = {
 const OPEN = new Set<TaskStatus>(["aberta", "em_andamento", "aguardando"]);
 
 /** Aba Tarefas: tarefas do cliente (abertas primeiro), cada uma abrindo no drawer da Central de Tarefas. */
-export function TabTarefas({ data }: { data: Client360 }) {
+/** `canCreate` (calculado no servidor): sem a ação de criar tarefa o botão não aparece. */
+export function TabTarefas({ data, canCreate = true }: { data: Client360; canCreate?: boolean }) {
   const { client, tasks, users } = data;
   const now = new Date().toISOString();
   const open = tasks.filter((t) => OPEN.has(t.status));
@@ -68,11 +69,13 @@ export function TabTarefas({ data }: { data: Client360 }) {
           title="Tarefas abertas"
           count={open.length}
           actions={
-            <Button asChild size="sm">
-              <Link href={`/tarefas?novo=1&cliente=${client.id}`}>
-                <Plus /> Nova tarefa
-              </Link>
-            </Button>
+            canCreate ? (
+              <Button asChild size="sm">
+                <Link href={`/tarefas?novo=1&cliente=${client.id}`}>
+                  <Plus /> Nova tarefa
+                </Link>
+              </Button>
+            ) : undefined
           }
         />
         <Card className="overflow-hidden">

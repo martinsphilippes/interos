@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Building2, History, ListChecks } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { ACCESS_DENIED_REDIRECT, getCurrentUser, requireScreen } from "@/server/auth/session";
+import { canSeeInstance } from "@/server/workflow/access";
+import { canSeeClientId } from "@/server/clients/access";
 import { getInstanceView, getStepDetail, listAssignableUsers } from "@/server/workflow/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
@@ -21,8 +23,11 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** A30: permissão e escopo ANTES de ler a jornada; sem acesso, título genérico. */
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { instanceId } = await params;
+  const user = await getCurrentUser();
+  if (!user || !(await canSeeInstance(user, instanceId))) return { title: "Jornada" };
   const detail = await getInstanceView(instanceId);
   return { title: detail ? `Jornada — ${detail.client.tradeName}` : "Jornada não encontrada" };
 }
@@ -35,10 +40,13 @@ const INSTANCE_STATUS: Record<string, { label: string; variant: "info" | "succes
 
 /** Jornada completa do cliente: stepper, detalhe da etapa selecionada (?etapa=), dados de gate e linha do tempo. */
 export default async function InstancePage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
-  const user = await requireUser();
+  const user = await requireScreen("operacao.workflow");
   const [{ instanceId }, sp] = await Promise.all([params, searchParams]);
+  // Jornada fora do escopo do usuário (nenhuma etapa dele/do departamento, quando o escopo recorta) = acesso negado.
+  if (!(await canSeeInstance(user, instanceId))) redirect(ACCESS_DENIED_REDIRECT);
   const detail = await getInstanceView(instanceId);
   if (!detail) notFound();
+  const canOpenClient = await canSeeClientId(user, detail.client.id);
 
   const requested = first(sp.etapa);
   const selectedId = requested && detail.steps.some((s) => s.step.id === requested) ? requested : (detail.instance.currentStepId ?? detail.steps[detail.steps.length - 1]?.step.id);
@@ -54,11 +62,13 @@ export default async function InstancePage({ params, searchParams }: { params: P
         breadcrumbs={[{ label: "Workflow", href: "/workflow" }, { label: "Jornada" }]}
         badge={<Badge variant={status.variant}>{status.label}</Badge>}
         actions={
-          <Button asChild variant="outline">
-            <Link href={`/clientes/${detail.client.id}`}>
-              <Building2 /> Ficha do cliente
-            </Link>
-          </Button>
+          canOpenClient ? (
+            <Button asChild variant="outline">
+              <Link href={`/clientes/${detail.client.id}`}>
+                <Building2 /> Ficha do cliente
+              </Link>
+            </Button>
+          ) : undefined
         }
       />
 

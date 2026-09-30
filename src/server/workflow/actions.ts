@@ -1,15 +1,17 @@
 "use server";
 /**
- * Server Actions do Workflow. Padrão: requireUser() → validação zod → serviço → revalidação.
- * Todas devolvem ActionResult com mensagem em português.
+ * Server Actions do Workflow. Padrão: requirePermission(chave do catálogo operacao.workflow.* / admin.workflows.*)
+ * → validação zod → etapa dentro do escopo (canSeeStepId) → serviço → revalidação. Falhas por failAction; todas
+ * devolvem ActionResult com mensagem em português. Quem pode aprovar/concluir por exceção continua decidido no serviço
+ * (canApproveStage/canCompleteWithException, A22) com as permissões efetivas do ator.
  */
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
-import { requireRole, requireUser } from "@/server/auth/session";
+import { BusinessError, PermissionError, failAction, requirePermission } from "@/server/auth/session";
 import { create, getById, list, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { COLLECTIONS, type ActionResult, type CurrentUser, type WorkflowInstance, type WorkflowStep, type WorkflowTemplate } from "@/domain/types";
 import type { GateEvaluation } from "./gates";
+import { canSeeStepId } from "./access";
 import {
   addStepNoteSchema,
   completeGateSchema,
@@ -35,16 +37,13 @@ import {
   type WorkflowActor,
 } from "./service";
 
-type Failure = { ok: false; error: string };
+function fail(error: unknown): { ok: false; error: string } {
+  return failAction(error, "Não foi possível concluir a operação. Tente novamente.", "workflow");
+}
 
-function fail(error: unknown): Failure {
-  if (error instanceof z.ZodError) return { ok: false, error: error.issues.map((i) => i.message).join(" · ") };
-  if (error instanceof Error && error.message) {
-    console.error("[workflow]", error);
-    return { ok: false, error: error.message };
-  }
-  console.error("[workflow]", error);
-  return { ok: false, error: "Não foi possível concluir a operação. Tente novamente." };
+/** Etapa fora do escopo do usuário na tela Workflow = acesso negado. */
+async function assertStepVisible(user: CurrentUser, stepId: string): Promise<void> {
+  if (!(await canSeeStepId(user, stepId))) throw new PermissionError();
 }
 
 /** Ator com as permissões efetivas da sessão: o servidor decide aprovação/exceção como a UI (perfil, exceções, módulos). */
@@ -63,7 +62,7 @@ function revalidateStepPaths(step: Pick<WorkflowStep, "clientId" | "instanceId">
 
 async function loadStep(id: string): Promise<WorkflowStep> {
   const step = await getById<WorkflowStep>(COLLECTIONS.workflowSteps, id);
-  if (!step) throw new Error("Etapa não encontrada");
+  if (!step) throw new BusinessError("Etapa não encontrada");
   return step;
 }
 
@@ -102,9 +101,12 @@ function blocked(evaluation: GateEvaluation, message: string): CompleteGateActio
 }
 
 export async function completeGateAction(input: unknown): Promise<CompleteGateActionResult> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.concluir");
     const data = completeGateSchema.parse(input);
+    await assertStepVisible(user, data.stepId);
+    // Motivo de exceção exige a chave própria (catálogo: checkedIn); o serviço confere de novo com o ator.
+    if (data.exceptionReason) await requirePermission("operacao.workflow.concluir-com-excecao");
     const result = await completeGate({
       stepId: data.stepId,
       actor: actorOf(user),
@@ -126,9 +128,10 @@ export async function completeGateAction(input: unknown): Promise<CompleteGateAc
 }
 
 export async function approveGateAction(input: unknown): Promise<CompleteGateActionResult> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.aprovar");
     const { stepId } = stepIdSchema.parse(input);
+    await assertStepVisible(user, stepId);
     const result = await approveGate(stepId, actorOf(user));
     revalidateStepPaths(result.step);
     if (result.status === "blocked") return blocked(result.evaluation, result.message);
@@ -140,9 +143,10 @@ export async function approveGateAction(input: unknown): Promise<CompleteGateAct
 }
 
 export async function rejectGateAction(input: unknown): Promise<ActionResult<{ stepId: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.aprovar");
     const { stepId, reason } = rejectGateSchema.parse(input);
+    await assertStepVisible(user, stepId);
     const step = await rejectGate(stepId, actorOf(user), reason);
     revalidateStepPaths(step);
     return { ok: true, data: { stepId } };
@@ -156,9 +160,10 @@ export async function rejectGateAction(input: unknown): Promise<ActionResult<{ s
 // ---------------------------------------------------------------------------
 
 export async function setWaitingClientAction(input: unknown): Promise<ActionResult<{ stepId: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.pausar");
     const { stepId, reason } = waitingClientSchema.parse(input);
+    await assertStepVisible(user, stepId);
     const step = await setStepWaitingClient(stepId, reason, actorOf(user));
     revalidateStepPaths(step);
     return { ok: true, data: { stepId } };
@@ -168,9 +173,10 @@ export async function setWaitingClientAction(input: unknown): Promise<ActionResu
 }
 
 export async function resumeStepAction(input: unknown): Promise<ActionResult<{ stepId: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.pausar");
     const { stepId } = stepIdSchema.parse(input);
+    await assertStepVisible(user, stepId);
     const step = await resumeStep(stepId, actorOf(user));
     revalidateStepPaths(step);
     return { ok: true, data: { stepId } };
@@ -180,9 +186,10 @@ export async function resumeStepAction(input: unknown): Promise<ActionResult<{ s
 }
 
 export async function reassignStepAction(input: unknown): Promise<ActionResult<{ stepId: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.atribuir");
     const { stepId, assigneeId } = reassignStepSchema.parse(input);
+    await assertStepVisible(user, stepId);
     const step = await reassignStep(stepId, assigneeId, actorOf(user));
     revalidateStepPaths(step);
     return { ok: true, data: { stepId } };
@@ -196,9 +203,10 @@ export async function reassignStepAction(input: unknown): Promise<ActionResult<{
 // ---------------------------------------------------------------------------
 
 export async function toggleStepChecklistAction(input: unknown): Promise<ActionResult<{ stepId: string; done: boolean }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.editar");
     const { stepId, itemId, done } = toggleChecklistSchema.parse(input);
+    await assertStepVisible(user, stepId);
     const step = await updateStepChecklist(stepId, [{ id: itemId, done }], actorOf(user));
     revalidateStepPaths(step);
     return { ok: true, data: { stepId, done } };
@@ -208,9 +216,10 @@ export async function toggleStepChecklistAction(input: unknown): Promise<ActionR
 }
 
 export async function updateStepFieldsAction(input: unknown): Promise<ActionResult<{ stepId: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.editar");
     const { stepId, fields } = updateStepFieldsSchema.parse(input);
+    await assertStepVisible(user, stepId);
     const step = await updateStepFields(stepId, fields as Record<string, unknown>, actorOf(user));
     revalidateStepPaths(step);
     return { ok: true, data: { stepId } };
@@ -220,9 +229,10 @@ export async function updateStepFieldsAction(input: unknown): Promise<ActionResu
 }
 
 export async function addStepNoteAction(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.workflow.editar");
     const { stepId, note } = addStepNoteSchema.parse(input);
+    await assertStepVisible(user, stepId);
     const step = await loadStep(stepId);
     const comment = await addStepNote(stepId, note, actorOf(user));
     revalidateStepPaths(step);
@@ -233,7 +243,7 @@ export async function addStepNoteAction(input: unknown): Promise<ActionResult<{ 
 }
 
 // ---------------------------------------------------------------------------
-// Admin de templates (somente admin)
+// Admin de templates (catálogo admin.workflows.jornada.*; padrão: só admin)
 // ---------------------------------------------------------------------------
 
 /**
@@ -242,11 +252,11 @@ export async function addStepNoteAction(input: unknown): Promise<ActionResult<{ 
  * continuam na versão em que começaram (`templateVersion`).
  */
 export async function saveWorkflowTemplateAction(input: unknown): Promise<ActionResult<{ id: string; version: number; created: boolean }>> {
-  const user = await requireRole("admin");
   try {
+    const user = await requirePermission("admin.workflows.jornada.editar");
     const data = saveTemplateSchema.parse(input);
     const source = await getById<WorkflowTemplate>(COLLECTIONS.workflowTemplates, data.id);
-    if (!source) throw new Error("Template não encontrado");
+    if (!source) throw new BusinessError("Template não encontrado");
     const stages = data.stages.map((stage, index) => ({
       ...stage,
       order: index + 1,
@@ -306,12 +316,12 @@ export async function saveWorkflowTemplateAction(input: unknown): Promise<Action
 
 /** Publica a versão informada e despublica as demais do mesmo template. */
 export async function publishWorkflowTemplateAction(input: unknown): Promise<ActionResult<{ id: string; version: number }>> {
-  const user = await requireRole("admin");
   try {
+    const user = await requirePermission("admin.workflows.jornada.publicar");
     const { id } = templateIdSchema.parse(input);
     const target = await getById<WorkflowTemplate>(COLLECTIONS.workflowTemplates, id);
-    if (!target) throw new Error("Template não encontrado");
-    if (!target.stages || target.stages.length === 0) throw new Error("Não é possível publicar um template sem etapas");
+    if (!target) throw new BusinessError("Template não encontrado");
+    if (!target.stages || target.stages.length === 0) throw new BusinessError("Não é possível publicar um template sem etapas");
     const siblings = await list<WorkflowTemplate>(COLLECTIONS.workflowTemplates, { where: [["key", "==", target.key]] });
     const now = nowIso();
     for (const t of siblings) {

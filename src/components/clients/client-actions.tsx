@@ -13,6 +13,7 @@ import { ContactEventDialog } from "./contact-event-dialog";
 import { NoteDialog } from "./note-form";
 import { StatusDialog } from "./status-dialog";
 import { UpsellDialog } from "./upsell-dialog";
+import { ALL_CLIENT_CAPABILITIES, type ClientCapabilities } from "./access-model";
 
 export interface ClientActionsProps {
   client: Client;
@@ -24,6 +25,8 @@ export interface ClientActionsProps {
   ticketOptions: NewTicketOptions | null;
   /** Canais conectados de fato (registro de integrações). */
   channels?: { whatsapp: boolean; voip: boolean };
+  /** Ações permitidas (calculadas no servidor): sem a permissão o controle não aparece; as actions revalidam. */
+  can?: ClientCapabilities;
 }
 
 type MenuDialog = "nota" | "oportunidade" | "ligar" | "whatsapp" | "status" | null;
@@ -33,7 +36,7 @@ type MenuDialog = "nota" | "oportunidade" | "ligar" | "whatsapp" | "status" | nu
  * implantação/ativo: "Novo atendimento"; demais: "Nova tarefa") e o menu com as demais ações.
  * Tudo que o usuário faz aqui vira evento na timeline.
  */
-export function ClientActions({ client, contacts, availableProducts, ownedCategories, options, ticketOptions, channels }: ClientActionsProps) {
+export function ClientActions({ client, contacts, availableProducts, ownedCategories, options, ticketOptions, channels, can = ALL_CLIENT_CAPABILITIES }: ClientActionsProps) {
   const [dialog, setDialog] = React.useState<MenuDialog>(null);
   const control = (key: Exclude<MenuDialog, null>) => ({ open: dialog === key, onOpenChange: (open: boolean) => setDialog(open ? key : null) });
   const serviceStage = client.status === "ativo" || client.status === "em_implantacao" || client.status === "inativo";
@@ -41,15 +44,17 @@ export function ClientActions({ client, contacts, availableProducts, ownedCatego
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <ClientEditDrawer
-        client={client}
-        options={options}
-        trigger={
-          <Button variant="outline">
-            <Pencil /> Editar cliente
-          </Button>
-        }
-      />
+      {can.edit ? (
+        <ClientEditDrawer
+          client={client}
+          options={options}
+          trigger={
+            <Button variant="outline">
+              <Pencil /> Editar cliente
+            </Button>
+          }
+        />
+      ) : null}
       {primaryIsTicket && ticketOptions ? (
         <NewTicketDialog
           options={ticketOptions}
@@ -60,13 +65,13 @@ export function ClientActions({ client, contacts, availableProducts, ownedCatego
             </Button>
           }
         />
-      ) : (
+      ) : can.createTask ? (
         <Button asChild>
           <Link href={`/tarefas?novo=1&cliente=${client.id}`}>
             <Plus /> Nova tarefa
           </Link>
         </Button>
-      )}
+      ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="icon" aria-label="Mais ações">
@@ -74,31 +79,43 @@ export function ClientActions({ client, contacts, availableProducts, ownedCatego
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[220px]">
-          {primaryIsTicket ? (
+          {primaryIsTicket && can.createTask ? (
             <DropdownMenuItem asChild>
               <Link href={`/tarefas?novo=1&cliente=${client.id}`}>
                 <CheckSquare /> Nova tarefa
               </Link>
             </DropdownMenuItem>
           ) : null}
-          <DropdownMenuItem onSelect={() => setDialog("nota")}>
-            <StickyNote /> Registrar nota
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setDialog("oportunidade")} disabled={availableProducts.length === 0}>
-            <TrendingUp /> Gerar oportunidade
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => setDialog("ligar")}>
-            <Phone /> Ligar
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setDialog("whatsapp")}>
-            <MessageCircle /> WhatsApp
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => setDialog("status")}>
-            <ArrowLeftRight /> Alterar status
-          </DropdownMenuItem>
-          {client.workflowInstanceId ? (
+          {can.register ? (
+            <DropdownMenuItem onSelect={() => setDialog("nota")}>
+              <StickyNote /> Registrar nota
+            </DropdownMenuItem>
+          ) : null}
+          {can.createOpportunity ? (
+            <DropdownMenuItem onSelect={() => setDialog("oportunidade")} disabled={availableProducts.length === 0}>
+              <TrendingUp /> Gerar oportunidade
+            </DropdownMenuItem>
+          ) : null}
+          {can.register ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setDialog("ligar")}>
+                <Phone /> Ligar
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setDialog("whatsapp")}>
+                <MessageCircle /> WhatsApp
+              </DropdownMenuItem>
+            </>
+          ) : null}
+          {can.changeStatus ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setDialog("status")}>
+                <ArrowLeftRight /> Alterar status
+              </DropdownMenuItem>
+            </>
+          ) : null}
+          {client.workflowInstanceId && can.openWorkflow ? (
             <DropdownMenuItem asChild>
               <Link href={`/workflow/${client.workflowInstanceId}`}>
                 <GitBranch /> Abrir jornada no workflow
