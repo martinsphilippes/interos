@@ -13,7 +13,6 @@ import {
   computeKpis,
   currentMonthKey,
   getDepartmentsAttainment,
-  getGoalPermissions,
   getHistory,
   getUserScorecard,
   listKpiDefinitions,
@@ -32,6 +31,8 @@ import {
 import { getPerformanceIndexConfig, indexFromScorecard, type PerformanceIndex } from "@/server/kpis/operation-health";
 import { getSlaSummaries } from "@/server/sla-report/queries";
 import { formatCompetence } from "@/lib/format";
+import { can } from "@/server/auth/permissions";
+import { resolveDataScope, type ScopeKind } from "@/server/auth/scope";
 import { inPeriod, localDayKey } from "@/server/kpis/period";
 import { getCommissionSummary, listActiveCommissionRules, type CommissionSummary } from "@/server/sales/commissions";
 import { REVENUE_TYPES, type CommissionRuleView } from "@/components/sales/model";
@@ -50,28 +51,40 @@ export { getRanking } from "./ranking";
 // ---------------------------------------------------------------------------
 
 export interface PerformanceAccess {
-  /** Pode escolher outro colaborador (gestor, diretoria, admin). */
+  /** Pode escolher outro colaborador (escopo da tela além de "meus"; padrão: gestor, diretoria, admin). */
   canViewOthers: boolean;
   /** Colaboradores que pode ver/gerir (inclui o próprio). */
   userIds: string[];
   /** Colaboradores que pode gerir (bloqueios, fechamento), exceto ele mesmo quando não é admin. */
   manageableIds: string[];
+  /** Escopo efetivo da tela ("empresa" = todos os colaboradores ativos). */
+  scopeKind: ScopeKind;
   people: { id: string; name: string; department: DepartmentKey; jobTitle?: string }[];
 }
 
-/** Mesma hierarquia das metas: admin/diretoria veem todos; gestor, os seus departamentos e liderados. */
-export async function getPerformanceAccess(viewer: CurrentUser): Promise<PerformanceAccess> {
-  const [perms, users] = await Promise.all([getGoalPermissions(viewer), list<User>(COLLECTIONS.users)]);
+/** Telas de Performance cujo sujeito (?usuario=) segue o escopo de colaboradores. */
+export type PerformanceSubjectScreen = "performance.meu-desempenho" | "performance.bonus";
+
+/**
+ * Quem pode ver quem, pelo escopo da tela no núcleo (resolveDataScope). Padrão = comportamento anterior (mesma
+ * hierarquia das metas): admin/diretoria veem todos; gestor, o próprio departamento, os que lidera e os liderados
+ * diretos; demais, só o próprio. Gerir (Bônus › Equipe e bloqueios) exige a seção `performance.bonus.equipe.ver`.
+ */
+export async function getPerformanceAccess(viewer: CurrentUser, screen: PerformanceSubjectScreen = "performance.meu-desempenho"): Promise<PerformanceAccess> {
+  const [scope, users] = await Promise.all([resolveDataScope(viewer, screen), list<User>(COLLECTIONS.users)]);
   const active = users.filter((u) => u.active !== false);
-  const ids = viewer.isManager ? Array.from(new Set([viewer.id, ...perms.userIds])) : [viewer.id];
+  const inScope = scope.userIds ? active.filter((u) => scope.userIds!.has(u.id)) : active;
+  const ids = Array.from(new Set([viewer.id, ...inScope.map((u) => u.id)]));
   const people = active
     .filter((u) => ids.includes(u.id))
     .map((u) => ({ id: u.id, name: u.name, department: u.departmentId, jobTitle: u.jobTitle }))
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const canManage = can(viewer, "performance.bonus.equipe.ver");
   return {
-    canViewOthers: viewer.isManager && people.length > 1,
+    canViewOthers: scope.kind !== "meus" && people.length > 1,
     userIds: ids,
-    manageableIds: viewer.isManager ? ids.filter((id) => id !== viewer.id || viewer.isAdmin) : [],
+    manageableIds: canManage ? ids.filter((id) => id !== viewer.id || viewer.isAdmin) : [],
+    scopeKind: scope.kind,
     people,
   };
 }
@@ -469,6 +482,34 @@ export async function getCampaignsProgress(viewerId: string): Promise<CampaignPr
 export interface CampaignFormOptions {
   kpis: { key: string; name: string; department: string }[];
   users: { id: string; name: string; department: DepartmentKey }[];
+}
+
+/**
+ * Campanhas visíveis pelo escopo da tela (resolveDataScope de performance.campanhas). Padrão = comportamento
+ * anterior: gestor/diretoria/admin = empresa (todas, inclusive planejadas); demais = departamento (não planejadas em
+ * que participa ou que incluem o seu departamento). "meus" = só as não planejadas em que participa.
+ */
+export function filterCampaignsByScope(items: CampaignProgress[], viewer: Pick<CurrentUser, "departmentId">, kind: ScopeKind): CampaignProgress[] {
+  if (kind === "empresa" || kind === "unidades") return items;
+  return items.filter((i) => i.campaign.status !== "planejada" && (i.mine !== null || (kind !== "meus" && i.campaign.departments.includes(viewer.departmentId))));
+}
+
+/**
+ * Uma campanha (registro) está no escopo do usuário? Mesma regra da lista (filterCampaignsByScope), sem o progresso:
+ * participa quem está em participantIds ou, sem lista, quem é dos departamentos da campanha. Usada nas actions de
+ * editar/remover (campanha fora do escopo → acesso negado, A29).
+ */
+export function campaignInScope(campaign: Pick<GamificationCampaign, "status" | "departments" | "participantIds">, viewer: Pick<CurrentUser, "id" | "departmentId">, kind: ScopeKind): boolean {
+  if (kind === "empresa" || kind === "unidades") return true;
+  if (campaign.status === "planejada") return false;
+  const participates = campaign.participantIds.length > 0 ? campaign.participantIds.includes(viewer.id) : campaign.departments.includes(viewer.departmentId);
+  return participates || (kind !== "meus" && campaign.departments.includes(viewer.departmentId));
+}
+
+/** Campanhas com progresso já recortadas pelo escopo do visitante. */
+export async function getVisibleCampaigns(viewer: CurrentUser): Promise<{ items: CampaignProgress[]; scopeKind: ScopeKind }> {
+  const [items, scope] = await Promise.all([getCampaignsProgress(viewer.id), resolveDataScope(viewer, "performance.campanhas")]);
+  return { items: filterCampaignsByScope(items, viewer, scope.kind), scopeKind: scope.kind };
 }
 
 export async function getCampaignFormOptions(): Promise<CampaignFormOptions> {

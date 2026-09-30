@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Award, Flame, Medal, Target, TrendingUp, Trophy, UserRound } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { canSeeHref, requireScreen } from "@/server/auth/session";
 import { getPerformanceAccess, getRanking, getRankingOverview } from "@/server/performance/queries";
 import { RANKING_SCOPES, type RankingScope } from "@/server/performance/schemas";
 import type { RankingRow } from "@/server/performance/ranking";
@@ -32,7 +32,7 @@ const RANKED_DEPARTMENTS = DEPARTMENT_KEYS.filter((d) => d !== "diretoria");
  * "como pontuar". Tudo alimentado pelos eventos reais (gamification_points, achievements, campanhas).
  */
 export default async function RankingPage({ searchParams }: { searchParams: SearchParams }) {
-  const [viewer, query] = await Promise.all([requireUser(), searchParams]);
+  const [viewer, query] = await Promise.all([requireScreen("performance.ranking"), searchParams]);
   const requested = parsePeriod(query);
   // Ranking por competência: janelas móveis/personalizadas viram o mês corrente.
   const period = requested.kind === "mes" || requested.kind === "trimestre" || requested.kind === "ano" ? requested : parsePeriod({});
@@ -46,11 +46,14 @@ export default async function RankingPage({ searchParams }: { searchParams: Sear
   const options = periodOptions(12).filter((o) => o.group !== "Janela móvel");
   const periodParam = `periodo=${encodeURIComponent(period.key)}`;
 
+  // Desempenho de outro colaborador: só dentro do escopo de Meu Desempenho (padrão: gestão, a sua equipe).
+  const seesPerformance = canSeeHref(viewer, "/performance");
   const hrefFor = (row: RankingRow): string | null => {
     if (row.kind === "departamento") return `/performance/ranking?${periodParam}&escopo=individual&departamento=${row.id}`;
     if (row.kind === "equipe") return row.department ? `/performance/ranking?${periodParam}&escopo=individual&departamento=${row.department}` : null;
+    if (!seesPerformance) return null;
     if (row.id === viewer.id) return `/performance?${periodParam}`;
-    if (viewer.isManager && access.userIds.includes(row.id)) return `/performance?${periodParam}&usuario=${row.id}`;
+    if (access.canViewOthers && access.userIds.includes(row.id)) return `/performance?${periodParam}&usuario=${row.id}`;
     return null;
   };
 
@@ -119,7 +122,7 @@ export default async function RankingPage({ searchParams }: { searchParams: Sear
           <Card>
             <CardHeader className="flex-row items-center justify-between gap-3 pb-2">
               <CardTitle>Campanhas ativas</CardTitle>
-              <CardLink href="/performance/campanhas">Ver todas</CardLink>
+              {canSeeHref(viewer, "/performance/campanhas") ? <CardLink href="/performance/campanhas">Ver todas</CardLink> : null}
             </CardHeader>
             <CardContent className="pt-2">
               <ActiveCampaigns items={overview.campaigns} today={localDayKey()} />

@@ -24,6 +24,9 @@ import {
 } from "./engine";
 import { monthPeriod, previousPeriod, type Period } from "./period";
 import { SCOPE_LABELS, departmentLabel, kpiHref, type KpiScope, type KpiStatus } from "./schemas";
+import { can, canAny } from "@/server/auth/permissions";
+import { resolveDataScope, type ScopeKind } from "@/server/auth/scope";
+import type { PermissionKey } from "@/domain/permissions";
 
 export { parsePeriod, previousPeriod, listRecentMonths, periodFromKey, monthPeriod, currentMonthKey, periodOptions, inPeriod, type Period, type PeriodKind } from "./period";
 export {
@@ -371,7 +374,7 @@ export async function getKpiAdminData(period: Period): Promise<KpiAdminData> {
 // ---------------------------------------------------------------------------
 
 export interface GoalPermissions {
-  /** Pode criar/editar metas da empresa (admin/diretoria). */
+  /** Pode criar/editar metas da empresa (escopo "empresa" na tela Metas; padrão: admin/diretoria). */
   canCompany: boolean;
   /** Departamentos cujas metas (de departamento e de colaboradores) pode gerenciar. */
   departments: DepartmentKey[];
@@ -379,25 +382,53 @@ export interface GoalPermissions {
   userIds: string[];
 }
 
+/** Recorte de REGISTROS da tela Metas (A7): o que o usuário vê; a gestão ainda exige as chaves de ação. */
+export interface GoalScope extends GoalPermissions {
+  kind: ScopeKind;
+}
+
+/** Chaves de gestão de metas (criar, editar, excluir, copiar): sem nenhuma, o usuário só lê. */
+export const GOAL_MANAGE_KEYS = ["performance.metas.criar", "performance.metas.editar", "performance.metas.excluir", "performance.metas.copiar"] as const satisfies readonly PermissionKey[];
+
 /**
- * Quem gerencia metas: admin/diretoria gerenciam todas; gestor gerencia as do seu departamento, dos
- * departamentos que lidera (departments.managerId) e dos colaboradores desses departamentos ou liderados
- * diretos; os demais só leem.
+ * Escopo de metas pelo núcleo (resolveDataScope da tela performance.metas). Padrão = comportamento anterior:
+ * admin/diretoria = empresa (todas); gestor = departamento (o próprio, os que lidera por departments.managerId, os
+ * colaboradores desses departamentos e os liderados diretos); demais = meus (as próprias e a do seu departamento).
+ */
+export async function getGoalScope(user: CurrentUser): Promise<GoalScope> {
+  const [scope, { users, departments }] = await Promise.all([resolveDataScope(user, "performance.metas"), nameMaps()]);
+  const all = Array.from(users.values()).filter((u) => u.active !== false);
+  if (scope.kind === "empresa" || scope.kind === "unidades") return { kind: scope.kind, canCompany: true, departments: [...DEPARTMENT_KEYS], userIds: all.map((u) => u.id) };
+  const managed = departments.filter((d) => d.managerId === user.id).map((d) => d.key);
+  const deps = scope.kind === "departamento" ? [user.departmentId, ...managed] : scope.kind === "equipe" ? managed : [];
+  const userIds = scope.userIds ? all.filter((u) => scope.userIds!.has(u.id)).map((u) => u.id) : [user.id];
+  return { kind: scope.kind, canCompany: false, departments: Array.from(new Set<DepartmentKey>(deps)), userIds };
+}
+
+/**
+ * Quem gerencia metas: quem tem alguma chave de gestão (padrão: gestor, diretoria e admin), dentro do escopo da tela
+ * (padrão: admin/diretoria todas; gestor as do seu departamento, dos departamentos que lidera e dos colaboradores
+ * desses departamentos ou liderados diretos); os demais só leem.
  */
 export async function getGoalPermissions(user: CurrentUser): Promise<GoalPermissions> {
-  const { users, departments } = await nameMaps();
-  const all = Array.from(users.values()).filter((u) => u.active !== false);
-  if (user.isDirector) return { canCompany: true, departments: [...DEPARTMENT_KEYS], userIds: all.map((u) => u.id) };
-  if (user.role !== "gestor") return { canCompany: false, departments: [], userIds: [] };
-  const deps = Array.from(new Set<DepartmentKey>([user.departmentId, ...departments.filter((d) => d.managerId === user.id).map((d) => d.key)]));
-  const userIds = all.filter((u) => deps.includes(u.departmentId) || u.managerId === user.id).map((u) => u.id);
-  return { canCompany: false, departments: deps, userIds };
+  if (!canAny(user, GOAL_MANAGE_KEYS)) return { canCompany: false, departments: [], userIds: [] };
+  const { canCompany, departments, userIds } = await getGoalScope(user);
+  return { canCompany, departments, userIds };
 }
 
 export function canManageGoal(perms: GoalPermissions, scope: KpiScope, scopeId?: string): boolean {
   if (scope === "empresa") return perms.canCompany;
   if (scope === "departamento") return Boolean(scopeId) && perms.departments.includes(scopeId as DepartmentKey);
   return Boolean(scopeId) && perms.userIds.includes(scopeId!);
+}
+
+/** A meta está no escopo de leitura? As próprias e a do próprio departamento sempre; empresa a partir de "equipe". */
+export function canSeeGoal(user: Pick<CurrentUser, "id" | "departmentId">, scope: GoalScope, goal: Pick<Goal, "scope" | "scopeId">): boolean {
+  if (scope.kind === "empresa" || scope.kind === "unidades") return true;
+  if (goal.scope === "usuario" && goal.scopeId === user.id) return true;
+  if (goal.scope === "departamento" && goal.scopeId === user.departmentId) return true;
+  if (scope.kind === "meus") return false;
+  return goal.scope === "empresa" || canManageGoal(scope, goal.scope, goal.scopeId);
 }
 
 export interface GoalRow {
@@ -412,14 +443,22 @@ export interface GoalRow {
   status: KpiStatus | null;
   note?: string;
   href: string;
+  /** Editar a meta (performance.metas.editar + escopo). */
   canEdit: boolean;
+  /** Remover a meta (performance.metas.excluir + escopo). */
+  canDelete: boolean;
 }
 
 export interface GoalsBoard {
   period: Period;
   rows: GoalRow[];
   permissions: GoalPermissions;
+  /** Alguma ação de gestão disponível (criar ou copiar). */
   canManageAny: boolean;
+  /** Criar meta (performance.metas.criar) com algum escopo gerenciável. */
+  canCreate: boolean;
+  /** Copiar metas do mês anterior (performance.metas.copiar) com algum escopo gerenciável. */
+  canCopy: boolean;
   /** Metas do mês anterior que o usuário pode copiar e que ainda não existem no período. */
   copyableFromPrevious: number;
   previousLabel: string;
@@ -436,21 +475,21 @@ function goalSignature(g: Pick<Goal, "kpiKey" | "scope" | "scopeId">): string {
 /** Metas visíveis ao usuário no período, com valor atual, atingimento e permissão de edição. */
 export async function getGoalsBoard(user: CurrentUser, period: Period): Promise<GoalsBoard> {
   const previous = previousPeriod(period.kind === "mes" ? period : monthPeriod(period.key.slice(0, 7)));
-  const [goals, prevGoals, perms, definitions, { users }] = await Promise.all([
+  const [goals, prevGoals, perms, records, definitions, { users }] = await Promise.all([
     list<Goal>(COLLECTIONS.goals, { where: [["period", "==", period.key]] }),
     list<Goal>(COLLECTIONS.goals, { where: [["period", "==", previous.key]] }),
     getGoalPermissions(user),
+    getGoalScope(user),
     listKpiDefinitions({ includeVirtual: true }),
     nameMaps(),
   ]);
+  const canEdit = can(user, "performance.metas.editar");
+  const canDelete = can(user, "performance.metas.excluir");
+  const managesSomething = perms.canCompany || perms.departments.length > 0 || perms.userIds.length > 0;
+  const canCreate = can(user, "performance.metas.criar") && managesSomething;
+  const canCopy = can(user, "performance.metas.copiar") && managesSomething;
 
-  const visible = goals.filter((g) => {
-    if (user.isDirector) return true;
-    if (g.scope === "usuario" && g.scopeId === user.id) return true;
-    if (g.scope === "departamento" && g.scopeId === user.departmentId) return true;
-    if (user.role === "gestor") return g.scope === "empresa" || canManageGoal(perms, g.scope, g.scopeId);
-    return false;
-  });
+  const visible = goals.filter((g) => canSeeGoal(user, records, g));
 
   // Uma requisição por escopo; o motor carrega definições, metas e dados uma única vez.
   const groups = new Map<string, { scope: KpiScope; scopeId?: string; goals: Goal[] }>();
@@ -485,7 +524,8 @@ export async function getGoalsBoard(user: CurrentUser, period: Period): Promise<
         status: r?.status ?? null,
         note: r ? r.note : "Indicador sem fórmula no registro.",
         href: kpiHref(goal.kpiKey, period, goal.scope, goal.scopeId),
-        canEdit: canManageGoal(perms, goal.scope, goal.scopeId),
+        canEdit: canEdit && canManageGoal(perms, goal.scope, goal.scopeId),
+        canDelete: canDelete && canManageGoal(perms, goal.scope, goal.scopeId),
       });
     }
   });
@@ -499,14 +539,16 @@ export async function getGoalsBoard(user: CurrentUser, period: Period): Promise<
     period,
     rows,
     permissions: perms,
-    canManageAny: perms.canCompany || perms.departments.length > 0 || perms.userIds.length > 0,
-    copyableFromPrevious: copyable,
+    canManageAny: canCreate || canCopy,
+    canCreate,
+    canCopy,
+    copyableFromPrevious: canCopy ? copyable : 0,
     previousLabel: previous.label,
     kpis: definitions
       .filter((d) => d.active !== false && d.formulaMeta)
       .map((d) => ({ key: d.key, name: d.name, unit: d.unit, suffix: d.formulaMeta?.suffix, direction: d.direction, department: departmentLabel(d.department), target: d.target })),
     users: activeUsers
-      .filter((u) => user.isDirector || perms.userIds.includes(u.id) || u.id === user.id)
+      .filter((u) => records.kind === "empresa" || perms.userIds.includes(u.id) || u.id === user.id)
       .map((u) => ({ id: u.id, name: u.name, departmentId: u.departmentId }))
       .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
     departments: DEPARTMENT_KEYS.map((key) => ({ key, label: DEPARTMENT_LABELS[key] })),

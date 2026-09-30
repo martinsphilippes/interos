@@ -134,7 +134,8 @@ function BlockDialog({ open, onOpenChange, options, period, periodOptions, defau
 
 type Decision = { block: BonusBlockView; kind: "confirmar" | "revogar" } | null;
 
-export function BonusBlocksList({ blocks, audit, manageableIds }: { blocks: BonusBlockView[]; audit: BonusAuditEntry[]; manageableIds: string[] }) {
+/** `canConfirm`/`canRevoke`: capacidades calculadas no servidor (performance.bonus.equipe.aprovar/cancelar). */
+export function BonusBlocksList({ blocks, audit, manageableIds, canConfirm = false, canRevoke = false }: { blocks: BonusBlockView[]; audit: BonusAuditEntry[]; manageableIds: string[]; canConfirm?: boolean; canRevoke?: boolean }) {
   const router = useRouter();
   const [decision, setDecision] = React.useState<Decision>(null);
   const [note, setNote] = React.useState("");
@@ -159,7 +160,10 @@ export function BonusBlocksList({ blocks, audit, manageableIds }: { blocks: Bonu
       <ul className="flex flex-col gap-3">
         {blocks.map((b) => {
           const trail = audit.filter((a) => a.blockId === b.id);
-          const canDecide = manageableIds.includes(b.userId) && b.status !== "revogado";
+          const inScope = manageableIds.includes(b.userId) && b.status !== "revogado";
+          const showConfirm = inScope && canConfirm && b.status === "aberto";
+          const showRevoke = inScope && canRevoke;
+          const canDecide = showConfirm || showRevoke;
           return (
             <li key={b.id} className="rounded-lg border border-border p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
@@ -203,14 +207,16 @@ export function BonusBlocksList({ blocks, audit, manageableIds }: { blocks: Bonu
               ) : null}
               {canDecide ? (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {b.status === "aberto" ? (
+                  {showConfirm ? (
                     <Button size="sm" variant="destructive" className="min-h-[44px] md:min-h-0" onClick={() => setDecision({ block: b, kind: "confirmar" })}>
                       <Ban /> Confirmar bloqueio
                     </Button>
                   ) : null}
-                  <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setDecision({ block: b, kind: "revogar" })}>
-                    <CheckCircle2 /> Revogar
-                  </Button>
+                  {showRevoke ? (
+                    <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setDecision({ block: b, kind: "revogar" })}>
+                      <CheckCircle2 /> Revogar
+                    </Button>
+                  ) : null}
                 </div>
               ) : null}
             </li>
@@ -256,13 +262,17 @@ export function BonusTeamPanel({
   options,
   periodOptions,
   canClose,
+  canBlock = false,
 }: {
   rows: TeamBonusRow[];
   month: string;
   monthLabel: string;
   options: BlockOption[];
   periodOptions: { value: string; label: string }[];
+  /** Fechar a competência (performance.bonus.equipe.concluir), calculado no servidor. */
   canClose: boolean;
+  /** Registrar bloqueio (performance.bonus.equipe.bloquear), calculado no servidor. */
+  canBlock?: boolean;
 }) {
   const router = useRouter();
   const [dialog, setDialog] = React.useState<{ open: boolean; userId?: string }>({ open: false });
@@ -283,9 +293,11 @@ export function BonusTeamPanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted">Projeção de {monthLabel.toLowerCase()} para quem tem regra de bônus vigente.</p>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setDialog({ open: true })} disabled={options.length === 0}>
-            <FileWarning /> Registrar bloqueio
-          </Button>
+          {canBlock ? (
+            <Button variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setDialog({ open: true })} disabled={options.length === 0}>
+              <FileWarning /> Registrar bloqueio
+            </Button>
+          ) : null}
           {canClose ? (
             <Button className="min-h-[44px] md:min-h-0" onClick={() => setClosing(true)}>
               <CalendarCheck /> Fechar competência
@@ -328,9 +340,11 @@ export function BonusTeamPanel({
                 ) : null}
               </div>
               <div className="flex gap-1 md:justify-end">
-                <Button size="sm" variant="ghost" className="min-h-[44px] md:min-h-0" onClick={() => setDialog({ open: true, userId: r.userId })} aria-label={`Registrar bloqueio para ${r.userName}`}>
-                  <Ban />
-                </Button>
+                {canBlock ? (
+                  <Button size="sm" variant="ghost" className="min-h-[44px] md:min-h-0" onClick={() => setDialog({ open: true, userId: r.userId })} aria-label={`Registrar bloqueio para ${r.userName}`}>
+                    <Ban />
+                  </Button>
+                ) : null}
                 <Button size="sm" variant="ghost" asChild className="min-h-[44px] md:min-h-0">
                   <Link href={`/performance/bonus?usuario=${r.userId}&periodo=${month}`} aria-label={`Detalhamento de ${r.userName}`}>
                     Detalhar <ChevronRight />
@@ -341,7 +355,7 @@ export function BonusTeamPanel({
           ))}
         </ul>
       )}
-      <BlockDialog open={dialog.open} onOpenChange={(v) => setDialog((d) => ({ ...d, open: v }))} options={options} period={month} periodOptions={periodOptions} defaultUserId={dialog.userId} />
+      {canBlock ? <BlockDialog open={dialog.open} onOpenChange={(v) => setDialog((d) => ({ ...d, open: v }))} options={options} period={month} periodOptions={periodOptions} defaultUserId={dialog.userId} /> : null}
       <ConfirmDialog
         open={closing}
         onOpenChange={setClosing}

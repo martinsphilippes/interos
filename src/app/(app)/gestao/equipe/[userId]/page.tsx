@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Award, Building2, ClipboardX, Gauge, History, ListChecks, Target, Timer, Workflow } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
-import { getMemberName, getTeamMemberView } from "@/server/management/queries";
+import { ACCESS_DENIED_REDIRECT, can, canSeeHref, getCurrentUser, requireScreen } from "@/server/auth/session";
+import { getMemberName, getTeamMemberView, memberAccess } from "@/server/management/queries";
 import { parseFocus, type FocusKey } from "@/server/management/schemas";
 import { parsePeriod, periodOptions } from "@/server/kpis/queries";
 import { formatPercent } from "@/lib/format";
@@ -21,8 +21,11 @@ import { BonusSummary, ClientList, EventList, ScorecardGrid, SlaList, StepList, 
 type Params = Promise<{ userId: string }>;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
+/** Título da aba (A30): o nome só é lido depois de checar a seção e o escopo do colaborador. */
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
-  const { userId } = await params;
+  const [{ userId }, user] = await Promise.all([params, getCurrentUser()]);
+  if (!user || !can(user, "gestao.dashboard.colaborador.ver")) return { title: "Colaborador" };
+  if ((await memberAccess(user, userId)) !== "ok") return { title: "Colaborador" };
   const name = await getMemberName(userId);
   return { title: name ? `${name} · Equipe` : "Colaborador" };
 }
@@ -41,11 +44,18 @@ function FocusCard({ active, id, title, description, icon, children, className }
   );
 }
 
-/** Visão do colaborador para o gestor: tarefas, SLAs, etapas, clientes, scorecard, bônus e histórico. */
+/**
+ * Visão do colaborador para o gestor (seção gestao.dashboard.colaborador.ver): tarefas, SLAs, etapas, clientes,
+ * scorecard, bônus e histórico. Colaborador fora do escopo do dashboard = acesso negado (A29); redistribuir exige
+ * gestao.dashboard.atribuir.
+ */
 export default async function TeamMemberPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
-  const [{ userId }, query, user] = await Promise.all([params, searchParams, requireRole("gestor", "diretoria")]);
+  const [{ userId }, query, user] = await Promise.all([params, searchParams, requireScreen("gestao.dashboard.colaborador.ver")]);
   const period = parsePeriod(query);
   const focus = parseFocus(query.foco);
+  const access = await memberAccess(user, userId);
+  if (access === "denied") redirect(ACCESS_DENIED_REDIRECT);
+  if (access === "not-found") notFound();
   const view = await getTeamMemberView(user, userId, period);
   if (!view) notFound();
   const { member, tasks } = view;
@@ -66,12 +76,14 @@ export default async function TeamMemberPage({ params, searchParams }: { params:
         actions={
           <>
             <PeriodSelect options={periodOptions()} value={period.key} />
-            <RedistributeButton size="md" from={{ id: member.id, name: member.name }} tasks={openTasks} targets={view.reassignTargets} />
+            {view.canRedistribute ? <RedistributeButton size="md" from={{ id: member.id, name: member.name }} tasks={openTasks} targets={view.reassignTargets} /> : null}
             {/* Link estilizado como botão (sem Slot/asChild): com o payload grande desta página, o filho do Slot
                 chegava como referência lazy do stream RSC e o Radix lançava "Slot failed to slot onto its children". */}
-            <Link href={`/performance?usuario=${member.id}`} className={cn(buttonVariants({ variant: "outline" }), "h-11 md:h-9")}>
-              <Gauge /> Desempenho
-            </Link>
+            {canSeeHref(user, "/performance") ? (
+              <Link href={`/performance?usuario=${member.id}`} className={cn(buttonVariants({ variant: "outline" }), "h-11 md:h-9")}>
+                <Gauge /> Desempenho
+              </Link>
+            ) : null}
           </>
         }
       />
@@ -129,9 +141,11 @@ export default async function TeamMemberPage({ params, searchParams }: { params:
           {view.bonus ? (
             <FocusCard id="bonus" active={false} title="Bônus projetado" icon={<Award />} description={period.label}>
               <BonusSummary bonus={view.bonus} />
-              <Link href="/performance/bonus" className={cn(buttonVariants({ variant: "link" }), "mt-3")}>
-                Ver detalhamento
-              </Link>
+              {canSeeHref(user, "/performance/bonus") ? (
+                <Link href="/performance/bonus" className={cn(buttonVariants({ variant: "link" }), "mt-3")}>
+                  Ver detalhamento
+                </Link>
+              ) : null}
             </FocusCard>
           ) : null}
 

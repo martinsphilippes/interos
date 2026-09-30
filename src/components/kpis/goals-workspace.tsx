@@ -97,12 +97,16 @@ export function GoalsWorkspace({ board }: { board: GoalsBoard }) {
         />
         {board.canManageAny ? (
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" className="min-h-[44px] md:min-h-0" disabled={board.copyableFromPrevious === 0} onClick={() => setCopyOpen(true)} title={board.copyableFromPrevious === 0 ? `Nada a copiar de ${board.previousLabel.toLowerCase()}` : undefined}>
-              <Copy /> Copiar metas do mês anterior
-            </Button>
-            <Button className="min-h-[44px] md:min-h-0" onClick={() => setDrawer({ mode: "new" })}>
-              <Plus /> Nova meta
-            </Button>
+            {board.canCopy ? (
+              <Button variant="outline" className="min-h-[44px] md:min-h-0" disabled={board.copyableFromPrevious === 0} onClick={() => setCopyOpen(true)} title={board.copyableFromPrevious === 0 ? `Nada a copiar de ${board.previousLabel.toLowerCase()}` : undefined}>
+                <Copy /> Copiar metas do mês anterior
+              </Button>
+            ) : null}
+            {board.canCreate ? (
+              <Button className="min-h-[44px] md:min-h-0" onClick={() => setDrawer({ mode: "new" })}>
+                <Plus /> Nova meta
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -118,14 +122,16 @@ export function GoalsWorkspace({ board }: { board: GoalsBoard }) {
             action={
               board.canManageAny ? (
                 <>
-                  {board.copyableFromPrevious > 0 ? (
+                  {board.canCopy && board.copyableFromPrevious > 0 ? (
                     <Button variant="outline" onClick={() => setCopyOpen(true)}>
                       <Copy /> Copiar {board.copyableFromPrevious} meta(s) de {board.previousLabel.toLowerCase()}
                     </Button>
                   ) : null}
-                  <Button onClick={() => setDrawer({ mode: "new" })}>
-                    <Plus /> Nova meta
-                  </Button>
+                  {board.canCreate ? (
+                    <Button onClick={() => setDrawer({ mode: "new" })}>
+                      <Plus /> Nova meta
+                    </Button>
+                  ) : null}
                 </>
               ) : null
             }
@@ -164,14 +170,14 @@ export function GoalsWorkspace({ board }: { board: GoalsBoard }) {
                   </div>
                   <div className="flex justify-end gap-1">
                     {r.canEdit ? (
-                      <>
-                        <Button variant="ghost" size="icon" className="size-11 md:size-9" aria-label={`Editar meta de ${r.kpiName}`} onClick={() => setDrawer({ mode: "edit", row: r })}>
-                          <Pencil />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="size-11 text-danger-fg md:size-9" aria-label={`Remover meta de ${r.kpiName}`} onClick={() => setToDelete(r)}>
-                          <Trash2 />
-                        </Button>
-                      </>
+                      <Button variant="ghost" size="icon" className="size-11 md:size-9" aria-label={`Editar meta de ${r.kpiName}`} onClick={() => setDrawer({ mode: "edit", row: r })}>
+                        <Pencil />
+                      </Button>
+                    ) : null}
+                    {r.canDelete ? (
+                      <Button variant="ghost" size="icon" className="size-11 text-danger-fg md:size-9" aria-label={`Remover meta de ${r.kpiName}`} onClick={() => setToDelete(r)}>
+                        <Trash2 />
+                      </Button>
                     ) : null}
                   </div>
                 </li>

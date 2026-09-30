@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/server/auth/session";
-import { ReportAccessError, buildReport, canAccessReport, reportFileName } from "@/server/reports/build";
+import { ACCESS_DENIED_MESSAGE, can, requireApiPermission } from "@/server/auth/session";
+import { ReportAccessError, buildReport, canAccessReport, reportExportKey, reportFileName } from "@/server/reports/build";
 import { EXPORT_FORMATS, isReportKey, readReportFilters, type ExportFormat } from "@/server/reports/definitions";
 import { reportToCsv } from "@/server/reports/export-csv";
 import { reportToXlsx } from "@/server/reports/export-xlsx";
@@ -17,12 +17,15 @@ const CONTENT_TYPES: Record<ExportFormat, string> = {
 
 /**
  * Exportação de relatório: GET /api/relatorios/<tipo>?formato=csv|xlsx|pdf&de=&ate=&departamento=&colaborador=&cliente=&produto=&status=
- * Mesmas regras de acesso e mesmos dados da prévia em /gestao/relatorios.
+ * Mesmos dados da prévia em /gestao/relatorios. Acesso (A14): sem sessão → 401 JSON; exige, nesta ordem,
+ * gestao.relatorios.exportar, a prévia do tipo (gestao.relatorios.<tipo>.ver) e gestao.relatorios.<tipo>.exportar →
+ * 403 JSON. O conteúdo segue o escopo do usuário (buildReport).
  */
 export async function GET(request: Request, { params }: { params: Promise<{ tipo: string }> }) {
-  const [user, { tipo }] = await Promise.all([requireUser(), params]);
+  const [user, { tipo }] = await Promise.all([requireApiPermission("gestao.relatorios.exportar"), params]);
+  if (user instanceof Response) return user;
   if (!isReportKey(tipo)) return NextResponse.json({ error: "Relatório inexistente." }, { status: 404 });
-  if (!canAccessReport(user, tipo)) return NextResponse.json({ error: "Você não tem acesso a este relatório." }, { status: 403 });
+  if (!canAccessReport(user, tipo) || !can(user, reportExportKey(tipo))) return NextResponse.json({ ok: false, error: ACCESS_DENIED_MESSAGE }, { status: 403 });
 
   const url = new URL(request.url);
   const format = (url.searchParams.get("formato") ?? "csv").toLowerCase();
@@ -42,7 +45,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ tipo
       },
     });
   } catch (error) {
-    if (error instanceof ReportAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ReportAccessError) return NextResponse.json({ ok: false, error: error.message }, { status: 403 });
     console.error(`[relatorios] falha ao exportar ${tipo} em ${format}`, error);
     return NextResponse.json({ error: "Não foi possível gerar o relatório." }, { status: 500 });
   }

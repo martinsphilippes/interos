@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { requireUser } from "@/server/auth/session";
-import { getCampaignFormOptions, getCampaignsProgress } from "@/server/performance/queries";
+import { can, requireScreen } from "@/server/auth/session";
+import { getCampaignFormOptions, getVisibleCampaigns } from "@/server/performance/queries";
 import { localDayKey } from "@/server/kpis/period";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -8,16 +8,20 @@ import { CampaignsWorkspace } from "@/components/performance/campaigns-workspace
 
 export const metadata: Metadata = { title: "Campanhas" };
 
-/** Campanhas e desafios de gamificação: progresso por participante (motor de KPIs ou contagem de eventos) e ranking. */
+/**
+ * Campanhas e desafios de gamificação: progresso por participante (motor de KPIs ou contagem de eventos) e ranking.
+ * Lista pelo escopo da tela (performance.campanhas: gestão vê todas; colaborador, as do seu departamento ou em que
+ * participa); criar/editar/remover pelas chaves de ação, calculadas aqui e revalidadas nas actions.
+ */
 export default async function CampaignsPage() {
-  const viewer = await requireUser();
-  const [items, options] = await Promise.all([getCampaignsProgress(viewer.id), viewer.isManager ? getCampaignFormOptions() : Promise.resolve({ kpis: [], users: [] })]);
-  // Colaborador vê as campanhas do seu departamento ou em que participa; gestão vê todas.
-  const visible = viewer.isManager ? items : items.filter((i) => i.campaign.status !== "planejada" && (i.mine || i.campaign.departments.includes(viewer.departmentId)));
+  const viewer = await requireScreen("performance.campanhas");
+  const capabilities = { create: can(viewer, "performance.campanhas.criar"), edit: can(viewer, "performance.campanhas.editar"), remove: can(viewer, "performance.campanhas.excluir") };
+  const needsForm = capabilities.create || capabilities.edit;
+  const [{ items }, options] = await Promise.all([getVisibleCampaigns(viewer), needsForm ? getCampaignFormOptions() : Promise.resolve({ kpis: [], users: [] })]);
   return (
     <PageContainer>
       <PageHeader title="Campanhas" description="Desafios com meta por pessoa, prêmio e ranking próprio." breadcrumbs={[{ label: "Performance", href: "/performance" }, { label: "Campanhas" }]} />
-      <CampaignsWorkspace items={visible} options={options} canManage={viewer.isManager} today={localDayKey()} />
+      <CampaignsWorkspace items={items} options={options} canManage={capabilities.create} canEdit={capabilities.edit} canDelete={capabilities.remove} today={localDayKey()} />
     </PageContainer>
   );
 }

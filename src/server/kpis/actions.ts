@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
+import { BusinessError, failAction, requirePermission } from "@/server/auth/session";
 import { batchSet, col, create, getById, list, nowIso, remove, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { COLLECTIONS, type ActionResult, type CurrentUser, type Goal, type Kpi, type Settings, type UserRef } from "@/domain/types";
@@ -15,21 +15,39 @@ import { operationHealthSchema, performanceIndexSchema, type OperationHealthInpu
 import { copyGoalsSchema, goalDocId, goalIdSchema, goalInputSchema, kpiInputSchema, toggleKpiSchema, zodMessage, type GoalInput, type KpiInput } from "./schemas";
 
 /**
- * Server Actions do motor de indicadores: definições de KPI (admin), metas (gestor/diretoria/admin) e
- * gravação de snapshots mensais (admin).
+ * Server Actions do motor de indicadores: definições de KPI (Administração › Indicadores), metas (Performance ›
+ * Metas), gravação de snapshots mensais e configuração dos índices (Saúde da operação, Índice de desempenho).
  *
- * Padrão: requireUser() → permissão → zod → mutação via db.ts → emitEvent → revalidatePath.
+ * Padrão: requirePermission(chave do catálogo — src/domain/permissions/{admin,performance,gestao}.ts) → zod →
+ * escopo do registro (metas: canManageGoal no escopo da tela) → mutação via db.ts → emitEvent → revalidatePath.
+ * Falhas pelo tratamento único (failAction: relança redirect, mostra PermissionError/BusinessError, esconde erros
+ * técnicos); validação com a primeira mensagem do zod, como antes.
  */
 
-class ActionError extends Error {}
+/** Erro de regra de negócio com mensagem para o usuário. */
+class ActionError extends BusinessError {}
 
 const actor = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
 
+/** Mensagens de acesso negado (a chave vem do catálogo; a mensagem mantém o texto de antes). */
+const KPI_DENIED = "Apenas administradores podem alterar indicadores";
+const SNAPSHOT_DENIED = "Apenas administradores podem gravar snapshots";
+const GOAL_EDIT_DENIED = "Seu perfil não pode alterar metas";
+const GOAL_CREATE_DENIED = "Seu perfil não pode criar metas";
+const GOAL_DELETE_DENIED = "Seu perfil não pode remover metas";
+const GOAL_COPY_DENIED = "Seu perfil não pode copiar metas";
+const HEALTH_DENIED = "Apenas administradores e diretoria podem configurar a Saúde da operação";
+const INDEX_DENIED = "Apenas administradores e diretoria podem configurar o Índice de desempenho";
+
 function fail(error: unknown, fallback: string): { ok: false; error: string } {
   if (error instanceof z.ZodError) return { ok: false, error: zodMessage(error) };
-  if (error instanceof ActionError) return { ok: false, error: error.message };
-  console.error(`[kpis] ${fallback}`, error);
-  return { ok: false, error: fallback };
+  return failAction(error, fallback, "kpis");
+}
+
+/** Meta com id = edição; sem id = criação (a chave depende do argumento, antes da validação). */
+function goalIdOf(input: unknown): string | undefined {
+  const id = input && typeof input === "object" ? (input as { id?: unknown }).id : undefined;
+  return typeof id === "string" && id.trim() ? id.trim() : undefined;
 }
 
 function revalidateKpiPages(): void {
@@ -45,8 +63,7 @@ function revalidateKpiPages(): void {
 
 export async function upsertKpi(input: KpiInput): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
-    if (!user.isAdmin) throw new ActionError("Apenas administradores podem alterar indicadores");
+    const user = await requirePermission("admin.indicadores.editar", KPI_DENIED);
     const data = kpiInputSchema.parse(input);
     const formula = getFormula(data.formula);
     if (!formula) throw new ActionError("Fórmula inexistente no registro de indicadores");
@@ -105,8 +122,7 @@ export async function upsertKpi(input: KpiInput): Promise<ActionResult<{ id: str
 
 export async function toggleKpi(input: { id: string; active: boolean }): Promise<ActionResult> {
   try {
-    const user = await requireUser();
-    if (!user.isAdmin) throw new ActionError("Apenas administradores podem alterar indicadores");
+    const user = await requirePermission("admin.indicadores.ativar", KPI_DENIED);
     const data = toggleKpiSchema.parse(input);
     const kpi = await getById<Kpi>(COLLECTIONS.kpis, data.id);
     if (!kpi) throw new ActionError("Indicador não encontrado");
@@ -129,8 +145,7 @@ export async function toggleKpi(input: { id: string; active: boolean }): Promise
 /** Grava os snapshots do mês (fechamento). Também é seguro rodar no mês corrente (atualiza os do mês). */
 export async function recordKpiSnapshots(input: { period: string }): Promise<ActionResult<{ written: number; skipped: number }>> {
   try {
-    const user = await requireUser();
-    if (!user.isAdmin) throw new ActionError("Apenas administradores podem gravar snapshots");
+    const user = await requirePermission("admin.indicadores.registrar-snapshot", SNAPSHOT_DENIED);
     const { period } = copyGoalsSchema.parse(input);
     invalidateDataBundle(period);
     const result = await storeSnapshots(monthPeriod(period));
@@ -155,7 +170,7 @@ export async function recordKpiSnapshots(input: { period: string }): Promise<Act
 
 export async function upsertGoal(input: GoalInput): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
+    const user = goalIdOf(input) ? await requirePermission("performance.metas.editar", GOAL_EDIT_DENIED) : await requirePermission("performance.metas.criar", GOAL_CREATE_DENIED);
     const data = goalInputSchema.parse(input);
     const scopeId = data.scope === "empresa" ? undefined : data.scopeId;
     const perms = await getGoalPermissions(user);
@@ -198,7 +213,7 @@ export async function upsertGoal(input: GoalInput): Promise<ActionResult<{ id: s
 
 export async function deleteGoal(input: { id: string }): Promise<ActionResult> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("performance.metas.excluir", GOAL_DELETE_DENIED);
     const { id } = goalIdSchema.parse(input);
     const goal = await getById<Goal>(COLLECTIONS.goals, id);
     if (!goal) throw new ActionError("Meta não encontrada");
@@ -223,7 +238,7 @@ export async function deleteGoal(input: { id: string }): Promise<ActionResult> {
 /** Copia para o período as metas do mês anterior que o usuário pode gerenciar e que ainda não existem. */
 export async function copyGoalsFromPreviousMonth(input: { period: string }): Promise<ActionResult<{ copied: number }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("performance.metas.copiar", GOAL_COPY_DENIED);
     const { period } = copyGoalsSchema.parse(input);
     const previous = previousPeriod(monthPeriod(period));
     const [perms, current, prior] = await Promise.all([
@@ -281,8 +296,7 @@ async function saveIndexSetting(key: string, value: Record<string, unknown>, des
 /** Salva o setting "saude_operacao" (componentes, pesos, normalização e faixas). Admin ou diretoria. */
 export async function saveOperationHealthSettings(input: OperationHealthInput): Promise<ActionResult<{ key: string }>> {
   try {
-    const user = await requireUser();
-    if (!user.isDirector) throw new ActionError("Apenas administradores e diretoria podem configurar a Saúde da operação");
+    const user = await requirePermission("gestao.cockpit.configurar", HEALTH_DENIED);
     const value = operationHealthSchema.parse(input);
     await saveIndexSetting(OPERATION_HEALTH_SETTING, value as unknown as Record<string, unknown>, "Componentes, pesos, normalização e faixas do índice de Saúde da operação.", user, "Configuração da Saúde da operação atualizada");
     return { ok: true, data: { key: OPERATION_HEALTH_SETTING } };
@@ -294,8 +308,7 @@ export async function saveOperationHealthSettings(input: OperationHealthInput): 
 /** Salva o setting "indice_desempenho" (meta, pesos e indicadores por departamento, faixas). Admin ou diretoria. */
 export async function savePerformanceIndexSettings(input: PerformanceIndexInput): Promise<ActionResult<{ key: string }>> {
   try {
-    const user = await requireUser();
-    if (!user.isDirector) throw new ActionError("Apenas administradores e diretoria podem configurar o Índice de desempenho");
+    const user = await requirePermission("performance.meu-desempenho.configurar", INDEX_DENIED);
     const value = performanceIndexSchema.parse(input);
     await saveIndexSetting(PERFORMANCE_INDEX_SETTING, value as unknown as Record<string, unknown>, "Pesos e indicadores do Índice de desempenho por departamento.", user, "Configuração do Índice de desempenho atualizada");
     return { ok: true, data: { key: PERFORMANCE_INDEX_SETTING } };

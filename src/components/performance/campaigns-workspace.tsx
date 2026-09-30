@@ -78,7 +78,7 @@ function metricText(item: CampaignProgress): string {
   return item.metricLabel;
 }
 
-function CampaignCard({ item, canManage, onEdit, onDelete }: { item: CampaignProgress; canManage: boolean; onEdit: () => void; onDelete: () => void }) {
+function CampaignCard({ item, canEdit, canDelete, onEdit, onDelete }: { item: CampaignProgress; canEdit: boolean; canDelete: boolean; onEdit: () => void; onDelete: () => void }) {
   const c = item.campaign;
   const fmt = (v: number | null) => (c.metric.kind === "evento" ? (v === null ? "—" : String(v)) : formatKpiValue(v, item.unit, item.suffix));
   const [expanded, setExpanded] = React.useState(false);
@@ -95,14 +95,18 @@ function CampaignCard({ item, canManage, onEdit, onDelete }: { item: CampaignPro
           </div>
           {c.description ? <p className="mt-0.5 text-sm text-muted">{c.description}</p> : null}
         </div>
-        {canManage ? (
+        {canEdit || canDelete ? (
           <div className="flex gap-1">
-            <Button variant="ghost" size="icon" className="size-11 md:size-9" aria-label={`Editar ${c.name}`} onClick={onEdit}>
-              <Pencil />
-            </Button>
-            <Button variant="ghost" size="icon" className="size-11 md:size-9" aria-label={`Remover ${c.name}`} onClick={onDelete}>
-              <Trash2 />
-            </Button>
+            {canEdit ? (
+              <Button variant="ghost" size="icon" className="size-11 md:size-9" aria-label={`Editar ${c.name}`} onClick={onEdit}>
+                <Pencil />
+              </Button>
+            ) : null}
+            {canDelete ? (
+              <Button variant="ghost" size="icon" className="size-11 md:size-9" aria-label={`Remover ${c.name}`} onClick={onDelete}>
+                <Trash2 />
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </header>
@@ -173,7 +177,25 @@ function CampaignCard({ item, canManage, onEdit, onDelete }: { item: CampaignPro
 }
 
 /** Campanhas e desafios de gamificação com progresso calculado; CRUD para gestor/diretoria/admin. */
-export function CampaignsWorkspace({ items, options, canManage, today }: { items: CampaignProgress[]; options: CampaignFormOptions; canManage: boolean; today: string }) {
+/**
+ * Capacidades calculadas no servidor: `canManage` = criar (performance.campanhas.criar); `canEdit`/`canDelete` =
+ * editar/remover (padrão: iguais a criar). Só escondem controles: as actions revalidam.
+ */
+export function CampaignsWorkspace({
+  items,
+  options,
+  canManage,
+  canEdit = canManage,
+  canDelete = canManage,
+  today,
+}: {
+  items: CampaignProgress[];
+  options: CampaignFormOptions;
+  canManage: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  today: string;
+}) {
   const router = useRouter();
   const [filter, setFilter] = React.useState<Filter>("todas");
   const [form, setForm] = React.useState<FormState | null>(null);
@@ -265,7 +287,7 @@ export function CampaignsWorkspace({ items, options, canManage, today }: { items
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {visible.map((item) => (
-            <CampaignCard key={item.campaign.id} item={item} canManage={canManage} onEdit={() => setForm(toForm(item.campaign, today))} onDelete={() => setToDelete(item.campaign)} />
+            <CampaignCard key={item.campaign.id} item={item} canEdit={canEdit} canDelete={canDelete} onEdit={() => setForm(toForm(item.campaign, today))} onDelete={() => setToDelete(item.campaign)} />
           ))}
         </div>
       )}

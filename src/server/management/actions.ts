@@ -3,30 +3,37 @@
  * Ações do Dashboard do Gestor. Redistribuir tarefas reaproveita o serviço de tarefas
  * (assignTaskInternal): cada reatribuição grava o evento task.assigned (auditoria e timeline) e o handler
  * de notificações avisa o novo responsável; o responsável anterior recebe um resumo.
+ *
+ * Padrão: requirePermission("gestao.dashboard.atribuir") → zod → origem e destino dentro do escopo do dashboard
+ * (canManageMember → PermissionError) → serviço → revalidatePath; falhas pelo tratamento único (failAction).
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getManyByIds, list } from "@/server/db";
-import { requireUser } from "@/server/auth/session";
+import { BusinessError, PermissionError, failAction, requirePermission } from "@/server/auth/session";
 import { assignTaskInternal } from "@/server/tasks/service";
 import { notify } from "@/server/notifications";
 import { isOpenStatus } from "@/components/tasks/task-model";
-import { COLLECTIONS, type ActionResult, type Task, type User } from "@/domain/types";
+import { COLLECTIONS, type ActionResult, type Department, type Task, type User } from "@/domain/types";
 import { canManageMember } from "./queries";
 import { redistributeTasksSchema, zodMessage } from "./schemas";
 
-export async function redistributeTasks(input: unknown): Promise<ActionResult<{ moved: number; skipped: number }>> {
-  const user = await requireUser();
-  try {
-    if (!user.isManager) return { ok: false, error: "Apenas gestores podem redistribuir tarefas." };
-    const { fromUserId, toUserId, taskIds } = redistributeTasksSchema.parse(input);
-    if (fromUserId === toUserId) return { ok: false, error: "Escolha um responsável diferente do atual." };
+/** Mensagens de acesso negado (a chave vem do catálogo; a mensagem mantém o texto de antes). */
+const REDISTRIBUTE_DENIED = "Apenas gestores podem redistribuir tarefas.";
 
-    const users = (await list<User>(COLLECTIONS.users)).filter((u) => u.active !== false);
-    if (!canManageMember(user, fromUserId, users)) return { ok: false, error: "Este colaborador não faz parte da sua equipe." };
-    if (toUserId !== user.id && !canManageMember(user, toUserId, users)) return { ok: false, error: "O novo responsável precisa ser da sua equipe." };
+export async function redistributeTasks(input: unknown): Promise<ActionResult<{ moved: number; skipped: number }>> {
+  try {
+    const user = await requirePermission("gestao.dashboard.atribuir", REDISTRIBUTE_DENIED);
+    const { fromUserId, toUserId, taskIds } = redistributeTasksSchema.parse(input);
+    if (fromUserId === toUserId) throw new BusinessError("Escolha um responsável diferente do atual.");
+
+    const [allUsers, departments] = await Promise.all([list<User>(COLLECTIONS.users), list<Department>(COLLECTIONS.departments)]);
+    const users = allUsers.filter((u) => u.active !== false);
+    const org = { users, departments };
+    if (!(await canManageMember(user, fromUserId, org))) throw new PermissionError("Este colaborador não faz parte da sua equipe.");
+    if (toUserId !== user.id && !(await canManageMember(user, toUserId, org))) throw new PermissionError("O novo responsável precisa ser da sua equipe.");
     const target = users.find((u) => u.id === toUserId);
-    if (!target) return { ok: false, error: "Novo responsável não encontrado ou inativo." };
+    if (!target) throw new BusinessError("Novo responsável não encontrado ou inativo.");
 
     const tasks = await getManyByIds<Task>(COLLECTIONS.tasks, taskIds);
     const actor = { id: user.id, name: user.name };
@@ -63,6 +70,6 @@ export async function redistributeTasks(input: unknown): Promise<ActionResult<{ 
     return { ok: true, data: { moved: moved.length, skipped } };
   } catch (error) {
     if (error instanceof z.ZodError) return { ok: false, error: zodMessage(error) };
-    return { ok: false, error: error instanceof Error ? error.message : "Não foi possível redistribuir as tarefas." };
+    return failAction(error, "Não foi possível redistribuir as tarefas.", "gestao");
   }
 }

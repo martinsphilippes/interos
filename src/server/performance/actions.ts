@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
+import { BusinessError, PermissionError, failAction, requirePermission } from "@/server/auth/session";
 import { create, getById, getManyByIds, list, remove, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { notify } from "@/server/notifications";
@@ -10,9 +10,10 @@ import { COLLECTIONS, type ActionResult, type BonusRule, type CurrentUser, type 
 import { DEPARTMENT_LABELS, type EventType } from "@/domain/constants";
 import { formatCurrency } from "@/lib/format";
 import { monthPeriod } from "@/server/kpis/period";
-import { BonusError, decideBonusBlock, describeClosing, registerBonusBlock as registerBlock, storeBonusResults } from "./bonus";
+import { decideBonusBlock, describeClosing, registerBonusBlock as registerBlock, storeBonusResults } from "./bonus";
 import { checkMonthAchievements } from "./gamification";
-import { getPerformanceAccess } from "./queries";
+import { campaignInScope, getPerformanceAccess } from "./queries";
+import { resolveDataScope } from "@/server/auth/scope";
 import {
   bonusBlockDecisionSchema,
   bonusBlockInputSchema,
@@ -28,29 +29,50 @@ import {
 
 /**
  * Server Actions de Performance: bloqueios de bônus (registrar/confirmar/revogar), fechamento da
- * competência, regras de bônus versionadas (admin) e campanhas de gamificação (gestor/diretoria/admin).
+ * competência, regras de bônus versionadas e campanhas de gamificação.
  *
- * Padrão: requireUser() → permissão → zod → mutação → emitEvent → revalidatePath.
+ * Padrão: requirePermission(chave do catálogo src/domain/permissions/performance.ts) → zod → escopo do registro
+ * (colaborador dentro do escopo da tela Bônus: assertCanManage → PermissionError) → mutação → emitEvent →
+ * revalidatePath. Falhas pelo tratamento único (failAction); validação com a primeira mensagem do zod.
  */
 
-class ActionError extends Error {}
+/** Erro de regra de negócio com mensagem para o usuário. */
+class ActionError extends BusinessError {}
 
 const actorOf = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
 
+/** Mensagens de acesso negado (a chave vem do catálogo; a mensagem mantém o texto de antes). */
+const BLOCK_DENIED = "Apenas gestores, diretoria e administradores registram bloqueios";
+const DECIDE_DENIED = "Apenas gestores, diretoria e administradores decidem bloqueios";
+const CLOSE_DENIED = "Apenas gestores, diretoria e administradores fecham a competência";
+const RULE_DENIED = "Apenas administradores alteram regras de bônus";
+const CAMPAIGN_DENIED = "Apenas gestores, diretoria e administradores gerenciam campanhas";
+
 function fail(error: unknown, fallback: string): { ok: false; error: string } {
   if (error instanceof z.ZodError) return { ok: false, error: zodMessage(error) };
-  if (error instanceof ActionError || error instanceof BonusError) return { ok: false, error: error.message };
-  console.error(`[performance] ${fallback}`, error);
-  return { ok: false, error: fallback };
+  return failAction(error, fallback, "performance");
 }
 
 function revalidatePerformance(): void {
   revalidatePath("/performance", "layout");
 }
 
+/** Colaborador fora do escopo de gestão da tela Bônus → acesso negado (A29). */
 async function assertCanManage(user: CurrentUser, targetUserId: string): Promise<void> {
-  const access = await getPerformanceAccess(user);
-  if (!access.manageableIds.includes(targetUserId)) throw new ActionError("Você não gerencia este colaborador");
+  const access = await getPerformanceAccess(user, "performance.bonus");
+  if (!access.manageableIds.includes(targetUserId)) throw new PermissionError("Você não gerencia este colaborador");
+}
+
+/** Campanha fora do escopo da tela Campanhas (padrão da gestão: empresa) → acesso negado (A29). */
+async function assertCampaignInScope(user: CurrentUser, campaign: GamificationCampaign): Promise<void> {
+  const scope = await resolveDataScope(user, "performance.campanhas");
+  if (!campaignInScope(campaign, user, scope.kind)) throw new PermissionError();
+}
+
+/** Campanha com id = edição; sem id = criação (a chave depende do argumento, antes da validação). */
+function campaignIdOf(input: unknown): string | undefined {
+  const id = input && typeof input === "object" ? (input as { id?: unknown }).id : undefined;
+  return typeof id === "string" && id.trim() ? id.trim() : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,8 +81,7 @@ async function assertCanManage(user: CurrentUser, targetUserId: string): Promise
 
 export async function registerBonusBlock(input: BonusBlockInput): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
-    if (!user.isManager) throw new ActionError("Apenas gestores, diretoria e administradores registram bloqueios");
+    const user = await requirePermission("performance.bonus.equipe.bloquear", BLOCK_DENIED);
     const data = bonusBlockInputSchema.parse(input);
     await assertCanManage(user, data.userId);
     const block = await registerBlock(data, actorOf(user));
@@ -71,9 +92,7 @@ export async function registerBonusBlock(input: BonusBlockInput): Promise<Action
   }
 }
 
-async function decide(input: { id: string; note?: string }, decision: "confirmado" | "revogado"): Promise<ActionResult> {
-  const user = await requireUser();
-  if (!user.isManager) throw new ActionError("Apenas gestores, diretoria e administradores decidem bloqueios");
+async function decide(user: CurrentUser, input: { id: string; note?: string }, decision: "confirmado" | "revogado"): Promise<ActionResult> {
   const data = bonusBlockDecisionSchema.parse(input);
   const block = await getById<{ id: string; organizationId: string; createdAt: string; updatedAt: string; userId: string }>(COLLECTIONS.bonusBlocks, data.id);
   if (!block) throw new ActionError("Bloqueio não encontrado");
@@ -86,7 +105,8 @@ async function decide(input: { id: string; note?: string }, decision: "confirmad
 /** Confirma o bloqueio: o bônus do mês do colaborador fica zerado (emite bonus.blocked e notifica). */
 export async function confirmBonusBlock(input: { id: string; note?: string }): Promise<ActionResult> {
   try {
-    return await decide(input, "confirmado");
+    const user = await requirePermission("performance.bonus.equipe.aprovar", DECIDE_DENIED);
+    return await decide(user, input, "confirmado");
   } catch (error) {
     return fail(error, "Não foi possível confirmar o bloqueio");
   }
@@ -95,7 +115,8 @@ export async function confirmBonusBlock(input: { id: string; note?: string }): P
 /** Revoga o bloqueio (aberto ou confirmado): o bônus volta a ser calculado normalmente. */
 export async function revokeBonusBlock(input: { id: string; note?: string }): Promise<ActionResult> {
   try {
-    return await decide(input, "revogado");
+    const user = await requirePermission("performance.bonus.equipe.cancelar", DECIDE_DENIED);
+    return await decide(user, input, "revogado");
   } catch (error) {
     return fail(error, "Não foi possível revogar o bloqueio");
   }
@@ -111,11 +132,12 @@ export async function revokeBonusBlock(input: { id: string; note?: string }): Pr
  */
 export async function closeBonusPeriod(input: { period: string }): Promise<ActionResult<{ written: number; blocked: number; total: number }>> {
   try {
-    const user = await requireUser();
-    if (!user.isManager) throw new ActionError("Apenas gestores, diretoria e administradores fecham a competência");
+    const user = await requirePermission("performance.bonus.equipe.concluir", CLOSE_DENIED);
     const data = closePeriodSchema.parse(input);
-    const access = await getPerformanceAccess(user);
-    const result = await storeBonusResults(monthPeriod(data.period), user.isDirector ? undefined : access.manageableIds);
+    // Escopo "empresa" (padrão: admin/diretoria) fecha todos; os demais, quem gerenciam (padrão do gestor).
+    const access = await getPerformanceAccess(user, "performance.bonus");
+    const companyWide = access.scopeKind === "empresa" || access.scopeKind === "unidades";
+    const result = await storeBonusResults(monthPeriod(data.period), companyWide ? undefined : access.manageableIds);
     if (result.written === 0) throw new ActionError("Nenhum colaborador com regra de bônus vigente para fechar");
 
     const event = await emitEvent({
@@ -124,7 +146,7 @@ export async function closeBonusPeriod(input: { period: string }): Promise<Actio
       entity: { type: "bonus_period", id: data.period },
       title: `Competência ${data.period} de bônus fechada`,
       description: describeClosing(result),
-      department: user.isDirector ? undefined : user.departmentId,
+      department: companyWide ? undefined : user.departmentId,
       payload: { kind: "fechamento", period: data.period, written: result.written, blocked: result.blocked, total: result.total, userIds: result.results.map((r) => r.userId) },
       timeline: false,
     });
@@ -160,8 +182,7 @@ export async function closeBonusPeriod(input: { period: string }): Promise<Actio
  */
 export async function saveBonusRule(input: BonusRuleInput): Promise<ActionResult<{ id: string; version: number }>> {
   try {
-    const user = await requireUser();
-    if (!user.isAdmin) throw new ActionError("Apenas administradores alteram regras de bônus");
+    const user = await requirePermission("performance.bonus.regras.editar", RULE_DENIED);
     const data = bonusRuleInputSchema.parse(input);
     const existing = await list<BonusRule>(COLLECTIONS.bonusRules, { where: [["department", "==", data.department]] });
     const version = existing.reduce((max, r) => Math.max(max, r.version ?? 0), 0) + 1;
@@ -214,8 +235,9 @@ const CAMPAIGN_EVENT: EventType = "campaign.progress";
 /** Cria ou atualiza uma campanha/desafio (gestor, diretoria, admin). */
 export async function upsertCampaign(input: CampaignInput): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
-    if (!user.isManager) throw new ActionError("Apenas gestores, diretoria e administradores gerenciam campanhas");
+    const user = campaignIdOf(input)
+      ? await requirePermission("performance.campanhas.editar", CAMPAIGN_DENIED)
+      : await requirePermission("performance.campanhas.criar", CAMPAIGN_DENIED);
     const data = campaignInputSchema.parse(input);
     if (data.participantIds.length > 0) {
       const found = await getManyByIds<User>(COLLECTIONS.users, data.participantIds);
@@ -239,6 +261,7 @@ export async function upsertCampaign(input: CampaignInput): Promise<ActionResult
     if (id) {
       const current = await getById<GamificationCampaign>(COLLECTIONS.gamificationCampaigns, id);
       if (!current) throw new ActionError("Campanha não encontrada");
+      await assertCampaignInScope(user, current);
       await update<GamificationCampaign>(COLLECTIONS.gamificationCampaigns, id, { ...fields, ownerId: current.ownerId });
     } else {
       id = (await create<GamificationCampaign>(COLLECTIONS.gamificationCampaigns, { ...fields, createdBy: user.id })).id;
@@ -261,11 +284,11 @@ export async function upsertCampaign(input: CampaignInput): Promise<ActionResult
 
 export async function deleteCampaign(input: { id: string }): Promise<ActionResult> {
   try {
-    const user = await requireUser();
-    if (!user.isManager) throw new ActionError("Apenas gestores, diretoria e administradores gerenciam campanhas");
+    const user = await requirePermission("performance.campanhas.excluir", CAMPAIGN_DENIED);
     const data = campaignIdSchema.parse(input);
     const current = await getById<GamificationCampaign>(COLLECTIONS.gamificationCampaigns, data.id);
     if (!current) throw new ActionError("Campanha não encontrada");
+    await assertCampaignInScope(user, current);
     await remove(COLLECTIONS.gamificationCampaigns, data.id);
     await emitEvent({
       type: CAMPAIGN_EVENT,

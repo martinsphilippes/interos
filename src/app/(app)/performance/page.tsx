@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChevronRight, ClipboardCheck, Gauge, ListChecks, ShieldCheck, Star, Target, TrendingUp } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, canSeeHref, requireScreen } from "@/server/auth/session";
+import { resolveDataScope } from "@/server/auth/scope";
 import { getMyPerformance, getPerformanceAccess, resolveSubjectId } from "@/server/performance/queries";
 import { getUserCommissionsDigest } from "@/server/commissions/queries";
 import { parsePeriod, periodOptions } from "@/server/kpis/queries";
@@ -61,18 +62,27 @@ function statusTone(attainment: number | null): Tone {
  * Meu Desempenho: meta geral, produtividade, qualidade, SLA e tarefas do período com variação; evolução mensal e
  * Índice de desempenho (Eficiência, Entrega, Qualidade); minhas metas; indicadores do mês por área; comparativo;
  * indicadores da função com drill-down; blocos da função (vendas: comissão/simulador; suporte/implantação/
- * financeiro: bônus); ranking e tarefas. Gestor/diretoria/admin escolhem o colaborador (?usuario=).
+ * financeiro: bônus); ranking e tarefas. Quem tem escopo além de "meus" (padrão: gestor/diretoria/admin) escolhe o
+ * colaborador (?usuario=, dentro do escopo). Seções e botões pelo catálogo: "Minhas comissões"
+ * (performance.meu-desempenho.comissoes.ver) não é lida sem a chave; configurar o índice exige
+ * performance.meu-desempenho.configurar; links para outras telas só aparecem para quem as vê.
  */
 export default async function MeuDesempenhoPage({ searchParams }: { searchParams: SearchParams }) {
-  const [viewer, query] = await Promise.all([requireUser(), searchParams]);
+  const [viewer, query] = await Promise.all([requireScreen("performance.meu-desempenho"), searchParams]);
   const period = parsePeriod(query);
-  const access = await getPerformanceAccess(viewer);
+  const [access, indicatorScope] = await Promise.all([getPerformanceAccess(viewer), resolveDataScope(viewer, "performance.indicadores")]);
   const subjectId = resolveSubjectId(viewer, access, one(query.usuario));
-  const [data, indexConfig] = await Promise.all([getMyPerformance(subjectId, period), viewer.isDirector ? getPerformanceIndexConfig() : Promise.resolve(null)]);
+  const canConfigureIndex = can(viewer, "performance.meu-desempenho.configurar");
+  const [data, indexConfig] = await Promise.all([getMyPerformance(subjectId, period), canConfigureIndex ? getPerformanceIndexConfig() : Promise.resolve(null)]);
   const self = subjectId === viewer.id;
-  // "Minhas comissões" (D17): só para quem tem bloco de vendas; o escopo D15 é aplicado na query (vendedor só as
-  // próprias; gestor, a equipe; financeiro, todas). O link para a memória exige acesso à tela de Comissões.
-  const commissions = data?.sales ? await getUserCommissionsDigest(viewer, subjectId, { canOpenFinance: canAccessModule(viewer, "financeiro") || canAccessModule(viewer, "vendas") }) : null;
+  // "Minhas comissões" (D17): só para quem tem bloco de vendas e a seção; o escopo D15 é aplicado na query (vendedor
+  // só as próprias; gestor, a equipe; financeiro, todas). O link para a memória exige acesso à tela de Comissões.
+  const commissions =
+    data?.sales && can(viewer, "performance.meu-desempenho.comissoes.ver") ? await getUserCommissionsDigest(viewer, subjectId, { canOpenFinance: canSeeHref(viewer, "/financeiro/comissoes") }) : null;
+  // Links para outras telas: só quando o visitante as vê (a página de destino revalida).
+  const visible = (href: string) => (canSeeHref(viewer, href) ? href : undefined);
+  // Indicador de área (escopo departamento): só para quem vê indicadores além do próprio (padrão: gestores).
+  const seesAreaIndicators = indicatorScope.kind === "empresa" && can(viewer, "performance.indicadores.ver");
 
   if (!data) {
     return (
@@ -165,7 +175,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
             tone={toneForPercent(data.sla.rate === null ? null : data.sla.rate * 100)}
             delta={ppDelta(data.sla.rate, data.sla.previousRate, prevLabel)}
             hint={data.sla.evaluated > 0 ? `${data.sla.met}/${data.sla.evaluated} no prazo` : "Nenhum SLA avaliado"}
-            href={`/sla?${`periodo=${encodeURIComponent(period.key)}&responsavel=${user.id}`}`}
+            href={visible(`/sla?${`periodo=${encodeURIComponent(period.key)}&responsavel=${user.id}`}`)}
             compact
           />
           <StatCard
@@ -183,7 +193,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
               direction: tasksDelta > 0 ? "up" : tasksDelta < 0 ? "down" : "flat",
               label: prevLabel,
             }}
-            href={self ? "/tarefas" : `/gestao/equipe/${user.id}`}
+            href={visible(self ? "/tarefas" : `/gestao/equipe/${user.id}`)}
             compact
           />
         </KpiStrip>
@@ -217,7 +227,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-3">
             <CardTitle>Minhas metas</CardTitle>
-            <CardLink href={`/performance/metas?periodo=${encodeURIComponent(period.key)}`}>Ver metas</CardLink>
+            {canSeeHref(viewer, "/performance/metas") ? <CardLink href={`/performance/metas?periodo=${encodeURIComponent(period.key)}`}>Ver metas</CardLink> : null}
           </CardHeader>
           <CardContent className="pt-0 pb-2">
             <MyGoalsTable items={scorecard.items} />
@@ -238,7 +248,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
                   value: a.attainment === null ? 0 : a.attainment * 100,
                   display: formatPercent(a.attainment),
                   tone: a.status === "atingida" ? "success" : a.status === "atencao" ? "warning" : a.status === "critico" ? "danger" : "neutral",
-                  href: viewer.isManager ? a.href : undefined,
+                  href: seesAreaIndicators ? a.href : undefined,
                 }))}
               />
             </CardContent>
@@ -259,7 +269,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
 
       {data.bonus ? (
         <section className="mb-6">
-          <BonusSummaryCard c={data.bonus} href={`/performance/bonus?periodo=${data.month.key}${self ? "" : `&usuario=${user.id}`}`} />
+          <BonusSummaryCard c={data.bonus} href={visible(`/performance/bonus?periodo=${data.month.key}${self ? "" : `&usuario=${user.id}`}`)} />
         </section>
       ) : null}
 
@@ -291,7 +301,7 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-        {data.gamification ? <GamificationCard data={data.gamification} periodLabel={period.label} rankingHref={`/performance/ranking?${periodQuery}`} /> : null}
+        {data.gamification ? <GamificationCard data={data.gamification} periodLabel={period.label} rankingHref={visible(`/performance/ranking?${periodQuery}`)} /> : null}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">

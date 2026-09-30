@@ -18,8 +18,8 @@ import { formatCompetence } from "@/lib/format";
 import { ORIGIN_LABELS } from "@/components/tasks/task-model";
 import { REPORT_DEFINITIONS, type ReportDefinition, type ReportFilters, type ReportKey, type ReportValue } from "./definitions";
 import { COMMISSION_STATUS_LABELS, PAYABLE_ORIGIN_LABELS, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
-import { canViewAllCommissions } from "@/server/commissions/permissions";
 import { can } from "@/server/auth/permissions";
+import { resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import type { PermissionKey } from "@/domain/permissions";
 import { resolveCommissionScope } from "@/server/commissions/queries";
 
@@ -48,6 +48,8 @@ export interface ReportData {
   periodLabel: string;
   generatedAt: string;
   notes: string[];
+  /** Filtros travados pelo escopo do usuário (a interface mostra desabilitados). */
+  locked: (keyof ReportFilters)[];
 }
 
 export class ReportAccessError extends Error {}
@@ -93,12 +95,42 @@ export function listReportsForUser(user: ReportUser): ReportDefinition[] {
   return Object.values(REPORT_DEFINITIONS).filter((d) => canAccessReport(user, d.key));
 }
 
-/** Restrições para quem não é gestor: Tarefas só do próprio departamento; Comissões só as próprias (exceto equipe financeira). */
-function forcedFilters(user: Pick<CurrentUser, "id" | "isManager" | "departmentId" | "role" | "isAdmin" | "isDirector">, key: ReportKey): ReportFilters {
-  if (user.isManager) return {};
-  if (key === "tarefas") return { departamento: user.departmentId };
-  if (key === "comissoes" && !canViewAllCommissions(user)) return { colaborador: user.id };
-  return {};
+/** Chave de exportação do tipo (gestao.relatorios.<tipo>.exportar), exigida pela API além de gestao.relatorios.exportar. */
+export function reportExportKey(key: ReportKey): PermissionKey {
+  return `gestao.relatorios.${key.replace(/_/g, "-")}.exportar` as PermissionKey;
+}
+
+/**
+ * Escopos que recortam o CONTEÚDO dos relatórios (A7), lidos uma vez por relatório:
+ * - `report`: escopo da tela Relatórios (padrão "empresa" para todos = sem recorte); fora de "empresa", as linhas
+ *   entram só quando o responsável (ou o departamento do registro) está no escopo;
+ * - `tasks`: escopo de Tarefas (operacao.tarefas) — padrão: gestores = empresa; demais = departamento (o relatório
+ *   de Tarefas trava o filtro no próprio departamento, como antes);
+ * - Comissões: resolveCommissionScope (escopo de financeiro.comissoes, D15).
+ */
+interface ReportScopes {
+  report: DataScope;
+  tasks: DataScope | null;
+}
+
+function restricted(scope: DataScope): boolean {
+  return Boolean(scope.userIds || scope.departmentKeys);
+}
+
+/** Registro dentro do escopo do relatório (qualquer dono no escopo, ou o departamento do registro). */
+function allowedBy(scope: DataScope, owners: readonly (string | undefined | null)[], departmentId?: string | null): boolean {
+  return !restricted(scope) || scopeAllows(scope, owners, departmentId);
+}
+
+/** Pessoas que o escopo do relatório permite filtrar (null = todas). */
+export async function reportAllowedUserIds(user: CurrentUser): Promise<ReadonlySet<string> | null> {
+  return (await resolveDataScope(user, "gestao.relatorios")).userIds ?? null;
+}
+
+/** Restrições forçadas pelo escopo: Tarefas só do próprio departamento (escopo "departamento" de Tarefas). */
+function forcedFilters(user: Pick<CurrentUser, "departmentId">, key: ReportKey, scopes: ReportScopes): { filters: ReportFilters; locked: (keyof ReportFilters)[] } {
+  if (key === "tarefas" && scopes.tasks?.kind === "departamento") return { filters: { departamento: user.departmentId }, locked: ["departamento"] };
+  return { filters: {}, locked: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +447,8 @@ interface OperationalInput {
   filters: ReportFilters;
   bundle: DataBundle;
   products: Map<string, Product>;
+  /** Registro no escopo do usuário (donos do registro e, quando houver, o departamento). */
+  inScope: (owners: readonly (string | undefined | null)[], departmentId?: string | null) => boolean;
 }
 
 function userName(bundle: DataBundle, id: string | undefined): string | null {
@@ -427,9 +461,10 @@ function clientName(bundle: DataBundle, id: string | undefined): string | null {
 
 const OPEN_TASK = new Set(["aberta", "em_andamento", "aguardando"]);
 
-function buildTasks({ period, filters, bundle }: OperationalInput): ReportRow[] {
+function buildTasks({ period, filters, bundle, inScope }: OperationalInput): ReportRow[] {
   const today = localDayKey();
   const items = bundle.tasks.filter((t) => {
+    if (!inScope([t.assigneeId], t.departmentId)) return false;
     if (!(inPeriod(t.createdAt, period) || inPeriod(t.dueAt, period) || inPeriod(t.completedAt, period))) return false;
     if (filters.departamento && t.departmentId !== filters.departamento) return false;
     if (filters.colaborador && t.assigneeId !== filters.colaborador) return false;
@@ -464,9 +499,10 @@ function buildTasks({ period, filters, bundle }: OperationalInput): ReportRow[] 
 const STAGE_LABELS: Record<string, string> = { qualificacao: "Qualificação", diagnostico: "Diagnóstico", proposta: "Proposta", negociacao: "Negociação", fechamento: "Fechamento", ganho: "Ganho", perdido: "Perdido" };
 const KIND_LABELS: Record<string, string> = { nova_venda: "Nova venda", upsell: "Upsell", cross_sell: "Cross-sell", renovacao: "Renovação" };
 
-function buildOpportunities({ period, filters, bundle }: OperationalInput): ReportRow[] {
+function buildOpportunities({ period, filters, bundle, inScope }: OperationalInput): ReportRow[] {
   return bundle.opportunities
     .filter((o) => {
+      if (!inScope([o.ownerId])) return false;
       if (!(inPeriod(o.createdAt, period) || inPeriod(o.wonAt, period) || inPeriod(o.lostAt, period))) return false;
       if (filters.colaborador && o.ownerId !== filters.colaborador) return false;
       if (filters.cliente && o.clientId !== filters.cliente) return false;
@@ -499,9 +535,10 @@ function buildOpportunities({ period, filters, bundle }: OperationalInput): Repo
 const CONTRACT_STATUS_LABELS: Record<string, string> = Object.fromEntries((REPORT_DEFINITIONS.contratos.statusOptions ?? []).map((o) => [o.value, o.label]));
 const FINANCIAL_LABELS: Record<string, string> = { pendente: "Pendente", aprovado: "Aprovado", pendencia: "Pendência" };
 
-function buildContracts({ period, filters, bundle }: OperationalInput): ReportRow[] {
+function buildContracts({ period, filters, bundle, inScope }: OperationalInput): ReportRow[] {
   return bundle.contracts
     .filter((c) => {
+      if (!inScope([c.ownerId])) return false;
       if (!(inPeriod(c.createdAt, period) || inPeriod(c.signedAt, period) || inPeriod(c.releasedAt, period))) return false;
       if (filters.colaborador && c.ownerId !== filters.colaborador) return false;
       if (filters.cliente && c.clientId !== filters.cliente) return false;
@@ -531,10 +568,11 @@ const TICKET_STATUS_LABELS: Record<string, string> = Object.fromEntries((REPORT_
 const TICKET_PRIORITY_LABELS: Record<string, string> = { critico: "Crítico", alto: "Alto", medio: "Médio", baixo: "Baixo" };
 const OPEN_TICKET = new Set(["aberto", "em_atendimento", "aguardando_cliente", "reaberto"]);
 
-function buildTickets({ period, filters, bundle, products }: OperationalInput): ReportRow[] {
+function buildTickets({ period, filters, bundle, products, inScope }: OperationalInput): ReportRow[] {
   const now = bundle.now;
   return bundle.tickets
     .filter((t) => {
+      if (!inScope([t.assigneeId])) return false;
       if (!(inPeriod(t.openedAt, period) || inPeriod(t.resolvedAt, period))) return false;
       if (filters.colaborador && t.assigneeId !== filters.colaborador) return false;
       if (filters.cliente && t.clientId !== filters.cliente) return false;
@@ -575,11 +613,12 @@ function buildTickets({ period, filters, bundle, products }: OperationalInput): 
 
 const HEALTH_LABELS: Record<string, string> = { saudavel: "Saudável", atencao: "Atenção", risco: "Risco" };
 
-async function buildClients({ filters, bundle }: OperationalInput): Promise<ReportRow[]> {
+async function buildClients({ filters, bundle, inScope }: OperationalInput): Promise<ReportRow[]> {
   const clientProducts = filters.produto ? await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["productId", "==", filters.produto]] }) : [];
   const withProduct = new Set(clientProducts.filter((p) => p.status !== "cancelado").map((p) => p.clientId));
   return bundle.clients
     .filter((c: Client) => {
+      if (!inScope([c.ownerCsId, c.ownerSalesId, c.ownerImplementationId])) return false;
       if (filters.status && c.status !== filters.status) return false;
       if (filters.colaborador && ![c.ownerCsId, c.ownerSalesId, c.ownerImplementationId].includes(filters.colaborador)) return false;
       if (filters.produto && !withProduct.has(c.id)) return false;
@@ -640,13 +679,13 @@ const PAYABLE_STATUS: Record<string, string> = PAYABLE_STATUS_LABELS;
 const PAYABLE_ORIGIN: Record<string, string> = PAYABLE_ORIGIN_LABELS;
 
 /** Contas a pagar (D28): títulos das competências do período, com situação derivada "vencido" para os em aberto. */
-async function buildPayables(months: Period[], filters: ReportFilters): Promise<ReportRow[]> {
+async function buildPayables(months: Period[], filters: ReportFilters, inScope: OperationalInput["inScope"]): Promise<ReportRow[]> {
   const keys = new Set(months.map((m) => m.key));
   const today = localDayKey();
   const payables = await list<Payable>(COLLECTIONS.payables);
   const overdue = (p: Payable) => (p.status === "previsto" || p.status === "aprovado" || p.status === "a_pagar") && p.dueDate.slice(0, 10) < today;
   return payables
-    .filter((p) => keys.has(p.competence))
+    .filter((p) => keys.has(p.competence) && inScope([p.creditorId, p.createdBy]))
     .filter((p) => (filters.status === "vencido" ? overdue(p) : !filters.status || p.status === filters.status))
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.code ?? a.id).localeCompare(b.code ?? b.id))
     .map((p) => ({
@@ -728,9 +767,38 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
   const dayPeriod = def.filters.includes("periodo_data") ? dayRange(rawFilters) : null;
   const refPeriod = range ? range.months[range.months.length - 1] : (dayPeriod ?? monthPeriod(currentMonthKey()));
 
-  const [bundle, productList] = await Promise.all([loadDataBundle(refPeriod), list<Product>(COLLECTIONS.products)]);
+  const [bundle, productList, reportScope, tasksScope, commissionScope] = await Promise.all([
+    loadDataBundle(refPeriod),
+    list<Product>(COLLECTIONS.products),
+    resolveDataScope(user, "gestao.relatorios"),
+    key === "tarefas" ? resolveDataScope(user, "operacao.tarefas") : Promise.resolve(null),
+    key === "comissoes" ? resolveCommissionScope(user) : Promise.resolve(null),
+  ]);
   const products = new Map(productList.map((p) => [p.id, p]));
-  const filters = { ...sanitize(def, rawFilters, bundle.userById), ...forcedFilters(user, key) };
+  const forced = forcedFilters(user, key, { report: reportScope, tasks: tasksScope });
+  const filters = { ...sanitize(def, rawFilters, bundle.userById), ...forced.filters };
+  const locked = [...forced.locked];
+  // Comissões: quem só vê as próprias tem o colaborador travado (D15, como antes).
+  if (commissionScope?.kind === "own") {
+    filters.colaborador = user.id;
+    locked.push("colaborador");
+  }
+  const notes: string[] = [];
+  // Escopo da tela Relatórios fora de "empresa": colaborador fora do escopo é descartado; nos departamentais sem
+  // colaborador, o recorte vira o próprio usuário (o agregado do departamento incluiria pessoas fora do escopo).
+  const reportRestricted = restricted(reportScope);
+  if (reportRestricted && filters.colaborador && !scopeAllows(reportScope, [filters.colaborador])) delete filters.colaborador;
+  if (reportRestricted && def.group === "departamental" && def.key !== "diretoria" && !filters.colaborador) {
+    const ownDepartment = reportScope.kind === "departamento" && def.department && reportScope.departmentKeys?.has(def.department);
+    if (!ownDepartment && def.filters.includes("colaborador")) {
+      filters.colaborador = user.id;
+      locked.push("colaborador");
+      notes.push("Seu escopo de relatórios mostra os seus próprios números.");
+    }
+  }
+  // Tarefas também respeitam o escopo de Tarefas (padrão: departamento + as próprias; com o filtro travado acima, o
+  // resultado é o de antes: as tarefas do próprio departamento).
+  const inScope: OperationalInput["inScope"] = (owners, departmentId) => allowedBy(reportScope, owners, departmentId) && (!tasksScope || allowedBy(tasksScope, owners, departmentId));
 
   let periodKey: string;
   let periodLabel: string;
@@ -757,8 +825,7 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
     range && def.group === "departamental" && def.department
       ? { months: range.months, scope: collaborator ? "usuario" : "departamento", scopeId: collaborator ?? def.department, userId: collaborator }
       : null;
-  const op: OperationalInput = { period: dayPeriod ?? refPeriod, filters, bundle, products };
-  const notes: string[] = [];
+  const op: OperationalInput = { period: dayPeriod ?? refPeriod, filters, bundle, products, inScope };
 
   let rows: ReportRow[];
   switch (key) {
@@ -784,7 +851,9 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
       rows = await buildSupport(departmental!);
       break;
     case "diretoria":
-      rows = await buildBoard(range!.months);
+      // Consolidado da empresa: fora do escopo "empresa" não há linhas (o CEO/CTO restringiu o escopo).
+      rows = reportRestricted ? [] : await buildBoard(range!.months);
+      if (reportRestricted) notes.push("O relatório da Diretoria é consolidado da empresa e não está no seu escopo de relatórios.");
       break;
     case "tarefas":
       rows = buildTasks(op);
@@ -803,13 +872,17 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
       break;
     case "comissoes": {
       // D15: o gestor só vê a equipe (antes qualquer gestor via todas); equipe financeira/admin/diretoria, todas.
-      const scope = await resolveCommissionScope(user);
-      rows = await buildCommissions(range!.months, filters, bundle, products, scope.kind === "all" ? null : scope.userIds);
+      // allowedUserIds = escopo de Comissões ∩ escopo da tela Relatórios.
+      const scope = commissionScope!;
+      const byCommission = scope.kind === "all" ? null : scope.userIds;
+      const byReport = reportScope.userIds ? Array.from(reportScope.userIds) : null;
+      const allowed = byCommission && byReport ? byCommission.filter((id) => byReport.includes(id)) : (byCommission ?? byReport);
+      rows = await buildCommissions(range!.months, filters, bundle, products, allowed);
       if (scope.kind === "team") notes.push("Gestor: comissões da sua equipe.");
       break;
     }
     case "contas_a_pagar":
-      rows = await buildPayables(range!.months, filters);
+      rows = await buildPayables(range!.months, filters, inScope);
       notes.push("Situação \"Vencido\" = título em aberto (previsto, aprovado ou a pagar) com vencimento anterior a hoje.");
       break;
   }
@@ -827,6 +900,7 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
     periodLabel,
     generatedAt: new Date().toISOString(),
     notes,
+    locked,
   };
 }
 
@@ -841,11 +915,12 @@ export interface ReportFilterOptions {
   departments: { value: string; label: string }[];
 }
 
-export async function getReportFilterOptions(): Promise<ReportFilterOptions> {
+/** Opções dos filtros; `allowedUserIds` (escopo da tela Relatórios) limita os colaboradores oferecidos. */
+export async function getReportFilterOptions(allowedUserIds?: ReadonlySet<string> | null): Promise<ReportFilterOptions> {
   const [users, clients, products] = await Promise.all([list<User>(COLLECTIONS.users), list<Client>(COLLECTIONS.clients), list<Product>(COLLECTIONS.products)]);
   return {
     users: users
-      .filter((u) => u.active !== false)
+      .filter((u) => u.active !== false && (!allowedUserIds || allowedUserIds.has(u.id)))
       .map((u) => ({ value: u.id, label: u.name, departmentId: u.departmentId }))
       .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
     clients: clients.map((c) => ({ value: c.id, label: c.tradeName })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
