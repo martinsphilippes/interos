@@ -3,7 +3,8 @@
  * 7a885f5). Não importe estas funções no código da aplicação — elas existem só para provar que as regras padrão do
  * catálogo reproduzem o comportamento anterior.
  */
-import { MOBILE_NAV, NAVIGATION, QUICK_ACTIONS, type DepartmentKey, type RoleKey } from "@/domain/constants";
+import type { DepartmentKey, RoleKey } from "@/domain/constants";
+import { LEGACY_MOBILE_NAV as MOBILE_NAV, LEGACY_NAVIGATION as NAVIGATION, LEGACY_QUICK_ACTIONS as QUICK_ACTIONS } from "./legacy-navigation";
 import { REPORT_DEFINITIONS, type ReportKey } from "@/server/reports/definitions";
 
 export interface LegacyUser {
