@@ -28,9 +28,11 @@ import {
   type DomainEvent,
   type Lead,
   type Opportunity,
+  type OpportunityClosing,
   type OpportunityProduct,
   type Proposal,
   type ProposalItem,
+  type SalePaymentMethod,
   type Settings,
   type Task,
   type User,
@@ -40,6 +42,7 @@ import {
 import { CLIENT_STATUS_LABELS, type Priority } from "@/domain/constants";
 import { VISIT_KIND_LABELS, type VisitKind } from "@/domain/sales-extra";
 import { MANUAL, recordCommunication } from "@/server/integrations/communications";
+import { closingPaymentConditionText } from "@/domain/sale-closing";
 import { OPPORTUNITY_STAGE_LABELS, effectiveProposalStatus, netItem, productTotals, proposalTotals } from "@/components/sales/model";
 import { calculateCommissionsForOpportunity, SYSTEM_ACTOR } from "./commissions";
 import { geocode } from "./maps";
@@ -396,12 +399,71 @@ export async function createOpportunityTask(input: { opportunityId: string; titl
 export interface MarkWonData {
   opportunityId: string;
   products: OpportunityProduct[];
-  billingData: { legalName: string; document: string; email: string; paymentCondition: string };
+  /** paymentCondition vazio: gerado a partir do fechamento estruturado. */
+  billingData: { legalName: string; document: string; email: string; paymentCondition?: string };
+  /** Condições do fechamento (opcional no tipo para compatibilidade; a interface exige). */
+  closing?: ClosingData;
+}
+
+export interface ClosingData {
+  paymentMethod: SalePaymentMethod;
+  billingDay: number;
+  /** AAAA-MM-DD */
+  firstDueDate?: string;
+  termMonths: number;
+  recurrence: OpportunityClosing["recurrence"];
+  setupInstallments: number;
+  contactId?: string;
+  newContact?: { name: string; email?: string; phone?: string; role?: string };
+  implementationRequired: boolean;
+  implementationNotes?: string;
+  commercialNotes?: string;
+}
+
+/** Número da venda "VEN-AAAA-NNNN" (contador transacional; parte do maior saleNumber já gravado). */
+export function nextSaleNumber(): Promise<string> {
+  return nextNumber("VEN", { pad: 4, initFrom: { collection: COLLECTIONS.opportunities, field: "saleNumber" } });
+}
+
+/** Resolve o contato responsável do fechamento: existente do cliente ou cadastrado na hora (contact.created). */
+async function resolveClosingContact(client: Client, closing: ClosingData, actor: UserRef): Promise<Contact | null> {
+  if (closing.contactId) {
+    const contact = await getById<Contact>(COLLECTIONS.contacts, closing.contactId);
+    if (!contact || contact.clientId !== client.id) throw new Error("Contato responsável não pertence a este cliente");
+    return contact;
+  }
+  if (!closing.newContact) return null;
+  const existing = await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", client.id]] });
+  const digits = closing.newContact.phone?.replace(/\D/g, "") || undefined;
+  const contact = await create<Contact>(COLLECTIONS.contacts, {
+    clientId: client.id,
+    name: closing.newContact.name,
+    role: closing.newContact.role ?? "Responsável pelo contrato",
+    email: closing.newContact.email,
+    phone: digits,
+    whatsapp: digits,
+    isPrimary: existing.length === 0,
+    isDecisionMaker: true,
+    createdBy: actor.id,
+  });
+  await emitEvent({
+    type: "contact.created",
+    actor,
+    clientId: client.id,
+    entity: { type: "contact", id: contact.id },
+    title: `Contato adicionado: ${contact.name}${contact.role ? ` (${contact.role})` : ""}`,
+    description: ["Cadastrado no fechamento da venda", contact.email].filter(Boolean).join(" · "),
+    department: "vendas",
+    payload: { isPrimary: contact.isPrimary, isDecisionMaker: true, source: "fechamento" },
+  });
+  return contact;
 }
 
 /**
  * Marca como ganha e emite opportunity.won. Os handlers fazem o resto: workflow avança a etapa
  * Vendas; o handler de vendas cria contrato, client_products, tarefa do financeiro e comissões.
+ * Grava o número da venda (VEN-AAAA-NNNN) e, quando informado, o fechamento estruturado (`closing`), que
+ * o contrato herda (forma de pagamento, vencimento, prazo, parcelas da adesão, contato, implantação).
  */
 export async function markOpportunityWon(data: MarkWonData, actor: UserRef): Promise<Opportunity> {
   const opp = await loadOpportunity(data.opportunityId);
@@ -411,16 +473,48 @@ export async function markOpportunityWon(data: MarkWonData, actor: UserRef): Pro
   const totals = productTotals(products);
   if (totals.setupTotal + totals.monthlyTotal + totals.hardwareTotal <= 0) throw new Error("Informe os valores dos produtos (adesão, mensalidade ou hardware)");
   const client = await loadClientOf(opp);
+  if (data.closing?.firstDueDate && data.closing.firstDueDate < dateKey(new Date())) throw new Error("O 1º vencimento não pode estar no passado");
   const now = nowIso();
+
+  // Fechamento estruturado: contato responsável, proposta aceita (base dos itens do contrato) e condições.
+  let closing: OpportunityClosing | undefined;
+  let conditionTotals: { setupTotal: number; monthlyTotal: number } = totals;
+  if (data.closing) {
+    const contact = await resolveClosingContact(client, data.closing, actor);
+    const proposal = opp.proposalId ? await getById<Proposal>(COLLECTIONS.proposals, opp.proposalId) : null;
+    const accepted = proposal?.status === "aceita" && proposal.items.length > 0 ? proposal : null;
+    if (accepted) conditionTotals = proposalTotals(accepted.items);
+    closing = {
+      paymentMethod: data.closing.paymentMethod,
+      billingDay: data.closing.billingDay,
+      firstDueDate: data.closing.firstDueDate ? `${data.closing.firstDueDate}T12:00:00.000Z` : undefined,
+      termMonths: data.closing.termMonths,
+      recurrence: data.closing.recurrence,
+      setupInstallments: data.closing.setupInstallments,
+      contactId: contact?.id,
+      contactName: contact?.name,
+      implementationRequired: data.closing.implementationRequired,
+      implementationNotes: data.closing.implementationNotes,
+      commercialNotes: data.closing.commercialNotes,
+      proposalId: accepted?.id,
+      closedAt: now,
+      closedBy: actor.id,
+    };
+  }
+  const paymentCondition = data.billingData.paymentCondition?.trim() || (closing ? closingPaymentConditionText(closing, conditionTotals) : "");
+  const saleNumber = opp.saleNumber ?? (await nextSaleNumber());
+
   const patch: Partial<Opportunity> = {
     products,
     ...totals,
-    billingData: { ...(opp.billingData ?? {}), ...data.billingData, address: opp.billingData?.address ?? client.address },
+    billingData: { ...(opp.billingData ?? {}), ...data.billingData, paymentCondition, address: opp.billingData?.address ?? client.address },
     stage: "ganho",
     stageChangedAt: now,
     wonAt: now,
     probability: 100,
     lastActivityAt: now,
+    saleNumber,
+    closing,
   };
   await update<Opportunity>(COLLECTIONS.opportunities, opp.id, patch);
   await clearFields(COLLECTIONS.opportunities, opp.id, ["nextAction", "nextActionAt", "lostAt", "lossReason", "lossCompetitor", "lossNotes"]);
@@ -430,12 +524,18 @@ export async function markOpportunityWon(data: MarkWonData, actor: UserRef): Pro
     actor,
     clientId: opp.clientId,
     entity: { type: "opportunity", id: opp.id },
-    title: `Negócio ganho: ${opp.title}`,
-    description: [totals.monthlyTotal > 0 ? `${formatCurrency(totals.monthlyTotal)}/mês` : null, totals.setupTotal > 0 ? `adesão ${formatCurrency(totals.setupTotal)}` : null, totals.hardwareTotal > 0 ? `hardware ${formatCurrency(totals.hardwareTotal)}` : null]
+    title: `Negócio ganho: ${opp.title} · venda ${saleNumber}`,
+    description: [
+      totals.monthlyTotal > 0 ? `${formatCurrency(totals.monthlyTotal)}/mês` : null,
+      totals.setupTotal > 0 ? `adesão ${formatCurrency(totals.setupTotal)}` : null,
+      totals.hardwareTotal > 0 ? `hardware ${formatCurrency(totals.hardwareTotal)}` : null,
+      closing ? paymentCondition : null,
+      closing && !closing.implementationRequired ? "implantação não contratada" : null,
+    ]
       .filter(Boolean)
       .join(" · "),
     department: "vendas",
-    payload: { ownerId: opp.ownerId, ...totals, productIds: products.map((p) => p.productId), proposalId: opp.proposalId, paymentCondition: data.billingData.paymentCondition },
+    payload: { ownerId: opp.ownerId, ...totals, productIds: products.map((p) => p.productId), proposalId: opp.proposalId, paymentCondition, saleNumber, closing },
   });
   return loadOpportunity(opp.id);
 }

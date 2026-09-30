@@ -32,6 +32,7 @@ import {
   workspaceMessageSchema,
   zodMessage,
 } from "./schemas";
+import { getWonContext, type WonContext } from "./queries";
 import { attachOpportunityDocument, registerCall, registerInternalNote, sendOrRegisterMessage, transferOpportunity, type MessageResult } from "./workspace";
 import {
   cancelVisit,
@@ -195,6 +196,20 @@ export async function markOpportunityWonAction(input: unknown): Promise<ActionRe
     return { ok: true, data: { id: opp.id, contractId: opp.contractId } };
   } catch (error) {
     return fail(error, "Não foi possível marcar como ganha");
+  }
+}
+
+/** Contexto do diálogo de ganho: contatos do cliente e proposta aceita (pré-preenchimento do fechamento). */
+export async function getWonContextAction(input: unknown): Promise<ActionResult<WonContext>> {
+  try {
+    const user = await requireSalesUser();
+    const { opportunityId } = opportunityIdSchema.parse(input);
+    await requireOpportunityAccess(user, opportunityId);
+    const context = await getWonContext(opportunityId);
+    if (!context) return { ok: false, error: "Oportunidade não encontrada" };
+    return { ok: true, data: context };
+  } catch (error) {
+    return fail(error, "Não foi possível carregar os dados do fechamento");
   }
 }
 

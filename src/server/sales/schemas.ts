@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { VISIT_KINDS } from "@/domain/sales-extra";
+import { MAX_SETUP_INSTALLMENTS } from "@/domain/sale-closing";
+import { SALE_PAYMENT_METHODS } from "@/domain/types";
 
 /**
  * Esquemas (zod) e constantes puras do módulo de Vendas. Sem dependências de servidor: é importado
@@ -126,23 +128,66 @@ export const registerContactSchema = z.object({
   notes: optionalText(2000),
 });
 
-export const markWonSchema = z.object({
-  opportunityId: id("Oportunidade"),
-  products: z.array(productLineSchema).min(1, "Inclua ao menos um produto"),
-  billingData: z.object({
-    legalName: z.string().trim().min(3, "Informe a razão social de faturamento").max(200),
-    document: z
-      .string()
-      .transform((v) => v.replace(/\D/g, ""))
-      .refine((v) => v.length === 11 || v.length === 14, "CNPJ/CPF de faturamento inválido"),
-    email: z
-      .string()
-      .trim()
-      .toLowerCase()
-      .refine((v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "E-mail de faturamento inválido"),
-    paymentCondition: z.string().trim().min(3, "Informe a condição de pagamento").max(300),
-  }),
+/** Condições estruturadas do fechamento (bloco "Condições do fechamento" do WonDialog). */
+export const closingSchema = z.object({
+  paymentMethod: z.enum(SALE_PAYMENT_METHODS, { message: "Escolha a forma de pagamento" }),
+  billingDay: z.coerce.number({ message: "Dia de vencimento inválido" }).int("Dia de vencimento deve ser inteiro").min(1, "Dia de vencimento mínimo é 1").max(28, "Dia de vencimento máximo é 28"),
+  firstDueDate: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v.slice(0, 10) : undefined))
+    .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), "1º vencimento inválido"),
+  termMonths: z.coerce.number({ message: "Prazo inválido" }).int("Prazo deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses"),
+  recurrence: z.enum(["mensal", "anual", "unico"], { message: "Recorrência inválida" }),
+  setupInstallments: z.coerce.number({ message: "Parcelas da adesão inválidas" }).int("Parcelas devem ser inteiras").min(1, "Mínimo 1 parcela").max(MAX_SETUP_INSTALLMENTS, `Máximo ${MAX_SETUP_INSTALLMENTS} parcelas`),
+  /** Contato existente do cliente (ou `newContact` para cadastrar na hora). */
+  contactId: optionalText(120),
+  newContact: z
+    .object({
+      name: z.string().trim().min(2, "Informe o nome do contato responsável").max(120, "Nome muito longo"),
+      email: z
+        .string()
+        .trim()
+        .toLowerCase()
+        .optional()
+        .transform((v) => (v ? v : undefined))
+        .refine((v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "E-mail do contato inválido"),
+      phone: optionalText(30),
+      role: optionalText(80),
+    })
+    .optional(),
+  implementationRequired: z.boolean().default(true),
+  implementationNotes: optionalText(1000),
+  commercialNotes: optionalText(1000),
 });
+export type ClosingInput = z.input<typeof closingSchema>;
+
+export const markWonSchema = z
+  .object({
+    opportunityId: id("Oportunidade"),
+    products: z.array(productLineSchema).min(1, "Inclua ao menos um produto"),
+    billingData: z.object({
+      legalName: z.string().trim().min(3, "Informe a razão social de faturamento").max(200),
+      document: z
+        .string()
+        .transform((v) => v.replace(/\D/g, ""))
+        .refine((v) => v.length === 11 || v.length === 14, "CNPJ/CPF de faturamento inválido"),
+      email: z
+        .string()
+        .trim()
+        .toLowerCase()
+        .refine((v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "E-mail de faturamento inválido"),
+      /** Texto livre; com o fechamento estruturado pode ficar vazio (é gerado a partir das condições). */
+      paymentCondition: z.string().trim().max(300, "Condição de pagamento muito longa").default(""),
+    }),
+    /** Opcional no tipo (compatibilidade); a interface exige para novas vendas. */
+    closing: closingSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.closing && data.billingData.paymentCondition.length < 3) ctx.addIssue({ code: "custom", path: ["billingData", "paymentCondition"], message: "Informe a condição de pagamento" });
+    if (data.closing && !data.closing.contactId && !data.closing.newContact) ctx.addIssue({ code: "custom", path: ["closing", "contactId"], message: "Escolha o contato responsável do cliente" });
+  });
 export type MarkWonInput = z.input<typeof markWonSchema>;
 
 export const markLostSchema = z

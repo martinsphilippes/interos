@@ -778,3 +778,51 @@ export async function getAgenda(user: CurrentUser, options: { view: AgendaView; 
 // Reexporta tipos usados pelas páginas.
 export type { CommissionSummary, OpportunitySettings, PipelineStage };
 export type { Commission };
+
+// ---------------------------------------------------------------------------
+// Contexto do diálogo "Marcar como ganho" (fechamento estruturado)
+// ---------------------------------------------------------------------------
+
+export interface WonContextContact {
+  id: string;
+  name: string;
+  role?: string;
+  email?: string;
+  phone?: string;
+  isPrimary: boolean;
+}
+
+export interface WonContext {
+  contacts: WonContextContact[];
+  /** Proposta aceita da oportunidade: o contrato usará estes itens (líquidos de desconto). */
+  acceptedProposal: {
+    id: string;
+    number: string;
+    conditions?: string;
+    items: { productId: string; productName: string; quantity: number; setupValue: number; monthlyValue: number; hardwareValue: number; discountPct: number }[];
+  } | null;
+}
+
+/** Contatos do cliente (principal primeiro) e a proposta aceita, para pré-preencher o fechamento. */
+export async function getWonContext(opportunityId: string): Promise<WonContext | null> {
+  const opp = await getById<Opportunity>(COLLECTIONS.opportunities, opportunityId);
+  if (!opp) return null;
+  const [contacts, proposal] = await Promise.all([
+    list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", opp.clientId]] }),
+    opp.proposalId ? getById<Proposal>(COLLECTIONS.proposals, opp.proposalId) : Promise.resolve(null),
+  ]);
+  const accepted = proposal?.status === "aceita" && proposal.items.length > 0 ? proposal : null;
+  return {
+    contacts: contacts
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.name.localeCompare(b.name, "pt-BR"))
+      .map((c) => ({ id: c.id, name: c.name, role: c.role, email: c.email, phone: c.phone ?? c.whatsapp, isPrimary: c.isPrimary })),
+    acceptedProposal: accepted
+      ? {
+          id: accepted.id,
+          number: accepted.number,
+          conditions: accepted.conditions,
+          items: accepted.items.map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: i.setupValue, monthlyValue: i.monthlyValue, hardwareValue: i.hardwareValue, discountPct: i.discountPct })),
+        }
+      : null,
+  };
+}
