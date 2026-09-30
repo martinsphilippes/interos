@@ -182,7 +182,7 @@ function AccessRow({ node, props, hasChildren, open, onToggle, descendants, modu
   const setState = (next: TriState) => onGrantChange?.(node.key, next === "padrao" ? undefined : next === "permitir");
 
   return (
-    <li role="treeitem" aria-selected={false} aria-expanded={hasChildren ? open : undefined} aria-level={node.depth + 1} className={cn("min-w-0 px-3 py-2.5", node.kind === "modulo" && "bg-surface-muted/60", ancestorDenied && "opacity-60")}>
+    <li role="treeitem" data-key={node.key} aria-selected={false} aria-expanded={hasChildren ? open : undefined} aria-level={node.depth + 1} className={cn("min-w-0 px-3 py-2.5", node.kind === "modulo" && "bg-surface-muted/60", ancestorDenied && "opacity-60")}>
       <div className="flex min-w-0 flex-col gap-2 md:flex-row md:items-start md:justify-between" style={{ paddingLeft: `${indent * 14}px` }}>
         <div className="flex min-w-0 flex-1 items-start gap-1.5">
           {hasChildren ? (
