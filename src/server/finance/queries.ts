@@ -16,6 +16,7 @@ import {
   type Communication,
   type Contact,
   type Contract,
+  type ContractAmendment,
   type Document,
   type DomainEvent,
   type ImplementationProject,
@@ -27,7 +28,8 @@ import {
   type User,
   type WorkflowStep,
 } from "@/domain/types";
-import { AGING_BUCKETS, agingBucket, allSigned, daysBetween, evaluateReleaseGate, listBillingsSwept, requiredPaymentBilling, todayKey, type AgingBucketKey } from "./billing";
+import { AGING_BUCKETS, agingBucket, allSigned, daysBetween, evaluateReleaseGate, isContractExpired, listBillingsSwept, pendingRecurringInstallments, requiredPaymentBilling, todayKey, type AgingBucketKey } from "./billing";
+import { getFinanceAlertSettings } from "./alerts";
 import { getGateSettings, mergedBillingData } from "./service";
 import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import { BILLING_STATUSES, BILLING_TYPES, BOLETO_FILTERS, boletoState, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type BoletoFilter, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
@@ -146,6 +148,9 @@ export interface ContractRow {
   pendingReason?: string;
   sla: SlaView | null;
   stepStatus?: WorkflowStep["status"];
+  /** Vigência terminada sem renovação aplicada (estado derivado, D24b). */
+  expired: boolean;
+  endDate?: string;
 }
 
 export interface ContractListResult {
@@ -205,6 +210,8 @@ export async function listContracts(filters: ContractFilters = {}): Promise<Cont
         pendingReason: c.pendingReason,
         sla: inFinance ? (step?.sla ?? null) : null,
         stepStatus: inFinance ? step?.status : undefined,
+        expired: isContractExpired(c),
+        endDate: c.endDate,
       };
     });
 
@@ -257,6 +264,8 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
   const month = todayKey().slice(0, 7);
   const inGroup = (g: ContractQueueGroup) => contracts.filter((c) => (CONTRACT_QUEUE_GROUPS[g] as readonly string[]).includes(c.status)).length;
   const released = contracts.filter((c) => c.status === "liberado");
+  // MRR só dos contratos liberados com vigência em curso (vencidos sem renovação ficam de fora, D24b).
+  const inForce = released.filter((c) => !isContractExpired(c));
   const overdue = billings.filter((b) => b.status === "vencida");
   const active = billings.filter((b) => b.status !== "cancelada");
   const billedMonth = active.filter((b) => b.competence === month).reduce((s, b) => s + b.amount, 0);
@@ -275,8 +284,8 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
       pendencia: inGroup("pendencia"),
       liberadosMes: released.filter((c) => monthOf(c.releasedAt) === month).length,
     },
-    mrrActive: released.reduce((s, c) => s + c.monthlyTotal, 0),
-    activeContracts: released.length,
+    mrrActive: inForce.reduce((s, c) => s + c.monthlyTotal, 0),
+    activeContracts: inForce.length,
     overdue: { amount: overdueAmount, count: overdue.length },
     billedMonth,
     receivedMonth,
@@ -322,13 +331,19 @@ export interface ContractDetail {
   editable: boolean;
   /** Resumo do contratado (D7): o que a venda contratou, com vendedor e contato. */
   summary: ContractSummaryData;
+  /** Vigência terminada sem renovação (estado derivado). */
+  expired: boolean;
+  /** Mensalidades que "Gerar próximas cobranças" criaria agora (0 = botão não aparece). */
+  pendingRecurring: number;
+  /** Aditivos do contrato (D25), do mais recente ao mais antigo. */
+  amendments: ContractAmendment[];
 }
 
 /** Memoizado por requisição: generateMetadata e a página compartilham a leitura. */
 export const getContract = cache(async (id: string): Promise<ContractDetail | null> => {
   const contract = await getById<Contract>(COLLECTIONS.contracts, id);
   if (!contract) return null;
-  const [client, opportunity, billings, settings, clientDocs, timeline, steps, projects, contractEvents, catalog] = await Promise.all([
+  const [client, opportunity, billings, settings, clientDocs, timeline, steps, projects, contractEvents, catalog, amendments, alertSettings] = await Promise.all([
     getById<Client>(COLLECTIONS.clients, contract.clientId),
     contract.opportunityId ? getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : Promise.resolve(null),
     listBillingsSwept({ where: [["contractId", "==", contract.id]] }),
@@ -339,6 +354,8 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
     list<ImplementationProject>(COLLECTIONS.implementationProjects, { where: [["contractId", "==", contract.id]] }),
     list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", contract.id]] }),
     list<Product>(COLLECTIONS.products),
+    list<ContractAmendment>(COLLECTIONS.contractAmendments, { where: [["contractId", "==", contract.id]] }),
+    getFinanceAlertSettings(),
   ]);
   if (!client) return null;
 
@@ -349,7 +366,8 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const project = projects.find((p) => p.status !== "cancelada") ?? null;
-  const related = new Set([contract.id, ...billingIds, ...(project ? [project.id] : []), ...(contract.opportunityId ? [contract.opportunityId] : [])]);
+  amendments.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const related = new Set([contract.id, ...billingIds, ...(project ? [project.id] : []), ...(contract.opportunityId ? [contract.opportunityId] : []), ...amendments.map((a) => a.id)]);
   const history = timeline
     .filter((e) => (e.entityId && related.has(e.entityId)) || e.department === "financeiro")
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
@@ -423,6 +441,9 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
       .sort((a, b) => a.order - b.order)
       .map((p) => ({ id: p.id, name: p.name, setupPrice: p.setupPrice, monthlyPrice: p.monthlyPrice, hardwarePrice: p.hardwarePrice })),
     editable: contract.status !== "liberado" && contract.status !== "cancelado" && !signedByAll,
+    expired: isContractExpired(contract),
+    pendingRecurring: contract.status === "liberado" || contract.status === "pago" ? pendingRecurringInstallments(contract, billings, { horizonMonths: alertSettings.horizonteCobrancasMeses }).length : 0,
+    amendments,
   };
 });
 
@@ -723,7 +744,9 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
     cancelledAt.set(c.id, churnDate ?? c.updatedAt);
   }
   const mrrAt = (endIso: string) =>
-    released.filter((c) => c.releasedAt! <= endIso && !(cancelledAt.has(c.id) && cancelledAt.get(c.id)! <= endIso)).reduce((s, c) => s + c.monthlyTotal, 0);
+    released
+      .filter((c) => c.releasedAt! <= endIso && !(cancelledAt.has(c.id) && cancelledAt.get(c.id)! <= endIso) && !(c.status === "liberado" && c.endDate && dateKey(c.endDate) < dateKey(endIso)))
+      .reduce((s, c) => s + c.monthlyTotal, 0);
 
   const months = Array.from({ length: 9 }, (_, i) => monthKey(i - 8));
   const points = months.map((m) => ({ month: m, label: formatCompetence(m), mrr: m === month ? mrrAt(new Date().toISOString()) : mrrAt(lastDayIso(m)) }));
@@ -732,7 +755,8 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
     return { ...p, growth: prev > 0 ? (p.mrr - prev) / prev : null };
   });
 
-  const active = contracts.filter((c) => c.status === "liberado");
+  // Vigência terminada sem renovação = fora do MRR (estado derivado; os vencidos seguem na lista de renovação).
+  const active = contracts.filter((c) => c.status === "liberado" && !isContractExpired(c));
   const byProduct = new Map<string, { productId: string; name: string; mrr: number; contracts: Set<string> }>();
   for (const c of active) {
     for (const item of c.items) {
@@ -749,8 +773,9 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
   const lostMrrMonth = churnThisMonth.reduce((s, r) => s + r.lostMrr, 0);
 
   const today = todayKey();
-  const names = await clientNames(active.map((c) => c.clientId));
-  const renewals: RenewalRow[] = active
+  const renewable = contracts.filter((c) => c.status === "liberado");
+  const names = await clientNames(renewable.map((c) => c.clientId));
+  const renewals: RenewalRow[] = renewable
     .filter((c) => c.endDate)
     .map((c) => ({ contractId: c.id, number: c.number, clientId: c.clientId, clientName: names.get(c.clientId) ?? c.clientId, endDate: c.endDate!, daysLeft: daysBetween(today, dateKey(c.endDate!)), monthlyTotal: c.monthlyTotal }))
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
@@ -820,7 +845,7 @@ export async function getClientFinancialSummary(clientId: string, preloaded?: { 
   const last = paid[0];
   const pending = contracts.filter((c) => c.status !== "liberado" && c.status !== "cancelado").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   return {
-    mrr: contracts.filter((c) => c.status === "liberado").reduce((s, c) => s + c.monthlyTotal, 0),
+    mrr: contracts.filter((c) => c.status === "liberado" && !isContractExpired(c)).reduce((s, c) => s + c.monthlyTotal, 0),
     openAmount: open.reduce((s, b) => s + b.amount, 0),
     openCount: open.length,
     overdueAmount: overdue.reduce((s, b) => s + b.amount, 0),

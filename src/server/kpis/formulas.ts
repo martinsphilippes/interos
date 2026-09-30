@@ -353,6 +353,8 @@ function isOpenStage(stage: Opportunity["stage"]): boolean {
 
 /** Data em que o contrato deixou de compor o MRR (mesma regra da Recorrência do Financeiro). */
 function contractEndOfMrr(c: Contract, data: DataBundle): string | undefined {
+  // Estado derivado "vencido" (D24b): contrato liberado cuja vigência terminou sai do MRR na data de término.
+  if (c.status === "liberado") return c.endDate;
   if (c.status !== "cancelado") return undefined;
   const churnDate = data.churn
     .filter((r) => r.clientId === c.clientId && r.date >= (c.releasedAt ?? ""))

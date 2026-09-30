@@ -453,6 +453,30 @@ async function reguaCobranca(now: Date): Promise<SweepOutcome> {
   };
 }
 
+/** Cobrança recorrente (D24b): horizonte rolante das mensalidades. */
+async function cobrancasRecorrentes(now: Date): Promise<SweepOutcome> {
+  const { ensureRecurringBillings } = await import("@/server/finance/alerts");
+  const r = await ensureRecurringBillings(now);
+  return {
+    summary: `${r.contracts} contrato(s) com horizonte rolante · ${r.extended} estendido(s) · ${r.created} mensalidade(s) gerada(s) (horizonte ${r.horizonMonths} mês(es))${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
+    data: { ...r },
+  };
+}
+
+/** Contas a pagar recorrentes (D28): próxima ocorrência das séries. */
+async function contasRecorrentes(now: Date): Promise<SweepOutcome> {
+  const { ensureRecurringPayables } = await import("@/server/commissions/payables-recurring");
+  const r = await ensureRecurringPayables(now);
+  return { summary: `${r.series} série(s) ativa(s) · ${r.created} título(s) criado(s) · ${r.skipped} já existente(s)${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`, data: { ...r } };
+}
+
+/** Contas a pagar vencidas (D28): aviso ao Financeiro uma única vez por título. */
+async function contasAPagarVencidas(now: Date): Promise<SweepOutcome> {
+  const { notifyOverduePayables } = await import("@/server/commissions/payables-recurring");
+  const r = await notifyOverduePayables(now);
+  return { summary: `${r.overdue} título(s) vencido(s) · ${r.notified} aviso(s) enviado(s) · ${r.alreadyNotified} já avisado(s)`, data: { ...r } };
+}
+
 // ---------------------------------------------------------------------------
 // Comissões (src/server/commissions/engine.ts)
 // ---------------------------------------------------------------------------
@@ -482,6 +506,9 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   comissoes,
   conciliacao_bancaria: conciliacaoBancaria,
   regua_cobranca: reguaCobranca,
+  cobrancas_recorrentes: cobrancasRecorrentes,
+  contas_recorrentes: contasRecorrentes,
+  contas_a_pagar_vencidas: contasAPagarVencidas,
 };
 
 /** Campos antigos (dos módulos) que também contam como "última execução" da varredura. */

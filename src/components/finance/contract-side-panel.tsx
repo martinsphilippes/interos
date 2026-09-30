@@ -71,7 +71,14 @@ export function ContractSidePanel({ panel, integrations, canOperate }: { panel: 
                 {panel.number} · v{panel.version}
               </p>
             </div>
-            <Badge variant={CONTRACT_STATUS_VARIANT[panel.status]}>{CONTRACT_STATUS_LABELS[panel.status]}</Badge>
+            <span className="flex flex-col items-end gap-1">
+              <Badge variant={CONTRACT_STATUS_VARIANT[panel.status]}>{CONTRACT_STATUS_LABELS[panel.status]}</Badge>
+              {panel.expired ? (
+                <Badge variant="danger" size="sm" title={panel.endDate ? `Vigência terminou em ${formatDate(panel.endDate)}` : undefined}>
+                  Vencido
+                </Badge>
+              ) : null}
+            </span>
           </div>
 
           <div className="grid grid-cols-2 gap-3 border-y border-border py-3">

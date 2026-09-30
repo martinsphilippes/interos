@@ -73,6 +73,9 @@ export const SWEEP_KEYS = [
   "comissoes",
   "conciliacao_bancaria",
   "regua_cobranca",
+  "cobrancas_recorrentes",
+  "contas_recorrentes",
+  "contas_a_pagar_vencidas",
 ] as const;
 export type SweepKey = (typeof SWEEP_KEYS)[number];
 
@@ -109,6 +112,22 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
     label: "Régua de cobrança",
     description:
       "Financeiro: executa os marcos da régua (dias antes/depois do vencimento, canal e texto em Configurações › Cobrança) uma única vez por cobrança e marco; canal não conectado vira tarefa ao Financeiro com o texto pronto. Desligada por padrão.",
+    schedule: "diaria",
+  },
+  cobrancas_recorrentes: {
+    label: "Cobrança recorrente",
+    description:
+      "Financeiro: contratos com renovação automática ou prazo indeterminado sempre têm mensalidades geradas para os próximos N meses (horizonte em Configurações › Gate financeiro). Ids determinísticos: nunca duplica.",
+    schedule: "diaria",
+  },
+  contas_recorrentes: {
+    label: "Contas a pagar recorrentes",
+    description: "Financeiro: cria a próxima ocorrência das séries recorrentes de Contas a Pagar 30 dias antes do vencimento (uma por competência, idempotente).",
+    schedule: "diaria",
+  },
+  contas_a_pagar_vencidas: {
+    label: "Contas a pagar vencidas",
+    description: "Financeiro: avisa o Financeiro uma única vez por título vencido (previsto, aprovado ou a pagar com vencimento passado).",
     schedule: "diaria",
   },
 };

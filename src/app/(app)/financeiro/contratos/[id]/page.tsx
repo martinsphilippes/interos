@@ -61,9 +61,16 @@ export default async function ContractPage({ params }: { params: Params }) {
       <PageHeader
         title={`Contrato ${contract.number}`}
         badge={
-          <Badge variant={CONTRACT_STATUS_VARIANT[contract.status]}>
-            {CONTRACT_STATUS_LABELS[contract.status]}
-          </Badge>
+          <>
+            <Badge variant={CONTRACT_STATUS_VARIANT[contract.status]}>
+              {CONTRACT_STATUS_LABELS[contract.status]}
+            </Badge>
+            {detail.expired ? (
+              <Badge variant="danger" title={`Vigência terminou em ${formatDate(contract.endDate)} sem renovação`}>
+                Vencido
+              </Badge>
+            ) : null}
+          </>
         }
         description={
           <>
@@ -155,6 +162,7 @@ export default async function ContractPage({ params }: { params: Params }) {
             canOperate={canOperate}
             canGenerate={signedByAll && !hasBillings && contract.status !== "cancelado"}
             waitingSignature={!signedByAll}
+            pendingRecurring={detail.pendingRecurring}
           />
           <Card>
             <CardHeader>

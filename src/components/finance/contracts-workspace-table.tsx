@@ -155,6 +155,7 @@ export function ContractsWorkspaceTable({ rows, selectedId }: { rows: WorkspaceR
                   {BILLING_STATE[r.billingState].label}
                 </Badge>
                 {r.status === "pendencia" ? <Badge variant="danger" size="sm">Pendência</Badge> : null}
+                {r.expired ? <Badge variant="danger" size="sm">Vencido</Badge> : null}
               </span>
             </button>
             <div className="absolute right-2 top-2">
@@ -204,6 +205,11 @@ export function ContractsWorkspaceTable({ rows, selectedId }: { rows: WorkspaceR
                   <span className={cn("mt-0.5 flex items-center gap-1.5 text-xs font-normal", STATUS_TEXT[CONTRACT_STATUS_VARIANT[r.status]] ?? "text-muted")}>
                     <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden />
                     {CONTRACT_STATUS_LABELS[r.status]}
+                    {r.expired ? (
+                      <Badge variant="danger" size="sm" title="Vigência terminada sem renovação">
+                        Vencido
+                      </Badge>
+                    ) : null}
                   </span>
                 </TableCell>
                 <TableCell className="max-w-[150px] 2xl:max-w-[220px]">

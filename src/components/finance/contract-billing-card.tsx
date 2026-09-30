@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Receipt, Star } from "lucide-react";
+import { CalendarPlus, Receipt, Star } from "lucide-react";
 import type { Billing } from "@/domain/types";
-import { generateBillingsAction } from "@/server/finance/actions";
+import { generateBillingsAction, generateNextBillingsAction } from "@/server/finance/actions";
 import { paymentMethodLabel } from "@/server/finance/schemas";
 import { formatCompetence, formatCurrency, formatDate } from "@/lib/format";
 import { BILLING_STATUS_LABELS, BILLING_STATUS_VARIANT } from "@/components/clients/labels";
@@ -26,16 +26,19 @@ export interface ContractBillingCardProps {
   /** Todos assinaram e ainda não há cobranças: mostra "Gerar cobranças". */
   canGenerate: boolean;
   waitingSignature: boolean;
+  /** Mensalidades que "Gerar próximas cobranças" criaria agora (0 = sem botão). */
+  pendingRecurring?: number;
 }
 
 /** Cobranças do contrato: geração (adesão, hardware e mensalidades do prazo) e registro de pagamento. */
-export function ContractBillingCard({ contractId, clientName, billings, requiredBillingId, canOperate, canGenerate, waitingSignature }: ContractBillingCardProps) {
+export function ContractBillingCard({ contractId, clientName, billings, requiredBillingId, canOperate, canGenerate, waitingSignature, pendingRecurring = 0 }: ContractBillingCardProps) {
   const { pending, run } = useFinanceAction();
   const active = billings.filter((b) => b.status !== "cancelada");
   const paid = active.filter((b) => b.status === "paga").reduce((s, b) => s + (b.paidAmount ?? b.amount), 0);
   const total = active.reduce((s, b) => s + b.amount, 0);
 
   const generate = () => run(() => generateBillingsAction({ contractId }), (d) => `${d.count} cobrança(s) gerada(s)`);
+  const extend = () => run(() => generateNextBillingsAction({ contractId }), (d) => (d.count > 0 ? `${d.count} mensalidade(s) gerada(s)` : "Nenhuma mensalidade nova: o plano já cobre o horizonte"));
 
   return (
     <Card>
@@ -47,6 +50,11 @@ export function ContractBillingCard({ contractId, clientName, billings, required
         {canOperate && canGenerate ? (
           <Button onClick={generate} loading={pending} className="h-10 md:h-9">
             <Receipt /> Gerar cobranças
+          </Button>
+        ) : null}
+        {canOperate && !canGenerate && pendingRecurring > 0 ? (
+          <Button variant="outline" onClick={extend} loading={pending} className="h-10 md:h-9" title="Mensalidades que faltam para cobrir o prazo ou o horizonte da cobrança recorrente">
+            <CalendarPlus /> Gerar próximas cobranças ({pendingRecurring})
           </Button>
         ) : null}
       </CardHeader>

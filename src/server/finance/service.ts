@@ -51,7 +51,8 @@ import {
   type ContractSignerEntry,
 } from "@/domain/types";
 import type { RoleKey } from "@/domain/constants";
-import { allSigned, buildBillingPlan, defaultFirstDueDate, deriveContractStatus, dueIso, evaluateReleaseGate, listBillingsSwept, round2, SYSTEM_ACTOR, todayKey } from "./billing";
+import { allSigned, billingDocId, buildBillingPlan, defaultFirstDueDate, deriveContractStatus, dueIso, evaluateReleaseGate, extendBillingPlan, lastRecurringBilling, listBillingsSwept, nextRecurringDueDate, pendingRecurringInstallments, round2, SYSTEM_ACTOR, todayKey, type BillingDraft } from "./billing";
+import { getFinanceAlertSettings } from "./alerts";
 import { contractDocumentHash, getSignatureProvider } from "./signature";
 import { MANUAL, manualSendUrl, recordCommunication, sendOrRecord, type SendChannel, type SendDelivery } from "@/server/integrations/communications";
 import { sendEmail } from "@/server/integrations/providers";
@@ -795,6 +796,113 @@ export async function generateBillings(contractId: string, actor: UserRef): Prom
 }
 
 // ---------------------------------------------------------------------------
+// Cobrança recorrente (D24b): próximas mensalidades com ids determinísticos (idempotente)
+// ---------------------------------------------------------------------------
+
+/**
+ * Campos do provedor de cobrança para uma cobrança nova: `createCharge` SOMENTE quando conectado (mesmo padrão de
+ * `generateBillings`); sem provedor (ou com falha), "aguardando emissão manual". Nunca simula emissão.
+ */
+async function providerChargeFields(draft: Record<string, unknown>, id: string, client: Client, errors: string[]): Promise<Record<string, unknown>> {
+  if (!billingProviderConnected()) return { chargeStatus: "aguardando_emissao_manual" };
+  try {
+    const charge = await getBillingProvider().createCharge({ ...(draft as unknown as Billing), id }, client);
+    return stripUndefined({ provider: charge.provider, externalId: charge.externalId, chargeStatus: charge.status, paymentUrl: charge.paymentUrl, boleto: charge.boleto, pix: charge.pix });
+  } catch (error) {
+    errors.push(`${id}: ${error instanceof Error ? error.message : String(error)}`);
+    return { chargeStatus: "aguardando_emissao_manual" };
+  }
+}
+
+/** Cria a cobrança com id determinístico; se o id já existe (cobrança anterior cancelada com o mesmo número), usa o sufixo _r2, _r3… */
+async function createBillingWithDeterministicId(contractId: string, draft: BillingDraft, extra: Record<string, unknown>): Promise<{ billing: Billing; created: boolean }> {
+  for (let attempt = 1; attempt <= 20; attempt++) {
+    const id = billingDocId(contractId, draft.type, draft.installment ?? 1, attempt);
+    const r = await createIfAbsent<Billing>(COLLECTIONS.billing, id, { ...(draft as Omit<Billing, "id" | "organizationId" | "createdAt" | "updatedAt">), ...(extra as Partial<Billing>) });
+    if (r.created) return { billing: r.doc, created: true };
+    // Já existe uma cobrança viva com este id e a mesma parcela: nada a criar (execução repetida).
+    if (r.doc.status !== "cancelada" && r.doc.type === draft.type && (r.doc.installment ?? 1) === (draft.installment ?? 1)) return { billing: r.doc, created: false };
+  }
+  throw new Error(`Não foi possível reservar um id para a cobrança ${draft.type} ${draft.installment ?? 1} do contrato ${contractId}`);
+}
+
+export interface GenerateNextBillingsOptions {
+  /** Quantidade fixa de meses a gerar (renovação); sem ela, vale o horizonte rolante (setting financeiro_alertas) ou o prazo do contrato. */
+  months?: number;
+  horizonMonths?: number;
+  reason?: string;
+  emit?: boolean;
+  source?: "manual" | "horizonte" | "renovacao";
+}
+
+export interface GenerateNextBillingsResult {
+  created: Billing[];
+  /** Parcelas já existentes que a execução encontrou (idempotência). */
+  skipped: number;
+  fromInstallment?: number;
+  toInstallment?: number;
+}
+
+/**
+ * Próximas mensalidades do contrato (D24b), idempotente: ids determinísticos `bill_<contractId>_m<n>` via createIfAbsent;
+ * cobranças antigas com id aleatório continuam valendo — a maior parcela existente define o próximo número.
+ * Provedor de cobrança só é chamado quando conectado. Emite `billing.created` quando cria algo.
+ */
+export async function generateNextBillings(contractId: string, actor: UserRef, options: GenerateNextBillingsOptions = {}): Promise<GenerateNextBillingsResult> {
+  const contract = await loadContract(contractId);
+  if (contract.status === "cancelado") throw new Error("Contrato cancelado não recebe novas cobranças");
+  if (contract.recurrence === "unico" || contract.monthlyTotal <= 0) throw new Error("O contrato não tem mensalidade recorrente");
+  const billings = await list<Billing>(COLLECTIONS.billing, { where: [["contractId", "==", contract.id]] });
+  const { billing: last, installment: max } = lastRecurringBilling(billings);
+  if (!last || max <= 0) throw new Error("Gere as cobranças do contrato (adesão e mensalidades do prazo) antes de estender o plano");
+  const horizonMonths = options.horizonMonths ?? (await getFinanceAlertSettings()).horizonteCobrancasMeses;
+  const pending = pendingRecurringInstallments(contract, billings, { horizonMonths, months: options.months });
+  if (pending.length === 0) return { created: [], skipped: 0 };
+  const drafts = extendBillingPlan(contract, { fromInstallment: pending[0], months: pending.length * (contract.recurrence === "anual" ? 12 : 1), firstDueDate: nextRecurringDueDate(contract, last, pending[0]) });
+  const client = await loadClient(contract.clientId);
+  const now = nowIso();
+  const providerErrors: string[] = [];
+  const created: Billing[] = [];
+  let skipped = 0;
+  for (const draft of drafts) {
+    const id = billingDocId(contract.id, draft.type, draft.installment ?? 1);
+    const fields = await providerChargeFields({ ...draft, organizationId: contract.organizationId, createdAt: now, updatedAt: now }, id, client, providerErrors);
+    const r = await createBillingWithDeterministicId(contract.id, draft, { ...fields, createdBy: actor.id });
+    if (r.created) created.push(r.billing);
+    else skipped += 1;
+  }
+  if (providerErrors.length > 0) {
+    await emitEvent({
+      type: "note.added",
+      actor,
+      clientId: contract.clientId,
+      entity: { type: "contract", id: contract.id },
+      title: `Falha ao emitir ${providerErrors.length} cobrança(s) no provedor de cobrança`,
+      description: `${providerErrors.join(" · ")} · as cobranças ficaram aguardando emissão manual`,
+      department: "financeiro",
+      payload: { contractId: contract.id, providerErrors },
+      timeline: false,
+    });
+  }
+  if (created.length > 0 && options.emit !== false) {
+    const total = created.reduce((s, b) => s + b.amount, 0);
+    const first = created[0];
+    const lastCreated = created[created.length - 1];
+    await emitEvent({
+      type: "billing.created",
+      actor,
+      clientId: contract.clientId,
+      entity: { type: "contract", id: contract.id },
+      title: `${created.length} mensalidade(s) gerada(s) para o contrato ${contract.number}${options.source === "horizonte" ? " (cobrança recorrente)" : options.source === "renovacao" ? " (renovação)" : ""}`,
+      description: [`mensalidades ${first.installment} a ${lastCreated.installment}`, `${formatDate(first.dueDate)} a ${formatDate(lastCreated.dueDate)}`, `total ${formatCurrency(total)}`, options.reason].filter(Boolean).join(" · "),
+      department: "financeiro",
+      payload: { contractId: contract.id, billingIds: created.map((b) => b.id), total, fromInstallment: first.installment, toInstallment: lastCreated.installment, source: options.source ?? "manual", reason: options.reason ?? null },
+    });
+  }
+  return { created, skipped, fromInstallment: pending[0], toInstallment: pending[pending.length - 1] };
+}
+
+// ---------------------------------------------------------------------------
 // Boleto (D20): registro manual do boleto emitido no banco/ERP enquanto não há provedor
 // ---------------------------------------------------------------------------
 
@@ -1193,7 +1301,7 @@ export async function cancelBilling(billingId: string, reason: string, actor: Us
  * Cancela a cobrança no provedor quando ele está conectado e a cobrança foi emitida lá (`externalId`). Falha do
  * provedor NÃO impede o cancelamento local: devolve a nota do erro para ficar registrada no evento.
  */
-async function cancelChargeAtProvider(billing: Billing): Promise<string | undefined> {
+export async function cancelChargeAtProvider(billing: Billing): Promise<string | undefined> {
   if (!billing.externalId || !billingProviderConnected()) return undefined;
   try {
     const r = await getBillingProvider().cancelCharge(billing);

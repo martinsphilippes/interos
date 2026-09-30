@@ -94,6 +94,50 @@ export async function reconcileBankPayments(now: Date = new Date()): Promise<Ban
 }
 
 // ---------------------------------------------------------------------------
+// cobrancas_recorrentes (D24b): horizonte rolante das mensalidades
+// ---------------------------------------------------------------------------
+
+export interface RecurringBillingsResult {
+  /** Contratos com horizonte rolante (renovação automática ou prazo indeterminado) avaliados. */
+  contracts: number;
+  extended: number;
+  created: number;
+  horizonMonths: number;
+  errors: string[];
+}
+
+/**
+ * Contratos liberados/pagos com renovação automática ou prazo indeterminado sem mensalidade gerada para os próximos
+ * N meses (`financeiro_alertas.horizonteCobrancasMeses`) recebem as parcelas que faltam via `generateNextBillings`
+ * (ids determinísticos: rodar duas vezes não duplica). Contratos de prazo fixo não entram: o plano inteiro já foi
+ * gerado na assinatura e a renovação (aditivo) é quem estende.
+ */
+export async function ensureRecurringBillings(now: Date = new Date()): Promise<RecurringBillingsResult> {
+  const settings = await getFinanceAlertSettings();
+  const { generateNextBillings } = await import("./service");
+  const { hasRollingBilling, isContractExpired, pendingRecurringInstallments } = await import("./billing");
+  const today = dateKey(now);
+  const contracts = (await list<Contract>(COLLECTIONS.contracts)).filter((c) => (c.status === "liberado" || c.status === "pago") && c.recurrence !== "unico" && c.monthlyTotal > 0 && hasRollingBilling(c) && !isContractExpired(c, today));
+  const result: RecurringBillingsResult = { contracts: contracts.length, extended: 0, created: 0, horizonMonths: settings.horizonteCobrancasMeses, errors: [] };
+  if (contracts.length === 0) return result;
+  const billings = await list<Billing>(COLLECTIONS.billing, { where: [["contractId", "in", contracts.map((c) => c.id)]] });
+  for (const c of contracts) {
+    const own = billings.filter((b) => b.contractId === c.id);
+    if (pendingRecurringInstallments(c, own, { horizonMonths: settings.horizonteCobrancasMeses, today }).length === 0) continue;
+    try {
+      const r = await generateNextBillings(c.id, SYSTEM_ACTOR, { horizonMonths: settings.horizonteCobrancasMeses, source: "horizonte", reason: `Horizonte de ${settings.horizonteCobrancasMeses} mês(es) da cobrança recorrente` });
+      if (r.created.length > 0) {
+        result.extended += 1;
+        result.created += r.created.length;
+      }
+    } catch (error) {
+      result.errors.push(`${c.number}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // contratos_alertas
 // ---------------------------------------------------------------------------
 

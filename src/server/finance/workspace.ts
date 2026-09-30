@@ -12,7 +12,7 @@ import { communicationStatusLabel } from "@/server/integrations/communications";
 import { getIntegrationFlags } from "@/server/integrations/status";
 import type { IntegrationFlags } from "@/server/integrations/types";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
-import { allSigned, listBillingsSwept, todayKey } from "./billing";
+import { allSigned, isContractExpired, listBillingsSwept, todayKey } from "./billing";
 import { listContracts, type ContractFilters } from "./queries";
 import { CONTRACT_QUEUE_GROUPS } from "./schemas";
 
@@ -45,6 +45,8 @@ export interface WorkspaceRow {
   ownerName?: string;
   whatsappUrl: string | null;
   telUrl: string | null;
+  /** Vigência terminada sem renovação (estado derivado, D24b). */
+  expired: boolean;
 }
 
 export interface KpiValue {
@@ -123,6 +125,9 @@ export interface ContractPanel {
   interactions: PanelInteraction[];
   milestones: Milestone[];
   pendingReason?: string;
+  /** Vigência terminada sem renovação (estado derivado). */
+  expired: boolean;
+  endDate?: string;
   /** Resumo do contratado (D7). */
   summary: ContractSummaryData;
 }
@@ -223,6 +228,7 @@ export async function getContractsWorkspace(filters: ContractFilters, selectedId
       ownerName: r.ownerName,
       whatsappUrl: whatsappHref(phones.whatsapp),
       telUrl: telHref(phones.phone),
+      expired: r.expired,
     };
   });
 
@@ -266,7 +272,8 @@ export async function getContractsWorkspace(filters: ContractFilters, selectedId
 function computeKpis(contracts: Contract[], billings: Billing[], sentEvents: DomainEvent[]): WorkspaceKpis {
   const prevEnd = previousMonthEnd();
   const prevDay = dateKey(prevEnd);
-  const released = contracts.filter((c) => c.status === "liberado");
+  // MRR e contratos ativos: liberados com vigência em curso (vencidos sem renovação ficam de fora, D24b).
+  const released = contracts.filter((c) => c.status === "liberado" && !isContractExpired(c));
   // Cancelado depois de liberado: a última atualização aproxima a data da saída.
   const activeAt = (c: Contract) => Boolean(c.releasedAt && c.releasedAt <= prevEnd) && !(c.status === "cancelado" && c.updatedAt <= prevEnd);
   const activePrev = contracts.filter(activeAt);
@@ -398,6 +405,8 @@ async function buildPanel(contract: Contract, client: Client | undefined, billin
     interactions: interactions.slice(0, 6),
     milestones,
     pendingReason: contract.pendingReason,
+    expired: isContractExpired(contract),
+    endDate: contract.endDate,
     summary,
   };
 }

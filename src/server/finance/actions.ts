@@ -19,6 +19,7 @@ import {
   ensureContractForOpportunity,
   getBillingContactInfo,
   generateBillings,
+  generateNextBillings,
   registerBillingCall,
   registerBoleto,
   registerPayment,
@@ -242,6 +243,19 @@ export async function generateBillingsAction(input: unknown): Promise<ActionResu
     return { ok: true, data: { count: created.length } };
   } catch (error) {
     return fail(error, "Não foi possível gerar as cobranças");
+  }
+}
+
+/** Próximas mensalidades (D24b): horizonte rolante ou o que falta do prazo; idempotente (ids determinísticos). */
+export async function generateNextBillingsAction(input: unknown): Promise<ActionResult<{ count: number; skipped: number }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const { contractId } = contractIdSchema.parse(input);
+    const r = await generateNextBillings(contractId, actorOf(user), { source: "manual", reason: `Gerado por ${user.name} na página do contrato` });
+    revalidateFinance(r.created[0]?.clientId ?? (await clientOfContract(contractId)), contractId);
+    return { ok: true, data: { count: r.created.length, skipped: r.skipped } };
+  } catch (error) {
+    return fail(error, "Não foi possível gerar as próximas cobranças");
   }
 }
 

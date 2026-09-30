@@ -49,6 +49,7 @@ export function ContractsTable({ rows, emptyDescription }: { rows: ContractRow[]
                   <Badge variant={CONTRACT_STATUS_VARIANT[r.status]} size="sm">
                     {CONTRACT_STATUS_LABELS[r.status]}
                   </Badge>
+                  {r.expired ? <Badge variant="danger" size="sm">Vencido</Badge> : null}
                   <Signatures row={r} />
                   {r.sla ? <Sla row={r} /> : null}
                 </div>
@@ -90,6 +91,11 @@ export function ContractsTable({ rows, emptyDescription }: { rows: ContractRow[]
                   <Badge variant={CONTRACT_STATUS_VARIANT[r.status]} size="sm">
                     {CONTRACT_STATUS_LABELS[r.status]}
                   </Badge>
+                  {r.expired ? (
+                    <Badge variant="danger" size="sm" className="ml-1" title={r.endDate ? `Vigência terminou em ${formatDate(r.endDate)}` : undefined}>
+                      Vencido
+                    </Badge>
+                  ) : null}
                   {r.pendingReason ? <p className="mt-1 max-w-[220px] truncate text-xs text-danger-fg" title={r.pendingReason}>{r.pendingReason}</p> : null}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(r.setupTotal)}</TableCell>
