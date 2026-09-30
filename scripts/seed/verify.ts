@@ -3,7 +3,7 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Client, type ClientProduct, type Commission, type Contract, type Counter, type Opportunity, type Payable, type Proposal, type SlaInstance, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
+import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
 import { counterId, list } from "../../src/server/db";
 import { commissionIdFor } from "../../src/server/commissions/store";
 
@@ -123,12 +123,30 @@ async function main(): Promise<void> {
   for (const c of commissions.filter((x) => x.status === "liberada" && !x.payableId && !(x.previousPayableIds?.length))) problems.push(`(k) comissão elegível ${c.id} sem título`);
   console.log(`Comissões: ${commissions.length} (${commissions.filter((c) => c.sourceKey).length} do motor); títulos: ${payables.length} (${payables.filter((p) => p.status === "pago").length} pagos)`);
 
+  // (l) eventos de pagamento externos sem duplicidade (provedor + eventId) e id determinístico `<provedor>_<eventId>`.
+  const paymentEvents = cache.get(COLLECTIONS.paymentEvents) as PaymentEvent[];
+  const eventKeys = new Set<string>();
+  for (const e of paymentEvents) {
+    const key = `${e.provider}|${e.eventId}`;
+    if (eventKeys.has(key)) problems.push(`(l) payment_event duplicado: ${key}`);
+    eventKeys.add(key);
+    if (!e.id.startsWith(`${e.provider}_`)) problems.push(`(l) ${e.id} não começa com o provedor ${e.provider}`);
+  }
+  // (m) toda cobrança com boleto/PIX registrado tem chargeStatus; paga ⇒ nunca "pendente"; cancelada ⇒ nunca paga.
+  const billings = cache.get(COLLECTIONS.billing) as Billing[];
+  for (const b of billings) {
+    if ((b.boleto || b.pix || b.paymentUrl || b.externalId) && !b.chargeStatus) problems.push(`(m) ${b.id} com boleto sem chargeStatus`);
+    if (b.status === "paga" && (b.paidAmount === undefined || !b.paidAt)) problems.push(`(m) ${b.id} paga sem paidAmount/paidAt`);
+    if (b.status !== "paga" && (b.paidAt || b.paidAmount !== undefined)) problems.push(`(m) ${b.id} ${b.status} com dados de pagamento`);
+  }
+  console.log(`Cobranças: ${billings.length} (${billings.filter((b) => b.boleto).length} com boleto registrado); eventos de pagamento externos: ${paymentEvents.length}`);
+
   const activeSlas = slas.filter((s) => s.status !== "concluido");
   console.log(`SLA ativos: ${activeSlas.length}, violados: ${activeSlas.filter((s) => s.breachedAt).length}`);
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(k): OK");
+    console.log("\nInvariantes (a)-(m): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);

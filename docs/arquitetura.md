@@ -143,6 +143,50 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   (`getPerformanceAccess`); vendedor, só as próprias — vale para /financeiro/comissoes, relatório e o bloco
   "Minhas comissões" do Meu Desempenho (`getUserCommissionsDigest`).
 
+## Boleto, baixa bancária, estorno e régua (etapa 4, `src/server/finance/*`)
+- **Boleto (D20)**: `Billing` ganhou campos opcionais `provider`, `externalId`, `chargeStatus`, `paymentUrl`, `boleto`
+  (linha digitável, nosso número, código de barras, PDF → documento "Boleto", emitido em, banco) e `pix`. Sem provedor
+  conectado (situação atual) o boleto é emitido no banco/ERP e **registrado** na cobrança (`registerBoleto`, evento
+  `billing.updated` com `changes`); `generateBillings` deixa `chargeStatus: "aguardando_emissao_manual"`. Ações no
+  painel da cobrança: Registrar boleto · Enviar boleto · 2ª via (mesmo helper) · Cobrar por WhatsApp/e-mail; badge e
+  filtro "Boleto" (sem boleto · emitido · pago) em Cobranças e Contas a Receber.
+- **Contrato do adaptador de cobrança** (`src/server/integrations/billing-provider.ts`, a implementar quando o
+  provedor for definido — Asaas, Iugu, banco): `createCharge` (chamado em `generateBillings` só quando
+  `billingProviderConnected()`), `getChargeStatus`/`getChargeDetail?` (conciliação), `cancelCharge` (em
+  `cancelBilling`/`cancelContract`; falha não impede o cancelamento local, fica em nota), `handleWebhook` (valida a
+  assinatura/token PRÓPRIOS do provedor e devolve `payments[] { externalId, eventId, status, paidAmount, paidAt }`).
+  A rota `/api/webhooks/cobranca` responde 503 sem provedor e, com ele, chama `applyWebhookPayments` →
+  `registerPayment(source: "provedor")`. Depois marque `implemented: true` no catálogo (`status.ts`).
+- **Baixa (D21)**: `registerPayment` é o caminho ÚNICO e é transacional (status conferido dentro da transação:
+  duas baixas concorrentes → só uma). Entrada ganha `source` (manual | provedor | conciliacao), `externalPaymentId`,
+  `providerEventId`, `provider`. Deduplicação de evento externo na coleção `payment_events` (id `<provedor>_<eventId>`,
+  `createIfAbsent` ANTES da baixa; reenvio → `alreadyProcessed: true`, sem erro). Tolerância (setting
+  `financeiro_baixa`, só para baixa automática): recebido < cobrança − tolerância → NÃO baixa; grava
+  `partialPaidAmount/partialPaidAt`, registra pendência no contrato (ou avisa o Financeiro quando já liberado) e
+  devolve `partial: true`. `payment.approved` leva `source`, `externalPaymentId` e `changes` (status/paidAmount/paidAt).
+  Varredura `conciliacao_bancaria`: só age com provedor conectado (`getChargeDetail`/`getChargeStatus` das cobranças
+  abertas com `externalId`); sem provedor fica "ignorada: provedor de cobrança não conectado" em /admin/automacoes.
+- **Estorno (D22)**: `reversePayment({ billingId, reason })` (requireFinanceOperator, motivo obrigatório): cobrança
+  paga volta a `aberta`/`vencida` pela data, `paidAt/paidAmount` limpos e guardados em `reversedPayments[]`, evento
+  `payment.reversed` com `changes`. Handler (`src/server/commissions/reversal.ts`): comissão elegível/com título que
+  depende da cobrança → título não pago é cancelado e a comissão volta a "aguardando recebimento"; título pago não é
+  tocado (estorno manual da comissão) e o gestor financeiro é avisado. Contrato "pago" (não liberado) volta a
+  aguardar pagamento; liberado não regride (aviso ao Financeiro).
+- **Canais (D23)**: helper ÚNICO `sendOrRecord` (`src/server/integrations/communications.ts`) envia pelo provedor
+  quando conectado; senão registra manual (wa.me/mailto) — usado por Financeiro, Central de Vendas, Caixa de Entrada
+  e Suporte. Respeita `Client.communicationOptOut` (registro `nao_enviada`) e aceita id determinístico (régua).
+  `sendBillingMessage(billingId, { channel: whatsapp | email | ambos, text?, includeBoleto? })`: destinatário =
+  contato do contrato → e-mail de cobrança da venda → contato principal → cliente; setting `cobranca_canais`
+  (principal WhatsApp, complementar e-mail, `enviarEmailJuntoAoWhatsapp`). Webhook do WhatsApp valida
+  `X-Hub-Signature-256` (WHATSAPP_APP_SECRET) e processa `statuses` (entregue/lida/falha em `communications`).
+- **Régua (D24)**: setting `regua_cobranca` { ativa (padrão **false**), diasUteis, marcos [{ id, nome, offsetDias
+  (negativo = antes, positivo = depois), canal, template, ativo }], pausarQuando }. Varredura `regua_cobranca`
+  (`src/server/finance/regua.ts`, diária + preguiçosa em Cobranças/Contas a Receber): executa cada marco UMA vez por
+  cobrança (comunicação `comm_regua_<billingId>_<marcoId>[_canal]` via `createIfAbsent`; tarefa por processId
+  `regua:<billingId>` + título), com folga de 2 dias; canal não conectado → registro "não enviada" + tarefa ao
+  Financeiro com texto e link prontos; evento `billing.reminder_due`. Prévia honesta em Configurações › Cobrança.
+  Meu Dia deriva "vencem nos próximos N dias" do menor marco antes do vencimento quando a régua está ativa.
+
 ## Contas a pagar (`payables`)
 - Um título por comissão elegível (`pag_<commissionId>`, `createIfAbsent`; `_2`, `_3`… depois de cancelado),
   código PAG-AAAA-NNNNN, vencimento no `diaPagamento` (setting `comissoes_pagamento`) do mês seguinte à
@@ -159,8 +203,8 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - Não há coleção de auditoria: cada mudança relevante emite evento com `actorId`, `occurredAt` e
   `payload.changes {campo: {from, to}}` + `payload.reason` (`auditChanges` em `src/server/audit.ts`). Cobre itens e
   condições do contrato, regras de comissão (`commission_rule.changed`), aprovação/pagamento/cancelamento de títulos
-  (`payable.*`), estorno/cancelamento/bloqueio de comissão (`commission.*`), cancelamento de contrato e
-  `settings.updated`. A timeline do cliente e do contrato usa os mesmos eventos (ícones em
+  (`payable.*`), estorno/cancelamento/bloqueio de comissão (`commission.*`), cancelamento de contrato,
+  `settings.updated`, boleto registrado (`billing.updated`), baixa (`payment.approved`) e estorno (`payment.reversed`). A timeline do cliente e do contrato usa os mesmos eventos (ícones em
   `src/components/timeline/event-icon.tsx`).
 
 ## Qualidade

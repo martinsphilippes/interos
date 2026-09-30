@@ -25,6 +25,7 @@ import type { SeedContext } from "./context";
 import { seedKpiDefinitions } from "./kpis";
 import { PROCESS_SEED_DEFINITIONS } from "../../src/server/process-engine/seed-definitions";
 import { DEFAULT_GAMIFICATION, DEFAULT_SALES_PRIZES } from "../../src/server/performance/schemas";
+import { REGUA_DEFAULT_MARCOS, SETTING_DEFAULTS, SETTING_DESCRIPTIONS } from "../../src/server/admin/schemas";
 
 const createdAt = daysAgo(400);
 
@@ -279,6 +280,10 @@ const SETTINGS: (SeedDoc<Settings> & { id: string })[] = [
   { id: "setting_comissoes_pagamento", key: "comissoes_pagamento", description: "Pagamento de comissões: dia do vencimento dos títulos no mês seguinte à competência da elegibilidade.", value: { diaPagamento: 10 } },
   { id: "setting_financeiro_alertas", key: "financeiro_alertas", description: "Alertas de contratos parados: aguardando assinatura, pago sem liberação e liberado sem início da implantação.", value: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3 } },
   { id: "setting_premios_vendas", key: "premios_vendas", description: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.", value: { ...DEFAULT_SALES_PRIZES } },
+  // Etapa 4 (D32): baixa automática, canais de cobrança e régua (DESLIGADA por padrão; marcos −15/−7/+21 são proposta).
+  { id: "setting_financeiro_baixa", key: "financeiro_baixa", description: SETTING_DESCRIPTIONS.financeiro_baixa, value: { ...SETTING_DEFAULTS.financeiro_baixa } },
+  { id: "setting_cobranca_canais", key: "cobranca_canais", description: SETTING_DESCRIPTIONS.cobranca_canais, value: { principal: "whatsapp", complementar: "email", enviarEmailJuntoAoWhatsapp: false } },
+  { id: "setting_regua_cobranca", key: "regua_cobranca", description: SETTING_DESCRIPTIONS.regua_cobranca, value: { ativa: false, diasUteis: false, marcos: REGUA_DEFAULT_MARCOS.map((m) => ({ ...m })), pausarQuando: { pendencia: true, negociacao: true } } },
 ];
 
 // ---------------------------------------------------------------------------

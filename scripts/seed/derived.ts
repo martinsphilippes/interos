@@ -10,10 +10,39 @@
  * Requer o seed rodando com `--conditions=react-server` (os motores são server-only).
  */
 import { listRecentMonths, previousPeriod, currentMonthKey, monthPeriod } from "../../src/server/kpis/period";
-import { COLLECTIONS, type Payable } from "../../src/domain/types";
-import { list } from "../../src/server/db";
+import { COLLECTIONS, type Billing, type Contract, type Payable } from "../../src/domain/types";
+import { getManyByIds, list } from "../../src/server/db";
 import { dateKey } from "../../src/lib/format";
 import { NOW, addDays } from "./lib";
+
+/**
+ * Boletos registrados manualmente (D32) pelo serviço `registerBoleto` em 2 cobranças abertas de contratos liberados
+ * (sem provedor de cobrança: emitidos "no banco" e registrados na cobrança), sem emitir eventos.
+ */
+export async function seedBoletos(): Promise<{ registered: string[] }> {
+  const { registerBoleto } = await import("../../src/server/finance/service");
+  const open = (await list<Billing>(COLLECTIONS.billing, { where: [["status", "==", "aberta"]] })).sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.id.localeCompare(b.id));
+  const contracts = await getManyByIds<Contract>(COLLECTIONS.contracts, open.map((b) => b.contractId));
+  const chosen = open.filter((b) => contracts.get(b.contractId)?.status === "liberado").slice(0, 2);
+  const karem = { id: "user_karem", name: "Karem Feitosa" };
+  const registered: string[] = [];
+  for (const [i, b] of chosen.entries()) {
+    const seq = String(i + 1).padStart(2, "0");
+    await registerBoleto(
+      {
+        billingId: b.id,
+        linhaDigitavel: `75691.23456 01234.567890 12345.678901 ${i + 1} 9${dateKey(b.dueDate).replace(/-/g, "").slice(2)}0${String(Math.round(b.amount * 100)).padStart(10, "0")}`.slice(0, 54),
+        nossoNumero: `2026${seq}${b.id.replace(/\D/g, "").padStart(6, "0")}`,
+        banco: "Sicoob",
+        emitidoEm: dateKey(addDays(b.dueDate, -12) < NOW.toISOString() ? addDays(b.dueDate, -12) : NOW.toISOString()),
+      },
+      karem,
+      { emit: false },
+    );
+    registered.push(b.id);
+  }
+  return { registered };
+}
 
 export interface CommissionSeedResult {
   commissions: number;

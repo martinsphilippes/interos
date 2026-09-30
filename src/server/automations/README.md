@@ -23,7 +23,10 @@
 
 `sweeps.ts` registra as varreduras nativas (`sla_alerts`, `followup_vendas`, `oportunidades_paradas`,
 `leads_sem_contato_24h`, `renovacoes`, `saude_clientes`, `implantacoes_atrasadas`, `tarefas_recorrentes`,
-`kpi_snapshots`); `scheduler.ts#runSweeps({ only, force })` roda as que venceram (controle em
+`kpi_snapshots`, `processos_esperas`, `cobrancas_vencidas`, `contratos_alertas`, `comissoes`,
+`conciliacao_bancaria` — só age com provedor de cobrança conectado, senão "ignorada" —, `regua_cobranca` — marcos
+da régua de cobrança, idempotente por cobrança e marco, desligada por padrão; ambas rodam também de forma
+preguiçosa ao abrir Cobranças/Contas a Receber); `scheduler.ts#runSweeps({ only, force })` roda as que venceram (controle em
 `settings/sweeps.value.automacoes.<chave>`) e as regras agendadas que varrem registros
 (`trigger.entity`, uma vez por registro até ele mudar). Uma regra agendada com `trigger.sweep` define a
 frequência daquela varredura.

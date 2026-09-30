@@ -93,6 +93,28 @@ Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada 
   seguinte (padrão 10); o título passa por aprovado → a pagar → pago. Vendedor acompanha as suas item a item
   (situação, data provável e memória de cálculo) no Meu Desempenho e em Financeiro › Comissões.
 
+## Cobrança: boleto, baixa, canais e régua (etapa 4)
+- **Boleto**: enquanto não há provedor de cobrança conectado (banco/Asaas/Iugu a definir), o boleto é emitido no
+  banco/ERP e **registrado** na cobrança (linha digitável, nosso número, PDF, PIX). O sistema nunca simula emissão:
+  a cobrança fica "aguardando emissão manual" e mostra "Sem boleto" até o registro. Com provedor, a emissão passa a
+  ser automática na geração das cobranças e o cancelamento é espelhado.
+- **Baixa**: registro manual com comprovante é o padrão; a baixa automática (webhook do provedor ou conciliação
+  diária) só existe com provedor conectado e é deduplicada (o mesmo evento nunca baixa duas vezes). Tolerância:
+  diferença ≤ R$ 1,00 (configurável) baixa como paga; abaixo disso a cobrança fica em aberto com pendência no
+  contrato e aviso ao Financeiro. Estorno de pagamento exige motivo; comissão com título não pago volta a aguardar,
+  comissão já paga não é alterada automaticamente (estorno manual).
+- **Canais com o cliente — política**: **WhatsApp é o canal principal**; **e-mail é complementar** (usado quando
+  o cliente não tem WhatsApp, quando o marco da régua pede os dois, ou quando o Financeiro escolhe "Cobrar por
+  e-mail"). Sem canal conectado, o sistema abre wa.me/mailto com o texto pronto e registra o envio manual — nunca
+  finge que enviou. Sem WhatsApp nem e-mail cadastrados → tarefa de ligação. O cliente pode ter **opt-out por
+  canal** no cadastro (nada é enviado; fica registrado "não enviada"). Fora da janela de 24 h a Meta exige template
+  aprovado (pendente de conta Meta).
+- **Régua de cobrança** (parametrizável em Configurações › Cobrança; **desligada até ser ativada**): marcos com dias
+  ANTES (sinal negativo) ou DEPOIS (positivo) do vencimento, canal (WhatsApp, e-mail, ambos, tarefa, notificação) e
+  texto com variáveis. Proposta inicial: 15 dias antes (WhatsApp), 7 dias antes (WhatsApp + e-mail), 21 dias depois
+  (tarefa "Cobrar/negociar — ligação" ao Financeiro). Cada marco roda uma única vez por cobrança; contrato com
+  pendência pausa a régua; o processo humano "cobrança inadimplente" continua para o escalonamento.
+
 ## Financeiro: metas e bônus (deck "Centro de Comando Financeiro")
 Papel: portão de qualidade do workflow. Valida e libera (faturamento correto de múltiplos
 produtos, contrato assinado, confirmação de pagamento, validação de escopo) antes da
