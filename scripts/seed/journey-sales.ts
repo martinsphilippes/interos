@@ -399,7 +399,10 @@ function seedContracts(ctx: SeedContext): void {
     const billingDay = closing?.billingDay ?? pickedDay;
     const primary = client.contacts.find((c) => c.isPrimary)!;
     const termMonths = closing?.termMonths ?? 12;
-    const endDate = startDate ? (status === "ativo" ? nextAnniversary(startDate) : addDays(startDate, termMonths === 12 ? 365 : Math.round(termMonths * 30.5))) : undefined;
+    // client_012 (D32): renovação automática combinada, vencendo em 20 dias — a varredura `renovacoes` (rodada pelo
+    // e2e, não pelo seed) renova por aditivo com reajuste de 5%.
+    const autoRenewal = n === 12 && startDate ? { autoRenew: true, renewalTermMonths: 12, readjustment: { type: "percentual" as const, percent: 5 }, noticeDays: 30 } : null;
+    const endDate = startDate ? (autoRenewal ? daysFromNow(20).slice(0, 10) + "T12:00:00.000Z" : status === "ativo" ? nextAnniversary(startDate) : addDays(startDate, termMonths === 12 ? 365 : Math.round(termMonths * 30.5))) : undefined;
 
     const contract = store.add(COLLECTIONS.contracts, id("ctr", n), {
       clientId: client.doc.id,
@@ -433,6 +436,7 @@ function seedContracts(ctx: SeedContext): void {
       pendingReason: override?.pendingReason,
       ownerId: users.karem.id,
       documentIds: [],
+      ...(autoRenewal ?? {}),
       // Vendedor dos contratos recentes (últimos 6 meses) sem oportunidade no seed: o dono comercial do cliente.
       // Contratos mais antigos ficam sem vendedor (o histórico de cobranças do seed não cobre o início deles).
       ...(!opp && client.doc.ownerSalesId && j.contractAt! >= `${competence(-5)}-01` ? { sellerId: client.doc.ownerSalesId } : {}),

@@ -3,7 +3,7 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
+import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
 import { counterId, list } from "../../src/server/db";
 import { commissionIdFor } from "../../src/server/commissions/store";
 
@@ -141,12 +141,45 @@ async function main(): Promise<void> {
   }
   console.log(`Cobranças: ${billings.length} (${billings.filter((b) => b.boleto).length} com boleto registrado); eventos de pagamento externos: ${paymentEvents.length}`);
 
+  // (n) aditivos (D32): todo aditivo aplicado está em contract.amendmentIds, com id cta_<contractId>_<n>, e o contrato
+  //     tem version ≥ aditivos aplicados + 1 e uma entrada em previousVersions por aditivo.
+  const amendments = cache.get(COLLECTIONS.contractAmendments) as ContractAmendment[];
+  const contractById = new Map(contracts.map((c) => [c.id, c]));
+  for (const a of amendments) {
+    const c = contractById.get(a.contractId);
+    if (!c) problems.push(`(n) aditivo ${a.id} sem contrato`);
+    if (!a.id.startsWith(`cta_${a.contractId}_`)) problems.push(`(n) aditivo ${a.id} com id fora do padrão cta_<contractId>_<n>`);
+    if (a.status === "aplicado" && c && !(c.amendmentIds ?? []).includes(a.id)) problems.push(`(n) aditivo aplicado ${a.id} não está em contract.amendmentIds`);
+    if (a.status === "aplicado" && c && !(c.previousVersions ?? []).some((v) => v.amendmentId === a.id)) problems.push(`(n) aditivo aplicado ${a.id} sem snapshot em previousVersions`);
+  }
+  for (const c of contracts) {
+    const applied = amendments.filter((a) => a.contractId === c.id && a.status === "aplicado").length;
+    if (applied > 0 && c.version < applied + 1) problems.push(`(n) ${c.id} version=${c.version} < aditivos aplicados + 1 (${applied + 1})`);
+  }
+  // (o) cobranças de um contrato sem `installment` duplicado por tipo (canceladas não contam).
+  const seenInstallments = new Set<string>();
+  for (const b of billings.filter((x) => x.status !== "cancelada" && x.installment !== undefined)) {
+    const key = `${b.contractId}|${b.type}|${b.installment}`;
+    if (seenInstallments.has(key)) problems.push(`(o) parcela duplicada: ${key}`);
+    seenInstallments.add(key);
+  }
+  // (p) contas a pagar geral: fornecedor referenciado existe; parcelas coerentes; série com modelo existente.
+  const suppliers = cache.get(COLLECTIONS.suppliers) as Supplier[];
+  const supplierIds = new Set(suppliers.map((s) => s.id));
+  for (const p of payables) {
+    if (p.supplierId && !supplierIds.has(p.supplierId)) problems.push(`(p) ${p.id} aponta para fornecedor inexistente ${p.supplierId}`);
+    if (p.installments && (!p.installment || p.installment < 1 || p.installment > p.installments)) problems.push(`(p) ${p.id} parcela ${p.installment}/${p.installments} inválida`);
+    if (p.origin === "recorrencia" && !(p.seriesId && payableById.has(p.seriesId))) problems.push(`(p) ${p.id} ocorrência sem série`);
+    if (p.origin === "recorrencia" && p.seriesId && p.id !== `pag_rec_${p.seriesId}_${p.competence}`) problems.push(`(p) ${p.id} id fora do padrão pag_rec_<serie>_<AAAA-MM>`);
+  }
+  console.log(`Aditivos: ${amendments.length} (${amendments.filter((a) => a.status === "aplicado").length} aplicados); fornecedores: ${suppliers.length}; títulos parcelados/recorrentes: ${payables.filter((p) => p.installments).length}/${payables.filter((p) => p.recurrence || p.origin === "recorrencia").length}`);
+
   const activeSlas = slas.filter((s) => s.status !== "concluido");
   console.log(`SLA ativos: ${activeSlas.length}, violados: ${activeSlas.filter((s) => s.breachedAt).length}`);
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(m): OK");
+    console.log("\nInvariantes (a)-(p): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);

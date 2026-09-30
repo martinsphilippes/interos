@@ -38,7 +38,7 @@ function normalize(input: SupplierInput, actor: UserRef): Omit<Supplier, "id" | 
 }
 
 /** Cria ou atualiza o fornecedor (nome único, sem diferenciar maiúsculas). */
-export async function saveSupplier(input: SupplierInput, actor: UserRef): Promise<{ supplier: Supplier; created: boolean }> {
+export async function saveSupplier(input: SupplierInput, actor: UserRef, options: { emit?: boolean } = {}): Promise<{ supplier: Supplier; created: boolean }> {
   const data = normalize(input, actor);
   const all = await listSuppliers();
   const duplicate = all.find((s) => s.id !== input.id && s.name.trim().toLowerCase() === data.name.toLowerCase());
@@ -50,6 +50,7 @@ export async function saveSupplier(input: SupplierInput, actor: UserRef): Promis
     const audit = auditChanges<Supplier>(current, next, [...SUPPLIER_FIELDS]);
     if (Object.keys(audit.changes).length === 0) return { supplier: current, created: false };
     await update<Supplier>(COLLECTIONS.suppliers, current.id, data);
+    if (options.emit === false) return { supplier: next, created: false };
     await emitEvent({
       type: "supplier.updated",
       actor,
@@ -63,6 +64,7 @@ export async function saveSupplier(input: SupplierInput, actor: UserRef): Promis
     return { supplier: next, created: false };
   }
   const supplier = await create<Supplier>(COLLECTIONS.suppliers, { ...data, createdBy: actor.id });
+  if (options.emit === false) return { supplier, created: true };
   await emitEvent({
     type: "supplier.created",
     actor,

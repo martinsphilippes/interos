@@ -407,8 +407,8 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
   // 4. Comissões: só previstas/em carência mudam (pagas e elegíveis com título ficam intactas — regra do motor).
   if (next.sellerId || next.opportunityId) {
     try {
-      const { reconcileContractCommissions } = await import("@/server/commissions/engine");
-      await reconcileContractCommissions(next.id, actor);
+      const { reconcileCommissions } = await import("@/server/commissions/engine");
+      await reconcileCommissions({ contractIds: [next.id], actor, emit });
     } catch (error) {
       console.error(`[financeiro] aditivo ${a.number}: falha ao recalcular as comissões`, error);
     }

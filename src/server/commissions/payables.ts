@@ -342,7 +342,7 @@ function shiftDue(dueDate: string, months: number): string {
  * recorrência marca o título como série (`seriesId` = próprio id) para a varredura `contas_recorrentes`; anexo vira
  * documento (entityType "payable"). Devolve o primeiro título (e os demais em `parcels`).
  */
-export async function createManualPayable(input: ManualPayableInput, actor: UserRef): Promise<Payable & { parcels?: Payable[] }> {
+export async function createManualPayable(input: ManualPayableInput, actor: UserRef, options: { emit?: boolean; createdAt?: string } = {}): Promise<Payable & { parcels?: Payable[] }> {
   let creditorName = input.creditorName?.trim() ?? "";
   let supplierId: string | undefined;
   if (input.creditorType === "colaborador") {
@@ -361,7 +361,7 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
   if (!settings.categorias.includes(input.category)) throw new Error(`Categoria "${input.category}" não está em Configurações › Contas a pagar`);
   if (input.costCenter && settings.centrosDeCusto.length > 0 && !settings.centrosDeCusto.includes(input.costCenter)) throw new Error(`Centro de custo "${input.costCenter}" não está em Configurações › Contas a pagar`);
   const n = Math.max(1, Math.min(48, Math.floor(input.installments ?? 1)));
-  const now = nowIso();
+  const now = options.createdAt ?? nowIso();
   const amount = Math.round(input.amount * 100) / 100;
   const base = {
     creditorType: input.creditorType,
@@ -377,6 +377,7 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
     createdBy: actor.id,
   };
   const emitCreated = async (p: Payable, extra: Record<string, unknown> = {}) => {
+    if (options.emit === false) return;
     await emitPayable("payable.created", actor, p, `Título ${p.code} lançado: ${formatCurrency(p.amount)} para ${creditorName}`, { origin: "manual", category: input.category, supplierId: supplierId ?? null, costCenter: input.costCenter ?? null, ...extra, ...auditChanges<Payable>(null, p, ["creditorName", "category", "description", "amount", "competence", "dueDate"]) }, `${payableCategoryLabel(input.category)}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}${p.recurrence ? ` · recorrente (${p.recurrence.frequency})` : ""} · vence ${formatDate(p.dueDate)}`);
   };
 
@@ -398,6 +399,8 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
         installments: n,
         seriesId: baseId,
         history: [payableHistory(actor, `Lançamento manual parcelado (${i + 1}/${n})`, { to: "previsto" }, now)],
+        createdAt: now,
+        updatedAt: now,
       });
       const p = created ? { ...doc, code: await assignPayableCode(id, now) } : doc;
       parcels.push(p);
@@ -415,6 +418,8 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
     dueDate: `${input.dueDate.slice(0, 10)}T12:00:00.000Z`,
     recurrence: input.recurrence ? stripUndefined({ frequency: input.recurrence.frequency, dayOfMonth: input.recurrence.dayOfMonth, until: input.recurrence.until?.slice(0, 10) }) : undefined,
     history: [payableHistory(actor, input.recurrence ? `Lançamento manual recorrente (${input.recurrence.frequency}, dia ${input.recurrence.dayOfMonth})` : "Lançamento manual", { to: "previsto" }, now)],
+    createdAt: now,
+    updatedAt: now,
   });
   // Série recorrente: o próprio título é o modelo (seriesId = id); as ocorrências vêm da varredura.
   if (input.recurrence) await update<Payable>(COLLECTIONS.payables, payable.id, { seriesId: payable.id });

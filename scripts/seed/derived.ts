@@ -11,9 +11,10 @@
  */
 import { listRecentMonths, previousPeriod, currentMonthKey, monthPeriod } from "../../src/server/kpis/period";
 import { COLLECTIONS, type Billing, type Contract, type Payable } from "../../src/domain/types";
-import { getManyByIds, list } from "../../src/server/db";
+import { getById, getManyByIds, list } from "../../src/server/db";
 import { dateKey } from "../../src/lib/format";
-import { NOW, addDays } from "./lib";
+import { NOW, addDays, daysAgo, daysFromNow } from "./lib";
+import { PRODUCT_IDS } from "./catalog";
 
 /**
  * Boletos registrados manualmente (D32) pelo serviço `registerBoleto` em 2 cobranças abertas de contratos liberados
@@ -42,6 +43,54 @@ export async function seedBoletos(): Promise<{ registered: string[] }> {
     registered.push(b.id);
   }
   return { registered };
+}
+
+/**
+ * Aditivo aplicado (D32) no contrato liberado de client_028 (venda com fechamento estruturado e vendedor): inclusão
+ * do Intercert Ponto com vigência no mês que vem, sem assinatura do cliente (aplicação direta). Passa pelo serviço
+ * real: contrato v2 com a v1 preservada, cobranças futuras refeitas (mesma numeração), produtos do cliente
+ * sincronizados e comissões previstas recalculadas. Sem eventos (o seed não dispara notificações).
+ */
+export async function seedAmendments(): Promise<{ applied: string[]; version: number | null }> {
+  const { applyAmendment, createAmendment } = await import("../../src/server/finance/amendments");
+  const karem = { id: "user_karem", name: "Karem Feitosa" };
+  const contract = await getById<Contract>(COLLECTIONS.contracts, "ctr_028");
+  if (!contract || contract.status !== "liberado") return { applied: [], version: null };
+  const ponto = contract.items.some((i) => i.productId === PRODUCT_IDS.ponto);
+  const items = [...contract.items.map((i) => ({ ...i })), ...(ponto ? [] : [{ productId: PRODUCT_IDS.ponto, productName: "Intercert Ponto", quantity: 1, setupValue: 300, monthlyValue: 79, hardwareValue: 0, discountPct: 0 }])];
+  const nextMonth = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+  const amendment = await createAmendment(
+    { contractId: contract.id, effectiveFrom: nextMonth, reason: "Inclusão do controle de ponto a pedido do cliente (ajuste interno acordado por e-mail)", requiresSignature: false, items },
+    karem,
+    { emit: false },
+  );
+  const r = await applyAmendment(amendment.id, karem, { emit: false, notifyIndexPending: false });
+  return { applied: [amendment.number], version: r.contract.version };
+}
+
+/**
+ * Contas a Pagar geral (D32): 2 fornecedores, 1 título parcelado (3x) e 1 recorrente mensal, pelos serviços reais
+ * (sem eventos). Os títulos nascem "previstos": aprovar/pagar é exercício das telas/e2e.
+ */
+export async function seedPayablesGeneral(): Promise<{ suppliers: number; parcels: number; recurring: number }> {
+  const { saveSupplier } = await import("../../src/server/commissions/suppliers");
+  const { createManualPayable } = await import("../../src/server/commissions/payables");
+  const karem = { id: "user_karem", name: "Karem Feitosa" };
+  const imobiliaria = await saveSupplier({ name: "Imobiliária Cariri Salas Comerciais", document: "12345678000195", email: "financeiro@caririsalas.com.br", phone: "88999120001", pixKey: "12345678000195", bank: { banco: "Sicoob", agencia: "3001", conta: "12345-6" }, category: "aluguel", notes: "Sala 402 — contrato de locação anual.", active: true }, karem, { emit: false });
+  const nuvem = await saveSupplier({ name: "Nuvem Sul Hospedagem e Licenças", email: "cobranca@nuvemsul.com.br", pixKey: "cobranca@nuvemsul.com.br", category: "software", notes: "Servidores e licenças do ERP hospedado.", active: true }, karem, { emit: false });
+  const month = dateKey(NOW).slice(0, 7);
+  const firstDue = daysFromNow(12).slice(0, 10);
+  const parcelado = await createManualPayable(
+    { creditorType: "fornecedor", supplierId: nuvem.supplier.id, category: "software", costCenter: "Tecnologia", description: "Renovação anual das licenças de servidor", amount: 5400, competence: month, dueDate: firstDue, installments: 3, notes: "Parcelado em 3x conforme proposta do fornecedor.", attachmentUrl: "https://drive.example.com/nf/nuvem-sul-2026.pdf", attachmentName: "NF Nuvem Sul — licenças" },
+    karem,
+    { emit: false, createdAt: daysAgo(2) },
+  );
+  const recorrente = await createManualPayable(
+    { creditorType: "fornecedor", supplierId: imobiliaria.supplier.id, category: "aluguel", costCenter: "Administrativo", description: "Aluguel da sala 402", amount: 2800, competence: month, dueDate: `${month}-10`, recurrence: { frequency: "mensal", dayOfMonth: 10 }, notes: "Série mensal; reajuste anual pelo índice do contrato de locação." },
+    karem,
+    { emit: false, createdAt: daysAgo(20) },
+  );
+  return { suppliers: 2, parcels: parcelado.parcels?.length ?? 1, recurring: recorrente.seriesId ? 1 : 0 };
 }
 
 export interface CommissionSeedResult {
