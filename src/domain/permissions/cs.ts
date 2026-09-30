@@ -91,7 +91,8 @@ export const CS = {
           otherwise: "empresa",
         },
         applyAt: [
-          "src/server/cs/queries.ts#resolveScope (limitar ?responsavel ao escopo efetivo)",
+          "src/server/cs/queries.ts#resolveCsView (limite = resolveDataScope da tela + filtro de donos; ?responsavel fora do limite volta à visão inicial)",
+          "src/server/cs/access.ts#assertCsClientAccess",
           "src/server/cs/queries.ts#getPortfolio",
           "src/server/cs/queries.ts#getCsOverview (sem chamadores)",
           "src/server/cs/queries.ts#listPortfolio (sem chamadores)",

@@ -73,6 +73,21 @@ export function normalizeActiveModules(activeModules: readonly string[] | undefi
   return set;
 }
 
+/**
+ * Lista de módulos ATIVOS a partir do documento da organização (A8). `inactiveModules` (os desligados) tem prioridade:
+ * com ele, um módulo novo do catálogo nasce ligado. Sem ele, vale `activeModules` (forma antiga); sem nenhum dos dois,
+ * `undefined` = todos ativos.
+ */
+export function activeModulesOfOrganization(organization: { activeModules?: unknown; inactiveModules?: unknown } | null | undefined): ModuleKey[] | undefined {
+  if (!organization) return undefined;
+  if (Array.isArray(organization.inactiveModules)) {
+    const inactive = organization.inactiveModules as unknown[];
+    return MODULE_KEYS.filter((m) => !inactive.includes(m));
+  }
+  if (Array.isArray(organization.activeModules)) return (organization.activeModules as unknown[]).filter((m): m is ModuleKey => (MODULE_KEYS as readonly string[]).includes(m as string));
+  return undefined;
+}
+
 const SCOPE_ORDER: Record<ScopeKind, number> = { meus: 0, equipe: 1, departamento: 2, unidades: 3, empresa: 4 };
 
 /** Mantém o escopo dentro dos permitidos: "unidades" vale "empresa"; fora da lista, o maior permitido abaixo dele. */

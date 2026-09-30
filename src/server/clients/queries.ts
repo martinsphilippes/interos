@@ -8,7 +8,9 @@ import { getClientImplementation, type ClientImplementation } from "@/server/imp
 import { getClientSupport, type ClientSupport } from "@/server/support/queries";
 import { getClientVisits } from "@/server/sales/workspace-queries";
 import type { VisitRow } from "@/server/sales/queries";
-import { filterByScope, type DataScope } from "@/server/auth/scope";
+import { filterByScope, resolveDataScope, type DataScope } from "@/server/auth/scope";
+import { filterBillingsByContracts, filterContractsByScope } from "@/server/finance/access";
+import { redactBilling, redactContract } from "@/server/finance/redact";
 import { ALL_CLIENT_SECTIONS, type ClientSectionAccess } from "@/components/clients/access-model";
 import {
   COLLECTIONS,
@@ -487,6 +489,11 @@ export interface Client360Access {
   sections?: ClientSectionAccess;
   /** Produtos disponíveis para upsell (ação "Gerar oportunidade") mesmo sem a seção de produtos. */
   withAvailableProducts?: boolean;
+  /**
+   * Usuário da requisição (A29): com ele, as abas de Implantação, Suporte e Financeiro aplicam o escopo da tela dona
+   * (implantacao.projetos, suporte.chamados, financeiro.contratos). Padrão "empresa" = nada muda. Sem ele, sem recorte.
+   */
+  user?: CurrentUser;
 }
 
 /**
@@ -539,14 +546,14 @@ export async function getClient360(id: string, access: Client360Access = {}): Pr
     when(sec.comercial, () => list<Proposal>(COLLECTIONS.proposals, byClient())),
     when(sec.financeiro, () => list<Contract>(COLLECTIONS.contracts, byClient())),
     when(sec.financeiro, () => listBillingsSwept(byClient())),
-    // Implantação e Suporte: fonte é o próprio módulo.
-    sec.implantacao ? getClientImplementation(id) : Promise.resolve(EMPTY_IMPLEMENTATION),
+    // Implantação e Suporte: fonte é o próprio módulo (com o usuário, recortados pelo escopo da tela dona).
+    sec.implantacao ? getClientImplementation(id, access.user) : Promise.resolve(EMPTY_IMPLEMENTATION),
     when(sec.cs, () => list<CsAccount>(COLLECTIONS.csAccounts, byClient())),
     when(sec.cs, () => list<HealthScore>(COLLECTIONS.healthScores, byClient())),
     when(sec.cs, () => list<SuccessPlan>(COLLECTIONS.successPlans, byClient())),
     when(sec.cs, () => list<Renewal>(COLLECTIONS.renewals, byClient())),
     when(sec.suporte, () => list<SupportTicket>(COLLECTIONS.supportTickets, byClient())),
-    sec.suporte ? getClientSupport(id) : Promise.resolve(EMPTY_SUPPORT),
+    sec.suporte ? getClientSupport(id, access.user) : Promise.resolve(EMPTY_SUPPORT),
     when(sec.documentos, () => list<Document>(COLLECTIONS.documents, byClient())),
     when(sec.tarefas, () => list<Task>(COLLECTIONS.tasks, byClient())),
     client.workflowInstanceId ? getById<WorkflowInstance>(COLLECTIONS.workflowInstances, client.workflowInstanceId) : Promise.resolve(null),
@@ -556,6 +563,18 @@ export async function getClient360(id: string, access: Client360Access = {}): Pr
   ]);
 
   const { projects, tasks: implementationTasks, trainings } = implementation;
+
+  // Contratos e cobranças no escopo de financeiro.contratos (A29; cobrança herda do contrato). Padrão "empresa" =
+  // nada muda. Aplicado antes do resumo, para os números refletirem só o que o usuário vê.
+  if (access.user && sec.financeiro && contracts.length) {
+    const scope = await resolveDataScope(access.user, "financeiro.contratos");
+    const scoped = await filterContractsByScope(contracts, scope);
+    if (scoped.length !== contracts.length) {
+      const visible = new Set(scoped.map((c) => c.id));
+      contracts.splice(0, contracts.length, ...scoped);
+      billing.splice(0, billing.length, ...filterBillingsByContracts(billing, visible));
+    }
+  }
   const csat = supportModule.recentCsat;
 
   // Ordenações.
@@ -612,9 +631,13 @@ export async function getClient360(id: string, access: Client360Access = {}): Pr
   const financeSummary = await getClientFinancialSummary(id, { contracts, billings: billing });
   const financial: FinancialSummary = {
     ...financeSummary,
-    // Sem a seção Financeiro o resumo fica zerado (inclusive o MRR estimado pelos produtos).
-    mrr: sec.financeiro ? financeSummary.mrr || products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0) : 0,
+    // Sem a seção Financeiro o resumo fica zerado (inclusive o MRR estimado pelos produtos); sem "Visualizar
+    // valores" (A13) também — o fallback pelos produtos não pode reintroduzir o número.
+    mrr: sec.financeiro && !financeSummary.valuesHidden ? financeSummary.mrr || products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0) : 0,
   };
+  // A13: sem "Visualizar valores", contratos e cobranças saem sem números (nenhum componente recebe as quantias).
+  const contractsOut = financeSummary.valuesHidden ? contracts.map(redactContract) : contracts;
+  const billingOut = financeSummary.valuesHidden ? billing.map(redactBilling) : billing;
 
   // Resumo de suporte (fonte: módulo de Suporte): reincidência e CSAT.
   const support: SupportSummary = {
@@ -667,8 +690,8 @@ export async function getClient360(id: string, access: Client360Access = {}): Pr
     campaign,
     opportunities,
     proposals,
-    contracts,
-    billing,
+    contracts: contractsOut,
+    billing: billingOut,
     projects,
     implementationTasks,
     trainings,

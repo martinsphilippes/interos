@@ -2,13 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { BusinessError, failAction, requirePermission } from "@/server/auth/session";
+import { BusinessError, canSeeHref, failAction, requirePermission } from "@/server/auth/session";
 import type { PermissionKey } from "@/domain/permissions";
 import { col, create, getById, nowIso, remove, stripUndefined } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { COLLECTIONS, type ActionResult, type AutomationRule } from "@/domain/types";
 import { AGENT_KINDS, type AgentRun } from "@/server/ai/types";
 import { runAgent } from "@/server/ai/agents";
+import { assertProjectAccess } from "@/server/implementation/access";
+import { assertTicketAccess } from "@/server/support/access";
+import { assertCsClientAccess } from "@/server/cs/access";
 import { invalidateRulesCache, normalizeRule, simulateRule, type SimulationResult } from "./engine";
 import { runSweeps, type SweepReport } from "./scheduler";
 import { getPathSuggestions } from "./queries";
@@ -242,9 +245,16 @@ export async function getAgentSuggestions(kind: unknown, subjectId: unknown): Pr
     if (k === "comercial" && subject !== user.id && (user.permissions.scopes["vendas.central"] ?? "meus") === "meus") {
       throw new BusinessError("Você só pode ver as sugestões da sua própria carteira");
     }
+    // Registro fora do escopo da tela dona (A29): o assistente não monta o contexto (T8).
+    if (k === "implantacao") await assertProjectAccess(user, subject);
+    if (k === "suporte") await assertTicketAccess(user, subject);
+    if (k === "cs") await assertCsClientAccess(user, subject, "cs.carteira");
     const run = await runAgent(k, subject, { actor: { id: user.id, name: user.name } });
     if (!run) throw new BusinessError("Registro não encontrado para o assistente");
-    return { ok: true, data: run };
+    // Link de sugestão para tela que o usuário não abre (ex.: /marketing/prospeccao para quem não tem Marketing)
+    // sai sem o link: a sugestão continua, mas não leva ao aviso de acesso negado.
+    const suggestions = run.suggestions.map((s) => (s.href && !canSeeHref(user, s.href) ? { ...s, href: undefined } : s));
+    return { ok: true, data: { ...run, suggestions } };
   } catch (error) {
     return fail(error, "Não foi possível gerar as sugestões");
   }

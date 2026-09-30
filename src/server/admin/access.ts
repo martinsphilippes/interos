@@ -5,7 +5,7 @@ import { COLLECTIONS, type CurrentUser, type Department, type DomainEvent, type 
 import { MODULES, PERMISSION_NODES, type ModuleKey, type PermissionOrigin, type ScopeKind } from "@/domain/permissions";
 import { getById, list, ORG_ID } from "@/server/db";
 import { can } from "@/server/auth/session";
-import { resolvePermissions, sanitizeAdjustments, type PermissionAdjustments } from "@/server/auth/permissions";
+import { activeModulesOfOrganization, resolvePermissions, sanitizeAdjustments, type PermissionAdjustments } from "@/server/auth/permissions";
 import {
   activeModulesFrom,
   buildAccessTree,
@@ -60,7 +60,7 @@ export async function loadAccessState(): Promise<LoadedAccessState> {
     departments: departments.map((d) => ({ key: d.key, name: d.name, managerId: d.managerId })),
     roleProfiles,
     userOverrides,
-    activeModules: Array.isArray(organization?.activeModules) ? organization.activeModules : undefined,
+    activeModules: activeModulesOfOrganization(organization),
   };
   return { state, profiles: byId, organization, usersById: new Map(users.map((u) => [u.id, u])), departments };
 }

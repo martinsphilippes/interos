@@ -154,6 +154,11 @@ export interface Organization extends BaseEntity {
    * todo o módulo a todos (admin incluído), sem apagar dados.
    */
   activeModules?: ModuleKey[];
+  /**
+   * Módulos DESATIVADOS na empresa; ausente/vazio = todos ativos. Tem prioridade sobre `activeModules` (com ele, um
+   * módulo novo do catálogo nasce ligado). `saveActiveModules` grava os dois campos.
+   */
+  inactiveModules?: ModuleKey[];
 }
 
 /**

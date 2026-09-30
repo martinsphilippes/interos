@@ -65,7 +65,7 @@ export default async function SlaPage({ searchParams }: { searchParams: SearchPa
     return (
       <PageContainer>
         <PageHeader title="Gestão de SLA" description={period.label} breadcrumbs={[{ label: "Operação" }, { label: "SLA" }]} />
-        {showSupportQuality ? <SupportSlaSection month={supportMonth} isAdmin={canEditRules} /> : <EmptyState title="Painel de SLA indisponível para o seu perfil" description="Fale com o administrador se precisar acompanhar os prazos da operação." />}
+        {showSupportQuality ? <SupportSlaSection month={supportMonth} canEditRules={canEditRules} viewer={user} /> : <EmptyState title="Painel de SLA indisponível para o seu perfil" description="Fale com o administrador se precisar acompanhar os prazos da operação." />}
       </PageContainer>
     );
   }
@@ -366,7 +366,7 @@ export default async function SlaPage({ searchParams }: { searchParams: SearchPa
         médios em horas corridas desde o início do SLA.
       </p>
 
-      {filters.tipo === "chamado" && showSupportQuality ? <SupportSlaSection month={supportMonth} isAdmin={canEditRules} /> : null}
+      {filters.tipo === "chamado" && showSupportQuality ? <SupportSlaSection month={supportMonth} canEditRules={canEditRules} viewer={user} /> : null}
     </PageContainer>
   );
 }

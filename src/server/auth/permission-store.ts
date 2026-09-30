@@ -9,7 +9,7 @@ import type { DocumentSnapshot } from "firebase-admin/firestore";
 import type { EffectivePermissions } from "@/domain/permissions";
 import { firestore } from "../firebase-admin";
 import { col, getById, ORG_ID } from "../db";
-import { resolvePermissions, sanitizeAdjustments, type PermissionAdjustments } from "./permissions";
+import { activeModulesOfOrganization, resolvePermissions, sanitizeAdjustments, type PermissionAdjustments } from "./permissions";
 
 export const roleProfileId = (role: string) => `role_${role}`;
 export const userOverrideId = (uid: string) => `user_${uid}`;
@@ -43,7 +43,8 @@ export async function loadAccessDocs(user: Pick<User, "id" | "role">): Promise<A
       // Saneados: só chaves próprias do catálogo com valor booleano e escopos válidos (nada vem do protótipo).
       roleProfile: roleProfile ? sanitizeAdjustments(roleProfile) : null,
       userOverride: userOverride ? sanitizeAdjustments(userOverride) : null,
-      organization: organization ? { activeModules: Array.isArray(organization.activeModules) ? organization.activeModules : undefined } : null,
+      // inactiveModules (desligados) tem prioridade sobre activeModules: módulo novo do catálogo nasce ligado.
+      organization: organization ? { activeModules: activeModulesOfOrganization(organization) } : null,
       degraded: false,
     };
   } catch (error) {

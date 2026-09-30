@@ -64,7 +64,8 @@ export const MARKETING = {
           suporte: "empresa",
           colaborador: "empresa",
         },
-        // Os agregados devem usar o mesmo DataScope de marketing.leads (sameAs).
+        // Decisão (integração): a Visão Geral tem escopo PRÓPRIO, configurado separadamente dos Leads
+        // (resolveDataScope(user, "marketing.visao-geral")). Padrão "empresa" para todos = comportamento anterior.
         applyAt: [
           "src/server/marketing/workspace.ts#getMarketingWorkspace",
           "src/server/marketing/queries.ts#getMarketingOverview",
@@ -194,7 +195,8 @@ export const MARKETING = {
           colaborador: "empresa",
         },
         // Leads sem dono: visíveis a quem tem marketing.leads.atribuir ou marketing.caixa-de-entrada.assumir
-        // mesmo com escopo 'meus' (poolUnassigned).
+        // mesmo com escopo 'meus' — implementado em src/server/marketing/access.ts#leadInScope/canPoolLeads (NÃO via
+        // scope.poolUnassigned, que seria incondicional). Vale também para a Visão Geral e a Caixa de Entrada.
         applyAt: [
           "src/server/marketing/queries.ts#listLeads",
           "src/server/marketing/queries.ts#getLead",

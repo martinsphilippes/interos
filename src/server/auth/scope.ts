@@ -14,8 +14,10 @@
  *   - Tarefas e SLA: departamento próprio (+ as próprias tarefas); gestores veem a empresa.
  * "unidades" resolve como "empresa" (não há unidade no modelo) e não é oferecido na interface.
  *
- * NESTA ETAPA os módulos continuam com os seus resolveScope; os testes provam que resolveDataScope produz o mesmo
- * conjunto de usuários para todos os usuários do seed.
+ * Todos os módulos consultam `resolveDataScope` (Meu Dia, Tarefas, Clientes 360º, Workflow, SLA, busca global, Vendas,
+ * Financeiro, Comissões/Contas a Pagar, Implantação, CS, Suporte, Marketing, Performance/Gestão e Relatórios); os
+ * resolvedores antigos que ainda existem são fachadas sobre ele. Os testes de equivalência provam que o padrão produz o
+ * mesmo conjunto de usuários de antes para todos os usuários do seed e os sintéticos.
  */
 import { cache } from "react";
 import { COLLECTIONS, type CurrentUser, type Department, type User } from "@/domain/types";

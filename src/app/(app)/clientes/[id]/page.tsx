@@ -19,6 +19,7 @@ import { TabSuporte } from "@/components/clients/tab-suporte";
 import { TabDocumentos } from "@/components/clients/tab-documentos";
 import { TabTarefas } from "@/components/clients/tab-tarefas";
 import { getClientCs } from "@/server/cs/queries";
+import { csCapabilities, csLinks } from "@/server/cs/access";
 import { getSupportOptions } from "@/server/support/queries";
 import { ClientCsPanel } from "@/components/cs/client-cs-panel";
 import { NewTicketDialog } from "@/components/support/new-ticket-dialog";
@@ -57,13 +58,13 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
   const requested = parseClientTab(query.aba);
   const tab: ClientTab | null = sections[requested] ? requested : (visibleTabs[0] ?? null);
 
-  const [data, options] = await Promise.all([getClient360(id, { sections, withAvailableProducts: caps.createOpportunity }), getClientFormOptions()]);
+  const [data, options] = await Promise.all([getClient360(id, { sections, withAvailableProducts: caps.createOpportunity, user }), getClientFormOptions()]);
   if (!data) notFound();
 
   // Dados dos módulos carregados só na aba que os usa. As opções de chamado alimentam a ação
   // principal "Novo atendimento" do cabeçalho, então carregam sempre que o usuário pode abrir chamado.
   const canSupport = can(user, "suporte.chamados.criar");
-  const [csData, supportOptions] = await Promise.all([tab === "cs" ? getClientCs(id) : Promise.resolve(null), canSupport ? getSupportOptions(user) : Promise.resolve(null)]);
+  const [csData, supportOptions] = await Promise.all([tab === "cs" ? getClientCs(id, user) : Promise.resolve(null), canSupport ? getSupportOptions(user) : Promise.resolve(null)]);
   const ticketOptions = supportOptions ? { clients: supportOptions.clients, products: supportOptions.products, team: supportOptions.team, categories: supportOptions.categories, slaRules: supportOptions.slaRules } : null;
   const originName = data.client.origin ? (options.leadSources.find((s) => s.key === data.client.origin)?.name ?? data.client.origin) : undefined;
   const counts: Partial<Record<ClientTab, number>> = {
@@ -92,7 +93,7 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
           csData ? (
             <div className="flex flex-col gap-4">
               {can(user, "cs.carteira.sugestoes.ver") && data.client.status !== "cancelado" ? <AgentSuggestions kind="cs" subjectId={data.client.id} title="Sugestões do assistente de CS" limit={3} /> : null}
-              <ClientCsPanel clientId={data.client.id} clientName={data.client.tradeName} data={csData} />
+              <ClientCsPanel clientId={data.client.id} clientName={data.client.tradeName} data={csData} capabilities={csCapabilities(user)} links={csLinks(user)} />
             </div>
           ) : null
         }

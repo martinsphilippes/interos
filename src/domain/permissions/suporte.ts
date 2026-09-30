@@ -290,7 +290,7 @@ export const SUPORTE = {
           "src/server/support/queries.ts#getClientSupport",
           "src/server/support/queries.ts#getSlaReport",
           "src/server/support/queries.ts#getCsatReport",
-          "src/server/support/service.ts#loadTicket",
+          "src/server/support/access.ts#assertTicketAccess (todas as actions sobre um chamado; saveArticleAction com sourceTicketId)",
           "src/server/ai/context.ts#buildSupportContext",
           "src/server/search/queries.ts (chamados)",
         ],
