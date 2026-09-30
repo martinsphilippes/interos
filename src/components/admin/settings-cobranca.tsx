@@ -4,7 +4,7 @@ import * as React from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { REGUA_CANAL_LABELS, REGUA_CANAIS, REGUA_TEMPLATE_VARS, type CobrancaCanaisConfig, type FinanceiroBaixaConfig, type ReguaCobrancaConfig, type ReguaMarco } from "@/server/admin/schemas";
 import type { ReguaPreview } from "@/server/finance/regua";
-import { formatDate } from "@/lib/format";
+import { formatDateKey } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
@@ -102,7 +102,7 @@ export function SettingsRegua({ value, stored, preview }: { value: ReguaCobranca
 
       <div className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-xs text-muted" data-testid="regua-preview">
         <p className="font-medium text-foreground">
-          Prévia de hoje ({formatDate(preview.today)}): {preview.openBillings} cobrança(s) em aberto{preview.pausedByPendency > 0 ? ` · ${preview.pausedByPendency} pausada(s) por pendência` : ""} · WhatsApp {preview.channels.whatsapp ? "conectado" : "não conectado"} · e-mail {preview.channels.email ? "conectado" : "não conectado"}
+          Prévia de hoje ({formatDateKey(preview.today)}): {preview.openBillings} cobrança(s) em aberto{preview.pausedByPendency > 0 ? ` · ${preview.pausedByPendency} pausada(s) por pendência` : ""} · WhatsApp {preview.channels.whatsapp ? "conectado" : "não conectado"} · e-mail {preview.channels.email ? "conectado" : "não conectado"}
         </p>
         <p>
           {preview.ativa ? "Com a régua ativa, a próxima varredura executaria os marcos abaixo (nada é enviado por esta prévia)." : "Régua desligada: a prévia mostra o que a varredura faria se estivesse ativa — nada é enviado."}
