@@ -32,7 +32,7 @@ import {
 } from "@/domain/types";
 import { REPORT_DEFINITIONS, type ReportKey } from "@/server/reports/definitions";
 import { canAccessReport } from "@/server/reports/build";
-import { can, canSeeHref } from "@/server/auth/session";
+import { can, canSeeHref } from "@/server/auth/permissions";
 import { resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import type { ScreenKey } from "@/domain/permissions";
 import type { CurrentUser } from "@/domain/types";

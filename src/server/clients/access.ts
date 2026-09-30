@@ -6,7 +6,7 @@ import "server-only";
  * a restrição configurada pelo CEO/CTO (meus / equipe / departamento) valha na lista, na ficha, nas actions, na
  * busca global e nas listas auxiliares (seleção de cliente em tarefas).
  */
-import { can, canSeeHref } from "@/server/auth/session";
+import { can, canSeeHref } from "@/server/auth/permissions";
 import { filterByScope, resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import { getById } from "@/server/db";
 import { COLLECTIONS, type Client, type CurrentUser } from "@/domain/types";

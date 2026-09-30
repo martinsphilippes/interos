@@ -9,7 +9,7 @@ import "server-only";
  * wa.me/mailto: com o texto. Ligações são sempre registro manual (não há adaptador VoIP). Cada registro
  * emite o evento correspondente (timeline do cliente, CS, automações).
  */
-import { resolvePermissionsForUser } from "@/server/auth/session";
+import { resolvePermissionsForUser } from "@/server/auth/permission-store";
 import { create, getById, list, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { MANUAL, recordCommunication, sendOrRecord } from "@/server/integrations/communications";

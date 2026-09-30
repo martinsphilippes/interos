@@ -6,7 +6,7 @@ import "server-only";
  */
 import { getById, getManyByIds, list, nowIso } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
-import { can, canSeeHref } from "@/server/auth/session";
+import { can, canSeeHref } from "@/server/auth/permissions";
 import { filterByScope, resolveDataScope } from "@/server/auth/scope";
 import { clientScope, scopeClients } from "@/server/clients/access";
 import { TASKS_SCREEN, canSeeTask } from "./access";

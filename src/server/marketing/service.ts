@@ -8,7 +8,7 @@ import "server-only";
  */
 import { create, getById, getManyByIds, list, nowIso, update, type CreateInput } from "@/server/db";
 import { emitEvent } from "@/server/events";
-import { BusinessError } from "@/server/auth/errors";
+import { BusinessError } from "@/server/auth/error-classes";
 import { registerHandler } from "@/server/events/emit";
 import { recomputeProspectListTotals, registerMarketingHandlers } from "@/server/events/handlers/marketing";
 import { notify } from "@/server/notifications";

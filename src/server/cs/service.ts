@@ -16,7 +16,7 @@ import { notify } from "@/server/notifications";
 import { assignTaskInternal, cancelTaskInternal, completeTaskInternal, createTaskInternal, reopenTaskInternal } from "@/server/tasks/service";
 import { cancelClientJourney, getDepartmentManager, updateStepChecklist } from "@/server/workflow/service";
 import { createOpportunity } from "@/server/sales/service";
-import { BusinessError } from "@/server/auth/errors";
+import { BusinessError } from "@/server/auth/error-classes";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { shortId } from "@/lib/utils";
 import {

@@ -18,7 +18,7 @@ export interface WorkspaceAccess {
 
 const FULL_ACCESS: WorkspaceAccess = { leads: { scope: FULL_SCOPE, pool: true }, automations: true };
 import { list } from "@/server/db";
-import { can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { eventTypeLabel } from "@/domain/event-labels";
 import { COLLECTIONS, type AutomationRule, type Campaign, type Communication, type CurrentUser, type DomainEvent, type LeadSource, type Product, type Prospect, type ProspectList, type User } from "@/domain/types";
 import { dateKey, formatDateKey } from "@/lib/format";

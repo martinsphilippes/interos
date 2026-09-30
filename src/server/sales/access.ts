@@ -13,7 +13,8 @@ import "server-only";
  * Detalhe por id fora do escopo: a página mostra o aviso de acesso negado; action sobre registro fora do escopo =
  * PermissionError (a mesma mensagem de antes: "Você não tem permissão para alterar …").
  */
-import { BusinessError, PermissionError, can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
+import { BusinessError, PermissionError } from "@/server/auth/error-classes";
 import { canSeeRecord, resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import { getById } from "@/server/db";
 import { COLLECTIONS, type CollectionName, type CurrentUser, type Opportunity, type Proposal, type Visit } from "@/domain/types";

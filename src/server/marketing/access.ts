@@ -13,7 +13,8 @@ import "server-only";
  *    escopo; mensagem sem nenhum dono é fila (visível a quem pode assumir).
  * Detalhe por id e actions sobre um registro fora do escopo: página trata como inexistente; action = PermissionError.
  */
-import { PermissionError, can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
+import { PermissionError } from "@/server/auth/error-classes";
 import { resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import { getById, list } from "@/server/db";
 import { COLLECTIONS, type Campaign, type Client, type Communication, type CurrentUser, type Lead, type Prospect, type ProspectList } from "@/domain/types";

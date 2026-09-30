@@ -5,7 +5,7 @@ import "server-only";
  */
 import { getById, getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
-import { can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { canSeeStep, scopeSteps, workflowScope } from "./access";
 import { dateLabel, listAssignableUsers as listAssignableTaskUsers, listTasksByProcess, todayKey } from "@/server/tasks/queries";
 import { COLLECTIONS, type Client, type Comment, type CurrentUser, type DomainEvent, type SlaInstance, type TimelineEvent, type User, type WorkflowInstance, type WorkflowStage, type WorkflowStep, type WorkflowTemplate } from "@/domain/types";

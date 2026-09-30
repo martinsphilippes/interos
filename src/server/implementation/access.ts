@@ -12,7 +12,7 @@ import type { EffectivePermissions, PermissionKey } from "@/domain/permissions";
 import { COLLECTIONS, type CurrentUser, type ImplementationTask, type Training } from "@/domain/types";
 import { getById } from "@/server/db";
 import { can, type PermissionHolder } from "@/server/auth/permissions";
-import { PermissionError } from "@/server/auth/errors";
+import { PermissionError } from "@/server/auth/error-classes";
 import { canSeeRecord, resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import type { ImplementationCapabilities } from "@/components/implementation/access-model";
 import type { ProjectRecord } from "./schemas";

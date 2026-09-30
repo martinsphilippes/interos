@@ -13,7 +13,7 @@ import type { EffectivePermissions, PermissionKey, ScreenKey } from "@/domain/pe
 import { COLLECTIONS, type CurrentUser, type SupportTicket } from "@/domain/types";
 import { getById } from "@/server/db";
 import { can, type PermissionHolder } from "@/server/auth/permissions";
-import { PermissionError } from "@/server/auth/errors";
+import { PermissionError } from "@/server/auth/error-classes";
 import { resolveDataScope, scopeAllows } from "@/server/auth/scope";
 import type { SupportCapabilities } from "@/components/support/access-model";
 

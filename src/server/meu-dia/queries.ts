@@ -12,7 +12,7 @@ import { computeSlaState } from "@/server/sla";
 import { listNotifications } from "@/server/notifications";
 import { sweepOverdue } from "@/server/finance/billing";
 import { getDueSoonDays } from "@/server/finance/regua";
-import { can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { resolveDataScope } from "@/server/auth/scope";
 import { toNotificationItem } from "@/components/notifications/model";
 import {

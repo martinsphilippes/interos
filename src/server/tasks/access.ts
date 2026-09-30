@@ -7,7 +7,7 @@ import "server-only";
  * vínculo (responsável ou criador) ∪ tarefa ligada a cliente visível (Cliente 360) ∪ etapa de workflow visível — os
  * links vindos da ficha do cliente e do Workflow continuam abrindo a tarefa, como antes.
  */
-import { can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { canSeeRecord, resolveDataScope, scopeAllows } from "@/server/auth/scope";
 import { getById } from "@/server/db";
 import { canSeeClientId } from "@/server/clients/access";

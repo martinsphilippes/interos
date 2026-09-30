@@ -28,7 +28,7 @@ import { createTaskInternal } from "@/server/tasks/service";
 import { getDepartmentManager } from "@/server/workflow/service";
 import { createOpportunity } from "@/server/sales/service";
 import { dateKey, formatCurrency } from "@/lib/format";
-import { BusinessError } from "@/server/auth/errors";
+import { BusinessError } from "@/server/auth/error-classes";
 import {
   COLLECTIONS,
   type Client,

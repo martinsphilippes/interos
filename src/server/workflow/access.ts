@@ -6,7 +6,7 @@ import "server-only";
  * anterior); a consulta SEMPRE passa por resolveDataScope para que a restrição configurada pelo CEO/CTO valha no
  * quadro, no drawer da etapa, na jornada completa e nas actions por etapa.
  */
-import { can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { canSeeRecord, filterByScope, resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import { getById, list } from "@/server/db";
 import { COLLECTIONS, type CurrentUser, type WorkflowStep } from "@/domain/types";

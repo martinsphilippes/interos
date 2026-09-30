@@ -36,7 +36,7 @@ import {
 } from "@/domain/types";
 import { getCommissionPaymentSettings, getPayablesSettings, listPayableAttachments } from "./payables";
 import { listSuppliers } from "./suppliers";
-import { can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import type { CommissionScope } from "./permissions";
 import {
   commissionAllowed,

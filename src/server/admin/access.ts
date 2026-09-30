@@ -4,7 +4,7 @@ import { ROLE_KEYS, ROLE_LABELS, type RoleKey } from "@/domain/constants";
 import { COLLECTIONS, type CurrentUser, type Department, type DomainEvent, type Organization, type PermissionProfile, type User } from "@/domain/types";
 import { MODULES, PERMISSION_NODES, type ModuleKey, type PermissionOrigin, type ScopeKind } from "@/domain/permissions";
 import { getById, list, ORG_ID } from "@/server/db";
-import { can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { activeModulesOfOrganization, resolvePermissions, sanitizeAdjustments, type PermissionAdjustments } from "@/server/auth/permissions";
 import {
   activeModulesFrom,

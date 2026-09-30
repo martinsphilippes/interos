@@ -15,7 +15,7 @@ import { COLLECTIONS, type Billing, type Client, type Contract, type ContractAme
 import type { EffectivePermissions } from "@/domain/permissions";
 import { getById, getManyByIds, list } from "@/server/db";
 import { can, type PermissionHolder } from "@/server/auth/permissions";
-import { BusinessError, PermissionError } from "@/server/auth/errors";
+import { BusinessError, PermissionError } from "@/server/auth/error-classes";
 import { resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import type { FinanceCapabilities } from "@/components/finance/access-model";
 

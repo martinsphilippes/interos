@@ -16,7 +16,8 @@ import "server-only";
  * Registro fora do escopo: a página não abre o painel; a action lança PermissionError.
  */
 import { cache } from "react";
-import { BusinessError, PermissionError, can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
+import { BusinessError, PermissionError } from "@/server/auth/error-classes";
 import { resolveDataScope, type DataScope } from "@/server/auth/scope";
 import { getById, list } from "@/server/db";
 import { COLLECTIONS, type Commission, type CurrentUser, type Payable, type User } from "@/domain/types";

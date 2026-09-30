@@ -14,7 +14,7 @@ import type { PermissionKey, ScreenKey } from "@/domain/permissions";
 import { COLLECTIONS, type Client, type Contract, type CsAccount, type Renewal, type SuccessPlan, type User } from "@/domain/types";
 import { getById, getManyByIds, list } from "@/server/db";
 import { can, canSeeHref, type PermissionHolder } from "@/server/auth/permissions";
-import { PermissionError } from "@/server/auth/errors";
+import { PermissionError } from "@/server/auth/error-classes";
 import { resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import type { CurrentUser } from "@/domain/types";
 import type { CsCapabilities, CsLinks } from "@/components/cs/access-model";

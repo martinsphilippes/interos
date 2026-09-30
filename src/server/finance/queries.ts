@@ -33,7 +33,6 @@ import { getFinanceAlertSettings } from "./alerts";
 import { getGateSettings, mergedBillingData } from "./service";
 import { buildContractSummary, redactContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import type { DataScope } from "@/server/auth/scope";
-import { getCurrentUser } from "@/server/auth/session";
 import { canSeeFinanceValues, filterBillingsByContracts, filterContractsByScope, isCompanyScope, ownersPredicate, visibleContractIds } from "./access";
 import { maskMoneyText, redactAmendment, redactBilling, redactContract } from "./redact";
 import { BILLING_STATUSES, BILLING_TYPES, BOLETO_FILTERS, boletoState, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type BoletoFilter, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
@@ -967,6 +966,8 @@ export async function getClientFinancialSummary(clientId: string, preloaded?: { 
 /** O usuário da requisição NÃO tem "Visualizar valores"? Sem sessão (ou fora de requisição) → oculta (falha fechada). */
 async function viewerHidesValues(): Promise<boolean> {
   try {
+    // Import dinâmico: mantém este módulo utilizável fora de requisição (scripts), onde a sessão não existe.
+    const { getCurrentUser } = await import("@/server/auth/session");
     const user = await getCurrentUser();
     return !user || !canSeeFinanceValues(user);
   } catch {
