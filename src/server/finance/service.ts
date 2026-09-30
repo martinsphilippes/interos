@@ -11,8 +11,11 @@ import "server-only";
  * como Error com mensagem em português (as actions devolvem a mensagem ao usuário).
  */
 import { FieldValue } from "firebase-admin/firestore";
-import { batchSet, col, create, getById, list, newId, nextNumber, nowIso, remove, update } from "@/server/db";
+import { firestore } from "@/server/firebase-admin";
+import { batchSet, col, create, createIfAbsent, getById, list, newId, nextNumber, nowIso, remove, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { getSetting } from "@/server/admin/queries";
+import { SETTING_DEFAULTS, type CobrancaCanaisConfig, type FinanceiroBaixaConfig } from "@/server/admin/schemas";
 import { registerHandler } from "@/server/events/emit";
 import { registerFinanceHandlers } from "@/server/events/handlers/finance";
 import { notify } from "@/server/notifications";
@@ -28,6 +31,8 @@ import {
   COLLECTIONS,
   type Address,
   type Billing,
+  type BillingBoleto,
+  type BillingReversedPayment,
   type Client,
   type ClientProduct,
   type Contact,
@@ -35,6 +40,8 @@ import {
   type Document,
   type DomainEvent,
   type Opportunity,
+  type PaymentEvent,
+  type PaymentSource,
   type Proposal,
   type ProposalItem,
   type Settings,
@@ -44,13 +51,15 @@ import {
   type ContractSignerEntry,
 } from "@/domain/types";
 import type { RoleKey } from "@/domain/constants";
-import { allSigned, buildBillingPlan, defaultFirstDueDate, deriveContractStatus, dueIso, evaluateReleaseGate, listBillingsSwept, round2, SYSTEM_ACTOR } from "./billing";
+import { allSigned, buildBillingPlan, defaultFirstDueDate, deriveContractStatus, dueIso, evaluateReleaseGate, listBillingsSwept, round2, SYSTEM_ACTOR, todayKey } from "./billing";
 import { contractDocumentHash, getSignatureProvider } from "./signature";
-import { MANUAL, recordCommunication } from "@/server/integrations/communications";
-import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
+import { MANUAL, manualSendUrl, recordCommunication, sendOrRecord, type SendChannel, type SendDelivery } from "@/server/integrations/communications";
+import { sendEmail } from "@/server/integrations/providers";
 import { isConnected } from "@/server/integrations/status";
+import { billingProviderConnected, getBillingProvider } from "@/server/integrations/billing-provider";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
-import { DEFAULT_GATE_SETTINGS, GATE_SETTING_KEY, PAYMENT_REQUIREMENTS, type BillingDataInput, type ContractItemInput, type FinanceGateSettings, type ManualSignatureInput, type RegisterPaymentInput, type UpdateConditionsInput } from "./schemas";
+import { billingEmailSubject, boletoLines, defaultBillingMessage, hasBoletoData, loadBillingMessageContext } from "./billing-message";
+import { DEFAULT_GATE_SETTINGS, GATE_SETTING_KEY, PAYMENT_REQUIREMENTS, type BillingDataInput, type BillingMessageChannel, type ContractItemInput, type FinanceGateSettings, type ManualSignatureInput, type RegisterBoletoInput, type RegisterPaymentInput, type UpdateConditionsInput } from "./schemas";
 
 // Registro idempotente dos handlers do Financeiro (ver src/server/events/handlers/finance.ts).
 registerFinanceHandlers(registerHandler);
@@ -723,9 +732,40 @@ export async function generateBillings(contractId: string, actor: UserRef): Prom
   if (drafts.length === 0) throw new Error("O contrato não tem valores a cobrar");
 
   const now = nowIso();
-  const writes = drafts.map((d) => ({ id: newId(COLLECTIONS.billing), data: { ...d, organizationId: contract.organizationId, createdAt: now, updatedAt: now, createdBy: actor.id } }));
+  const writes = drafts.map((d) => ({ id: newId(COLLECTIONS.billing), data: { ...d, organizationId: contract.organizationId, createdAt: now, updatedAt: now, createdBy: actor.id } as Record<string, unknown> }));
+  // D20: emissão no provedor SOMENTE quando conectado (adaptador real + credenciais). Sem provedor, a cobrança
+  // fica "aguardando emissão manual": o boleto é emitido no banco/ERP e registrado com "Registrar boleto".
+  const providerErrors: string[] = [];
+  if (billingProviderConnected()) {
+    const provider = getBillingProvider();
+    const client = await loadClient(contract.clientId);
+    for (const w of writes) {
+      try {
+        const charge = await provider.createCharge({ ...(w.data as unknown as Billing), id: w.id }, client);
+        Object.assign(w.data, stripUndefined({ provider: charge.provider, externalId: charge.externalId, chargeStatus: charge.status, paymentUrl: charge.paymentUrl, boleto: charge.boleto, pix: charge.pix }));
+      } catch (error) {
+        providerErrors.push(`${w.id}: ${error instanceof Error ? error.message : String(error)}`);
+        w.data.chargeStatus = "aguardando_emissao_manual";
+      }
+    }
+  } else {
+    for (const w of writes) w.data.chargeStatus = "aguardando_emissao_manual";
+  }
   await batchSet(writes.map((w) => ({ collection: COLLECTIONS.billing, id: w.id, data: w.data })));
   const created = writes.map((w) => ({ ...w.data, id: w.id }) as Billing);
+  if (providerErrors.length > 0) {
+    await emitEvent({
+      type: "note.added",
+      actor,
+      clientId: contract.clientId,
+      entity: { type: "contract", id: contract.id },
+      title: `Falha ao emitir ${providerErrors.length} cobrança(s) no provedor de cobrança`,
+      description: `${providerErrors.join(" · ")} · as cobranças ficaram aguardando emissão manual`,
+      department: "financeiro",
+      payload: { contractId: contract.id, providerErrors },
+      timeline: false,
+    });
+  }
 
   const settings = await getGateSettings();
   const status = contract.status === "pendencia" ? "pendencia" : deriveContractStatus(contract, created, settings);
@@ -754,11 +794,208 @@ export async function generateBillings(contractId: string, actor: UserRef): Prom
   return created;
 }
 
-export async function registerPayment(input: RegisterPaymentInput, actor: UserRef): Promise<Billing> {
+// ---------------------------------------------------------------------------
+// Boleto (D20): registro manual do boleto emitido no banco/ERP enquanto não há provedor
+// ---------------------------------------------------------------------------
+
+const BOLETO_LABELS: Record<string, string> = { boleto: "Boleto", pix: "PIX", chargeStatus: "Situação da cobrança", provider: "Provedor", paymentUrl: "Link de pagamento" };
+
+/**
+ * Registra o boleto/PIX emitido fora do INTEROS na cobrança: linha digitável, nosso número, código de barras,
+ * PDF (vira documento "Boleto" em `documents`), banco, PIX copia e cola. Grava `provider: "manual"`,
+ * `chargeStatus: "pendente"` e emite `billing.updated` com as mudanças (de → para).
+ */
+export async function registerBoleto(input: RegisterBoletoInput, actor: UserRef, options: { emit?: boolean } = {}): Promise<Billing> {
   const billing = await loadBilling(input.billingId);
-  if (billing.status === "paga") throw new Error("Esta cobrança já está paga");
-  if (billing.status === "cancelada") throw new Error("Cobrança cancelada não recebe pagamento");
+  if (billing.status === "paga") throw new Error("Cobrança paga não recebe boleto novo");
+  if (billing.status === "cancelada") throw new Error("Cobrança cancelada não recebe boleto");
+  if (billing.externalId && billing.provider && billing.provider !== "manual") throw new Error("Esta cobrança foi emitida pelo provedor de cobrança: o boleto vem de lá");
   const contract = await loadContract(billing.contractId);
+  const clean = (v: string | undefined) => (v?.trim() ? v.trim() : undefined);
+  const emitidoEm = input.emitidoEm ? dueIso(input.emitidoEm) : nowIso();
+  const pdfUrl = clean(input.pdfUrl);
+  const boleto: BillingBoleto = stripUndefined({
+    ...(billing.boleto ?? {}),
+    linhaDigitavel: clean(input.linhaDigitavel) ?? billing.boleto?.linhaDigitavel,
+    nossoNumero: clean(input.nossoNumero) ?? billing.boleto?.nossoNumero,
+    codigoBarras: clean(input.codigoBarras) ?? billing.boleto?.codigoBarras,
+    pdfUrl: pdfUrl ?? billing.boleto?.pdfUrl,
+    banco: clean(input.banco) ?? billing.boleto?.banco,
+    emitidoEm,
+  });
+  if (pdfUrl && pdfUrl !== billing.boleto?.pdfUrl) {
+    const doc = await create<Document>(COLLECTIONS.documents, {
+      clientId: billing.clientId,
+      entityType: "billing",
+      entityId: billing.id,
+      name: `Boleto ${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""} — ${contract.number} · vence ${formatDate(billing.dueDate)}`,
+      url: pdfUrl,
+      version: 1,
+      uploadedBy: actor.id,
+      category: "Boleto",
+      createdBy: actor.id,
+    });
+    boleto.documentId = doc.id;
+    await update<Contract>(COLLECTIONS.contracts, contract.id, { documentIds: [...contract.documentIds, doc.id] });
+  }
+  const pixCopiaECola = clean(input.pixCopiaECola) ?? billing.pix?.copiaECola;
+  const pixQrCodeUrl = clean(input.pixQrCodeUrl) ?? billing.pix?.qrCodeUrl;
+  const pix = pixCopiaECola || pixQrCodeUrl ? stripUndefined({ copiaECola: pixCopiaECola, qrCodeUrl: pixQrCodeUrl }) : undefined;
+  const patch: Partial<Billing> = {
+    provider: "manual",
+    chargeStatus: billing.status === "vencida" ? "vencido" : "pendente",
+    boleto,
+    pix,
+    paymentUrl: clean(input.paymentUrl) ?? billing.paymentUrl,
+  };
+  await update<Billing>(COLLECTIONS.billing, billing.id, patch);
+  const next: Billing = { ...billing, ...stripUndefined(patch) };
+  const audit = auditChanges<Billing>(billing, next, ["boleto", "pix", "chargeStatus", "provider", "paymentUrl"]);
+  if (options.emit !== false) {
+    await emitEvent({
+      type: "billing.updated",
+      actor,
+      clientId: billing.clientId,
+      entity: { type: "billing", id: billing.id },
+      title: `Boleto registrado: ${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(billing.amount)}`,
+      description: [boleto.banco ? `banco ${boleto.banco}` : null, boleto.nossoNumero ? `nosso número ${boleto.nossoNumero}` : null, boleto.linhaDigitavel ? "linha digitável" : null, boleto.pdfUrl ? "PDF" : null, pix?.copiaECola ? "PIX" : null, `contrato ${contract.number}`, `vence ${formatDate(billing.dueDate)}`, `emitido fora do INTEROS (sem provedor conectado)`]
+        .filter(Boolean)
+        .join(" · "),
+      department: "financeiro",
+      payload: { billingId: billing.id, contractId: contract.id, clientId: billing.clientId, kind: "boleto", documentId: boleto.documentId, ...audit, labels: BOLETO_LABELS },
+    });
+  }
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// Baixa (D21): transacional, com origem, deduplicação de evento externo e tolerância na baixa automática
+// ---------------------------------------------------------------------------
+
+/** Lê o setting "financeiro_baixa" (tolerância e política de pagamento parcial da baixa automática). */
+export async function getPaymentSettings(): Promise<FinanceiroBaixaConfig> {
+  const value = await getSetting<FinanceiroBaixaConfig>("financeiro_baixa", SETTING_DEFAULTS.financeiro_baixa);
+  const tol = Number(value.toleranciaValor);
+  return {
+    toleranciaValor: Number.isFinite(tol) && tol >= 0 ? tol : SETTING_DEFAULTS.financeiro_baixa.toleranciaValor,
+    pagamentoParcialAutomatico: value.pagamentoParcialAutomatico === "baixar" ? "baixar" : "pendencia",
+  };
+}
+
+/** Resultado da baixa: a cobrança (paga) mais os marcadores da baixa automática. */
+export type PaidBillingResult = Billing & {
+  /** Evento externo já processado antes (mesmo eventId/externalPaymentId): nada mudou. */
+  alreadyProcessed?: boolean;
+  /** Pagamento parcial automático abaixo da tolerância: NÃO baixou; pendência/aviso registrados. */
+  partial?: boolean;
+};
+
+function paymentEventDocId(provider: string, eventId: string): string {
+  return `${provider}_${eventId}`.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 300);
+}
+
+/**
+ * Caminho ÚNICO de recebimento. Transacional: lê a cobrança dentro da transação e recusa se já estiver paga ou
+ * cancelada (duas baixas concorrentes → só uma vence). Origem (`source`): "manual" (tela, com o valor que o
+ * humano informou), "provedor" (webhook) ou "conciliacao" (varredura). Para origem externa:
+ * - `providerEventId` é reservado em `payment_events` (`<provedor>_<eventId>`, createIfAbsent) ANTES da baixa:
+ *   o reenvio do mesmo evento devolve `alreadyProcessed: true` sem erro;
+ * - cobrança já paga com o mesmo `externalPaymentId` também devolve `alreadyProcessed`;
+ * - valor recebido abaixo de (valor da cobrança − tolerância do setting `financeiro_baixa`) NÃO baixa: grava
+ *   `partialPaidAmount/partialPaidAt`, registra pendência no contrato (ou avisa o Financeiro quando o contrato já
+ *   foi liberado) e devolve `partial: true` — salvo se o setting mandar "baixar".
+ */
+export async function registerPayment(input: RegisterPaymentInput, actor: UserRef): Promise<PaidBillingResult> {
+  const source: PaymentSource = input.source ?? "manual";
+  const automatic = source !== "manual";
+  const providerName = input.provider?.trim() || (automatic ? "provedor" : "manual");
+  const amount = round2(input.amount);
+  const paidAt = dueIso(input.paidAt);
+  if (!(amount > 0)) throw new Error("Valor pago deve ser maior que zero");
+
+  // 1. Deduplicação do evento externo (webhook/conciliação): reserva atômica do id do evento.
+  let eventDocId: string | undefined;
+  if (automatic && input.providerEventId) {
+    eventDocId = paymentEventDocId(providerName, input.providerEventId);
+    const claim = await createIfAbsent<PaymentEvent>(COLLECTIONS.paymentEvents, eventDocId, {
+      provider: providerName,
+      eventId: input.providerEventId,
+      source,
+      billingId: input.billingId,
+      externalPaymentId: input.externalPaymentId,
+      paidAmount: amount,
+      paidAt,
+      receivedAt: nowIso(),
+      createdBy: actor.id,
+    });
+    if (!claim.created) {
+      const current = await loadBilling(input.billingId);
+      return { ...current, alreadyProcessed: true };
+    }
+  }
+  const finishEvent = async (result: PaymentEvent["result"], message?: string, billingId?: string) => {
+    if (eventDocId) await update<PaymentEvent>(COLLECTIONS.paymentEvents, eventDocId, stripUndefined({ result, message, billingId }));
+  };
+
+  const billing = await loadBilling(input.billingId);
+  const contract = await loadContract(billing.contractId);
+
+  // 2. Tolerância (só baixa automática): abaixo dela não baixa — pendência + aviso.
+  if (automatic && billing.status !== "paga" && billing.status !== "cancelada") {
+    const settings = await getPaymentSettings();
+    if (amount < round2(billing.amount - settings.toleranciaValor) && settings.pagamentoParcialAutomatico === "pendencia") {
+      const partial = await registerPartialAutomaticPayment(billing, contract, { amount, paidAt, source, externalPaymentId: input.externalPaymentId, tolerance: settings.toleranciaValor }, actor);
+      await finishEvent("parcial", `Recebido ${formatCurrency(amount)} de ${formatCurrency(billing.amount)}: pendência registrada`, billing.id);
+      return partial;
+    }
+  }
+
+  // 3. Baixa em transação: o status é conferido dentro dela.
+  const ref = col(COLLECTIONS.billing).doc(billing.id);
+  let outcome: { already: true; current: Billing } | { already: false; before: Billing; after: Billing };
+  try {
+    outcome = await firestore.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new Error("Cobrança não encontrada");
+      const current = { ...(snap.data() as Omit<Billing, "id">), id: billing.id } as Billing;
+      if (current.status === "paga") {
+        if (automatic && input.externalPaymentId && current.externalPaymentId === input.externalPaymentId) return { already: true as const, current };
+        throw new Error("Esta cobrança já está paga");
+      }
+      if (current.status === "cancelada") throw new Error("Cobrança cancelada não recebe pagamento");
+      const patch: Record<string, unknown> = stripUndefined({
+        status: "paga",
+        paidAt,
+        paidAmount: amount,
+        method: input.method,
+        paymentSource: source,
+        externalPaymentId: automatic ? input.externalPaymentId : undefined,
+        chargeStatus: current.chargeStatus ? "pago" : undefined,
+        updatedAt: nowIso(),
+      });
+      if (current.partialPaidAmount !== undefined) {
+        patch.partialPaidAmount = FieldValue.delete();
+        patch.partialPaidAt = FieldValue.delete();
+      }
+      tx.update(ref, patch);
+      const after = { ...current } as Record<string, unknown>;
+      for (const [k, v] of Object.entries(patch)) {
+        if (v instanceof FieldValue) delete after[k];
+        else after[k] = v;
+      }
+      return { already: false as const, before: current, after: after as unknown as Billing };
+    });
+  } catch (error) {
+    await finishEvent("erro", error instanceof Error ? error.message : String(error), billing.id);
+    throw error;
+  }
+  if (outcome.already) {
+    await finishEvent("ja_processado", "Cobrança já paga com o mesmo pagamento do provedor", billing.id);
+    return { ...outcome.current, alreadyProcessed: true };
+  }
+  const { before, after } = outcome;
+
+  // 4. Comprovante (fora da transação: nunca fica órfão de uma baixa que falhou).
   let receiptDocumentId: string | undefined;
   if (input.receiptUrl) {
     const doc = await create<Document>(COLLECTIONS.documents, {
@@ -773,23 +1010,24 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
       createdBy: actor.id,
     });
     receiptDocumentId = doc.id;
+    await update<Billing>(COLLECTIONS.billing, billing.id, { receiptDocumentId });
     await update<Contract>(COLLECTIONS.contracts, contract.id, { documentIds: [...contract.documentIds, doc.id] });
   }
-  const paidAt = dueIso(input.paidAt);
-  const patch: Partial<Billing> = { status: "paga", paidAt, paidAmount: round2(input.amount), method: input.method, receiptDocumentId };
-  await update<Billing>(COLLECTIONS.billing, billing.id, patch);
-  const paid: Billing = { ...billing, ...patch };
+  const paid: Billing = { ...after, receiptDocumentId: receiptDocumentId ?? after.receiptDocumentId };
+  const audit = auditChanges<Billing>(before, paid, ["status", "paidAmount", "paidAt"]);
+  const sourceLabel = source === "manual" ? "registro manual" : source === "provedor" ? "baixa automática (provedor)" : "conciliação bancária";
 
   await emitEvent({
     type: "payment.approved",
     actor,
     clientId: billing.clientId,
     entity: { type: "billing", id: billing.id },
-    title: `Pagamento registrado: ${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(input.amount)}`,
-    description: `Contrato ${contract.number} · ${input.method.toUpperCase()} · pago em ${formatDate(paidAt)}${input.amount !== billing.amount ? ` (valor da cobrança ${formatCurrency(billing.amount)})` : ""}`,
+    title: `Pagamento registrado: ${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(amount)}`,
+    description: `Contrato ${contract.number} · ${input.method.toUpperCase()} · pago em ${formatDate(paidAt)}${amount !== billing.amount ? ` (valor da cobrança ${formatCurrency(billing.amount)})` : ""} · ${sourceLabel}`,
     department: "financeiro",
-    payload: { billingId: billing.id, contractId: contract.id, clientId: billing.clientId, type: billing.type, installment: billing.installment ?? null, amount: input.amount },
+    payload: { billingId: billing.id, contractId: contract.id, clientId: billing.clientId, type: billing.type, installment: billing.installment ?? null, amount, source, externalPaymentId: input.externalPaymentId ?? null, providerEventId: input.providerEventId ?? null, ...audit },
   });
+  await finishEvent("processado", undefined, billing.id);
 
   // Atualiza o status do contrato (ex.: aguardando pagamento → pago).
   if (contract.status !== "liberado" && contract.status !== "cancelado" && contract.status !== "pendencia") {
@@ -800,98 +1038,342 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
   return paid;
 }
 
+/** Pagamento parcial automático abaixo da tolerância: não baixa; pendência (contrato aberto) ou aviso (liberado). */
+async function registerPartialAutomaticPayment(
+  billing: Billing,
+  contract: Contract,
+  input: { amount: number; paidAt: string; source: PaymentSource; externalPaymentId?: string; tolerance: number },
+  actor: UserRef,
+): Promise<PaidBillingResult> {
+  const patch: Partial<Billing> = { partialPaidAmount: input.amount, partialPaidAt: input.paidAt };
+  await update<Billing>(COLLECTIONS.billing, billing.id, patch);
+  const label = `${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""}`;
+  const difference = round2(billing.amount - input.amount);
+  const reason = `Pagamento parcial recebido por ${input.source === "provedor" ? "provedor de cobrança" : "conciliação bancária"}: ${formatCurrency(input.amount)} de ${formatCurrency(billing.amount)} (${label}, diferença ${formatCurrency(difference)}, tolerância ${formatCurrency(input.tolerance)}). A cobrança NÃO foi baixada: confira e registre a baixa manual ou negocie a diferença.`;
+  const client = await loadClient(contract.clientId);
+  const event = await emitEvent({
+    type: "note.added",
+    actor,
+    clientId: billing.clientId,
+    entity: { type: "billing", id: billing.id },
+    title: `Pagamento parcial de ${formatCurrency(input.amount)} recebido (${label}) — cobrança não baixada`,
+    description: reason,
+    department: "financeiro",
+    payload: { billingId: billing.id, contractId: contract.id, partial: true, amount: input.amount, expected: billing.amount, difference, tolerance: input.tolerance, source: input.source, externalPaymentId: input.externalPaymentId ?? null },
+  });
+  let pendencyRegistered = false;
+  if (contract.status !== "liberado" && contract.status !== "cancelado" && contract.status !== "pendencia") {
+    try {
+      await registerPendency(contract.id, reason, actor);
+      pendencyRegistered = true;
+    } catch (error) {
+      console.error(`[financeiro] pagamento parcial: falha ao registrar pendência no contrato ${contract.id}`, error);
+    }
+  }
+  if (!pendencyRegistered) {
+    const financeManager = await getDepartmentManager("financeiro");
+    await notify({
+      userIds: [contract.ownerId, financeManager?.id].filter((id, i, arr): id is string => Boolean(id) && arr.indexOf(id) === i),
+      kind: "atencao",
+      title: `Pagamento parcial: ${client.tradeName}`,
+      body: reason,
+      href: `/financeiro/cobrancas?cliente=${contract.clientId}`,
+      entity: { type: "billing", id: billing.id },
+      eventId: event.id,
+    });
+  }
+  return { ...billing, ...patch, partial: true };
+}
+
+// ---------------------------------------------------------------------------
+// Estorno de pagamento (D22)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estorna o pagamento de uma cobrança paga: volta para "aberta" ou "vencida" (pela data de vencimento), limpa
+ * paidAt/paidAmount guardando o pagamento em `reversedPayments[]` e emite `payment.reversed` (com changes).
+ * Efeitos em comissões/títulos: handler em src/server/commissions/reversal.ts. Contrato: "pago" (não liberado)
+ * volta a "aguardando pagamento"; liberado NÃO regride (a implantação já andou) — o Financeiro é avisado.
+ */
+export async function reversePayment(input: { billingId: string; reason: string }, actor: UserRef): Promise<Billing> {
+  const reason = input.reason.trim();
+  if (reason.length < 5) throw new Error("Descreva o motivo do estorno");
+  const billing = await loadBilling(input.billingId);
+  const contract = await loadContract(billing.contractId);
+  const ref = col(COLLECTIONS.billing).doc(billing.id);
+  const today = todayKey();
+  const reversedAt = nowIso();
+  const { before, after } = await firestore.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Cobrança não encontrada");
+    const current = { ...(snap.data() as Omit<Billing, "id">), id: billing.id } as Billing;
+    if (current.status !== "paga") throw new Error("Só cobrança paga pode ter o pagamento estornado");
+    const status: Billing["status"] = dateKey(current.dueDate) < today ? "vencida" : "aberta";
+    const entry: BillingReversedPayment = stripUndefined({
+      paidAt: current.paidAt ?? reversedAt,
+      paidAmount: current.paidAmount ?? current.amount,
+      method: current.method,
+      source: current.paymentSource,
+      externalPaymentId: current.externalPaymentId,
+      receiptDocumentId: current.receiptDocumentId,
+      reversedAt,
+      reversedBy: actor.id,
+      reason,
+    });
+    const patch: Record<string, unknown> = {
+      status,
+      reversedPayments: [...(current.reversedPayments ?? []), entry],
+      paidAt: FieldValue.delete(),
+      paidAmount: FieldValue.delete(),
+      receiptDocumentId: FieldValue.delete(),
+      paymentSource: FieldValue.delete(),
+      externalPaymentId: FieldValue.delete(),
+      updatedAt: reversedAt,
+    };
+    if (current.chargeStatus === "pago") patch.chargeStatus = status === "vencida" ? "vencido" : "pendente";
+    tx.update(ref, patch);
+    const next = { ...current } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(patch)) {
+      if (v instanceof FieldValue) delete next[k];
+      else next[k] = v;
+    }
+    return { before: current, after: next as unknown as Billing };
+  });
+  const label = `${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""}`;
+  const audit = auditChanges<Billing>(before, after, ["status", "paidAt", "paidAmount"], reason);
+  const event = await emitEvent({
+    type: "payment.reversed",
+    actor,
+    clientId: billing.clientId,
+    entity: { type: "billing", id: billing.id },
+    title: `Pagamento estornado: ${label} de ${formatCurrency(before.paidAmount ?? before.amount)}`,
+    description: `${reason} · contrato ${contract.number} · cobrança volta a ${after.status === "vencida" ? "vencida" : "em aberto"} (pago em ${formatDate(before.paidAt)})`,
+    department: "financeiro",
+    payload: { billingId: billing.id, contractId: contract.id, clientId: billing.clientId, type: billing.type, installment: billing.installment ?? null, amount: before.paidAmount ?? before.amount, previousPaidAt: before.paidAt ?? null, source: before.paymentSource ?? "manual", contractStatus: contract.status, ...audit },
+  });
+
+  if (contract.status === "liberado") {
+    const [client, financeManager] = await Promise.all([loadClient(contract.clientId), getDepartmentManager("financeiro")]);
+    await notify({
+      userIds: [contract.ownerId, financeManager?.id].filter((id, i, arr): id is string => Boolean(id) && id !== actor.id && arr.indexOf(id) === i),
+      kind: "atencao",
+      title: `Pagamento estornado em contrato liberado: ${client.tradeName}`,
+      body: `${label} de ${formatCurrency(before.paidAmount ?? before.amount)} (${contract.number}) voltou a ${after.status === "vencida" ? "vencida" : "em aberto"}. Motivo: ${reason}. A liberação não regride: acompanhe a cobrança.`,
+      href: `/financeiro/cobrancas?cliente=${contract.clientId}`,
+      entity: { type: "billing", id: billing.id },
+      eventId: event.id,
+    });
+  } else if (contract.status !== "cancelado" && contract.status !== "pendencia") {
+    const [billings, settings] = await Promise.all([contractBillings(contract.id), getGateSettings()]);
+    const next = deriveContractStatus(contract, billings.map((b) => (b.id === after.id ? after : b)), settings);
+    if (next !== contract.status) await update<Contract>(COLLECTIONS.contracts, contract.id, { status: next });
+  }
+  return after;
+}
+
 export async function cancelBilling(billingId: string, reason: string, actor: UserRef): Promise<void> {
   const billing = await loadBilling(billingId);
   if (billing.status === "paga") throw new Error("Cobrança paga não pode ser cancelada");
   if (billing.status === "cancelada") throw new Error("Esta cobrança já está cancelada");
-  await update<Billing>(COLLECTIONS.billing, billing.id, { status: "cancelada" });
+  const providerNote = await cancelChargeAtProvider(billing);
+  await update<Billing>(COLLECTIONS.billing, billing.id, { status: "cancelada", ...(billing.chargeStatus ? { chargeStatus: "cancelado" } : {}) });
   await emitEvent({
     type: "note.added",
     actor,
     clientId: billing.clientId,
     entity: { type: "billing", id: billing.id },
     title: `Cobrança cancelada: ${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(billing.amount)}`,
-    description: reason,
+    description: providerNote ? `${reason} · ${providerNote}` : reason,
     department: "financeiro",
-    payload: { billingId: billing.id, contractId: billing.contractId, reason, previousStatus: billing.status },
+    payload: { billingId: billing.id, contractId: billing.contractId, reason, previousStatus: billing.status, providerNote },
   });
-}
-
-async function billingContext(billingId: string): Promise<{ billing: Billing; client: Client; contact?: Contact }> {
-  const billing = await loadBilling(billingId);
-  const [client, contacts] = await Promise.all([loadClient(billing.clientId), list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", billing.clientId]] })]);
-  return { billing, client, contact: contacts.find((c) => c.isPrimary) ?? contacts[0] };
-}
-
-function defaultBillingMessage(billing: Billing, contact?: Contact): string {
-  return `Olá${contact ? `, ${contact.name.split(" ")[0]}` : ""}! Lembrete da Intercert: ${TYPE_LABEL[billing.type].toLowerCase()}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(billing.amount)} com vencimento em ${formatDate(billing.dueDate)}. Precisa da 2ª via do boleto ou da chave PIX?`;
-}
-
-export interface BillingContactInfo {
-  /** Telefone usado no WhatsApp/ligação (contato principal ou cliente). */
-  phone?: string;
-  contactName: string;
-  message: string;
-  whatsappUrl: string | null;
-  telUrl: string | null;
-  whatsappConnected: boolean;
-  voipConnected: boolean;
-}
-
-/** Destinatário e texto padrão da cobrança, para a tela abrir wa.me/tel: com tudo pronto. */
-export async function getBillingContactInfo(billingId: string): Promise<BillingContactInfo> {
-  const { billing, client, contact } = await billingContext(billingId);
-  const phone = contact?.whatsapp ?? contact?.phone ?? client.whatsapp ?? client.phone;
-  return {
-    phone,
-    contactName: contact?.name ?? client.tradeName,
-    message: defaultBillingMessage(billing, contact),
-    whatsappUrl: whatsappHref(phone),
-    telUrl: telHref(contact?.phone ?? contact?.whatsapp ?? client.phone ?? client.whatsapp),
-    whatsappConnected: isConnected("whatsapp"),
-    voipConnected: isConnected("voip"),
-  };
 }
 
 /**
- * Cobrança por WhatsApp. Com a Meta conectada envia pela API; sem integração (situação atual) o usuário
- * abriu o wa.me com o texto e aqui só se registra "cobrança enviada manualmente".
+ * Cancela a cobrança no provedor quando ele está conectado e a cobrança foi emitida lá (`externalId`). Falha do
+ * provedor NÃO impede o cancelamento local: devolve a nota do erro para ficar registrada no evento.
+ */
+async function cancelChargeAtProvider(billing: Billing): Promise<string | undefined> {
+  if (!billing.externalId || !billingProviderConnected()) return undefined;
+  try {
+    const r = await getBillingProvider().cancelCharge(billing);
+    return r.ok ? `cancelada também no provedor (${r.message ?? billing.provider ?? "provedor"})` : `falha ao cancelar no provedor: ${r.message ?? "sem detalhe"} — cancele manualmente no provedor`;
+  } catch (error) {
+    return `falha ao cancelar no provedor: ${error instanceof Error ? error.message : String(error)} — cancele manualmente no provedor`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mensagens de cobrança (D23): WhatsApp principal, e-mail complementar, boleto/2ª via
+// ---------------------------------------------------------------------------
+
+export async function getBillingChannelSettings(): Promise<CobrancaCanaisConfig> {
+  const value = await getSetting<CobrancaCanaisConfig>("cobranca_canais", SETTING_DEFAULTS.cobranca_canais);
+  return { ...SETTING_DEFAULTS.cobranca_canais, ...value, enviarEmailJuntoAoWhatsapp: Boolean(value.enviarEmailJuntoAoWhatsapp) };
+}
+
+export interface BillingContactInfo {
+  /** Telefone usado no WhatsApp/ligação (contato do contrato, principal ou cliente). */
+  phone?: string;
+  /** E-mail de cobrança (contato do contrato → e-mail de faturamento da venda → contato principal → cliente). */
+  email?: string;
+  contactName: string;
+  message: string;
+  /** Texto com os dados do boleto (vazio quando não há boleto registrado). */
+  messageWithBoleto: string;
+  emailSubject: string;
+  whatsappUrl: string | null;
+  telUrl: string | null;
+  emailUrl: string | null;
+  whatsappConnected: boolean;
+  emailConnected: boolean;
+  voipConnected: boolean;
+  hasBoleto: boolean;
+  boletoSummary: string | null;
+  optOut: { whatsapp: boolean; email: boolean };
+  /** Setting cobranca_canais: ao cobrar por WhatsApp o e-mail complementar vai junto. */
+  emailWithWhatsapp: boolean;
+}
+
+/** Destinatário, textos e estado dos canais da cobrança, para a tela abrir wa.me/mailto/tel: com tudo pronto. */
+export async function getBillingContactInfo(billingId: string): Promise<BillingContactInfo> {
+  const ctx = await loadBillingMessageContext(billingId);
+  const channels = await getBillingChannelSettings();
+  const message = defaultBillingMessage(ctx);
+  const boleto = hasBoletoData(ctx.billing);
+  const messageWithBoleto = boleto ? defaultBillingMessage(ctx, { includeBoleto: true }) : "";
+  const emailSubject = billingEmailSubject(ctx);
+  return {
+    phone: ctx.phone,
+    email: ctx.email,
+    contactName: ctx.contactName,
+    message,
+    messageWithBoleto,
+    emailSubject,
+    whatsappUrl: whatsappHref(ctx.phone),
+    telUrl: telHref(ctx.contact?.phone ?? ctx.contact?.whatsapp ?? ctx.primary?.phone ?? ctx.primary?.whatsapp ?? ctx.client.phone ?? ctx.client.whatsapp),
+    emailUrl: ctx.email ? manualSendUrl("email", ctx.email, emailSubject, message) : null,
+    whatsappConnected: isConnected("whatsapp"),
+    emailConnected: isConnected("email"),
+    voipConnected: isConnected("voip"),
+    hasBoleto: boleto,
+    boletoSummary: boleto ? boletoLines(ctx.billing).join(" · ") : null,
+    optOut: { whatsapp: Boolean(ctx.client.communicationOptOut?.whatsapp), email: Boolean(ctx.client.communicationOptOut?.email) },
+    emailWithWhatsapp: channels.enviarEmailJuntoAoWhatsapp && channels.complementar === "email",
+  };
+}
+
+export interface BillingChannelResult {
+  channel: SendChannel;
+  delivery: SendDelivery;
+  /** Canal não conectado: o usuário envia pelo próprio aparelho (wa.me/mailto) e o registro fica manual. */
+  manual: boolean;
+  delivered: boolean;
+  communicationId: string;
+  /** Link de envio manual (wa.me com texto / mailto), quando faz sentido. */
+  url: string | null;
+  to?: string;
+  error?: string;
+  /** false quando o id determinístico já existia (régua: execução repetida não envia de novo). */
+  created: boolean;
+}
+
+export interface SendBillingMessageOptions {
+  /** Emitir eventos (padrão true; a régua emite o próprio evento). */
+  emit?: boolean;
+  /** Id determinístico base (régua): `<id>_<canal>`; execução repetida não envia de novo. */
+  id?: string;
+  /** Automação: canal não conectado vira "nao_enviada" (nunca "manual", que significa "alguém enviou"). */
+  whenNotConnected?: "manual" | "nao_enviada";
+  templateKey?: string;
+  /** Rótulo da origem no título do evento (ex.: "régua · 7 dias antes"). */
+  originLabel?: string;
+}
+
+/**
+ * Mensagem de cobrança por WhatsApp (principal), e-mail (complementar) ou ambos, com ou sem os dados do boleto
+ * (envio/2ª via). Destinatário pela ordem de preferência (billing-message.ts). Com `includeBoleto`, exige boleto
+ * registrado (nada de "boleto" fictício). Quando o setting `cobranca_canais.enviarEmailJuntoAoWhatsapp` está
+ * ligado, cobrar por WhatsApp também dispara o e-mail complementar. Registra communications (templateKey
+ * "cobranca") e emite whatsapp.message.sent / email.sent.
+ */
+export async function sendBillingMessage(
+  billingId: string,
+  input: { channel: BillingMessageChannel; text?: string; includeBoleto?: boolean; secondCopy?: boolean },
+  actor: UserRef,
+  options: SendBillingMessageOptions = {},
+): Promise<{ results: BillingChannelResult[]; contactName: string }> {
+  const ctx = await loadBillingMessageContext(billingId);
+  const { billing, client, contract } = ctx;
+  if (billing.status === "cancelada") throw new Error("Cobrança cancelada não é enviada ao cliente");
+  const includeBoleto = Boolean(input.includeBoleto);
+  if (includeBoleto && !hasBoletoData(billing)) throw new Error("Nenhum boleto ou PIX registrado nesta cobrança. Registre o boleto emitido no banco/ERP antes de enviá-lo.");
+  const settings = await getBillingChannelSettings();
+  const channels: SendChannel[] = input.channel === "ambos" ? ["whatsapp", "email"] : [input.channel];
+  if (input.channel === "whatsapp" && settings.enviarEmailJuntoAoWhatsapp && settings.complementar === "email" && ctx.email) channels.push("email");
+  const text = input.text?.trim() || defaultBillingMessage(ctx, { includeBoleto, secondCopy: input.secondCopy });
+  const body = includeBoleto && input.text?.trim() && !boletoLines(billing).some((l) => text.includes(l)) ? `${text}\n${boletoLines(billing).join("\n")}` : text;
+  const subject = billingEmailSubject(ctx, { includeBoleto });
+  const results: BillingChannelResult[] = [];
+  for (const channel of channels) {
+    const to = channel === "whatsapp" ? ctx.phone : ctx.email;
+    const sent = await sendOrRecord({
+      channel,
+      to,
+      subject,
+      text: body,
+      clientId: client.id,
+      contactId: ctx.contact?.id ?? ctx.primary?.id,
+      templateKey: options.templateKey ?? "cobranca",
+      entity: { type: "billing", id: billing.id },
+      actor,
+      id: options.id ? `${options.id}_${channel}` : undefined,
+      whenNotConnected: options.whenNotConnected ?? "manual",
+    });
+    const manual = sent.delivery === "manual";
+    const delivered = sent.delivery === "enviada";
+    results.push({ channel, delivery: sent.delivery, manual, delivered, communicationId: sent.communication.id, url: sent.manualUrl, to, error: sent.error, created: sent.created });
+    if (options.emit === false || !sent.created) continue;
+    const what = includeBoleto ? (input.secondCopy ? "2ª via do boleto" : "Boleto") : "Cobrança";
+    const via = channel === "whatsapp" ? "WhatsApp" : "e-mail";
+    const origin = options.originLabel ? ` (${options.originLabel})` : "";
+    const title =
+      sent.delivery === "manual"
+        ? `${what} enviad${includeBoleto ? "a" : "a"} manualmente por ${via} para ${ctx.contactName}${origin}`
+        : sent.delivery === "enviada"
+          ? `${what} enviad${includeBoleto ? "a" : "a"} por ${via} para ${ctx.contactName}${origin}`
+          : sent.delivery === "falha"
+            ? `${what} por ${via} para ${ctx.contactName}: falha no envio${origin}`
+            : `${what} por ${via} para ${ctx.contactName} não enviad${includeBoleto ? "a" : "a"} (${sent.optedOut ? "opt-out do cliente" : sent.error ?? "canal não conectado"})${origin}`;
+    await emitEvent({
+      type: channel === "whatsapp" ? "whatsapp.message.sent" : "email.sent",
+      actor,
+      clientId: client.id,
+      entity: { type: "billing", id: billing.id },
+      title: title.replace("Cobrança enviada", "Cobrança enviada").replace("Boleto enviada", "Boleto enviado").replace("2ª via do boleto enviada", "2ª via do boleto enviada"),
+      description: body,
+      department: "financeiro",
+      payload: { billingId: billing.id, contractId: contract.id, to, channel, communicationId: sent.communication.id, manual, delivered, delivery: sent.delivery, includeBoleto, secondCopy: Boolean(input.secondCopy), optedOut: sent.optedOut, templateKey: options.templateKey ?? "cobranca", marco: options.originLabel ?? null },
+    });
+  }
+  return { results, contactName: ctx.contactName };
+}
+
+/**
+ * Cobrança por WhatsApp (compatibilidade: mesma assinatura de antes). Com a Meta conectada envia pela API; sem
+ * integração o usuário abriu o wa.me com o texto e aqui só se registra "cobrança enviada manualmente".
  */
 export async function sendBillingWhatsapp(billingId: string, notes: string | undefined, actor: UserRef): Promise<{ manual: boolean; delivered: boolean }> {
-  const { billing, client, contact } = await billingContext(billingId);
-  const to = contact?.whatsapp ?? contact?.phone ?? client.whatsapp ?? client.phone;
-  const body = notes?.trim() || defaultBillingMessage(billing, contact);
-  const sent = isConnected("whatsapp") && to ? await sendWhatsappText(to, body) : null;
-  const manual = sent === null;
-  const communication = await recordCommunication({
-    clientId: client.id,
-    contactId: contact?.id,
-    channel: "whatsapp",
-    direction: "saida",
-    userId: actor.id,
-    entityType: "billing",
-    entityId: billing.id,
-    body,
-    templateKey: "cobranca",
-    ...(sent ? { status: sent.ok ? "enviada" : "falha", provider: "meta", externalId: sent.ok ? sent.externalId : undefined } : MANUAL),
-    createdBy: actor.id,
-  });
-  await emitEvent({
-    type: "whatsapp.message.sent",
-    actor,
-    clientId: client.id,
-    entity: { type: "billing", id: billing.id },
-    title: manual ? `Cobrança enviada manualmente por WhatsApp para ${contact?.name ?? client.tradeName}` : `Cobrança enviada por WhatsApp para ${contact?.name ?? client.tradeName}${sent?.ok ? "" : " (falha no envio)"}`,
-    description: body,
-    department: "financeiro",
-    payload: { billingId: billing.id, contractId: billing.contractId, to, communicationId: communication.id, manual, delivered: sent?.ok ?? false },
-  });
-  return { manual, delivered: sent?.ok ?? false };
+  const { results } = await sendBillingMessage(billingId, { channel: "whatsapp", text: notes }, actor);
+  const wa = results.find((r) => r.channel === "whatsapp") ?? results[0];
+  return { manual: wa?.manual ?? true, delivered: wa?.delivered ?? false };
 }
 
 /** Ligação de cobrança feita no discador (sem VoIP conectado): registro manual do resultado. */
 export async function registerBillingCall(billingId: string, notes: string | undefined, actor: UserRef): Promise<void> {
-  const { billing, client, contact } = await billingContext(billingId);
+  const ctx = await loadBillingMessageContext(billingId);
+  const { billing, client } = ctx;
+  const contact = ctx.contact ?? ctx.primary;
   const communication = await recordCommunication({
     clientId: client.id,
     contactId: contact?.id,
@@ -1041,11 +1523,30 @@ export async function cancelContract(input: { contractId: string; reason: string
   const patch: Partial<Contract> = { status: "cancelado", cancelledAt, cancelReason: reason, cancelledBy: actor.id };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
 
-  // Cobranças em aberto/vencidas deixam de ser devidas (pagas ficam como estão).
+  // Cobranças em aberto/vencidas deixam de ser devidas (pagas ficam como estão). Emitidas no provedor conectado
+  // são canceladas lá também (falha do provedor não impede o cancelamento local: fica na nota do evento).
   const open = billings.filter((b) => b.status === "aberta" || b.status === "vencida");
   const stamp = nowIso();
-  await batchSet(open.map((b) => ({ collection: COLLECTIONS.billing, id: b.id, data: { status: "cancelada", updatedAt: stamp }, merge: true })));
+  const providerNotes: string[] = [];
+  for (const b of open) {
+    const note = await cancelChargeAtProvider(b);
+    if (note) providerNotes.push(`${TYPE_LABEL[b.type]}${b.installment ? ` ${b.installment}` : ""}: ${note}`);
+  }
+  await batchSet(open.map((b) => ({ collection: COLLECTIONS.billing, id: b.id, data: { status: "cancelada", updatedAt: stamp, ...(b.chargeStatus ? { chargeStatus: "cancelado" } : {}) }, merge: true })));
   const cancelledBillingIds = open.map((b) => b.id);
+  if (providerNotes.length > 0) {
+    await emitEvent({
+      type: "note.added",
+      actor,
+      clientId: contract.clientId,
+      entity: { type: "contract", id: contract.id },
+      title: `Cobranças do contrato ${contract.number} no provedor de cobrança`,
+      description: providerNotes.join(" · "),
+      department: "financeiro",
+      payload: { contractId: contract.id, providerNotes },
+      timeline: false,
+    });
+  }
 
   // Antes da liberação, os produtos ainda em implantação não serão entregues.
   const cancelledProductIds: string[] = [];

@@ -192,7 +192,62 @@ export const registerPaymentSchema = z.object({
   method: z.enum(PAYMENT_METHODS, { message: "Selecione a forma de pagamento" }),
   receiptUrl: z.union([z.literal(""), url]).optional(),
 });
-export type RegisterPaymentInput = z.input<typeof registerPaymentSchema>;
+/**
+ * Entrada da baixa. `source`/`externalPaymentId`/`providerEventId`/`provider` NÃO vêm da tela (a action força
+ * "manual"): são usados pelo webhook do provedor e pela conciliação (deduplicação em `payment_events`).
+ */
+export type RegisterPaymentInput = z.input<typeof registerPaymentSchema> & {
+  source?: "manual" | "provedor" | "conciliacao";
+  externalPaymentId?: string;
+  providerEventId?: string;
+  provider?: string;
+};
+
+/** Boleto emitido no banco/ERP e registrado à mão: pelo menos linha digitável, nosso número, PDF ou PIX. */
+export const registerBoletoSchema = z
+  .object({
+    billingId: id("Cobrança"),
+    linhaDigitavel: z.string().trim().max(80, "Linha digitável muito longa").optional(),
+    nossoNumero: z.string().trim().max(40, "Nosso número muito longo").optional(),
+    codigoBarras: z.string().trim().max(60, "Código de barras muito longo").optional(),
+    pdfUrl: z.union([z.literal(""), url]).optional(),
+    banco: z.string().trim().max(60, "Banco muito longo").optional(),
+    emitidoEm: dateKey("Data de emissão").optional(),
+    pixCopiaECola: z.string().trim().max(500, "PIX copia e cola muito longo").optional(),
+    pixQrCodeUrl: z.union([z.literal(""), url]).optional(),
+    paymentUrl: z.union([z.literal(""), url]).optional(),
+  })
+  .refine((v) => Boolean(v.linhaDigitavel?.trim() || v.nossoNumero?.trim() || v.pdfUrl?.trim() || v.pixCopiaECola?.trim() || v.paymentUrl?.trim()), {
+    message: "Informe pelo menos a linha digitável, o nosso número, o PDF do boleto, o PIX ou o link de pagamento",
+    path: ["linhaDigitavel"],
+  });
+export type RegisterBoletoInput = z.input<typeof registerBoletoSchema>;
+
+export const BILLING_MESSAGE_CHANNELS = ["whatsapp", "email", "ambos"] as const;
+export type BillingMessageChannel = (typeof BILLING_MESSAGE_CHANNELS)[number];
+
+/** Mensagem de cobrança (WhatsApp principal, e-mail complementar) com ou sem os dados do boleto (2ª via). */
+export const sendBillingMessageSchema = z.object({
+  billingId: id("Cobrança"),
+  channel: z.enum(BILLING_MESSAGE_CHANNELS, { message: "Canal inválido" }),
+  text: z.string().trim().max(2000, "Texto muito longo").optional(),
+  includeBoleto: z.boolean().optional(),
+});
+export type SendBillingMessageInput = z.input<typeof sendBillingMessageSchema>;
+
+export const reversePaymentSchema = z.object({ billingId: id("Cobrança"), reason: z.string().trim().min(5, "Descreva o motivo do estorno (mín. 5 caracteres)").max(500, "Motivo muito longo") });
+
+/** Filtro "Boleto" das listas de cobranças. */
+export const BOLETO_FILTERS = ["sem_boleto", "emitido", "pago"] as const;
+export type BoletoFilter = (typeof BOLETO_FILTERS)[number];
+export const BOLETO_FILTER_LABELS: Record<BoletoFilter, string> = { sem_boleto: "Sem boleto", emitido: "Boleto emitido", pago: "Boleto pago" };
+
+/** Situação do boleto de uma cobrança para badge/filtro: sem boleto · emitido · pago. */
+export function boletoState(b: Pick<Billing, "status" | "boleto" | "pix" | "paymentUrl" | "externalId">): BoletoFilter {
+  const issued = Boolean(b.boleto?.linhaDigitavel || b.boleto?.nossoNumero || b.boleto?.pdfUrl || b.boleto?.codigoBarras || b.pix?.copiaECola || b.paymentUrl || b.externalId);
+  if (!issued) return "sem_boleto";
+  return b.status === "paga" ? "pago" : "emitido";
+}
 
 export const cancelBillingSchema = z.object({ billingId: id("Cobrança"), reason: z.string().trim().min(3, "Informe o motivo do cancelamento").max(300, "Motivo muito longo") });
 

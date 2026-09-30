@@ -57,4 +57,15 @@ export function registerCommissionHandlers(registerHandler: typeof RegisterFn): 
   registerHandler("financial.released", async function commissionsOnFinancialReleased(event) {
     await reconcile(contractIdOf(event), event);
   });
+  // Estorno de pagamento (D22): título não pago é cancelado e a comissão volta a aguardar recebimento;
+  // comissão já paga fica como está (estorno manual) e o gestor financeiro é avisado.
+  registerHandler("payment.reversed", async function commissionsOnPaymentReversed(event) {
+    const billingId = event.entityType === "billing" && event.entityId ? event.entityId : typeof event.payload.billingId === "string" ? event.payload.billingId : null;
+    if (!billingId) return;
+    const { getById } = await import("@/server/db");
+    const billing = await getById<Billing>(COLLECTIONS.billing, billingId);
+    if (!billing) return;
+    const { applyPaymentReversalToCommissions } = await import("@/server/commissions/reversal");
+    await applyPaymentReversalToCommissions(billing, typeof event.payload.reason === "string" ? event.payload.reason : "estorno de pagamento", { id: event.actorId, name: event.actorName });
+  });
 }

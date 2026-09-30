@@ -431,6 +431,28 @@ async function contratosAlertas(now: Date): Promise<SweepOutcome> {
   };
 }
 
+/** Conciliação bancária: só age com provedor conectado (senão "ignorada"). */
+async function conciliacaoBancaria(now: Date): Promise<SweepOutcome> {
+  const { reconcileBankPayments } = await import("@/server/finance/alerts");
+  const r = await reconcileBankPayments(now);
+  if (r.skipped) return { summary: `ignorada: ${r.reason}`, data: { ...r } };
+  return {
+    summary: `${r.checked} cobrança(s) consultada(s) no provedor · ${r.paid} baixada(s) · ${r.alreadyProcessed} já processada(s) · ${r.partial} parcial(is)${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
+    data: { ...r },
+  };
+}
+
+/** Régua de cobrança (src/server/finance/regua.ts): desligada por padrão. */
+async function reguaCobranca(now: Date): Promise<SweepOutcome> {
+  const { runBillingReminders } = await import("@/server/finance/regua");
+  const r = await runBillingReminders(now);
+  if (r.skipped) return { summary: `ignorada: ${r.reason}`, data: { ...r } };
+  return {
+    summary: `${r.billings} cobrança(s) em aberto · ${r.due} marco(s) vencido(s) hoje (ou na folga de 2 dias) · ${r.sent} enviado(s) · ${r.tasks} tarefa(s) · ${r.notifications} notificação(ões) · ${r.skippedExisting} já executado(s) · ${r.notSent} não enviado(s)${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
+    data: { ...r, errors: r.errors.slice(0, 20) },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Comissões (src/server/commissions/engine.ts)
 // ---------------------------------------------------------------------------
@@ -458,6 +480,8 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   cobrancas_vencidas: cobrancasVencidas,
   contratos_alertas: contratosAlertas,
   comissoes,
+  conciliacao_bancaria: conciliacaoBancaria,
+  regua_cobranca: reguaCobranca,
 };
 
 /** Campos antigos (dos módulos) que também contam como "última execução" da varredura. */

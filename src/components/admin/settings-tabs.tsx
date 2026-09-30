@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Activity, Award, BadgeCheck, CalendarOff, Clock, Gauge, HeartPulse, ShieldCheck, Target, Timer, TrendingUp } from "lucide-react";
+import { Activity, Award, BadgeCheck, BellRing, CalendarOff, Clock, Gauge, HeartPulse, ShieldCheck, Target, Timer, TrendingUp } from "lucide-react";
 import type { SlaRule } from "@/domain/types";
 import type { SettingKey, SettingValues } from "@/server/admin/schemas";
+import type { ReguaPreview } from "@/server/finance/regua";
 import type { OperationHealthConfig, PerformanceIndexConfig } from "@/server/kpis/health-schemas";
 import { OperationHealthSettingsForm, type KpiOption } from "@/components/kpis/operation-health-settings";
 import { PerformanceIndexSettingsForm } from "@/components/kpis/performance-index-settings";
@@ -16,6 +17,7 @@ import { SettingsHolidays } from "./settings-holidays";
 import { SettingsLeadScoring } from "./settings-lead-scoring";
 import { SettingsOpportunity } from "./settings-opportunity";
 import { SettingsFinanceAlerts, SettingsFinanceGate } from "./settings-finance-gate";
+import { SettingsCobrancaCanais, SettingsFinanceiroBaixa, SettingsRegua } from "./settings-cobranca";
 import { SettingsDeliveryGates } from "./settings-delivery-gates";
 import { SettingsSlaRules } from "./settings-sla-rules";
 import { SettingsGamification, SettingsSalesPrizes, SettingsStreak } from "./settings-performance";
@@ -32,6 +34,7 @@ const TAB_ITEMS: { value: SettingsTab; label: string; icon: React.ReactNode }[] 
   { value: "health-score", label: "Health score", icon: <HeartPulse /> },
   { value: "oportunidades", label: "Oportunidades", icon: <Gauge /> },
   { value: "gate-financeiro", label: "Gate financeiro", icon: <ShieldCheck /> },
+  { value: "cobranca", label: "Cobrança", icon: <BellRing /> },
   { value: "entrega", label: "Go-live e ativação", icon: <BadgeCheck /> },
   { value: "performance", label: "Gamificação e prêmios", icon: <Award /> },
   { value: "saude-indice", label: "Saúde e índice", icon: <Activity /> },
@@ -49,10 +52,12 @@ export interface SettingsTabsProps {
   operationHealth: OperationHealthConfig;
   performanceIndex: PerformanceIndexConfig;
   kpiOptions: KpiOption[];
+  /** Prévia honesta da régua de cobrança (o que a varredura faria hoje, sem enviar). */
+  reguaPreview: ReguaPreview;
 }
 
 /** Abas das configurações (?aba=...). Cada aba é um formulário independente que salva a própria chave. */
-export function SettingsTabs({ tab, values, stored, slaRules, originKeys, interestKeys, operationHealth, performanceIndex, kpiOptions }: SettingsTabsProps) {
+export function SettingsTabs({ tab, values, stored, slaRules, originKeys, interestKeys, operationHealth, performanceIndex, kpiOptions, reguaPreview }: SettingsTabsProps) {
   const { setLocal } = useAdminUrl();
   const [current, setCurrent] = React.useState<SettingsTab>(tab);
   const has = (key: SettingKey) => stored.includes(key);
@@ -95,6 +100,13 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
         <div className="flex flex-col gap-4">
           <SettingsFinanceGate key={JSON.stringify(values.gate_financeiro)} value={values.gate_financeiro} stored={has("gate_financeiro")} />
           <SettingsFinanceAlerts key={JSON.stringify(values.financeiro_alertas)} value={values.financeiro_alertas} stored={has("financeiro_alertas")} />
+        </div>
+      </TabsContent>
+      <TabsContent value="cobranca">
+        <div className="flex flex-col gap-4">
+          <SettingsRegua key={JSON.stringify(values.regua_cobranca)} value={values.regua_cobranca} stored={has("regua_cobranca")} preview={reguaPreview} />
+          <SettingsCobrancaCanais key={JSON.stringify(values.cobranca_canais)} value={values.cobranca_canais} stored={has("cobranca_canais")} />
+          <SettingsFinanceiroBaixa key={JSON.stringify(values.financeiro_baixa)} value={values.financeiro_baixa} stored={has("financeiro_baixa")} />
         </div>
       </TabsContent>
       <TabsContent value="entrega">

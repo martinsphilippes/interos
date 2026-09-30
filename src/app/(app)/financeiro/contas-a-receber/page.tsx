@@ -3,17 +3,19 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AlertTriangle, CalendarClock, UserX, Wallet } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
+import { runDueSweeps } from "@/server/automations/lazy";
 import { getReceivablesAging } from "@/server/finance/queries";
 import { canOperateFinance } from "@/server/finance/schemas";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BillingActions } from "@/components/finance/billing-actions";
+import { BillingActions, BoletoBadge } from "@/components/finance/billing-actions";
 import { ReceivedBilledChart } from "@/components/finance/finance-charts";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +25,7 @@ export const metadata: Metadata = { title: "Contas a Receber" };
 export default async function ReceivablesPage() {
   const user = await requireUser();
   if (!canAccessModule(user, "financeiro")) redirect("/meu-dia?erro=sem-permissao");
+  await runDueSweeps(["regua_cobranca", "conciliacao_bancaria"]);
   const aging = await getReceivablesAging();
   const canOperate = canOperateFinance(user);
   const max = Math.max(1, ...aging.buckets.map((b) => b.amount));
@@ -95,6 +98,7 @@ export default async function ReceivablesPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    {c.oldestOverdue ? <BoletoBadge billing={c.oldestOverdue} /> : null}
                     <Button asChild variant="outline" size="sm" className="h-10 sm:h-8">
                       <Link href={`/financeiro/cobrancas?cliente=${c.clientId}&status=vencida`}>Ver cobranças</Link>
                     </Button>
@@ -116,7 +120,7 @@ export default async function ReceivablesPage() {
           {aging.byClient.length === 0 ? (
             <EmptyState size="sm" icon={<Wallet />} title="Nada a receber" description="Não há cobranças em aberto." />
           ) : (
-            <Table className="min-w-[720px]">
+            <Table className="min-w-[860px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Cliente</TableHead>
@@ -124,6 +128,7 @@ export default async function ReceivablesPage() {
                   <TableHead className="text-right">Vencido</TableHead>
                   <TableHead className="text-right">Total</TableHead>
                   <TableHead>Próximo vencimento</TableHead>
+                  <TableHead>Boleto</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -138,6 +143,20 @@ export default async function ReceivablesPage() {
                     <TableCell className={cn("text-right tabular-nums", c.overdue > 0 && "font-medium text-danger-fg")}>{formatCurrency(c.overdue)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatCurrency(c.open + c.overdue)}</TableCell>
                     <TableCell className="whitespace-nowrap text-muted">{c.nextDueDate ? formatDate(c.nextDueDate) : "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <span className="inline-flex flex-wrap items-center gap-1">
+                        {c.boletoIssued > 0 ? (
+                          <Badge variant="info" size="sm">
+                            {c.boletoIssued} emitido{c.boletoIssued === 1 ? "" : "s"}
+                          </Badge>
+                        ) : null}
+                        {c.boletoMissing > 0 ? (
+                          <Badge variant="muted" size="sm">
+                            {c.boletoMissing} sem boleto
+                          </Badge>
+                        ) : null}
+                      </span>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

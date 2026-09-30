@@ -30,7 +30,7 @@ import {
 import { AGING_BUCKETS, agingBucket, allSigned, daysBetween, evaluateReleaseGate, listBillingsSwept, requiredPaymentBilling, todayKey, type AgingBucketKey } from "./billing";
 import { getGateSettings, mergedBillingData } from "./service";
 import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
-import { BILLING_STATUSES, BILLING_TYPES, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
+import { BILLING_STATUSES, BILLING_TYPES, BOLETO_FILTERS, boletoState, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type BoletoFilter, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
 
 // ---------------------------------------------------------------------------
 // Utilitários
@@ -503,18 +503,22 @@ export interface BillingFilters {
   competence?: string;
   clientId?: string;
   contractId?: string;
+  /** Situação do boleto: sem boleto · emitido · pago (D20). */
+  boleto?: BoletoFilter;
 }
 
 export function parseBillingFilters(params: SearchParams): BillingFilters {
   const status = one(params, "status");
   const type = one(params, "tipo");
   const comp = one(params, "competencia");
+  const boleto = one(params, "boleto");
   return {
     status: (BILLING_STATUSES as readonly string[]).includes(status ?? "") ? (status as Billing["status"]) : undefined,
     type: (BILLING_TYPES as readonly string[]).includes(type ?? "") ? (type as Billing["type"]) : undefined,
     competence: comp && /^\d{4}-\d{2}$/.test(comp) ? comp : undefined,
     clientId: one(params, "cliente"),
     contractId: one(params, "contrato"),
+    boleto: (BOLETO_FILTERS as readonly string[]).includes(boleto ?? "") ? (boleto as BoletoFilter) : undefined,
   };
 }
 
@@ -523,6 +527,8 @@ export interface BillingRow extends Billing {
   contractNumber: string;
   /** Dias de atraso (vencidas) ou até o vencimento (negativo = já venceu). */
   daysToDue: number;
+  /** Situação do boleto (badge/filtro). */
+  boletoState: BoletoFilter;
 }
 
 export interface BillingListResult {
@@ -536,11 +542,16 @@ export async function listBillings(filters: BillingFilters = {}): Promise<Billin
   const [names, contracts] = await Promise.all([clientNames(billings.map((b) => b.clientId)), getManyByIds<Contract>(COLLECTIONS.contracts, billings.map((b) => b.contractId))]);
   const today = todayKey();
   const filtered = billings.filter(
-    (b) => (!filters.status || b.status === filters.status) && (!filters.type || b.type === filters.type) && (!filters.competence || b.competence === filters.competence) && (!filters.clientId || b.clientId === filters.clientId),
+    (b) =>
+      (!filters.status || b.status === filters.status) &&
+      (!filters.type || b.type === filters.type) &&
+      (!filters.competence || b.competence === filters.competence) &&
+      (!filters.clientId || b.clientId === filters.clientId) &&
+      (!filters.boleto || boletoState(b) === filters.boleto),
   );
   const rank: Record<Billing["status"], number> = { vencida: 0, aberta: 1, paga: 2, cancelada: 3 };
   const rows: BillingRow[] = filtered
-    .map((b) => ({ ...b, clientName: names.get(b.clientId) ?? b.clientId, contractNumber: contracts.get(b.contractId)?.number ?? "—", daysToDue: daysBetween(today, dateKey(b.dueDate)) }))
+    .map((b) => ({ ...b, clientName: names.get(b.clientId) ?? b.clientId, contractNumber: contracts.get(b.contractId)?.number ?? "—", daysToDue: daysBetween(today, dateKey(b.dueDate)), boletoState: boletoState(b) }))
     .sort((a, b) => rank[a.status] - rank[b.status] || (a.status === "paga" || a.status === "cancelada" ? b.dueDate.localeCompare(a.dueDate) : a.dueDate.localeCompare(b.dueDate)));
 
   const sum = (items: Billing[]) => items.reduce((s, b) => s + b.amount, 0);
@@ -587,7 +598,11 @@ export interface ReceivableClient {
   nextDueDate?: string;
   buckets: Partial<Record<AgingBucketKey, number>>;
   /** Cobrança vencida mais antiga (alvo da ação de cobrança). */
-  oldestOverdue?: Pick<Billing, "id" | "type" | "installment" | "amount" | "dueDate" | "status">;
+  oldestOverdue?: Pick<Billing, "id" | "type" | "installment" | "amount" | "dueDate" | "status" | "boleto" | "pix" | "paymentUrl" | "externalId">;
+  /** Boletos registrados/emitidos nas cobranças em aberto e vencidas do cliente. */
+  boletoIssued: number;
+  /** Cobranças em aberto/vencidas ainda sem boleto registrado. */
+  boletoMissing: number;
 }
 
 export interface MonthlyFlow {
@@ -620,13 +635,15 @@ export async function getReceivablesAging(): Promise<ReceivablesAging> {
     const bucket = buckets.find((x) => x.key === key)!;
     bucket.amount += b.amount;
     bucket.count += 1;
-    const row = byClient.get(b.clientId) ?? { clientId: b.clientId, clientName: names.get(b.clientId) ?? b.clientId, open: 0, overdue: 0, overdueCount: 0, openCount: 0, oldestOverdueDays: 0, buckets: {} };
+    const row = byClient.get(b.clientId) ?? { clientId: b.clientId, clientName: names.get(b.clientId) ?? b.clientId, open: 0, overdue: 0, overdueCount: 0, openCount: 0, oldestOverdueDays: 0, buckets: {}, boletoIssued: 0, boletoMissing: 0 };
     row.buckets[key] = (row.buckets[key] ?? 0) + b.amount;
+    if (boletoState(b) === "sem_boleto") row.boletoMissing += 1;
+    else row.boletoIssued += 1;
     if (b.status === "vencida") {
       row.overdue += b.amount;
       row.overdueCount += 1;
       row.oldestOverdueDays = Math.max(row.oldestOverdueDays, -daysBetween(today, dateKey(b.dueDate)));
-      if (!row.oldestOverdue || b.dueDate < row.oldestOverdue.dueDate) row.oldestOverdue = { id: b.id, type: b.type, installment: b.installment, amount: b.amount, dueDate: b.dueDate, status: b.status };
+      if (!row.oldestOverdue || b.dueDate < row.oldestOverdue.dueDate) row.oldestOverdue = { id: b.id, type: b.type, installment: b.installment, amount: b.amount, dueDate: b.dueDate, status: b.status, boleto: b.boleto, pix: b.pix, paymentUrl: b.paymentUrl, externalId: b.externalId };
     } else {
       row.open += b.amount;
       row.openCount += 1;

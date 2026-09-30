@@ -18,9 +18,11 @@ import { createTaskInternal } from "@/server/tasks/service";
 import { getDepartmentManager } from "@/server/workflow/service";
 import { getSetting } from "@/server/admin/queries";
 import { SETTING_DEFAULTS, type FinanceiroAlertasConfig } from "@/server/admin/schemas";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { billingProviderConnected, getBillingProvider } from "@/server/integrations/billing-provider";
+import { dateKey, formatDate, formatDateTime } from "@/lib/format";
 import { COLLECTIONS, type Billing, type Client, type Contract, type DomainEvent, type ImplementationProject, type Notification, type Opportunity, type Task, type User } from "@/domain/types";
 import { SYSTEM_ACTOR, sweepOverdue } from "./billing";
+import { PAYMENT_METHODS } from "./schemas";
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -40,6 +42,55 @@ export async function sweepAllOpenBillings(): Promise<{ open: number; flipped: n
   const swept = await sweepOverdue(open);
   const flipped = swept.filter((b) => b.status === "vencida").length;
   return { open: open.length, flipped };
+}
+
+// ---------------------------------------------------------------------------
+// conciliacao_bancaria (D21): só age com provedor de cobrança conectado — nunca inventa pagamento
+// ---------------------------------------------------------------------------
+
+export interface BankReconciliationResult {
+  /** Varredura ignorada (provedor não conectado). */
+  skipped: boolean;
+  reason?: string;
+  checked: number;
+  paid: number;
+  alreadyProcessed: number;
+  partial: number;
+  errors: string[];
+}
+
+/**
+ * Para cada cobrança aberta/vencida emitida no provedor (`externalId`), consulta o status lá e dá baixa pelo
+ * caminho único `registerPayment(source: "conciliacao")` (deduplicada em `payment_events`). Sem provedor
+ * conectado devolve `skipped` — o resultado "ignorada: provedor de cobrança não conectado" fica visível em
+ * /admin/automacoes.
+ */
+export async function reconcileBankPayments(now: Date = new Date()): Promise<BankReconciliationResult> {
+  const result: BankReconciliationResult = { skipped: false, checked: 0, paid: 0, alreadyProcessed: 0, partial: 0, errors: [] };
+  if (!billingProviderConnected()) return { ...result, skipped: true, reason: "provedor de cobrança não conectado" };
+  const provider = getBillingProvider();
+  const { registerPayment } = await import("./service");
+  const open = (await list<Billing>(COLLECTIONS.billing)).filter((b) => (b.status === "aberta" || b.status === "vencida") && b.externalId);
+  for (const b of open) {
+    result.checked += 1;
+    try {
+      const detail = provider.getChargeDetail ? await provider.getChargeDetail(b) : { status: await provider.getChargeStatus(b) };
+      if (detail.status !== "pago") continue;
+      const paidAt = detail.paidAt ? dateKey(detail.paidAt) : dateKey(now);
+      const externalPaymentId = detail.externalPaymentId ?? b.externalId!;
+      const method = (PAYMENT_METHODS as readonly string[]).includes(b.method ?? "") ? (b.method as (typeof PAYMENT_METHODS)[number]) : "boleto";
+      const r = await registerPayment(
+        { billingId: b.id, paidAt, amount: detail.paidAmount ?? b.amount, method, source: "conciliacao", externalPaymentId, providerEventId: `conc_${b.externalId}_${externalPaymentId}`, provider: provider.name },
+        SYSTEM_ACTOR,
+      );
+      if (r.alreadyProcessed) result.alreadyProcessed += 1;
+      else if (r.partial) result.partial += 1;
+      else result.paid += 1;
+    } catch (error) {
+      result.errors.push(`${b.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

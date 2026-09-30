@@ -71,6 +71,8 @@ export const SWEEP_KEYS = [
   "cobrancas_vencidas",
   "contratos_alertas",
   "comissoes",
+  "conciliacao_bancaria",
+  "regua_cobranca",
 ] as const;
 export type SweepKey = (typeof SWEEP_KEYS)[number];
 
@@ -97,6 +99,18 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
     schedule: "diaria",
   },
   kpi_snapshots: { label: "Fotografia dos indicadores", description: "Grava os snapshots do motor de KPIs do mês corrente e, nos 3 primeiros dias do mês, o fechamento do mês anterior.", schedule: "diaria" },
+  conciliacao_bancaria: {
+    label: "Conciliação bancária",
+    description:
+      "Financeiro: com o provedor de cobrança conectado, consulta o status das cobranças abertas/vencidas emitidas nele e dá baixa pelo caminho único (origem conciliação, deduplicada). Sem provedor conectado a varredura é ignorada — nunca inventa pagamento.",
+    schedule: "diaria",
+  },
+  regua_cobranca: {
+    label: "Régua de cobrança",
+    description:
+      "Financeiro: executa os marcos da régua (dias antes/depois do vencimento, canal e texto em Configurações › Cobrança) uma única vez por cobrança e marco; canal não conectado vira tarefa ao Financeiro com o texto pronto. Desligada por padrão.",
+    schedule: "diaria",
+  },
 };
 
 /** Entidades que uma regra agendada pode varrer (só registros em aberto). */

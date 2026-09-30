@@ -20,17 +20,21 @@ import {
   getBillingContactInfo,
   generateBillings,
   registerBillingCall,
+  registerBoleto,
   registerPayment,
   registerPendency,
   releaseContract,
   removeSigner,
   resolvePendency,
+  reversePayment,
+  sendBillingMessage,
   sendBillingWhatsapp,
   sendForSignature,
   registerManualSignature,
   sendSignatureReminder,
   updateContractConditions,
   updateContractItems,
+  type BillingChannelResult,
 } from "./service";
 import {
   billingContactSchema,
@@ -45,9 +49,12 @@ import {
   manualSignatureSchema,
   opportunityIdSchema,
   pendencySchema,
+  registerBoletoSchema,
   registerPaymentSchema,
   releaseSchema,
   resolvePendencySchema,
+  reversePaymentSchema,
+  sendBillingMessageSchema,
   signerRefSchema,
   signerSchema,
   updateConditionsSchema,
@@ -242,12 +249,55 @@ export async function registerPaymentAction(input: unknown): Promise<ActionResul
   try {
     const user = await requireFinanceOperator();
     const data = registerPaymentSchema.parse(input);
-    const paid = await registerPayment(data, actorOf(user));
+    // Pela tela a origem é SEMPRE manual: provedor/conciliação só entram pelo webhook e pela varredura.
+    const paid = await registerPayment({ ...data, source: "manual" }, actorOf(user));
     revalidateFinance(paid.clientId, paid.contractId);
     revalidatePath("/vendas", "layout");
     return { ok: true, data: undefined };
   } catch (error) {
     return fail(error, "Não foi possível registrar o pagamento");
+  }
+}
+
+/** Boleto emitido no banco/ERP registrado na cobrança (linha digitável, nosso número, PDF, PIX). */
+export async function registerBoletoAction(input: unknown): Promise<ActionResult<{ hasPdf: boolean }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const data = registerBoletoSchema.parse(input);
+    const billing = await registerBoleto(data, actorOf(user));
+    revalidateFinance(billing.clientId, billing.contractId);
+    return { ok: true, data: { hasPdf: Boolean(billing.boleto?.pdfUrl) } };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar o boleto");
+  }
+}
+
+/** Cobrança por WhatsApp/e-mail/ambos, com ou sem os dados do boleto (envio ou 2ª via). */
+export async function sendBillingMessageAction(input: unknown): Promise<ActionResult<{ results: BillingChannelResult[]; contactName: string }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const data = sendBillingMessageSchema.parse(input) as { billingId: string; channel: "whatsapp" | "email" | "ambos"; text?: string; includeBoleto?: boolean; secondCopy?: boolean };
+    const secondCopy = Boolean((input as { secondCopy?: unknown })?.secondCopy);
+    const billing = await billingRef(data.billingId);
+    const result = await sendBillingMessage(data.billingId, { channel: data.channel, text: data.text, includeBoleto: data.includeBoleto, secondCopy }, actorOf(user));
+    revalidateFinance(billing?.clientId, billing?.contractId);
+    return { ok: true, data: result };
+  } catch (error) {
+    return fail(error, "Não foi possível enviar a cobrança");
+  }
+}
+
+/** Estorno do pagamento de uma cobrança paga (motivo obrigatório): efeitos em comissões/títulos por evento. */
+export async function reversePaymentAction(input: unknown): Promise<ActionResult<{ status: string }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const data = reversePaymentSchema.parse(input);
+    const billing = await reversePayment(data, actorOf(user));
+    revalidateFinance(billing.clientId, billing.contractId);
+    revalidatePath("/vendas", "layout");
+    return { ok: true, data: { status: billing.status } };
+  } catch (error) {
+    return fail(error, "Não foi possível estornar o pagamento");
   }
 }
 

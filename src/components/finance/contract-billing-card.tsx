@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { BillingActions, billingLabel } from "./billing-actions";
+import { BillingActions, billingLabel, BoletoBadge } from "./billing-actions";
 import { useFinanceAction } from "./use-finance-action";
 
 export interface ContractBillingCardProps {
@@ -72,9 +72,12 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                       Vence {formatDate(b.dueDate)}
                       {b.paidAt ? ` · pago ${formatDate(b.paidAt)} (${paymentMethodLabel(b.method)})` : ""}
                     </p>
-                    <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm" className="mt-1.5">
-                      {BILLING_STATUS_LABELS[b.status]}
-                    </Badge>
+                    <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
+                      <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
+                        {BILLING_STATUS_LABELS[b.status]}
+                      </Badge>
+                      {b.status !== "cancelada" ? <BoletoBadge billing={b} /> : null}
+                    </span>
                   </div>
                   {canOperate ? <BillingActions billing={{ ...b, clientName }} compact /> : null}
                 </li>
@@ -105,9 +108,12 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                       <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(b.amount)}</TableCell>
                       <TableCell className={cn("whitespace-nowrap", b.status === "vencida" ? "text-danger-fg" : "text-muted")}>{formatDate(b.dueDate)}</TableCell>
                       <TableCell>
-                        <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
-                          {BILLING_STATUS_LABELS[b.status]}
-                        </Badge>
+                        <span className="inline-flex flex-wrap gap-1.5">
+                          <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
+                            {BILLING_STATUS_LABELS[b.status]}
+                          </Badge>
+                          {b.status !== "cancelada" ? <BoletoBadge billing={b} /> : null}
+                        </span>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted">
                         {b.paidAt ? `${formatDate(b.paidAt)} · ${paymentMethodLabel(b.method)}${b.paidAmount !== undefined && b.paidAmount !== b.amount ? ` · ${formatCurrency(b.paidAmount)}` : ""}` : "—"}

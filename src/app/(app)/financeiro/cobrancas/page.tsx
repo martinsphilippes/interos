@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AlertTriangle, CheckCircle2, Clock, Receipt } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
+import { runDueSweeps } from "@/server/automations/lazy";
 import { listBillings, parseBillingFilters } from "@/server/finance/queries";
-import { BILLING_STATUSES, BILLING_TYPES, canOperateFinance } from "@/server/finance/schemas";
+import { BILLING_STATUSES, BILLING_TYPES, BOLETO_FILTER_LABELS, BOLETO_FILTERS, canOperateFinance } from "@/server/finance/schemas";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Card } from "@/components/ui/card";
@@ -17,10 +18,12 @@ export const metadata: Metadata = { title: "Cobranças" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Cobranças com filtros (status, tipo, competência, cliente), totais e ações de cobrança. */
+/** Cobranças com filtros (status, tipo, competência, cliente, boleto), totais e ações de cobrança. */
 export default async function BillingsPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireUser();
   if (!canAccessModule(user, "financeiro")) redirect("/meu-dia?erro=sem-permissao");
+  // Varreduras preguiçosas do Financeiro (só rodam quando vencidas pela frequência): régua e conciliação.
+  await runDueSweeps(["regua_cobranca", "conciliacao_bancaria"]);
   const filters = parseBillingFilters(await searchParams);
   const { rows, totals, facets } = await listBillings(filters);
 
@@ -40,6 +43,7 @@ export default async function BillingsPage({ searchParams }: { searchParams: Sea
         fields={[
           { param: "status", label: "Status", allLabel: "Todos os status", options: BILLING_STATUSES.map((s) => ({ value: s, label: BILLING_STATUS_LABELS[s] })) },
           { param: "tipo", label: "Tipo", allLabel: "Todos os tipos", options: BILLING_TYPES.map((t) => ({ value: t, label: BILLING_TYPE_LABELS[t] })) },
+          { param: "boleto", label: "Boleto", allLabel: "Boleto: todos", options: BOLETO_FILTERS.map((b) => ({ value: b, label: BOLETO_FILTER_LABELS[b] })) },
           { param: "competencia", label: "Competência", allLabel: "Todas as competências", options: facets.competences },
           { param: "cliente", label: "Cliente", allLabel: "Todos os clientes", options: facets.clients },
         ]}

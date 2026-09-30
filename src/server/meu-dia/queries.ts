@@ -11,6 +11,7 @@ import { getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { listNotifications } from "@/server/notifications";
 import { sweepOverdue } from "@/server/finance/billing";
+import { getDueSoonDays } from "@/server/finance/regua";
 import { isFinanceTeam } from "@/server/commissions/permissions";
 import { toNotificationItem } from "@/components/notifications/model";
 import {
@@ -263,7 +264,8 @@ const PENDING_CONTRACT_STATUSES: Contract["status"][] = ["aguardando_contrato", 
 /** Contratos das vendas do vendedor que dependem do cliente assinar. */
 const SELLER_CONTRACT_STATUSES = new Set<Contract["status"]>(["aguardando_contrato", "aguardando_assinatura"]);
 const OPEN_PAYABLE_STATUSES: PayableStatus[] = ["previsto", "aprovado", "a_pagar"];
-const DUE_SOON_DAYS = 3;
+/** Padrão de "vencem nos próximos N dias"; com a régua de cobrança ativa vale o menor marco antes do vencimento (getDueSoonDays). */
+const DEFAULT_DUE_SOON_DAYS = 3;
 const FINANCE_SECTION_LIMIT = 6;
 const BILLING_TYPE_LABEL: Record<Billing["type"], string> = { setup: "Adesão", mensalidade: "Mensalidade", hardware: "Hardware", servico: "Serviço" };
 
@@ -401,6 +403,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     profile.sales ? byOwner<Contract>(COLLECTIONS.contracts, "sellerId", ids) : Promise.resolve([] as Contract[]),
   ]);
   const openBillings = wantsBillings ? await sweepOverdue(openBillingsRaw) : [];
+  const DUE_SOON_DAYS = wantsBillings ? await getDueSoonDays() : DEFAULT_DUE_SOON_DAYS;
 
   // Contratos ainda no Financeiro (não liberados nem cancelados): os de que o usuário é responsável; a fila
   // inteira para a equipe financeira; e, para o vendedor, os das próprias vendas que dependem da assinatura

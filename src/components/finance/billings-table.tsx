@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination, paginate } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { BillingActions, billingLabel } from "./billing-actions";
+import { BillingActions, billingLabel, BoletoBadge } from "./billing-actions";
 
 const PAGE_SIZE = 25;
 
@@ -51,6 +51,7 @@ export function BillingsTable({ rows, canOperate }: { rows: BillingRow[]; canOpe
                 <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
                   {BILLING_STATUS_LABELS[b.status]}
                 </Badge>
+                {b.status !== "cancelada" ? <BoletoBadge billing={b} /> : null}
                 <DueInfo row={b} />
               </div>
             </div>
@@ -59,7 +60,7 @@ export function BillingsTable({ rows, canOperate }: { rows: BillingRow[]; canOpe
         ))}
       </ul>
       <div className="hidden md:block">
-        <Table className="min-w-[980px]">
+        <Table className="min-w-[1080px]">
           <TableHeader>
             <TableRow>
               <TableHead>Cliente</TableHead>
@@ -69,6 +70,7 @@ export function BillingsTable({ rows, canOperate }: { rows: BillingRow[]; canOpe
               <TableHead className="text-right">Valor</TableHead>
               <TableHead>Vencimento</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Boleto</TableHead>
               {canOperate ? <TableHead className="text-right">Ações</TableHead> : null}
             </TableRow>
           </TableHeader>
@@ -102,6 +104,7 @@ export function BillingsTable({ rows, canOperate }: { rows: BillingRow[]; canOpe
                     {BILLING_STATUS_LABELS[b.status]}
                   </Badge>
                 </TableCell>
+                <TableCell>{b.status !== "cancelada" ? <BoletoBadge billing={b} /> : <span className="text-xs text-muted">—</span>}</TableCell>
                 {canOperate ? (
                   <TableCell className="text-right">
                     <BillingActions billing={b} />
