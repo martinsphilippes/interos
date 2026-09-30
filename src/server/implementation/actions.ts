@@ -68,7 +68,8 @@ function fail(error: unknown, fallback: string): Failure {
   return { ok: false, error: fallback };
 }
 
-const actorOf = (user: CurrentUser): ImplementationActor => ({ id: user.id, name: user.name, role: user.role, isManager: user.isManager });
+/** Ator com departamento e permissões efetivas da sessão: o go-live é decidido no servidor como na UI. */
+const actorOf = (user: CurrentUser): ImplementationActor => ({ id: user.id, name: user.name, role: user.role, isManager: user.isManager, departmentId: user.departmentId, permissions: user.permissions });
 
 /** Quem opera a implantação: equipe de implantação, gestores, diretoria e admin (Suporte e CS só consultam). */
 async function requireOperator(): Promise<CurrentUser> {

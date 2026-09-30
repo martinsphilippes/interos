@@ -47,8 +47,9 @@ function fail(error: unknown): Failure {
   return { ok: false, error: "Não foi possível concluir a operação. Tente novamente." };
 }
 
+/** Ator com as permissões efetivas da sessão: o servidor decide aprovação/exceção como a UI (perfil, exceções, módulos). */
 function actorOf(user: CurrentUser): WorkflowActor {
-  return { id: user.id, name: user.name, role: user.role };
+  return { id: user.id, name: user.name, role: user.role, permissions: user.permissions };
 }
 
 function revalidateStepPaths(step: Pick<WorkflowStep, "clientId" | "instanceId"> | null | undefined): void {

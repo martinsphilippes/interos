@@ -14,6 +14,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { batchSet, col, create, getById, getManyByIds, list, newId, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { can } from "@/server/auth/permissions";
+import { resolvePermissionsForUser } from "@/server/auth/permission-store";
 import type { EffectivePermissions } from "@/domain/permissions";
 import { registerHandler } from "@/server/events/emit";
 import { registerImplementationHandlers } from "@/server/events/handlers/implementation";
@@ -68,8 +69,23 @@ import {
 // Registro idempotente dos handlers da Implantação (ver src/server/events/handlers/implementation.ts).
 registerImplementationHandlers(registerHandler);
 
-/** Ator das operações, com papel (aprovação de go-live e mudança de fase). */
-export type ImplementationActor = UserRef & { role?: RoleKey; isManager?: boolean };
+/**
+ * Ator das operações, com papel, departamento e permissões efetivas (aprovação de go-live e mudança de fase). As
+ * Server Actions passam os do CurrentUser; sem `permissions`, approveGoLive lê as do usuário no banco.
+ */
+export type ImplementationActor = UserRef & { role?: RoleKey; isManager?: boolean; departmentId?: string; permissions?: EffectivePermissions };
+
+/**
+ * Ator com as permissões efetivas: as recebidas ou, para um usuário existente, as resolvidas no banco (perfil,
+ * exceções, módulos) — nunca a matriz padrão do papel. Ator sem documento (automação) segue como veio.
+ */
+async function withEffectivePermissions(actor: ImplementationActor): Promise<ImplementationActor> {
+  if (actor.permissions) return actor;
+  const user = await getById<User>(COLLECTIONS.users, actor.id);
+  if (!user) return actor;
+  const permissions = (await resolvePermissionsForUser(user)) ?? undefined;
+  return { ...actor, role: actor.role ?? user.role, departmentId: actor.departmentId ?? user.departmentId, permissions };
+}
 
 const SYSTEM_ACTOR: UserRef = { id: "system", name: "INTEROS" };
 const OPEN_TASK = new Set<ImplementationTask["status"]>(["aberta", "em_andamento", "aguardando"]);
@@ -1144,8 +1160,8 @@ async function pickCsOwner(): Promise<User> {
  */
 export async function approveGoLive(projectId: string, actor: ImplementationActor): Promise<GoLiveResult> {
   const project = await loadProject(projectId);
-  const [tasks, trainings, settings, client] = await Promise.all([projectTasks(projectId), projectTrainings(projectId), getGoLiveSettings(), loadClient(project.clientId)]);
-  if (!canApproveGoLive(project, actor, settings)) {
+  const [tasks, trainings, settings, client, approver] = await Promise.all([projectTasks(projectId), projectTrainings(projectId), getGoLiveSettings(), loadClient(project.clientId), withEffectivePermissions(actor)]);
+  if (!canApproveGoLive(project, approver, settings)) {
     throw new Error(settings.exigeAprovacaoGestor ? "Só gestores ou administradores podem aprovar o go-live" : "Só o responsável do projeto ou gestores podem aprovar o go-live");
   }
   const gate = evaluateGoLiveGate(project, tasks, trainings);
