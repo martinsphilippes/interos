@@ -3,38 +3,9 @@
  */
 import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
+import { AuthenticationError, BusinessError, PermissionError } from "./error-classes";
 
-/** Mensagem padrão de acesso negado (sem revelar o que existe do outro lado). */
-export const ACCESS_DENIED_MESSAGE = "Acesso negado: seu perfil não tem permissão para esta operação.";
-
-/** Negação de permissão em Server Action (requirePermission). A mensagem é segura para o usuário. */
-export class PermissionError extends Error {
-  readonly key?: string;
-  constructor(message: string = ACCESS_DENIED_MESSAGE, key?: string) {
-    super(message);
-    this.name = "PermissionError";
-    this.key = key;
-  }
-}
-
-/** Sem sessão válida numa Server Action ou API. */
-export class AuthenticationError extends Error {
-  constructor(message = "Sua sessão expirou. Entre novamente.") {
-    super(message);
-    this.name = "AuthenticationError";
-  }
-}
-
-/**
- * Erro de regra de negócio com mensagem escrita para o usuário: failAction sempre a exibe. Use nos serviços quando a
- * mensagem precisa chegar à interface mesmo contendo termos que pareceriam técnicos.
- */
-export class BusinessError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "BusinessError";
-  }
-}
+export { ACCESS_DENIED_MESSAGE, AuthenticationError, BusinessError, PermissionError } from "./error-classes";
 
 /** Mensagens técnicas que nunca chegam ao usuário (ficam no log). */
 const TECHNICAL = /firestore|firebase|ECONN|deadline|permission denied|undefined|null|NEXT_/i;

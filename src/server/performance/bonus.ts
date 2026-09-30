@@ -21,7 +21,7 @@ import "server-only";
  */
 import { batchSet, create, getById, getManyByIds, list, nowIso, ORG_ID, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
-import { BusinessError } from "@/server/auth/errors";
+import { BusinessError } from "@/server/auth/error-classes";
 import { notify } from "@/server/notifications";
 import { COLLECTIONS, type BonusBlock, type BonusResult, type BonusRule, type Opportunity, type Settings, type User, type UserRef } from "@/domain/types";
 import { DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";

@@ -1,6 +1,6 @@
 import "server-only";
 import { getManyByIds, list } from "@/server/db";
-import { can } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { filterByScope, resolveDataScope } from "@/server/auth/scope";
 import { COLLECTIONS, type CurrentUser, type Department, type ImplementationTemplate, type LeadSource, type Product, type Settings, type SlaRule, type Task, type User, type WorkflowTemplate } from "@/domain/types";
 import { SETTING_DEFAULTS, SETTING_KEYS, type SettingKey, type SettingValues } from "./schemas";
