@@ -1146,9 +1146,9 @@ export async function releaseContract(contractId: string, actor: FinanceActor, e
   // Exceção: conclui a etapa Financeiro com o motivo informado (antes do evento, para ficar registrado no step).
   if (exception) await completeFinanceStepWithException(client, contract, actor, reason!, gate.checks.filter((c) => !c.ok).map((c) => c.label));
 
-  // Criação do projeto: caminho único no módulo de Implantação (combina templates, SLA, evento implementation.created).
-  const project = await createProjectFromContract(released, actor, client);
-
+  // Ordem dos marcos na linha do tempo: "liberado para implantação" antes de "projeto de implantação criado".
+  // O handler do workflow avança Financeiro → Implantação aqui; a criação do projeto (abaixo) grava o projectId no
+  // contexto da jornada. Nenhum handler depende de payload.projectId neste evento.
   await emitEvent({
     type: "financial.released",
     actor,
@@ -1157,8 +1157,11 @@ export async function releaseContract(contractId: string, actor: FinanceActor, e
     title: `Contrato ${contract.number} liberado para implantação${exception ? " (exceção)" : ""}`,
     description: exception ? `Liberado com pendência por ${actor.name}: ${reason}` : `Critérios atendidos: ${gate.checks.map((c) => c.label.toLowerCase()).join(", ")}`,
     department: "financeiro",
-    payload: { contractId: contract.id, projectId: project?.id, exceptionReason: exception ? reason : undefined, monthlyTotal: contract.monthlyTotal, setupTotal: contract.setupTotal, checks: gate.checks },
+    payload: { contractId: contract.id, exceptionReason: exception ? reason : undefined, monthlyTotal: contract.monthlyTotal, setupTotal: contract.setupTotal, checks: gate.checks },
   });
+
+  // Criação do projeto: caminho único no módulo de Implantação (combina templates, SLA, evento implementation.created).
+  const project = await createProjectFromContract(released, actor, client);
 
   // Tarefas do processo do contrato (emitir contrato, gerar cobrança e liberar) ficam concluídas.
   const tasks = await list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", contract.id]] });
@@ -1198,7 +1201,13 @@ async function completeFinanceStepWithException(client: Client, contract: Contra
 // Handlers (chamados por src/server/events/handlers/finance.ts)
 // ---------------------------------------------------------------------------
 
-/** contract.signed → tarefa "Gerar cobrança e liberar" para o responsável financeiro. */
+/**
+ * contract.signed → tarefa "Gerar cobrança e liberar" para o responsável financeiro.
+ *
+ * Uma tarefa financeira por etapa do contrato: a tarefa da venda ("Emitir contrato e cobrança", criada no ganho)
+ * cobre gerar o contrato e conseguir a assinatura; assinado por todos, ela é concluída aqui e a etapa seguinte
+ * (gerar cobranças, confirmar o pagamento exigido e liberar) passa a ser a única tarefa aberta do contrato.
+ */
 export async function onContractSigned(event: DomainEvent): Promise<void> {
   const contract = await getById<Contract>(COLLECTIONS.contracts, event.entityId ?? "");
   if (!contract) return;
@@ -1206,6 +1215,14 @@ export async function onContractSigned(event: DomainEvent): Promise<void> {
   const assigneeId = contract.ownerId ?? (await getDepartmentManager("financeiro"))?.id;
   const title = `Gerar cobrança e liberar: ${client?.tradeName ?? contract.number}`;
   const existing = await list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", contract.id]] });
+  const actor = { id: event.actorId, name: event.actorName };
+  for (const task of existing.filter((t) => t.processType === "contract" && t.origin === "evento" && t.title.startsWith("Emitir contrato e cobrança") && OPEN_TASK.has(t.status))) {
+    try {
+      await completeTaskInternal(task, actor);
+    } catch (error) {
+      console.error(`[financeiro] falha ao concluir a tarefa ${task.id} após a assinatura`, error);
+    }
+  }
   if (existing.some((t) => t.title === title && t.status !== "cancelada")) return;
   const holidays = await getHolidays();
   await createTaskInternal(
@@ -1224,7 +1241,7 @@ export async function onContractSigned(event: DomainEvent): Promise<void> {
       checklist: ["Gerar cobranças", "Confirmar pagamento exigido", "Liberar para implantação"],
       tags: ["financeiro", "contrato"],
     },
-    { id: event.actorId, name: event.actorName },
+    actor,
   );
   if (assigneeId) {
     await notify({

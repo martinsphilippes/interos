@@ -27,7 +27,7 @@ export function parsePriorityFilter(value: string | undefined): PriorityFilter {
   return (PRIORITY_FILTERS as readonly string[]).includes(value ?? "") ? (value as PriorityFilter) : "todas";
 }
 
-export type PriorityKind = "tarefa" | "etapa" | "lead" | "oportunidade" | "projeto" | "chamado" | "cliente" | "renovacao" | "sla" | "retorno" | "contrato";
+export type PriorityKind = "tarefa" | "etapa" | "lead" | "oportunidade" | "projeto" | "chamado" | "cliente" | "renovacao" | "sla" | "retorno" | "contrato" | "cobranca" | "titulo" | "comissao";
 
 export const PRIORITY_KIND_LABELS: Record<PriorityKind, string> = {
   tarefa: "Tarefa",
@@ -41,6 +41,9 @@ export const PRIORITY_KIND_LABELS: Record<PriorityKind, string> = {
   sla: "SLA",
   retorno: "Aguardando retorno",
   contrato: "Contrato",
+  cobranca: "Cobrança",
+  titulo: "Título a pagar",
+  comissao: "Comissão",
 };
 
 export type ReasonTone = "danger" | "warning" | "info" | "muted";
@@ -80,7 +83,7 @@ export interface PriorityItem {
 export interface MeuDiaStats {
   /** Tarefas abertas ou em andamento (card "Tarefas"). */
   tasksInProgress: number;
-  /** Itens aguardando o usuário: etapas atribuídas, clientes aguardando retorno e contratos pendentes. */
+  /** Itens aguardando o usuário: etapas atribuídas, clientes aguardando retorno, contratos pendentes e pendências financeiras do perfil. */
   pendingOnYou: number;
   /** Atingimento médio das metas do mês (fração), null sem metas. */
   goalAttainment: number | null;
@@ -207,6 +210,52 @@ export interface PendingContractItem {
   href: string;
 }
 
+/** Item do bloco "Financeiro do dia" (D17): cobrança, título a pagar ou comissão, sempre com link real. */
+export interface FinanceItem {
+  /** `${kind}:${entityId}` — mesma chave usada na lista de prioridades. */
+  id: string;
+  kind: "cobranca" | "titulo" | "comissao";
+  title: string;
+  detail?: string;
+  amount?: number;
+  dueAt?: string;
+  dueLabel?: string;
+  tone: ReasonTone;
+  href: string;
+  clientId?: string;
+  clientName?: string;
+  assigneeName?: string;
+}
+
+export interface FinanceSection {
+  key: "cobrancas_vencidas" | "vencimentos" | "titulos" | "comissoes";
+  title: string;
+  description?: string;
+  /** Link "ver todas" da seção. */
+  href?: string;
+  /** Total de itens da seção (a lista mostra os primeiros). */
+  count: number;
+  /** Soma dos valores da seção. */
+  total: number;
+  items: FinanceItem[];
+}
+
+/**
+ * Bloco financeiro do Meu Dia, parametrizado pelo perfil: equipe financeira (cobranças vencidas, vencimentos em
+ * 3 dias, títulos a aprovar/pagar/vencidos, comissões elegíveis sem título) ou vendedor (cobrança vencida de
+ * cliente seu, para acionar). Contratos pendentes continuam no bloco "Contratos pendentes".
+ */
+export interface FinanceDigest {
+  profile: "financeiro" | "vendas";
+  title: string;
+  description?: string;
+  href: string;
+  hrefLabel: string;
+  sections: FinanceSection[];
+  /** Itens que entraram nas prioridades (soma das seções). */
+  count: number;
+}
+
 export interface MeuDiaData {
   user: { id: string; name: string; firstName: string };
   scope: MeuDiaScope;
@@ -228,6 +277,8 @@ export interface MeuDiaData {
   team: TeamMember[];
   awaiting: AwaitingItem[];
   contracts: PendingContractItem[];
+  /** Presente só para perfis com pendências financeiras (equipe financeira ou vendedor com cobrança vencida). */
+  finance?: FinanceDigest;
 }
 
 /** Aplica o filtro dos StatCards à lista de prioridades. */

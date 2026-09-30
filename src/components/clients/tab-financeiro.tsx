@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, CalendarClock, FileSignature, Receipt, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarClock, CircleDollarSign, FileSignature, Receipt, Wallet } from "lucide-react";
 import type { Client360 } from "@/server/clients/queries";
 import { formatCompetence, formatCurrency, formatDate, formatRelative } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -8,22 +8,27 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { SectionTitle } from "@/components/ui/section-title";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ContractSummaryCard } from "@/components/finance/contract-summary-card";
 import { cn } from "@/lib/utils";
 import { UserCell } from "./client-badges";
 import { BILLING_STATUS_LABELS, BILLING_STATUS_VARIANT, BILLING_TYPE_LABELS, CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "./labels";
+import { contractSummaryOf, currentContract } from "./overview-model";
 
 const RECENT_BILLS = 12;
 
-/** Aba Financeiro: resumo (MRR, em aberto, vencido, próximo vencimento), contratos e cobranças. */
+/** Aba Financeiro: resumo (MRR, em aberto, vencido, próximo vencimento, último pagamento), Resumo do contratado do contrato vigente, contratos e cobranças. */
 export function TabFinanceiro({ data }: { data: Client360 }) {
   const { client, contracts, billing, financial, users } = data;
   const recent = billing.slice(0, RECENT_BILLS);
   const today = new Date().toISOString().slice(0, 10);
   const mrr = financial.mrr || client.mrr || 0;
+  const current = currentContract(data);
+  const summary = current ? contractSummaryOf(data, current) : null;
+  const last = financial.lastPayment;
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard label="MRR" value={formatCurrency(mrr)} icon={<Wallet />} tone="success" hint="mensalidades dos contratos liberados" compact />
         <StatCard label="Em aberto" value={formatCurrency(financial.openAmount)} icon={<Receipt />} tone="info" hint={`${financial.openCount} cobrança${financial.openCount === 1 ? "" : "s"} a vencer`} compact />
         <StatCard
@@ -42,7 +47,30 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
           hint={financial.nextDue ? `${formatCurrency(financial.nextDue.amount)} · ${BILLING_TYPE_LABELS[financial.nextDue.type]} · ${formatRelative(financial.nextDue.dueDate)}` : "sem cobranças em aberto"}
           compact
         />
+        <StatCard
+          label="Último pagamento"
+          value={last ? formatDate(last.paidAt) : "—"}
+          icon={<CircleDollarSign />}
+          tone={last ? "brand" : "neutral"}
+          hint={last ? `${formatCurrency(last.amount)}${last.method ? ` · ${last.method}` : ""} · ${BILLING_TYPE_LABELS[last.type]}${last.installment ? ` ${last.installment}` : ""}` : "nenhum pagamento identificado"}
+          compact
+        />
       </div>
+
+      {current && summary ? (
+        <div data-testid="resumo-contratado">
+          <ContractSummaryCard
+            summary={summary}
+            title="Resumo do contratado"
+            description={`Contrato vigente ${current.number} v${current.version}${current.saleNumber ? ` · venda ${current.saleNumber}` : ""}${current.status === "liberado" ? "" : ` · ${CONTRACT_STATUS_LABELS[current.status]}`}`}
+            footer={
+              <Link href={`/financeiro/contratos/${current.id}`} className="text-sm font-medium text-brand-fg hover:underline">
+                Abrir contrato
+              </Link>
+            }
+          />
+        </div>
+      ) : null}
 
       {financial.pendingContract ? (
         <Card className="flex flex-wrap items-center gap-3 border-warning/40 bg-warning-soft/40 p-4">

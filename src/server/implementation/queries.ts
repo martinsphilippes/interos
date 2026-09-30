@@ -92,6 +92,8 @@ export interface ProjectRow {
   activationDays?: number;
   /** Tarefas obrigatórias abertas da fase atual (o que falta para avançar). */
   pendingInPhase: string[];
+  /** false quando a venda não contratou implantação (D9): indicador leve na lista e no kanban. */
+  implementationRequired?: boolean;
 }
 
 export interface ScopeInfo {
@@ -191,6 +193,7 @@ async function buildRows(projects: ProjectRecord[]): Promise<ProjectRow[]> {
       onTime: p.status === "concluida" && p.goLiveAt ? p.goLiveAt <= p.dueDate : undefined,
       activationDays: p.goLiveAt && contract?.releasedAt ? Math.round(daysBetween(contract.releasedAt, p.goLiveAt) * 10) / 10 : undefined,
       pendingInPhase: active ? pendingRequired(tasksByProject.get(p.id) ?? [], [p.currentPhase]).map((t) => t.title) : [],
+      implementationRequired: p.saleSnapshot?.implementationRequired ?? contract?.implementationRequired,
     };
   });
 }

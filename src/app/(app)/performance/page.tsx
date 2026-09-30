@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChevronRight, ClipboardCheck, Gauge, ListChecks, ShieldCheck, Star, Target, TrendingUp } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getMyPerformance, getPerformanceAccess, resolveSubjectId } from "@/server/performance/queries";
+import { getUserCommissionsDigest } from "@/server/commissions/queries";
 import { parsePeriod, periodOptions } from "@/server/kpis/queries";
 import { DEPARTMENT_LABELS } from "@/domain/constants";
 import { formatNumber, formatPercent } from "@/lib/format";
@@ -25,6 +26,7 @@ import { BonusSummaryCard } from "@/components/performance/bonus-summary";
 import { GamificationCard } from "@/components/performance/gamification-card";
 import { IndexComparison, MyGoalsTable, PerformanceIndexCard } from "@/components/performance/performance-panels";
 import { PerformanceEvolutionChart } from "@/components/performance/performance-evolution-chart";
+import { MyCommissionsCard } from "@/components/performance/my-commissions";
 import { SalesPerformanceBlock } from "@/components/performance/sales-performance";
 import { UserSelect } from "@/components/performance/user-select";
 
@@ -68,6 +70,9 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
   const subjectId = resolveSubjectId(viewer, access, one(query.usuario));
   const [data, indexConfig] = await Promise.all([getMyPerformance(subjectId, period), viewer.isDirector ? getPerformanceIndexConfig() : Promise.resolve(null)]);
   const self = subjectId === viewer.id;
+  // "Minhas comissões" (D17): só para quem tem bloco de vendas; o escopo D15 é aplicado na query (vendedor só as
+  // próprias; gestor, a equipe; financeiro, todas). O link para a memória exige acesso à tela de Comissões.
+  const commissions = data?.sales ? await getUserCommissionsDigest(viewer, subjectId, { canOpenFinance: canAccessModule(viewer, "financeiro") || canAccessModule(viewer, "vendas") }) : null;
 
   if (!data) {
     return (
@@ -259,8 +264,9 @@ export default async function MeuDesempenhoPage({ searchParams }: { searchParams
       ) : null}
 
       {data.sales ? (
-        <section className="mb-6">
+        <section className="mb-6 flex flex-col gap-4">
           <SectionTitle title="Vendas e comissões" description="Vendido por tipo de receita, comissões e prêmios de meta batida da competência." />
+          {commissions ? <MyCommissionsCard digest={commissions} self={self} firstName={firstName} /> : null}
           <SalesPerformanceBlock data={data.sales} monthLabel={data.month.label} />
         </section>
       ) : null}

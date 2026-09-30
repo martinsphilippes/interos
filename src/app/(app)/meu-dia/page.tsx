@@ -5,7 +5,7 @@ import { getMeuDia } from "@/server/meu-dia/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { MeuDiaHeader } from "@/components/meu-dia/meu-dia-header";
 import { PrioritiesList } from "@/components/meu-dia/priorities-list";
-import { AgendaBlock, AttentionClientsBlock, AwaitingBlock, ContractsBlock, FollowupsBlock, GoalsBlock, NotificationsBlock, StepsBlock, TeamBlock } from "@/components/meu-dia/blocks";
+import { AgendaBlock, AttentionClientsBlock, AwaitingBlock, ContractsBlock, FinanceBlock, FollowupsBlock, GoalsBlock, NotificationsBlock, StepsBlock, TeamBlock } from "@/components/meu-dia/blocks";
 import { parsePriorityFilter } from "@/components/meu-dia/model";
 import { InsightsBlock } from "@/components/meu-dia/insights-block";
 import { getTopInsightsForUser } from "@/server/insights/engine";
@@ -33,9 +33,10 @@ export default async function MeuDiaPage({ searchParams }: { searchParams: Searc
   const deniedAccess = first(sp.erro) === "sem-permissao";
   // Gestores e diretoria recebem os principais alertas de gestão (gargalos detectados pelas regras de insights).
   const showInsights = user.isManager || user.isDirector;
-  // Varreduras operacionais vencidas (SLA, leads sem contato, implantações atrasadas, tarefas recorrentes e
-  // resumo de oportunidades paradas) rodam depois da resposta: o Meu Dia é a tela mais aberta do dia.
-  after(() => runDueSweeps(["sla_alerts", "leads_sem_contato_24h", "implantacoes_atrasadas", "tarefas_recorrentes", "oportunidades_paradas"]));
+  // Varreduras operacionais vencidas (SLA, leads sem contato, implantações atrasadas, tarefas recorrentes, resumo de
+  // oportunidades paradas e o circuito financeiro: cobranças vencidas, contratos parados e comissões) rodam depois
+  // da resposta: o Meu Dia é a tela mais aberta do dia.
+  after(() => runDueSweeps(["sla_alerts", "leads_sem_contato_24h", "implantacoes_atrasadas", "tarefas_recorrentes", "oportunidades_paradas", "cobrancas_vencidas", "contratos_alertas", "comissoes"]));
   const [data, insights] = await Promise.all([getMeuDia(user, scope), showInsights ? getTopInsightsForUser(user).catch(() => []) : Promise.resolve([])]);
   const team = data.scope === "equipe";
 
@@ -58,6 +59,7 @@ export default async function MeuDiaPage({ searchParams }: { searchParams: Searc
         <AgendaBlock items={data.agenda} upcomingVisits={data.upcomingVisits} />
         <AwaitingBlock items={data.awaiting} />
         <FollowupsBlock items={data.followups} />
+        <FinanceBlock digest={data.finance} />
         <ContractsBlock items={data.contracts} />
         <StepsBlock items={data.steps} team={team} />
         <AttentionClientsBlock items={data.attentionClients} total={data.stats.clientsAttention} />

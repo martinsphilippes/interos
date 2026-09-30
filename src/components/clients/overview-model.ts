@@ -3,9 +3,31 @@
  * pendências, próximos vencimentos e datas de renovação. Recebem o `Client360` já carregado.
  */
 import type { Client360, UserSummary } from "@/server/clients/queries";
-import type { Client, ClientProduct } from "@/domain/types";
+import type { Client, ClientProduct, Contract } from "@/domain/types";
 import { dateKey } from "@/lib/format";
+import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import { CONTRACT_STATUS_LABELS } from "./labels";
+
+// ---------------------------------------------------------------------------
+// Contrato vigente e Resumo do contratado (D7/D17)
+// ---------------------------------------------------------------------------
+
+/** Contrato vigente da ficha: o que o resumo financeiro apontou (liberado mais recente, senão o mais recente não cancelado). */
+export function currentContract(data: Pick<Client360, "contracts" | "financial">): Contract | undefined {
+  return data.contracts.find((c) => c.id === data.financial.currentContractId);
+}
+
+/** Resumo do contratado do contrato informado, montado com as cobranças, o vendedor e o contato já carregados na ficha. */
+export function contractSummaryOf(data: Pick<Client360, "billing" | "contacts" | "users" | "opportunities">, contract: Contract): ContractSummaryData {
+  const sellerId = contract.sellerId ?? data.opportunities.find((o) => o.id === contract.opportunityId)?.ownerId;
+  const contactId = contract.contactId ?? data.opportunities.find((o) => o.id === contract.opportunityId)?.closing?.contactId;
+  const contact = contactId ? data.contacts.find((c) => c.id === contactId) : undefined;
+  return buildContractSummary(contract, {
+    billings: data.billing.filter((b) => b.contractId === contract.id),
+    sellerName: sellerId ? data.users[sellerId]?.name : undefined,
+    contact: contact ? { name: contact.name, phone: contact.phone, whatsapp: contact.whatsapp, email: contact.email } : null,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Gestor da conta

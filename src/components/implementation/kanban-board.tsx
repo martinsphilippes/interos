@@ -235,6 +235,11 @@ function ProjectCard({ row, handleRef, handleProps, overlay }: { row: ProjectRow
           <ProductChips products={row.products} max={2} />
         </div>
         <Progress value={row.progress} showValue size="sm" tone={progressTone(row)} className="mt-2" />
+        {row.implementationRequired === false ? (
+          <Badge variant="warning" size="sm" className="mt-1.5" title="A venda não contratou implantação: valide com o gestor o que fazer antes do go-live">
+            Sem implantação contratada
+          </Badge>
+        ) : null}
         {row.pendingInPhase.length > 0 ? (
           <p className="mt-1.5 text-xs text-muted" title={row.pendingInPhase.join("\n")}>
             Falta{row.pendingInPhase.length > 1 ? "m" : ""} {row.pendingInPhase.length} obrigatória(s) nesta fase

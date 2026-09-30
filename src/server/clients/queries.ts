@@ -577,8 +577,9 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     if (sla) slaByEntity[item.id] = computeSlaState(sla, now);
   }
 
-  // Resumo financeiro (fonte: módulo Financeiro).
-  const financeSummary = await getClientFinancialSummary(id);
+  // Resumo financeiro (fonte: módulo Financeiro) sobre os contratos e cobranças já lidos acima (uma única
+  // varredura de vencidas por ficha).
+  const financeSummary = await getClientFinancialSummary(id, { contracts, billings: billing });
   const financial: FinancialSummary = {
     ...financeSummary,
     mrr: financeSummary.mrr || products.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0),
@@ -607,7 +608,7 @@ export async function getClient360(id: string): Promise<Client360 | null> {
     campaign?.ownerId,
     ...opportunities.flatMap((o) => [o.ownerId, o.originUserId]),
     ...proposals.map((p) => p.ownerId),
-    ...contracts.flatMap((c) => [c.ownerId, c.releasedBy]),
+    ...contracts.flatMap((c) => [c.ownerId, c.releasedBy, c.sellerId, c.cancelledBy]),
     ...projects.flatMap((p) => [p.ownerId, ...p.teamIds]),
     ...implementationTasks.map((t) => t.assigneeId),
     ...trainings.map((t) => t.instructorId),

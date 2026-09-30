@@ -685,7 +685,7 @@ export async function processWonOpportunity(opportunityId: string, actor: UserRe
     const task = await createTaskInternal(
       {
         title: `Emitir contrato e cobrança: ${client.tradeName}`,
-        description: `Venda ganha por ${actor.name}. Contrato ${contract.number} aguardando geração, assinatura e confirmação de pagamento.${opp.billingData?.paymentCondition ? ` Condição: ${opp.billingData.paymentCondition}.` : ""}`,
+        description: `Venda ganha por ${actor.name}. Contrato ${contract.number} aguardando geração do documento e assinatura; assinado por todos, esta tarefa é concluída e nasce a tarefa de gerar cobrança e liberar.${opp.billingData?.paymentCondition ? ` Condição: ${opp.billingData.paymentCondition}.` : ""}`,
         clientId: client.id,
         assigneeId: financeManager?.id,
         departmentId: "financeiro",
@@ -695,7 +695,7 @@ export async function processWonOpportunity(opportunityId: string, actor: UserRe
         processId: contract.id,
         origin: "evento",
         sourceEventId,
-        checklist: ["Conferir dados de faturamento", "Gerar contrato e enviar para assinatura", "Emitir cobrança da adesão"],
+        checklist: ["Conferir dados de faturamento", "Gerar contrato e enviar para assinatura", "Acompanhar a assinatura (registrar com evidência)"],
       },
       actor,
     );

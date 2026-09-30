@@ -10,12 +10,16 @@ import "server-only";
 import { getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { listNotifications } from "@/server/notifications";
+import { sweepOverdue } from "@/server/finance/billing";
+import { isFinanceTeam } from "@/server/commissions/permissions";
 import { toNotificationItem } from "@/components/notifications/model";
 import {
   COLLECTIONS,
   type BaseEntity,
+  type Billing,
   type Client,
   type CollectionName,
+  type Commission,
   type Communication,
   type Contract,
   type SuccessPlan,
@@ -26,6 +30,8 @@ import {
   type ImplementationProject,
   type Lead,
   type Opportunity,
+  type Payable,
+  type PayableStatus,
   type Renewal,
   type Settings,
   type SlaInstance,
@@ -38,6 +44,7 @@ import {
   type WorkflowStep,
 } from "@/domain/types";
 import { DEPARTMENT_LABELS, PRIORITY_WEIGHT, type DepartmentKey, type Priority } from "@/domain/constants";
+import { PAYABLE_STATUS_LABELS } from "@/domain/commissions";
 import { formatCurrency } from "@/lib/format";
 import { computeKpiBatch, kpiHref, monthPeriod, type KpiResult } from "@/server/kpis/queries";
 import { CONTRACT_STATUS_LABELS } from "@/components/clients/labels";
@@ -46,6 +53,9 @@ import type {
   AttentionClient,
   AwaitingItem,
   PendingContractItem,
+  FinanceDigest,
+  FinanceItem,
+  FinanceSection,
   FollowupItem,
   GoalItem,
   MeuDiaData,
@@ -244,6 +254,35 @@ async function resolveScope(user: CurrentUser, requested: MeuDiaScope): Promise<
 // Metas do mês
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Perfil financeiro / comercial (D17): o Meu Dia é um só; o que muda é o que entra nele.
+// ---------------------------------------------------------------------------
+
+/** Contratos ainda no Financeiro (fila da equipe financeira). */
+const PENDING_CONTRACT_STATUSES: Contract["status"][] = ["aguardando_contrato", "aguardando_assinatura", "assinado", "aguardando_pagamento", "pago", "pendencia"];
+/** Contratos das vendas do vendedor que dependem do cliente assinar. */
+const SELLER_CONTRACT_STATUSES = new Set<Contract["status"]>(["aguardando_contrato", "aguardando_assinatura"]);
+const OPEN_PAYABLE_STATUSES: PayableStatus[] = ["previsto", "aprovado", "a_pagar"];
+const DUE_SOON_DAYS = 3;
+const FINANCE_SECTION_LIMIT = 6;
+const BILLING_TYPE_LABEL: Record<Billing["type"], string> = { setup: "Adesão", mensalidade: "Mensalidade", hardware: "Hardware", servico: "Serviço" };
+
+interface MeuDiaProfile {
+  /** Equipe financeira, gestor financeiro, admin ou diretoria: fila do Financeiro inteira. */
+  finance: boolean;
+  /** Vendedor (ou equipe com vendedores, no modo gestor): só o que é das próprias vendas. */
+  sales: boolean;
+}
+
+function profileOf(user: CurrentUser, members: User[]): MeuDiaProfile {
+  const isSeller = (u: Pick<User, "role" | "departmentId">) => u.role === "vendas" || u.departmentId === "vendas";
+  return { finance: isFinanceTeam(user), sales: isSeller(user) || members.some(isSeller) };
+}
+
+function billingLabel(b: Billing): string {
+  return `${BILLING_TYPE_LABEL[b.type]}${b.installment ? ` ${b.installment}` : ""} · ${b.competence.split("-").reverse().join("/")}`;
+}
+
 const OPEN_TASK_STATUS = new Set<Task["status"]>(["aberta", "em_andamento"]);
 const OPEN_STEP_STATUS = new Set<WorkflowStep["status"]>(["pendente", "em_andamento", "aguardando_cliente", "aguardando_aprovacao"]);
 const OPEN_TICKET_STATUS = new Set<SupportTicket["status"]>(["aberto", "em_atendimento", "reaberto", "aguardando_cliente"]);
@@ -330,8 +369,10 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   const userById = new Map(allUsers.map((u) => [u.id, u]));
   const nameOf = (id: string | undefined) => (id ? userById.get(id)?.name : undefined);
   const isTeam = scope === "equipe";
+  const profile = profileOf(user, members);
+  const wantsBillings = profile.finance || profile.sales;
 
-  const [tasks, steps, leads, opps, projects, tickets, csClients, csAccounts, renewals, ownedSlas, visits, trainings, unread, oppSettings, goals, ownedContracts, successPlans, communications] = await Promise.all([
+  const [tasks, steps, leads, opps, projects, tickets, csClients, csAccounts, renewals, ownedSlas, visits, trainings, unread, oppSettings, goals, ownedContracts, successPlans, communications, openBillingsRaw, payables, eligibleCommissions, queueContracts, sellerContracts] = await Promise.all([
     byOwner<Task>(COLLECTIONS.tasks, "assigneeId", ids),
     byOwner<WorkflowStep>(COLLECTIONS.workflowSteps, "assigneeId", ids),
     byOwner<Lead>(COLLECTIONS.leads, "ownerId", ids),
@@ -351,13 +392,35 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     byOwner<SuccessPlan>(COLLECTIONS.successPlans, "ownerId", ids),
     // Mensagens recebidas/enviadas (coleção pequena): base de "clientes aguardando retorno".
     list<Communication>(COLLECTIONS.communications),
+    // Perfil financeiro/comercial (D17): cobranças em aberto (a varredura de vencidas roda na leitura, como no
+    // Financeiro), títulos abertos, comissões elegíveis sem título, fila de contratos e contratos das vendas.
+    wantsBillings ? list<Billing>(COLLECTIONS.billing, { where: [["status", "in", ["aberta", "vencida"]]] }) : Promise.resolve([] as Billing[]),
+    profile.finance ? list<Payable>(COLLECTIONS.payables, { where: [["status", "in", OPEN_PAYABLE_STATUSES]] }) : Promise.resolve([] as Payable[]),
+    profile.finance ? list<Commission>(COLLECTIONS.commissions, { where: [["status", "==", "liberada"]] }) : Promise.resolve([] as Commission[]),
+    profile.finance ? list<Contract>(COLLECTIONS.contracts, { where: [["status", "in", PENDING_CONTRACT_STATUSES]] }) : Promise.resolve([] as Contract[]),
+    profile.sales ? byOwner<Contract>(COLLECTIONS.contracts, "sellerId", ids) : Promise.resolve([] as Contract[]),
   ]);
-  // Contratos ainda no Financeiro (não liberados nem cancelados) de que o usuário é responsável.
-  const pendingContracts = ownedContracts.filter((c) => c.status !== "liberado" && c.status !== "cancelado");
+  const openBillings = wantsBillings ? await sweepOverdue(openBillingsRaw) : [];
+
+  // Contratos ainda no Financeiro (não liberados nem cancelados): os de que o usuário é responsável; a fila
+  // inteira para a equipe financeira; e, para o vendedor, os das próprias vendas que dependem da assinatura
+  // (contratos antigos sem sellerId chegam pela oportunidade ganha).
+  const contractById = new Map<string, Contract>();
+  for (const c of [...ownedContracts, ...queueContracts, ...sellerContracts]) contractById.set(c.id, c);
+  if (profile.sales) {
+    const wonContractIds = opps.filter((o) => o.stage === "ganho" && o.contractId && !contractById.has(o.contractId)).map((o) => o.contractId!);
+    for (const [id, c] of await getManyByIds<Contract>(COLLECTIONS.contracts, wonContractIds)) contractById.set(id, c);
+  }
+  const sellerOf = (c: Contract) => c.sellerId ?? opps.find((o) => o.id === c.opportunityId)?.ownerId;
+  const pendingContracts = Array.from(contractById.values()).filter((c) => {
+    if (c.status === "liberado" || c.status === "cancelado") return false;
+    if (ids.includes(c.ownerId ?? "") || profile.finance) return true;
+    return profile.sales && SELLER_CONTRACT_STATUSES.has(c.status) && ids.includes(sellerOf(c) ?? "");
+  });
 
   // Clientes referenciados (nomes e MRR para o impacto), resolvidos em lote.
   const clientIds = new Set<string>();
-  for (const x of [...tasks, ...leads, ...opps, ...projects, ...tickets, ...renewals, ...ownedSlas, ...visits, ...trainings, ...pendingContracts, ...successPlans]) if (x.clientId) clientIds.add(x.clientId);
+  for (const x of [...tasks, ...leads, ...opps, ...projects, ...tickets, ...renewals, ...ownedSlas, ...visits, ...trainings, ...pendingContracts, ...successPlans, ...openBillings]) if (x.clientId) clientIds.add(x.clientId);
   for (const s of steps) clientIds.add(s.clientId);
   const clientById = new Map<string, Client>(csClients.map((c) => [c.id, c]));
   const missingClients = Array.from(clientIds).filter((id) => !clientById.has(id));
@@ -836,6 +899,134 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Financeiro do dia (D17): parametrizado pelo perfil. Cada item entra nas prioridades (com link real) e no
+  // bloco "Financeiro do dia"; a contagem do card "Pendências" soma exatamente o que entrou.
+  // -------------------------------------------------------------------------
+  let finance: FinanceDigest | undefined;
+  if (wantsBillings) {
+    const dueSoonLimit = addDaysToKey(today, DUE_SOON_DAYS);
+    const overdueBillings = openBillings.filter((b) => b.status === "vencida").sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    const dueSoon = openBillings.filter((b) => b.status === "aberta" && dayKey(b.dueDate) >= today && dayKey(b.dueDate) <= dueSoonLimit).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    const maxBilling = Math.max(1, ...openBillings.map((b) => b.amount));
+    const sections: FinanceSection[] = [];
+    const sumOf = (items: { amount?: number }[]) => Math.round(items.reduce((s, i) => s + (i.amount ?? 0), 0) * 100) / 100;
+    const addSection = (section: Omit<FinanceSection, "count" | "total" | "items">, all: FinanceItem[]) => {
+      if (all.length === 0) return;
+      sections.push({ ...section, items: all.slice(0, FINANCE_SECTION_LIMIT), count: all.length, total: sumOf(all) });
+    };
+    const pushFinance = (item: FinanceItem, score: number, overdue: boolean) => {
+      push({
+        kind: item.kind,
+        entityId: item.id.slice(item.kind.length + 1),
+        title: item.title,
+        clientId: item.clientId,
+        clientName: item.clientName,
+        reason: item.detail ?? item.title,
+        reasonTone: item.tone,
+        dueAt: item.dueAt,
+        dueLabel: item.dueLabel,
+        impactLabel: item.amount !== undefined ? formatCurrency(item.amount) : undefined,
+        score,
+        href: item.href,
+        canComplete: false,
+        assigneeName: item.assigneeName,
+        overdue,
+        pending: true,
+      });
+    };
+    const billingItem = (b: Billing, href: string, kind: "vencida" | "a_vencer"): FinanceItem => {
+      const days = Math.max(0, Math.round((nowMs - new Date(b.dueDate).getTime()) / DAY_MS));
+      return {
+        id: `cobranca:${b.id}`,
+        kind: "cobranca",
+        title: `${clientName(b.clientId) ?? "Cliente"} · ${billingLabel(b)}`,
+        detail: kind === "vencida" ? `Vencida há ${days} dia${days === 1 ? "" : "s"}` : `Vence ${dateLabel(b.dueDate, today).split(",")[0].toLowerCase()}`,
+        amount: b.amount,
+        dueAt: b.dueDate,
+        dueLabel: dateLabel(b.dueDate, today),
+        tone: kind === "vencida" ? "danger" : "warning",
+        href,
+        clientId: b.clientId,
+        clientName: clientName(b.clientId),
+      };
+    };
+
+    if (profile.finance) {
+      const overdueItems = overdueBillings.map((b) => billingItem(b, `/financeiro/cobrancas?cliente=${b.clientId}&status=vencida`, "vencida"));
+      overdueItems.forEach((item, i) => {
+        const b = overdueBillings[i];
+        const days = (nowMs - new Date(b.dueDate).getTime()) / DAY_MS;
+        pushFinance(item, 30 + 20 * Math.min(days / 30, 1) + impactScore(b.amount, maxBilling), true);
+      });
+      addSection({ key: "cobrancas_vencidas", title: "Cobranças vencidas", description: "Inadimplência para cobrar", href: "/financeiro/cobrancas?status=vencida" }, overdueItems);
+
+      const dueSoonItems = dueSoon.map((b) => billingItem(b, `/financeiro/cobrancas?cliente=${b.clientId}&status=aberta`, "a_vencer"));
+      dueSoonItems.forEach((item, i) => pushFinance(item, 10 + urgencyScore(dueSoon[i].dueDate, nowMs) + impactScore(dueSoon[i].amount, maxBilling), false));
+      addSection({ key: "vencimentos", title: `Vencem nos próximos ${DUE_SOON_DAYS} dias`, description: "Cobranças em aberto a acompanhar", href: "/financeiro/contas-a-receber" }, dueSoonItems);
+
+      // Títulos: vencidos primeiro, depois a aprovar (previstos) e a pagar (aprovados/programados).
+      const payableItems: FinanceItem[] = [];
+      for (const p of [...payables].sort((a, b) => a.dueDate.localeCompare(b.dueDate))) {
+        const overdue = dayKey(p.dueDate) < today;
+        const action = p.status === "previsto" ? "A aprovar" : "A pagar";
+        const item: FinanceItem = {
+          id: `titulo:${p.id}`,
+          kind: "titulo",
+          title: `${p.code ?? p.id} · ${p.creditorName}`,
+          detail: `${overdue ? "Vencido · " : ""}${action} (${PAYABLE_STATUS_LABELS[p.status]}) · ${p.description}`,
+          amount: p.amount,
+          dueAt: p.dueDate,
+          dueLabel: dateLabel(p.dueDate, today),
+          tone: overdue ? "danger" : p.status === "previsto" ? "info" : "warning",
+          href: `/financeiro/contas-a-pagar?titulo=${p.id}`,
+        };
+        payableItems.push(item);
+        pushFinance(item, (overdue ? 30 : p.status === "previsto" ? 15 : 20) + urgencyScore(p.dueDate, nowMs), overdue);
+      }
+      addSection({ key: "titulos", title: "Títulos a aprovar e a pagar", description: "Contas a pagar em aberto (comissões e lançamentos)", href: "/financeiro/contas-a-pagar" }, payableItems);
+
+      const commissionItems: FinanceItem[] = eligibleCommissions
+        .filter((c) => !c.payableId)
+        .sort((a, b) => (a.eligibleAt ?? a.updatedAt).localeCompare(b.eligibleAt ?? b.updatedAt))
+        .map((c) => ({
+          id: `comissao:${c.id}`,
+          kind: "comissao",
+          title: `${c.code ?? c.id} · ${nameOf(c.userId) ?? "Vendedor"}`,
+          detail: `Elegível sem título a pagar${c.productName ? ` · ${c.productName}` : ""}`,
+          amount: c.amount,
+          dueAt: c.eligibleAt,
+          dueLabel: c.eligibleAt ? dateLabel(c.eligibleAt, today) : undefined,
+          tone: "info",
+          href: `/financeiro/comissoes?comissao=${c.id}`,
+          clientId: c.clientId,
+          clientName: clientName(c.clientId),
+        }));
+      commissionItems.forEach((item) => pushFinance(item, 12, false));
+      addSection({ key: "comissoes", title: "Comissões elegíveis sem título", description: "Gerar o título em Contas a Pagar", href: "/financeiro/comissoes?status=liberada" }, commissionItems);
+
+      finance = { profile: "financeiro", title: isTeam ? "Financeiro do dia (equipe)" : "Financeiro do dia", description: "Cobranças, títulos e comissões que dependem do Financeiro", href: "/financeiro", hrefLabel: "Financeiro", sections, count: sections.reduce((s, x) => s + x.count, 0) };
+    } else if (profile.sales) {
+      // Vendedor: cobrança vencida de cliente seu (conta ou contrato da própria venda), para acionar o cliente.
+      const missingContracts = overdueBillings.map((b) => b.contractId).filter((id) => !contractById.has(id));
+      for (const [id, c] of await getManyByIds<Contract>(COLLECTIONS.contracts, missingContracts)) contractById.set(id, c);
+      const mine = overdueBillings.filter((b) => {
+        const client = clientById.get(b.clientId);
+        const contract = contractById.get(b.contractId);
+        return ids.includes(client?.ownerSalesId ?? "") || ids.includes(contract ? (sellerOf(contract) ?? "") : "");
+      });
+      const items = mine.map((b) => {
+        const item = billingItem(b, `/clientes/${b.clientId}?aba=financeiro`, "vencida");
+        const sellerId = clientById.get(b.clientId)?.ownerSalesId ?? (contractById.get(b.contractId) ? sellerOf(contractById.get(b.contractId)!) : undefined);
+        return { ...item, detail: `${item.detail} · acione o cliente`, assigneeName: isTeam ? nameOf(sellerId) : undefined };
+      });
+      items.forEach((item, i) => pushFinance(item, 25 + 15 * Math.min((nowMs - new Date(mine[i].dueDate).getTime()) / DAY_MS / 30, 1) + impactScore(mine[i].amount, maxBilling), true));
+      addSection({ key: "cobrancas_vencidas", title: "Clientes seus com cobrança vencida", description: "Acione o cliente; a baixa é feita pelo Financeiro" }, items);
+      if (sections.length > 0) finance = { profile: "vendas", title: isTeam ? "Cobranças vencidas das vendas da equipe" : "Cobranças vencidas dos seus clientes", description: "Para acionar junto ao cliente", href: "/financeiro/contas-a-receber", hrefLabel: "Contas a receber", sections, count: sections.reduce((s, x) => s + x.count, 0) };
+    }
+  }
+  const financeCount = finance?.count ?? 0;
+
   priorities.sort((a, b) => b.score - a.score || (a.dueAt ?? "9").localeCompare(b.dueAt ?? "9"));
   // Horário à direita da lista: hora quando é hoje; senão o dia ("Ontem", "3 out").
   const shortWhen = (iso: string | undefined) => {
@@ -857,7 +1048,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   const goalAttainment = goalBase.length ? goalBase.reduce((sum, g) => sum + Math.min(g.attainment as number, 1.5), 0) / goalBase.length : null;
   const stats: MeuDiaStats = {
     tasksInProgress: openTasks.length,
-    pendingOnYou: openSteps.filter((st) => st.status !== "aguardando_cliente").length + awaiting.length + pendingContracts.length,
+    pendingOnYou: openSteps.filter((st) => st.status !== "aguardando_cliente").length + awaiting.length + pendingContracts.length + financeCount,
     goalAttainment: goalAttainment === null ? null : Number(goalAttainment.toFixed(3)),
     tasksToday,
     overdueTasks,
@@ -983,5 +1174,6 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     team,
     awaiting,
     contracts: contractItems,
+    finance,
   };
 }

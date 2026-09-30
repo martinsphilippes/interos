@@ -4,6 +4,7 @@
  */
 import Link from "next/link";
 import { Check, FileSignature, MessageSquareReply, Ticket } from "lucide-react";
+import type { FinanceDigest, FinanceItem } from "./model";
 import { WORKFLOW_STEP_STATUS_LABELS, type WorkflowStepStatus } from "@/domain/constants";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -377,6 +378,68 @@ export function AwaitingBlock({ items }: { items: AwaitingItem[] }) {
             </li>
           ))}
         </ul>
+      )}
+    </CollapsibleBlock>
+  );
+}
+
+const FINANCE_TONE: Record<FinanceItem["tone"], string> = { danger: "text-danger-fg", warning: "text-warning-fg", info: "text-info-fg", muted: "text-muted" };
+
+/**
+ * Financeiro do dia (D17): seções por tipo (cobranças vencidas, vencimentos, títulos, comissões) para a equipe
+ * financeira; para o vendedor, os clientes seus com cobrança vencida. Todo item tem link para a tela de ação.
+ */
+export function FinanceBlock({ digest }: { digest?: FinanceDigest }) {
+  if (!digest) return null;
+  return (
+    <CollapsibleBlock title={digest.title} count={digest.count} description={digest.description} action={<Link href={digest.href} className="font-medium text-brand hover:underline">{digest.hrefLabel}</Link>} className={digest.sections.length > 1 ? "md:col-span-2" : undefined}>
+      {digest.sections.length === 0 ? (
+        <Empty>Nada pendente no Financeiro hoje.</Empty>
+      ) : (
+        <div className={cn("grid gap-4", digest.sections.length > 1 && "md:grid-cols-2")} data-testid="financeiro-do-dia">
+          {digest.sections.map((s) => (
+            <section key={s.key} aria-label={s.title} data-finance-section={s.key} className="min-w-0">
+              <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                <p className="label-caps">
+                  {s.title} <span className="tabular-nums text-muted-light">({s.count})</span>
+                </p>
+                {s.href ? (
+                  <Link href={s.href} className="shrink-0 text-xs font-medium text-brand hover:underline">
+                    Ver todas · {formatCurrency(s.total, true)}
+                  </Link>
+                ) : (
+                  <span className="shrink-0 text-xs tabular-nums text-muted">{formatCurrency(s.total, true)}</span>
+                )}
+              </div>
+              {s.description ? <p className="mb-2 text-xs text-muted">{s.description}</p> : null}
+              <ul className="flex flex-col divide-y divide-border">
+                {s.items.map((i) => (
+                  <li key={i.id} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+                    <KindIcon kind={i.kind} className="size-7 [&_svg]:size-3.5" />
+                    <div className="min-w-0 flex-1">
+                      <Link href={i.href} className="block truncate text-sm font-medium text-foreground hover:text-brand hover:underline">
+                        {i.title}
+                      </Link>
+                      <p className={cn("truncate text-xs", FINANCE_TONE[i.tone])}>
+                        {i.detail}
+                        {i.assigneeName ? <span className="text-muted"> · {i.assigneeName}</span> : null}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-right text-xs tabular-nums">
+                      {i.amount !== undefined ? <span className="block font-semibold text-foreground">{formatCurrency(i.amount)}</span> : null}
+                      {i.dueLabel ? <span className="text-muted">{i.dueLabel.split(",")[0]}</span> : null}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {s.count > s.items.length && s.href ? (
+                <Link href={s.href} className="mt-2 inline-block text-xs font-medium text-brand hover:underline">
+                  Mais {s.count - s.items.length}
+                </Link>
+              ) : null}
+            </section>
+          ))}
+        </div>
       )}
     </CollapsibleBlock>
   );

@@ -771,18 +771,36 @@ export interface ClientFinancialSummary {
   overdueCount: number;
   paidLast12Months: number;
   nextDue?: { billingId: string; dueDate: string; amount: number; type: Billing["type"] };
+  /** Último pagamento identificado (data, valor pago e forma). */
+  lastPayment?: { billingId: string; contractId: string; paidAt: string; amount: number; method?: string; type: Billing["type"]; installment?: number; competence: string };
   contracts: { id: string; number: string; status: Contract["status"]; monthlyTotal: number }[];
   /** Contrato ainda no Financeiro (não liberado nem cancelado), se houver. */
   pendingContract?: { id: string; number: string; status: Contract["status"]; pendingReason?: string };
+  /** Contrato vigente: o liberado mais recente; sem liberado, o mais recente não cancelado (D7/D17). */
+  currentContractId?: string;
 }
 
-export async function getClientFinancialSummary(clientId: string): Promise<ClientFinancialSummary> {
-  const [contracts, billings] = await Promise.all([list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", clientId]] }), listBillingsSwept({ where: [["clientId", "==", clientId]] })]);
+/** Contrato vigente do cliente: o liberado mais recente; sem liberado, o mais recente ainda não cancelado. */
+export function pickCurrentContract(contracts: Contract[]): Contract | undefined {
+  const byRecency = (a: Contract, b: Contract) => (b.releasedAt ?? b.createdAt).localeCompare(a.releasedAt ?? a.createdAt);
+  return [...contracts].filter((c) => c.status === "liberado").sort(byRecency)[0] ?? [...contracts].filter((c) => c.status !== "cancelado").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+/**
+ * Resumo financeiro do cliente. Aceita contratos e cobranças já carregados (a ficha 360º lê ambos uma única vez,
+ * com a varredura de vencidas aplicada); sem eles, lê do Financeiro.
+ */
+export async function getClientFinancialSummary(clientId: string, preloaded?: { contracts: Contract[]; billings: Billing[] }): Promise<ClientFinancialSummary> {
+  const [contracts, billings] = preloaded
+    ? [preloaded.contracts, preloaded.billings]
+    : await Promise.all([list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", clientId]] }), listBillingsSwept({ where: [["clientId", "==", clientId]] })]);
   const today = todayKey();
   const yearAgo = dateKey(new Date(Date.now() - 365 * 86_400_000));
   const open = billings.filter((b) => b.status === "aberta");
   const overdue = billings.filter((b) => b.status === "vencida");
   const next = [...open].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).find((b) => dateKey(b.dueDate) >= today);
+  const paid = billings.filter((b) => b.status === "paga" && b.paidAt).sort((a, b) => b.paidAt!.localeCompare(a.paidAt!) || b.dueDate.localeCompare(a.dueDate));
+  const last = paid[0];
   const pending = contracts.filter((c) => c.status !== "liberado" && c.status !== "cancelado").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   return {
     mrr: contracts.filter((c) => c.status === "liberado").reduce((s, c) => s + c.monthlyTotal, 0),
@@ -790,9 +808,11 @@ export async function getClientFinancialSummary(clientId: string): Promise<Clien
     openCount: open.length,
     overdueAmount: overdue.reduce((s, b) => s + b.amount, 0),
     overdueCount: overdue.length,
-    paidLast12Months: billings.filter((b) => b.status === "paga" && b.paidAt && dateKey(b.paidAt) >= yearAgo).reduce((s, b) => s + (b.paidAmount ?? b.amount), 0),
+    paidLast12Months: paid.filter((b) => dateKey(b.paidAt) >= yearAgo).reduce((s, b) => s + (b.paidAmount ?? b.amount), 0),
     nextDue: next ? { billingId: next.id, dueDate: next.dueDate, amount: next.amount, type: next.type } : undefined,
-    contracts: contracts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => ({ id: c.id, number: c.number, status: c.status, monthlyTotal: c.monthlyTotal })),
+    lastPayment: last ? { billingId: last.id, contractId: last.contractId, paidAt: last.paidAt!, amount: last.paidAmount ?? last.amount, method: last.method, type: last.type, installment: last.installment, competence: last.competence } : undefined,
+    contracts: [...contracts].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => ({ id: c.id, number: c.number, status: c.status, monthlyTotal: c.monthlyTotal })),
     pendingContract: pending ? { id: pending.id, number: pending.number, status: pending.status, pendingReason: pending.pendingReason } : undefined,
+    currentContractId: pickCurrentContract(contracts)?.id,
   };
 }

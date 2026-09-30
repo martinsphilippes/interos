@@ -73,6 +73,26 @@ Metas mensais: setup R$ 10.000 · recorrência R$ 5.000 · hardware R$ 25.000.
 Prêmio por meta batida: adesão 1 salário mínimo · recorrência 1 salário mínimo · hardware R$ 500.
 Estratégia: pacotes (ERP + TEF + maquininha), venda cruzada, foco em recorrência.
 
+Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada é fixo no código):
+- **Precedência**: exceção por contrato > regra do vendedor > regra por produto/categoria > regra padrão >
+  percentual do cadastro do produto. A exceção exige motivo e fica registrada (quem, quando, o quê).
+- **Base**: valor contratado (itens líquidos de desconto do contrato) ou valor efetivamente recebido
+  (pagamento parcial comissiona só o recebido). Percentual ou valor fixo por unidade.
+- **Gatilhos**: na venda · na assinatura · no primeiro pagamento · no recebimento da cobrança · após a carência
+  (permanência em dias contados do início do contrato) · recebimento + carência · na N-ésima mensalidade paga.
+- **Recorrência**: a partir da mensalidade N (padrão 1) por X competências (ou enquanto o contrato estiver
+  ativo); a comissão de cada competência nasce quando a mensalidade daquela competência é paga.
+- **3ª mensalidade**: regra por vendedor em que a adesão (e/ou a recorrência) só é adquirida quando a 3ª
+  mensalidade é paga — vale para quem tem a regra, sem virar padrão para todos.
+- **Inadimplência**: cobrança vencida deixa a comissão dependente em "aguardando recebimento" (não cancela);
+  paga depois, segue o fluxo. **Cancelamento** do contrato cancela o que ainda não foi adquirido e não gera
+  nada futuro; comissões já pagas não são apagadas.
+- **Estorno**: só manual, por gestor financeiro/diretoria, com motivo; comissão paga estornada gera título
+  negativo em Contas a Pagar. Comissão pode ser bloqueada (retida) e desbloqueada com motivo.
+- **Pagamento**: comissão elegível gera título em Contas a Pagar com vencimento no dia configurado do mês
+  seguinte (padrão 10); o título passa por aprovado → a pagar → pago. Vendedor acompanha as suas item a item
+  (situação, data provável e memória de cálculo) no Meu Desempenho e em Financeiro › Comissões.
+
 ## Financeiro: metas e bônus (deck "Centro de Comando Financeiro")
 Papel: portão de qualidade do workflow. Valida e libera (faturamento correto de múltiplos
 produtos, contrato assinado, confirmação de pagamento, validação de escopo) antes da

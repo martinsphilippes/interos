@@ -256,6 +256,92 @@ export async function getCommissionsWorkspace(viewer: CurrentUser, filters: Comm
 
 const z = (): CountAmount => ({ count: 0, amount: 0 });
 
+// ---------------------------------------------------------------------------
+// "Minhas comissões" (Meu Desempenho, D17): item a item, com data provável e link para a memória
+// ---------------------------------------------------------------------------
+
+export interface UserCommissionRow extends CommissionRow {
+  /** Data provável/efetiva relevante para a situação (elegibilidade, pagamento previsto do título, pagamento). */
+  whenAt?: string;
+  /** "Elegível em", "Pagamento previsto", "Paga em", "Previsão"… */
+  whenLabel: string;
+  /** Link para a memória de cálculo em Financeiro › Comissões (quem tem acesso à tela). */
+  href?: string;
+}
+
+export interface UserCommissionsDigest {
+  userId: string;
+  rows: UserCommissionRow[];
+  total: number;
+  /** Totais por grupo de situação (valores do motor, não recalculados na tela). */
+  totals: { previstas: CountAmount; em_carencia: CountAmount; aguardando_recebimento: CountAmount; elegiveis: CountAmount; a_pagar: CountAmount; pagas: CountAmount };
+  /** Link para a tela de comissões com o filtro do vendedor (ou "Minhas comissões"). */
+  href: string;
+}
+
+const WHEN_LABEL: Record<CommissionStatus, string> = {
+  prevista: "Previsão",
+  em_carencia: "Elegível em",
+  aguardando_recebimento: "Aguardando cobrança de",
+  liberada: "Elegível desde",
+  titulo_gerado: "Pagamento previsto",
+  paga: "Paga em",
+  bloqueada: "Bloqueada",
+  cancelada: "Cancelada em",
+  estornada: "Estornada em",
+};
+
+/**
+ * Comissões de um colaborador para o Meu Desempenho. O escopo D15 vale aqui também: devolve null quando o visitante
+ * não pode ver as comissões desse usuário (vendedor só vê as próprias; gestor, a equipe; financeiro, todas).
+ */
+export async function getUserCommissionsDigest(viewer: CurrentUser, userId: string, options: { canOpenFinance: boolean; limit?: number } = { canOpenFinance: false }): Promise<UserCommissionsDigest | null> {
+  const scope = await resolveCommissionScope(viewer);
+  if (!scopeAllows(scope, userId)) return null;
+  const all = await list<Commission>(COLLECTIONS.commissions, { where: [["userId", "==", userId]] });
+  const [users, clients, contracts, payables, billings] = await Promise.all([
+    getManyByIds<User>(COLLECTIONS.users, [userId]),
+    getManyByIds<Client>(COLLECTIONS.clients, all.map((c) => c.clientId)),
+    getManyByIds<Contract>(COLLECTIONS.contracts, all.map((c) => c.contractId ?? "")),
+    getManyByIds<Payable>(COLLECTIONS.payables, all.map((c) => c.payableId ?? "")),
+    getManyByIds<Billing>(COLLECTIONS.billing, all.filter((c) => c.status === "prevista" || c.status === "aguardando_recebimento").map((c) => c.billingId ?? "")),
+  ]);
+  const totals: UserCommissionsDigest["totals"] = { previstas: z(), em_carencia: z(), aguardando_recebimento: z(), elegiveis: z(), a_pagar: z(), pagas: z() };
+  const bucket = (s: CommissionStatus): keyof UserCommissionsDigest["totals"] | null =>
+    s === "prevista" ? "previstas" : s === "em_carencia" ? "em_carencia" : s === "aguardando_recebimento" ? "aguardando_recebimento" : s === "liberada" ? "elegiveis" : s === "titulo_gerado" ? "a_pagar" : s === "paga" ? "pagas" : null;
+  const rows: UserCommissionRow[] = [];
+  for (const c of all) {
+    const k = bucket(c.status);
+    if (k) {
+      totals[k].count++;
+      totals[k].amount = round2(totals[k].amount + c.amount);
+    }
+    if (c.status === "cancelada" || c.status === "estornada") continue;
+    const row = toRow(c, users, clients, contracts, payables);
+    const payable = c.payableId ? payables.get(c.payableId) : undefined;
+    const billing = c.billingId ? billings.get(c.billingId) : undefined;
+    const whenAt =
+      c.status === "paga"
+        ? (c.paidAt ?? payable?.paidAt)
+        : c.status === "titulo_gerado"
+          ? payable?.dueDate
+          : c.status === "prevista" || c.status === "aguardando_recebimento"
+            ? (c.eligibleAt ?? billing?.dueDate)
+            : (c.eligibleAt ?? c.releaseAt);
+    rows.push({ ...row, whenAt, whenLabel: WHEN_LABEL[c.status], href: options.canOpenFinance ? `/financeiro/comissoes?comissao=${c.id}` : undefined });
+  }
+  const order: Record<CommissionStatus, number> = { liberada: 0, titulo_gerado: 1, aguardando_recebimento: 2, em_carencia: 3, prevista: 4, paga: 5, bloqueada: 6, cancelada: 7, estornada: 8 };
+  rows.sort((a, b) => order[a.status] - order[b.status] || (b.whenAt ?? "").localeCompare(a.whenAt ?? "") || b.competence.localeCompare(a.competence));
+  const limit = options.limit ?? 12;
+  return {
+    userId,
+    rows: rows.slice(0, limit),
+    total: rows.length,
+    totals,
+    href: scope.kind === "own" ? "/financeiro/comissoes" : `/financeiro/comissoes?vendedor=${userId}`,
+  };
+}
+
 async function commissionDetail(c: Commission, row: CommissionRow, contracts: Map<string, Contract>, payables: Map<string, Payable>, can: CommissionsWorkspace["can"]): Promise<CommissionDetail> {
   const [billing, eventsByEntity, eventsByPayload, reversal] = await Promise.all([
     c.billingId ? getById<Billing>(COLLECTIONS.billing, c.billingId) : Promise.resolve(null),

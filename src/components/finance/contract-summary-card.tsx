@@ -24,6 +24,10 @@ export interface ContractSummaryCardProps {
   description?: string;
   /** Mostra o link "Ver documento" (padrão: sim, exceto na impressão). */
   showDocumentLink?: boolean;
+  /** "essential": só o que resume o contratado (mensalidade, adesão, vencimento, forma, prazo, implantação, assinatura, financeiro, venda, vendedor) — Visão geral do Cliente 360º. */
+  rows?: "all" | "essential";
+  /** Link extra no rodapé (ex.: "Abrir contrato" no Cliente 360º). */
+  footer?: ReactNode;
   className?: string;
 }
 
@@ -31,9 +35,16 @@ interface Row {
   label: string;
   value: ReactNode;
   wide?: boolean;
+  /** Entra no modo "essential". */
+  essential?: boolean;
 }
 
-function rowsOf(s: ContractSummaryData, print: boolean): Row[] {
+function rowsOf(s: ContractSummaryData, print: boolean, mode: "all" | "essential" = "all"): Row[] {
+  const all = allRowsOf(s, print);
+  return mode === "essential" ? all.filter((r) => r.essential) : all;
+}
+
+function allRowsOf(s: ContractSummaryData, print: boolean): Row[] {
   const installments = s.setupInstallments ?? 1;
   const parcels = s.setupTotal > 0 && installments > 1 ? splitInstallments(s.setupTotal, installments) : [];
   const signature = !s.signature.generated
@@ -43,30 +54,30 @@ function rowsOf(s: ContractSummaryData, print: boolean): Row[] {
       : `Aguardando assinatura (${s.signature.signed} de ${s.signature.total})`;
   const implementation = s.implementationRequired === undefined ? NOT_INFORMED : s.implementationRequired ? "Sim" : "Não contratada";
   const rows: Row[] = [
-    { label: "Mensalidade", value: s.recurrence === "unico" ? "Sem recorrência" : `${formatCurrency(s.monthlyTotal)}/mês${s.recurrence === "anual" ? " (cobrança anual)" : ""}` },
-    { label: "Adesão", value: s.setupTotal > 0 ? `${formatCurrency(s.setupTotal)}${parcels.length > 1 ? ` em ${parcels.length}x de ${formatCurrency(parcels[0])}` : " à vista"}` : formatCurrency(0) },
-    { label: "Hardware", value: formatCurrency(s.hardwareTotal) },
-    { label: "Vencimento", value: `Todo dia ${s.billingDay}${s.nextDueDate ? ` · próximo ${formatDate(s.nextDueDate)}` : ""}` },
+    { label: "Mensalidade", value: s.recurrence === "unico" ? "Sem recorrência" : `${formatCurrency(s.monthlyTotal)}/mês${s.recurrence === "anual" ? " (cobrança anual)" : ""}`, essential: true },
+    { label: "Adesão", value: s.setupTotal > 0 ? `${formatCurrency(s.setupTotal)}${parcels.length > 1 ? ` em ${parcels.length}x de ${formatCurrency(parcels[0])}` : " à vista"}` : formatCurrency(0), essential: true },
+    { label: "Hardware", value: formatCurrency(s.hardwareTotal), essential: s.hardwareTotal > 0 },
+    { label: "Vencimento", value: `Todo dia ${s.billingDay}${s.nextDueDate ? ` · próximo ${formatDate(s.nextDueDate)}` : ""}`, essential: true },
     { label: "1º vencimento", value: s.firstDueDate ? formatDate(s.firstDueDate) : "Definido ao gerar as cobranças" },
-    { label: "Forma de pagamento", value: s.paymentMethod ? SALE_PAYMENT_METHOD_LABELS[s.paymentMethod] : NOT_INFORMED },
-    { label: "Prazo", value: `${s.termMonths} meses · ${RECURRENCE_LABELS[s.recurrence]}${s.startDate ? ` · vigência ${formatDate(s.startDate)} a ${formatDate(s.endDate)}` : ""}` },
-    { label: "Implantação contratada", value: implementation },
+    { label: "Forma de pagamento", value: s.paymentMethod ? SALE_PAYMENT_METHOD_LABELS[s.paymentMethod] : NOT_INFORMED, essential: true },
+    { label: "Prazo", value: `${s.termMonths} meses · ${RECURRENCE_LABELS[s.recurrence]}${s.startDate ? ` · vigência ${formatDate(s.startDate)} a ${formatDate(s.endDate)}` : ""}`, essential: true },
+    { label: "Implantação contratada", value: implementation, essential: true },
     { label: "Condições", value: s.paymentCondition || NOT_INFORMED, wide: true },
   ];
   if (!print) {
     rows.push(
-      { label: "Assinatura", value: signature },
-      { label: "Financeiro", value: `${FINANCIAL_STATUS_LABELS[s.financialStatus]} · ${BILLING_STATE_LABELS[s.billingState]}${s.overdueCount > 1 ? ` (${s.overdueCount})` : ""}` },
+      { label: "Assinatura", value: signature, essential: true },
+      { label: "Financeiro", value: `${FINANCIAL_STATUS_LABELS[s.financialStatus]} · ${BILLING_STATE_LABELS[s.billingState]}${s.overdueCount > 1 ? ` (${s.overdueCount})` : ""}`, essential: true },
     );
   }
   rows.push(
-    { label: "Venda", value: s.saleNumber ?? NOT_INFORMED },
-    { label: "Vendedor", value: s.sellerName ?? NOT_INFORMED },
+    { label: "Venda", value: s.saleNumber ?? NOT_INFORMED, essential: true },
+    { label: "Vendedor", value: s.sellerName ?? NOT_INFORMED, essential: true },
     { label: "Contato do cliente", value: s.contactName ? [s.contactName, s.contactPhone, s.contactEmail].filter(Boolean).join(" · ") : NOT_INFORMED, wide: true },
   );
   if (s.commercialNotes) rows.push({ label: "Observações comerciais", value: s.commercialNotes, wide: true });
   if (s.implementationNotes) rows.push({ label: "Observações para implantação", value: s.implementationNotes, wide: true });
-  if (s.cancelledAt) rows.push({ label: "Cancelamento", value: `${formatDate(s.cancelledAt)}${s.cancelReason ? ` · ${s.cancelReason}` : ""}`, wide: true });
+  if (s.cancelledAt) rows.push({ label: "Cancelamento", value: `${formatDate(s.cancelledAt)}${s.cancelReason ? ` · ${s.cancelReason}` : ""}`, wide: true, essential: true });
   return rows;
 }
 
@@ -108,14 +119,20 @@ function Grid({ rows, columns }: { rows: Row[]; columns: 1 | 2 }) {
  * vencimento, forma de pagamento, prazo, condições, implantação, assinatura, situação financeira, venda (VEN),
  * vendedor e contato. Reutilizado na página do contrato, no painel lateral, no documento e na implantação.
  */
-export function ContractSummaryCard({ summary, variant = "card", title = "Resumo do contratado", description, showDocumentLink, className }: ContractSummaryCardProps) {
+export function ContractSummaryCard({ summary, variant = "card", title = "Resumo do contratado", description, showDocumentLink, rows: rowsMode = "all", footer, className }: ContractSummaryCardProps) {
   const print = variant === "print";
-  const rows = rowsOf(summary, print);
-  const docLink = (showDocumentLink ?? !print) ? (
-    <Link href={`/financeiro/contratos/${summary.id}/documento`} className="inline-flex items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
-      <FileText className="size-4" /> Ver documento
-    </Link>
-  ) : null;
+  const rows = rowsOf(summary, print, rowsMode);
+  const docLink =
+    (showDocumentLink ?? !print) || footer ? (
+      <span className="flex flex-wrap items-center gap-3">
+        {footer}
+        {(showDocumentLink ?? !print) ? (
+          <Link href={`/financeiro/contratos/${summary.id}/documento`} className="inline-flex items-center gap-1 text-sm font-medium text-brand-fg hover:underline">
+            <FileText className="size-4" /> Ver documento
+          </Link>
+        ) : null}
+      </span>
+    ) : null;
 
   if (print) {
     return (

@@ -103,6 +103,66 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - Estados obrigatórios em toda lista/tela: vazio, carregando (loading.tsx), erro.
 - Sem números fixos "de enfeite": todo indicador vem do banco.
 
+## Circuito de receita (venda → contrato → financeiro → comissões → contas a pagar → implantação)
+- **Venda** = `Opportunity` com stage `ganho` (não existe entidade Venda). No ganho a oportunidade recebe
+  `saleNumber` (VEN-AAAA-NNNN) e o bloco `closing` (forma de pagamento, dia de vencimento, 1º vencimento, prazo,
+  recorrência, parcelas da adesão, contato responsável, implantação contratada, observações). Campos opcionais:
+  vendas antigas continuam válidas.
+- **Contrato** nasce por um único caminho (`ensureContractForOpportunity`, idempotente por oportunidade) e herda o
+  `closing`; `contract.items` (líquidos de desconto, `contractEffectiveItems`) é a fonte única para `client_products`
+  e comissões. Status não mudaram (`aguardando_contrato → … → liberado | cancelado`); `cancelContract` (com motivo,
+  evento `contract.cancelled`) é o único caminho de cancelamento, inclusive via churn.
+- **Financeiro**: cobranças (`buildBillingPlan`: forma de pagamento e adesão parcelada), `registerPayment` é o único
+  caminho de recebimento, vencidas detectadas na leitura (`listBillingsSwept`) e pela varredura diária
+  `cobrancas_vencidas`; `contratos_alertas` cobra contratos parados (setting `financeiro_alertas`).
+  Uma tarefa financeira por etapa do contrato: "Emitir contrato e cobrança" (no ganho) é concluída na assinatura,
+  quando nasce "Gerar cobrança e liberar"; a liberação conclui o que restar.
+- **Liberação** (`releaseContract`) emite `financial.released` e cria o projeto de implantação com `saleSnapshot`
+  (handoff: card "Dados da venda"; `implementationRequired=false` vira aviso no projeto e badge na lista/kanban).
+- **Resumo do contratado** (`src/components/finance/contract-summary*`): mesmo componente na página do contrato,
+  painel lateral, documento, implantação e Cliente 360º (Visão geral em modo `rows="essential"` e aba Financeiro).
+- **Meu Dia é um só, parametrizado pelo perfil** (`src/server/meu-dia/queries.ts`): equipe financeira/gestor
+  financeiro/admin/diretoria recebem cobranças vencidas, vencimentos em 3 dias, fila de contratos, títulos a
+  aprovar/pagar/vencidos e comissões elegíveis sem título; vendedor recebe contratos das próprias vendas aguardando
+  assinatura e cobrança vencida de cliente seu. Tudo entra nas prioridades (com link real) e no bloco "Financeiro
+  do dia"; o card "Pendências" soma exatamente o que entrou.
+
+## Motor de comissões (v2, `src/server/commissions/*`)
+- Regras (`commission_rules`) com precedência **contrato > vendedor > produto/categoria > padrão > Product.commission**;
+  gatilhos (`venda`, `contrato_assinado`, `primeiro_pagamento`, `pagamento`, `permanencia`,
+  `pagamento_e_permanencia`, `mensalidade_n`), base contratado/recebido, carência, competências recorrentes, vigência,
+  `overridesDefault` e motivo obrigatório em exceção por contrato. Regras antigas valem como "padrão".
+- Comissão = documento por `sourceKey` (`contractId|revenueType|productId[#n]|slot|ruleId`), id determinístico
+  `com_<sha1>` criado com `createIfAbsent` (nunca duplica), código COM-AAAA-NNNNN, `ruleSnapshot` congelado e
+  `calc.steps` (memória de cálculo). Ciclo: `prevista → em_carencia | aguardando_recebimento → liberada ("Elegível")
+  → titulo_gerado → paga`, mais `cancelada`, `bloqueada`, `estornada`.
+- Reconciliação idempotente (`reconcileContractCommissions`) disparada por `opportunity.won`, `contract.signed`,
+  `payment.approved`, `payment.overdue`, `contract.cancelled`, `financial.released`, alteração de regra/itens e pela
+  varredura diária `comissoes` (carência vencida). `src/server/sales/commissions.ts` é só compatibilidade (delega).
+- Visibilidade no servidor (`permissions.ts`): financeiro/admin/diretoria veem tudo; gestor, a equipe
+  (`getPerformanceAccess`); vendedor, só as próprias — vale para /financeiro/comissoes, relatório e o bloco
+  "Minhas comissões" do Meu Desempenho (`getUserCommissionsDigest`).
+
+## Contas a pagar (`payables`)
+- Um título por comissão elegível (`pag_<commissionId>`, `createIfAbsent`; `_2`, `_3`… depois de cancelado),
+  código PAG-AAAA-NNNNN, vencimento no `diaPagamento` (setting `comissoes_pagamento`) do mês seguinte à
+  elegibilidade. Fluxo `previsto → aprovado → a_pagar → pago` (pagar marca a comissão `paga` na mesma transação);
+  cancelar antes de pago devolve a comissão a Elegível; estorno de comissão paga gera título negativo
+  (`estorno_comissao`). Títulos manuais permitidos. Aprovar/pagar/estornar: gestor financeiro, admin, diretoria.
+
+## Numeração transacional (`nextNumber` em `src/server/db.ts`)
+- Coleção `counters` (`counter_<prefixo>_<ano>`), `runTransaction`, inicializada a partir do maior número já gravado
+  (`initFrom`). Usada por VEN, CT, PR, COM e PAG; formatos antigos preservados, sem renumerar documentos.
+  `verify.ts` confere que nenhum contador fica abaixo do maior número existente.
+
+## Auditoria via eventos
+- Não há coleção de auditoria: cada mudança relevante emite evento com `actorId`, `occurredAt` e
+  `payload.changes {campo: {from, to}}` + `payload.reason` (`auditChanges` em `src/server/audit.ts`). Cobre itens e
+  condições do contrato, regras de comissão (`commission_rule.changed`), aprovação/pagamento/cancelamento de títulos
+  (`payable.*`), estorno/cancelamento/bloqueio de comissão (`commission.*`), cancelamento de contrato e
+  `settings.updated`. A timeline do cliente e do contrato usa os mesmos eventos (ícones em
+  `src/components/timeline/event-icon.tsx`).
+
 ## Qualidade
 - `npm run lint && npm run typecheck && npm run build` devem passar antes de considerar uma entrega pronta.
 - Emuladores locais: `FIRESTORE_EMULATOR_HOST` e `FIREBASE_AUTH_EMULATOR_HOST` já estão em `.env.local`.
