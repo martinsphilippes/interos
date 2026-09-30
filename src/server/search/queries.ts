@@ -78,6 +78,19 @@ const PER_COLLECTION = 500;
 const PER_GROUP = 5;
 const CACHE_TTL_MS = 30_000;
 
+/**
+ * Prefixos de numeração → tipo dono do número. Buscar "CT-2026-0031" abre o contrato (não a tarefa ou a proposta
+ * que citam o número); "VEN-…" abre a venda (oportunidade ganha); "PR-…" a proposta; "CH-…" o chamado.
+ * COM-/PAG- (comissões e títulos) não fazem parte do índice da busca: têm escopo por vendedor (D15).
+ */
+const NUMBER_PREFIX_KIND: Record<string, SearchKind> = { ct: "contrato", ven: "oportunidade", pr: "proposta", ch: "chamado" };
+
+/** Tipo dono do número quando o termo é (ou começa como) um número de documento: "ct-2026", "ven-2026-0008"… */
+export function numberKindOf(term: string): SearchKind | undefined {
+  const m = term.match(/^([a-z]{2,3})-\d/);
+  return m ? NUMBER_PREFIX_KIND[m[1]] : undefined;
+}
+
 const OPP_STAGE_LABELS: Record<Opportunity["stage"], string> = {
   qualificacao: "Qualificação",
   diagnostico: "Diagnóstico",
@@ -266,8 +279,9 @@ export async function searchGlobalQuery(rawTerm: string, viewer: { admin?: boole
     add("tarefa", t, score, t.title, `/tarefas?tarefa=${t.id}`, [TASK_STATUS_LABELS[t.status], t.clientName].filter(Boolean).join(" · "));
   }
   for (const o of data.opportunities) {
-    const score = matchScore(term, termDigits, [o.title, clientById.get(o.clientId)?.tradeName]);
-    add("oportunidade", o, score, o.title, `/vendas/oportunidades?oportunidade=${o.id}`, [OPP_STAGE_LABELS[o.stage], o.monthlyTotal > 0 ? `${formatCurrency(o.monthlyTotal)}/mês` : undefined].filter(Boolean).join(" · "));
+    // saleNumber (VEN-AAAA-NNNN) da venda ganha também é pesquisável.
+    const score = matchScore(term, termDigits, [o.title, o.saleNumber, clientById.get(o.clientId)?.tradeName], [o.saleNumber]);
+    add("oportunidade", o, score, o.saleNumber ? `${o.title} · ${o.saleNumber}` : o.title, `/vendas/oportunidades?oportunidade=${o.id}`, [OPP_STAGE_LABELS[o.stage], o.monthlyTotal > 0 ? `${formatCurrency(o.monthlyTotal)}/mês` : undefined].filter(Boolean).join(" · "));
   }
   for (const p of data.proposals) {
     const score = matchScore(term, termDigits, [p.number, clientById.get(p.clientId)?.tradeName], [p.number]);
@@ -326,12 +340,17 @@ export async function searchGlobalQuery(rawTerm: string, viewer: { admin?: boole
 
   results.sort((a, b) => b.score - a.score || (a.createdAt < b.createdAt ? 1 : -1));
 
-  // Nome do cliente nos subtítulos (contato, oportunidade, contrato, implantação, chamado).
+  // Grupos ordenados pela relevância: o tipo dono do número pesquisado primeiro (CT- → contrato, VEN- → venda,
+  // PR- → proposta, CH- → chamado), depois pela melhor pontuação do grupo; empate na ordem fixa dos tipos.
+  const preferredKind = numberKindOf(term);
   const groups: SearchGroup[] = [];
   for (const kind of SEARCH_KINDS) {
     const items = results.filter((r) => r.kind === kind).slice(0, PER_GROUP);
     if (items.length > 0) groups.push({ kind, label: SEARCH_KIND_LABELS[kind], items });
   }
+  const rank = (g: SearchGroup) => (g.kind === preferredKind ? 1000 : 0) + Math.max(0, ...g.items.map((i) => i.score));
+  groups.sort((a, b) => rank(b) - rank(a) || SEARCH_KINDS.indexOf(a.kind) - SEARCH_KINDS.indexOf(b.kind));
+  // Nome do cliente nos subtítulos (contato, oportunidade, contrato, implantação, chamado).
   const needClient = groups.flatMap((g) => (g.kind === "contato" || g.kind === "oportunidade" || g.kind === "proposta" || g.kind === "contrato" || g.kind === "implantacao" || g.kind === "plano" || g.kind === "chamado" ? g.items : [])) as (SearchResult & { clientId?: string })[];
   const missing = needClient.map((r) => r.clientId ?? "").filter((id) => id && !clientById.has(id));
   const fetched = await getManyByIds<Client>(COLLECTIONS.clients, missing);

@@ -88,7 +88,7 @@ export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOpe
             <button
               type="button"
               aria-expanded={open}
-              aria-controls={panelId}
+              aria-controls={open ? panelId : undefined}
               onClick={() => toggle(ph)}
               className="flex min-h-[48px] w-full cursor-pointer items-center gap-2 px-4 text-left text-sm focus-visible:outline-brand"
             >
