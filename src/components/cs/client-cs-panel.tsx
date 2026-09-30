@@ -7,18 +7,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ActivateButton } from "./activate-button";
 import { CheckpointDialog } from "./checkpoint-dialog";
 import { RecalculateClientButton } from "./health-actions";
+import { ALL_CS_CAPABILITIES, ALL_CS_LINKS, type CsCapabilities, type CsLinks } from "./access-model";
 
 export interface ClientCsPanelProps {
   clientId: string;
   clientName: string;
   data: ClientCs;
+  /**
+   * Capacidades e links calculados no servidor (src/server/cs/access.ts#csCapabilities/csLinks). Ausentes = tudo
+   * visível (comportamento anterior); as actions revalidam de qualquer forma.
+   */
+  capabilities?: CsCapabilities;
+  links?: CsLinks;
 }
 
 /**
  * Painel de ações de CS para a ficha 360º (aba CS): gate de ativação, checkpoint, recálculo da saúde,
- * explicação do score e últimos checkpoints. Os dados vêm de `getClientCs(clientId)`.
+ * explicação do score e últimos checkpoints. Os dados vêm de `getClientCs(clientId, user)`.
  */
-export function ClientCsPanel({ clientId, clientName, data }: ClientCsPanelProps) {
+export function ClientCsPanel({ clientId, clientName, data, capabilities: caps = ALL_CS_CAPABILITIES, links = ALL_CS_LINKS }: ClientCsPanelProps) {
   const { activation, account } = data;
   return (
     <Card>
@@ -31,16 +38,16 @@ export function ClientCsPanel({ clientId, clientName, data }: ClientCsPanelProps
           </CardDescription>
         </div>
         <div className="flex flex-wrap gap-2">
-          <CheckpointDialog clientId={clientId} clientName={clientName} adoptionPct={account?.adoptionPct} satisfaction={account?.satisfaction} />
-          <RecalculateClientButton clientId={clientId} />
-          {!activation.activePlan ? (
+          {caps.checkpoint ? <CheckpointDialog clientId={clientId} clientName={clientName} adoptionPct={account?.adoptionPct} satisfaction={account?.satisfaction} /> : null}
+          {caps.recalculate ? <RecalculateClientButton clientId={clientId} /> : null}
+          {!activation.activePlan && caps.createPlan && links.plans ? (
             <Button asChild size="sm" variant="outline" className="min-h-[44px] md:min-h-0">
               <Link href={`/cs/planos?novo=1&cliente=${clientId}`}>
                 <Plus /> Plano de sucesso
               </Link>
             </Button>
           ) : null}
-          {activation.stageOpen ? <ActivateButton clientId={clientId} clientName={clientName} missing={activation.missing} /> : null}
+          {activation.stageOpen && caps.activate ? <ActivateButton clientId={clientId} clientName={clientName} missing={activation.missing} /> : null}
         </div>
       </CardHeader>
       <CardContent className="grid gap-4 pt-0 lg:grid-cols-3">
@@ -57,10 +64,12 @@ export function ClientCsPanel({ clientId, clientName, data }: ClientCsPanelProps
             </li>
             <li className="flex items-start gap-2">
               {activation.activePlan || !activation.settings.exigePlano ? <BadgeCheck className="mt-0.5 size-4 shrink-0 text-success" /> : <CircleAlert className="mt-0.5 size-4 shrink-0 text-warning" />}
-              {activation.activePlan ? (
+              {activation.activePlan && links.plans ? (
                 <Link href={`/cs/planos?plano=${activation.activePlan.id}`} className="hover:underline">
                   Plano ativo: {activation.activePlan.objective}
                 </Link>
+              ) : activation.activePlan ? (
+                `Plano ativo: ${activation.activePlan.objective}`
               ) : activation.settings.exigePlano ? (
                 "Plano de sucesso ativo (obrigatório)"
               ) : (
@@ -82,9 +91,11 @@ export function ClientCsPanel({ clientId, clientName, data }: ClientCsPanelProps
           ) : (
             <p className="text-sm text-muted">Sem cálculo de saúde ainda.</p>
           )}
-          <Link href={`/cs/saude?cliente=${clientId}`} className="mt-2 inline-block text-sm text-secondary hover:underline">
-            Ver fatores e histórico
-          </Link>
+          {links.health ? (
+            <Link href={`/cs/saude?cliente=${clientId}`} className="mt-2 inline-block text-sm text-secondary hover:underline">
+              Ver fatores e histórico
+            </Link>
+          ) : null}
         </div>
         <div className="rounded-md border border-border p-3">
           <p className="label-caps mb-2">Últimos checkpoints</p>

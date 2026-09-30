@@ -15,9 +15,10 @@ import { RecalculateClientButton } from "./health-actions";
 import { CheckpointDialog } from "./checkpoint-dialog";
 import { useCsUrl } from "./use-cs";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { ALL_CS_CAPABILITIES, ALL_CS_LINKS, type CsCapabilities, type CsLinks } from "./access-model";
 
-/** Drill-down do health score (?cliente=<id>): fatores, explicação textual e histórico. */
-export function HealthDrawer({ detail, limiares }: { detail: HealthDetail | null; limiares: { saudavel: number; atencao: number } }) {
+/** Drill-down do health score (?cliente=<id>): fatores, explicação textual e histórico. Ações pelas capacidades. */
+export function HealthDrawer({ detail, limiares, capabilities = ALL_CS_CAPABILITIES, links = ALL_CS_LINKS }: { detail: HealthDetail | null; limiares: { saudavel: number; atencao: number }; capabilities?: CsCapabilities; links?: CsLinks }) {
   const { navigate } = useCsUrl();
   const latest = detail?.latest ?? null;
   return (
@@ -79,13 +80,15 @@ export function HealthDrawer({ detail, limiares }: { detail: HealthDetail | null
               )}
             </DrawerBody>
             <DrawerFooter>
-              <Button asChild variant="ghost" size="sm">
-                <Link href={`/clientes/${detail.clientId}?aba=cs`}>
-                  Ficha do cliente <ExternalLink />
-                </Link>
-              </Button>
-              <CheckpointDialog clientId={detail.clientId} clientName={detail.tradeName} adoptionPct={detail.account?.adoptionPct} satisfaction={detail.account?.satisfaction} />
-              <RecalculateClientButton clientId={detail.clientId} variant="primary" />
+              {links.client ? (
+                <Button asChild variant="ghost" size="sm">
+                  <Link href={`/clientes/${detail.clientId}?aba=cs`}>
+                    Ficha do cliente <ExternalLink />
+                  </Link>
+                </Button>
+              ) : null}
+              {capabilities.checkpoint ? <CheckpointDialog clientId={detail.clientId} clientName={detail.tradeName} adoptionPct={detail.account?.adoptionPct} satisfaction={detail.account?.satisfaction} /> : null}
+              {capabilities.recalculate ? <RecalculateClientButton clientId={detail.clientId} variant="primary" /> : null}
             </DrawerFooter>
           </>
         ) : null}

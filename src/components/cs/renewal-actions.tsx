@@ -16,7 +16,19 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useCsAction } from "./use-cs";
 
+/** Ações permitidas (calculadas no servidor; padrão: todas, como antes). As actions revalidam. */
+export interface RenewalActionCapabilities {
+  negotiate: boolean;
+  renew: boolean;
+  lose: boolean;
+  /** Após a perda, abrir o registro de churn (/cs/churn?registrar=) — exige cs.churn.registrar. */
+  registerChurn: boolean;
+}
+
+const ALL_RENEWAL_ACTIONS: RenewalActionCapabilities = { negotiate: true, renew: true, lose: true, registerChurn: true };
+
 export interface RenewalActionsProps {
+  capabilities?: RenewalActionCapabilities;
   renewalId: string;
   status: Renewal["status"];
   tradeName: string;
@@ -26,7 +38,7 @@ export interface RenewalActionsProps {
 }
 
 /** Ações de uma renovação aberta: iniciar negociação, renovar (novo prazo no contrato) ou perder (abre o churn). */
-export function RenewalActions({ renewalId, status, tradeName, contractNumber, dueDate, mrr }: RenewalActionsProps) {
+export function RenewalActions({ renewalId, status, tradeName, contractNumber, dueDate, mrr, capabilities = ALL_RENEWAL_ACTIONS }: RenewalActionsProps) {
   const router = useRouter();
   const { pending, run } = useCsAction();
   const [dialog, setDialog] = React.useState<"renovar" | "perder" | null>(null);
@@ -53,25 +65,29 @@ export function RenewalActions({ renewalId, status, tradeName, contractNumber, d
     e.preventDefault();
     const ok = await run(
       () => markRenewalLost({ renewalId, reason }),
-      "Renovação perdida · registre o cancelamento",
-      (d) => router.push(`/cs/churn?registrar=${d.clientId}`),
+      capabilities.registerChurn ? "Renovação perdida · registre o cancelamento" : "Renovação perdida",
+      (d) => (capabilities.registerChurn ? router.push(`/cs/churn?registrar=${d.clientId}`) : undefined),
     );
     if (ok) setDialog(null);
   };
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">
-      {status === "aguardando" ? (
+      {status === "aguardando" && capabilities.negotiate ? (
         <Button size="sm" variant="outline" loading={pending && dialog === null} onClick={() => run(() => startNegotiation({ renewalId }), "Negociação iniciada · tarefa criada")} className="min-h-[44px] md:min-h-0">
           <Handshake /> Negociar
         </Button>
       ) : null}
-      <Button size="sm" variant="primary" onClick={() => setDialog("renovar")} className="min-h-[44px] md:min-h-0">
-        <RefreshCw /> Renovar
-      </Button>
-      <Button size="sm" variant="ghost" onClick={() => setDialog("perder")} className="min-h-[44px] text-danger-fg md:min-h-0">
-        <XCircle /> Perder
-      </Button>
+      {capabilities.renew ? (
+        <Button size="sm" variant="primary" onClick={() => setDialog("renovar")} className="min-h-[44px] md:min-h-0">
+          <RefreshCw /> Renovar
+        </Button>
+      ) : null}
+      {capabilities.lose ? (
+        <Button size="sm" variant="ghost" onClick={() => setDialog("perder")} className="min-h-[44px] text-danger-fg md:min-h-0">
+          <XCircle /> Perder
+        </Button>
+      ) : null}
 
       <Dialog open={dialog === "renovar"} onOpenChange={(o) => !pending && setDialog(o ? "renovar" : null)}>
         <DialogContent size="sm">
@@ -122,7 +138,9 @@ export function RenewalActions({ renewalId, status, tradeName, contractNumber, d
           <form onSubmit={lose} className="contents">
             <DialogHeader>
               <DialogTitle>Renovação perdida</DialogTitle>
-              <DialogDescription>{tradeName} não vai renovar o contrato {contractNumber}. Em seguida, registre o cancelamento no fluxo de churn.</DialogDescription>
+              <DialogDescription>
+                {tradeName} não vai renovar o contrato {contractNumber}.{capabilities.registerChurn ? " Em seguida, registre o cancelamento no fluxo de churn." : " O registro do cancelamento fica com quem tem acesso ao Churn."}
+              </DialogDescription>
             </DialogHeader>
             <DialogBody>
               <FormField label="Motivo" htmlFor={`${id}-reason`} required>

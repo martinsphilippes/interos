@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ClientCombobox } from "@/components/tasks/client-combobox";
 import { useCsAction, useCsUrl } from "./use-cs";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { ALL_CS_CAPABILITIES, ALL_CS_LINKS, type CsCapabilities, type CsLinks } from "./access-model";
 
 type Plan = SuccessPlanWithTasks;
 
@@ -35,6 +36,9 @@ export interface PlanDrawerProps {
   users: UserLite[];
   clients: { id: string; tradeName: string }[];
   currentUserId: string;
+  /** Capacidades do servidor (criar/editar/encerrar); sem edição o detalhe fica somente leitura. */
+  capabilities?: CsCapabilities;
+  links?: CsLinks;
 }
 
 interface ActionDraft {
@@ -134,7 +138,7 @@ function PlanEditor({ plan, initialClientId, users, clients, currentUserId, onDo
   );
 }
 
-function PlanDetail({ plan, clientName, users, onEdit }: { plan: Plan; clientName?: string; users: UserLite[]; onEdit: () => void }) {
+function PlanDetail({ plan, clientName, users, onEdit, caps, links }: { plan: Plan; clientName?: string; users: UserLite[]; onEdit: () => void; caps: CsCapabilities; links: CsLinks }) {
   const { pending, run } = useCsAction();
   const [closeStatus, setCloseStatus] = React.useState<"concluido" | "cancelado">("concluido");
   const [result, setResult] = React.useState("");
@@ -157,9 +161,13 @@ function PlanDetail({ plan, clientName, users, onEdit }: { plan: Plan; clientNam
         </div>
         <DrawerTitle>{plan.objective}</DrawerTitle>
         <DrawerDescription>
-          <Link href={`/clientes/${plan.clientId}?aba=cs`} className="hover:underline">
-            {clientName ?? plan.clientId}
-          </Link>{" "}
+          {links.client ? (
+            <Link href={`/clientes/${plan.clientId}?aba=cs`} className="hover:underline">
+              {clientName ?? plan.clientId}
+            </Link>
+          ) : (
+            clientName ?? plan.clientId
+          )}{" "}
           · responsável {userName(plan.ownerId)} · criado <RelativeTime value={plan.createdAt} />
           {plan.checkpointAt ? ` · checkpoint ${formatDate(plan.checkpointAt)}` : ""}
         </DrawerDescription>
@@ -179,7 +187,7 @@ function PlanDetail({ plan, clientName, users, onEdit }: { plan: Plan; clientNam
             <li key={a.id} className="flex items-start gap-3 rounded-md border border-border p-3">
               <Checkbox
                 checked={a.done}
-                disabled={!active || pending}
+                disabled={!active || pending || !caps.editPlan}
                 aria-label={`${a.done ? "Reabrir" : "Concluir"} ação: ${a.description}`}
                 onCheckedChange={(v) => run(() => togglePlanAction({ planId: plan.id, actionId: a.id, done: v === true }), v === true ? "Ação concluída" : "Ação reaberta")}
                 className="mt-0.5 size-5"
@@ -190,7 +198,7 @@ function PlanDetail({ plan, clientName, users, onEdit }: { plan: Plan; clientNam
                   {userName(a.responsibleId)} · {a.done ? `feito ${formatDate(a.doneAt)}` : `até ${formatDate(a.dueAt)}${a.dueAt < now ? " (atrasada)" : ""}`}
                 </p>
               </div>
-              {a.taskId ? (
+              {a.taskId && links.tasks ? (
                 <Button asChild variant="ghost" size="icon" className="size-11 md:size-8" title="Abrir tarefa">
                   <Link href={`/tarefas?tarefa=${a.taskId}`} aria-label={`Abrir tarefa da ação ${a.description}`}>
                     <ExternalLink />
@@ -206,7 +214,7 @@ function PlanDetail({ plan, clientName, users, onEdit }: { plan: Plan; clientNam
             {plan.result}
           </div>
         ) : null}
-        {active ? (
+        {active && caps.closePlan ? (
           <form
             className="flex flex-col gap-3 rounded-md border border-border p-3"
             onSubmit={async (e) => {
@@ -227,7 +235,7 @@ function PlanDetail({ plan, clientName, users, onEdit }: { plan: Plan; clientNam
           </form>
         ) : null}
       </DrawerBody>
-      {active ? (
+      {active && caps.editPlan ? (
         <DrawerFooter>
           <Button variant="outline" onClick={onEdit}>
             <Pencil /> Editar plano
@@ -239,7 +247,7 @@ function PlanDetail({ plan, clientName, users, onEdit }: { plan: Plan; clientNam
 }
 
 /** Drawer do plano de sucesso: detalhe (?plano=<id>) ou criação (?novo=1). */
-export function PlanDrawer({ plan, clientName, creating, initialClientId, users, clients, currentUserId }: PlanDrawerProps) {
+export function PlanDrawer({ plan, clientName, creating, initialClientId, users, clients, currentUserId, capabilities = ALL_CS_CAPABILITIES, links = ALL_CS_LINKS }: PlanDrawerProps) {
   const { navigate } = useCsUrl();
   const [editing, setEditing] = React.useState(false);
   const open = creating || Boolean(plan);
@@ -250,7 +258,7 @@ export function PlanDrawer({ plan, clientName, creating, initialClientId, users,
   return (
     <Drawer open={open} onOpenChange={(next) => !next && close()}>
       <DrawerContent size="lg">
-        {creating || (plan && editing) ? (
+        {(creating && capabilities.createPlan) || (plan && editing && capabilities.editPlan) ? (
           <PlanEditor
             key={plan?.id ?? "novo"}
             plan={creating ? null : plan}
@@ -265,7 +273,7 @@ export function PlanDrawer({ plan, clientName, creating, initialClientId, users,
             }}
           />
         ) : plan ? (
-          <PlanDetail plan={plan} clientName={clientName} users={users} onEdit={() => setEditing(true)} />
+          <PlanDetail plan={plan} clientName={clientName} users={users} onEdit={() => setEditing(true)} caps={capabilities} links={links} />
         ) : null}
       </DrawerContent>
     </Drawer>

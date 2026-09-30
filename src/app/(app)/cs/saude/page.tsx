@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight, HeartPulse, Settings } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
+import { csCapabilities, csLinks } from "@/server/cs/access";
 import { getHealthDetail, getHealthOverview } from "@/server/cs/queries";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { HEALTH_FACTORS, HEALTH_LEVEL_LABELS } from "@/server/cs/schemas";
@@ -26,15 +26,19 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 const LEVEL_BG: Record<HealthLevel, string> = { saudavel: "bg-success", atencao: "bg-warning", risco: "bg-danger" };
 const LEVEL_TEXT: Record<HealthLevel, string> = { saudavel: "text-success-fg", atencao: "text-warning-fg", risco: "text-danger-fg" };
 
-/** Health Score: distribuição por nível, pesos configurados, tabela e drill-down por cliente. */
+/**
+ * Health Score: distribuição por nível, pesos configurados, tabela e drill-down por cliente. Tela cs.saude; lista
+ * e detalhe (?cliente=) respeitam o escopo efetivo; recálculos seguem as capacidades do usuário.
+ */
 export default async function HealthPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("cs.saude");
+  const caps = csCapabilities(user);
+  const links = csLinks(user);
   const params = await searchParams;
   // Recálculo automático da carteira pela varredura central (padrão: 1x por dia; ajustável em /admin/automacoes).
   await runDueSweeps(["saude_clientes"]);
   const clientParam = typeof params.cliente === "string" ? params.cliente : undefined;
-  const [data, detail] = await Promise.all([getHealthOverview(user, params), clientParam ? getHealthDetail(clientParam) : Promise.resolve(null)]);
+  const [data, detail] = await Promise.all([getHealthOverview(user, params), clientParam ? getHealthDetail(clientParam, user) : Promise.resolve(null)]);
   const total = HEALTH_LEVELS.reduce((s, l) => s + data.distribution[l].count, 0);
   const weightTotal = HEALTH_FACTORS.reduce((s, f) => s + Math.max(0, data.config.pesos[f.key] ?? 0), 0);
   const levelParam = typeof params.nivel === "string" ? params.nivel : "";
@@ -54,11 +58,11 @@ export default async function HealthPage({ searchParams }: { searchParams: Searc
       <PageHeader
         title="Saúde dos clientes"
         description={`Health score configurável · ${data.lastSweep.ranAt ? `recálculo automático ${formatRelative(data.lastSweep.ranAt)}` : "sem recálculo automático ainda"}`}
-        breadcrumbs={[{ label: "Customer Success", href: "/cs" }, { label: "Saúde" }]}
+        breadcrumbs={[{ label: "Customer Success", href: links.portfolio ? "/cs" : undefined }, { label: "Saúde" }]}
         actions={
           <>
-            <ScopeSelect owners={data.owners} value={data.scope.param} />
-            {user.isManager ? <RecalculateAllButton /> : null}
+            <ScopeSelect owners={data.owners} value={data.scope.param} restricted={data.scope.restricted} />
+            {caps.recalculateAll ? <RecalculateAllButton /> : null}
           </>
         }
       />
@@ -102,9 +106,9 @@ export default async function HealthPage({ searchParams }: { searchParams: Searc
                 Saudável ≥ {data.config.limiares.saudavel} · atenção ≥ {data.config.limiares.atencao} · risco abaixo
               </CardDescription>
             </div>
-            {user.isAdmin ? (
+            {can(user, "admin.configuracoes.health-score.editar") ? (
               <Button asChild variant="ghost" size="icon" aria-label="Configurar pesos">
-                <Link href="/admin/configuracoes">
+                <Link href="/admin/configuracoes?aba=health-score">
                   <Settings />
                 </Link>
               </Button>
@@ -200,7 +204,7 @@ export default async function HealthPage({ searchParams }: { searchParams: Searc
         </>
       )}
 
-      <HealthDrawer detail={detail} limiares={data.config.limiares} />
+      <HealthDrawer detail={detail} limiares={data.config.limiares} capabilities={caps} links={links} />
     </PageContainer>
   );
 }

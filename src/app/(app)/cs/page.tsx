@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { AlertTriangle, BadgeCheck, Briefcase, CalendarClock, CircleDollarSign, HeartPulse, MessageSquareOff, RefreshCw, ShieldAlert, TrendingUp } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
+import { csCapabilities, csLinks } from "@/server/cs/access";
 import { getPortfolio } from "@/server/cs/queries";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -15,15 +15,19 @@ export const metadata: Metadata = { title: "Carteira de CS" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Carteira de Customer Success: indicadores com drill-down, filtros e a tabela de clientes com ações. */
+/**
+ * Carteira de Customer Success: indicadores com drill-down, filtros e a tabela de clientes com ações. Tela
+ * cs.carteira; a lista respeita o escopo efetivo (resolveCsView) e botões/links seguem as capacidades do usuário.
+ */
 export default async function CsPortfolioPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("cs.carteira");
+  const caps = csCapabilities(user);
+  const links = csLinks(user);
   const data = await getPortfolio(user, await searchParams);
   const { stats, scope } = data;
   const q = (extra: Record<string, string>) => `/cs?${new URLSearchParams({ responsavel: scope.param, ...extra }).toString()}`;
   const pct = (n: number) => (stats.clients > 0 ? formatPercent(n / stats.clients) : "—");
-  const scopeLabel = scope.ownerId ? `Carteira de ${data.owners.find((o) => o.id === scope.ownerId)?.name ?? "responsável"}` : "Carteira de toda a equipe";
+  const scopeLabel = scope.ownerId ? `Carteira de ${data.owners.find((o) => o.id === scope.ownerId)?.name ?? "responsável"}` : scope.restricted ? "Toda a sua carteira" : "Carteira de toda a equipe";
 
   return (
     <PageContainer>
@@ -32,16 +36,22 @@ export default async function CsPortfolioPage({ searchParams }: { searchParams: 
         description={`${scopeLabel} · clientes ativos e recém-implantados acompanhados pelo Customer Success`}
         breadcrumbs={[{ label: "Customer Success" }, { label: "Carteira" }]}
         actions={
-          <>
-            <Button asChild variant="outline" size="sm">
-              <Link href="/cs/riscos">
-                <ShieldAlert /> Riscos
-              </Link>
-            </Button>
-            <Button asChild variant="outline" size="sm">
-              <Link href="/cs/churn">Churn</Link>
-            </Button>
-          </>
+          links.risks || links.churn ? (
+            <>
+              {links.risks ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/cs/riscos">
+                    <ShieldAlert /> Riscos
+                  </Link>
+                </Button>
+              ) : null}
+              {links.churn ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/cs/churn">Churn</Link>
+                </Button>
+              ) : null}
+            </>
+          ) : undefined
         }
       />
 
@@ -54,9 +64,9 @@ export default async function CsPortfolioPage({ searchParams }: { searchParams: 
       </div>
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard label="Sem interação há 30+ dias" value={formatNumber(stats.noInteraction30)} icon={<MessageSquareOff />} tone={stats.noInteraction30 > 0 ? "warning" : "success"} href={q({ sem_interacao: "1" })} compact />
-        <StatCard label="Próximas interações vencidas" value={formatNumber(stats.overdueNext)} icon={<CalendarClock />} tone={stats.overdueNext > 0 ? "danger" : "success"} href={`/cs/checkpoints?responsavel=${scope.param}`} compact />
-        <StatCard label="Renovações em 60 dias" value={formatNumber(stats.renewals60)} icon={<RefreshCw />} tone={stats.renewals60 > 0 ? "warning" : "neutral"} href="/cs/renovacoes" compact />
-        <StatCard label="Upsell em aberto" value={formatNumber(stats.openUpsell)} icon={<TrendingUp />} tone="info" href={`/cs/upsell?responsavel=${scope.param}`} compact />
+        <StatCard label="Próximas interações vencidas" value={formatNumber(stats.overdueNext)} icon={<CalendarClock />} tone={stats.overdueNext > 0 ? "danger" : "success"} href={links.checkpoints ? `/cs/checkpoints?responsavel=${scope.param}` : undefined} compact />
+        <StatCard label="Renovações em 60 dias" value={formatNumber(stats.renewals60)} icon={<RefreshCw />} tone={stats.renewals60 > 0 ? "warning" : "neutral"} href={links.renewals ? "/cs/renovacoes" : undefined} compact />
+        <StatCard label="Upsell em aberto" value={formatNumber(stats.openUpsell)} icon={<TrendingUp />} tone="info" href={links.upsell ? `/cs/upsell?responsavel=${scope.param}` : undefined} compact />
       </div>
 
       <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -68,7 +78,7 @@ export default async function CsPortfolioPage({ searchParams }: { searchParams: 
         ) : null}
       </div>
       <p className="mb-2 text-xs text-muted">{data.rows.length} de {stats.clients} cliente(s)</p>
-      <PortfolioTable rows={data.rows} />
+      <PortfolioTable rows={data.rows} capabilities={caps} links={links} />
     </PageContainer>
   );
 }

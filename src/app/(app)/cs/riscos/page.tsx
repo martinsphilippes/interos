@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { AlertTriangle, CircleDollarSign, HeartPulse, Plus, Receipt, Route, UserMinus } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
+import { csCapabilities, csLinks } from "@/server/cs/access";
 import { listRisks, type RiskRow } from "@/server/cs/queries";
+import type { CsCapabilities, CsLinks } from "@/components/cs/access-model";
 import { formatCurrency, formatNumber, formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
@@ -21,35 +22,43 @@ export const metadata: Metadata = { title: "Riscos" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-function RiskCard({ r }: { r: RiskRow }) {
+function RiskCard({ r, caps, links }: { r: RiskRow; caps: CsCapabilities; links: CsLinks }) {
   return (
     <Card className={cn("flex flex-col gap-3 p-4", r.healthLevel === "risco" && "border-danger/40")}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <Link href={`/clientes/${r.clientId}?aba=cs`} className="font-semibold hover:text-brand hover:underline">
-              {r.tradeName}
-            </Link>
+            {links.client ? (
+              <Link href={`/clientes/${r.clientId}?aba=cs`} className="font-semibold hover:text-brand hover:underline">
+                {r.tradeName}
+              </Link>
+            ) : (
+              <span className="font-semibold">{r.tradeName}</span>
+            )}
             <LevelBadge level={r.healthLevel} />
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
-            <Link href={`/cs/saude?cliente=${r.clientId}`} className="hover:underline">
+            {links.health ? (
+              <Link href={`/cs/saude?cliente=${r.clientId}`} className="hover:underline">
+                <HealthIndicator score={r.healthScore} level={r.healthLevel} />
+              </Link>
+            ) : (
               <HealthIndicator score={r.healthScore} level={r.healthLevel} />
-            </Link>
+            )}
             <span className="tabular-nums">{formatCurrency(r.mrr)}/mês</span>
             <OwnerCell owner={r.owner} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1 sm:justify-end">
-          {!r.activePlanId ? (
+          {!r.activePlanId && caps.createPlan && links.plans ? (
             <Button asChild size="sm" variant="outline" className="min-h-[44px] md:min-h-0">
               <Link href={`/cs/planos?novo=1&cliente=${r.clientId}`}>
                 <Plus /> Criar plano
               </Link>
             </Button>
           ) : null}
-          <CheckpointDialog clientId={r.clientId} clientName={r.tradeName} adoptionPct={r.adoptionPct} />
-          <EscalateDialog clientId={r.clientId} clientName={r.tradeName} reasons={r.riskReasons} />
+          {caps.checkpoint ? <CheckpointDialog clientId={r.clientId} clientName={r.tradeName} adoptionPct={r.adoptionPct} /> : null}
+          {caps.escalate ? <EscalateDialog clientId={r.clientId} clientName={r.tradeName} reasons={r.riskReasons} /> : null}
         </div>
       </div>
       {r.riskReasons.length > 0 ? (
@@ -76,10 +85,12 @@ function RiskCard({ r }: { r: RiskRow }) {
         <div>
           <dt className="label-caps">Plano ativo</dt>
           <dd>
-            {r.activePlanId ? (
+            {r.activePlanId && links.plans ? (
               <Link href={`/cs/planos?plano=${r.activePlanId}`} className="text-secondary hover:underline" title={r.activePlanObjective}>
                 Sim · ver plano
               </Link>
+            ) : r.activePlanId ? (
+              <span title={r.activePlanObjective}>Sim</span>
             ) : (
               <span className="text-danger-fg">Não</span>
             )}
@@ -94,10 +105,14 @@ function RiskCard({ r }: { r: RiskRow }) {
   );
 }
 
-/** Riscos: clientes em risco/atenção com motivos, MRR em risco e ações de retenção. */
+/**
+ * Riscos: clientes em risco/atenção com motivos, MRR em risco e ações de retenção. Tela cs.riscos; a lista
+ * respeita o escopo efetivo e as ações (plano, checkpoint, escalação) seguem as capacidades do usuário.
+ */
 export default async function RisksPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("cs.riscos");
+  const caps = csCapabilities(user);
+  const links = csLinks(user);
   const data = await listRisks(user, await searchParams);
   const { totals } = data;
   const risk = data.rows.filter((r) => r.healthLevel === "risco");
@@ -108,24 +123,26 @@ export default async function RisksPage({ searchParams }: { searchParams: Search
       <PageHeader
         title="Riscos"
         description="Clientes em risco ou atenção pelo health score, com os motivos e as ações de retenção."
-        breadcrumbs={[{ label: "Customer Success", href: "/cs" }, { label: "Riscos" }]}
+        breadcrumbs={[{ label: "Customer Success", href: links.portfolio ? "/cs" : undefined }, { label: "Riscos" }]}
         actions={
           <>
-            <ScopeSelect owners={data.owners} value={data.scope.param} />
-            <Button asChild variant="outline" size="sm">
-              <Link href="/cs/churn">
-                <UserMinus /> Churn
-              </Link>
-            </Button>
+            <ScopeSelect owners={data.owners} value={data.scope.param} restricted={data.scope.restricted} />
+            {links.churn ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href="/cs/churn">
+                  <UserMinus /> Churn
+                </Link>
+              </Button>
+            ) : null}
           </>
         }
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="MRR em risco" value={formatCurrency(totals.mrrRisk)} icon={<CircleDollarSign />} tone="danger" hint={`${totals.risk} cliente(s) em risco`} href="/cs?saude=risco" compact />
-        <StatCard label="MRR em atenção" value={formatCurrency(totals.mrrAttention)} icon={<HeartPulse />} tone="warning" hint={`${totals.attention} cliente(s)`} href="/cs?saude=atencao" compact />
-        <StatCard label="Sem plano ativo" value={formatNumber(totals.withoutPlan)} icon={<Route />} tone={totals.withoutPlan > 0 ? "warning" : "success"} href="/cs/planos" compact />
-        <StatCard label="Financeiro vencido" value={formatCurrency(totals.overdueAmount)} icon={<Receipt />} tone={totals.overdueAmount > 0 ? "danger" : "success"} href="/financeiro/contas-a-receber" compact />
+        <StatCard label="MRR em risco" value={formatCurrency(totals.mrrRisk)} icon={<CircleDollarSign />} tone="danger" hint={`${totals.risk} cliente(s) em risco`} href={links.portfolio ? "/cs?saude=risco" : undefined} compact />
+        <StatCard label="MRR em atenção" value={formatCurrency(totals.mrrAttention)} icon={<HeartPulse />} tone="warning" hint={`${totals.attention} cliente(s)`} href={links.portfolio ? "/cs?saude=atencao" : undefined} compact />
+        <StatCard label="Sem plano ativo" value={formatNumber(totals.withoutPlan)} icon={<Route />} tone={totals.withoutPlan > 0 ? "warning" : "success"} href={links.plans ? "/cs/planos" : undefined} compact />
+        <StatCard label="Financeiro vencido" value={formatCurrency(totals.overdueAmount)} icon={<Receipt />} tone={totals.overdueAmount > 0 ? "danger" : "success"} href={links.receivables ? "/financeiro/contas-a-receber" : undefined} compact />
       </div>
 
       {data.rows.length === 0 ? (
@@ -148,7 +165,7 @@ export default async function RisksPage({ searchParams }: { searchParams: Search
                 <ul className="grid gap-3 xl:grid-cols-2">
                   {g.rows.map((r) => (
                     <li key={r.clientId}>
-                      <RiskCard r={r} />
+                      <RiskCard r={r} caps={caps} links={links} />
                     </li>
                   ))}
                 </ul>

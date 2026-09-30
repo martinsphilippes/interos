@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Check, Clock, Plus, Target } from "lucide-react";
+import { Check, Clock, Minus, Plus, Target } from "lucide-react";
 import type { UpsellMatrix as Matrix } from "@/server/cs/queries";
 import { generateUpsell } from "@/server/cs/actions";
 import { formatCurrency } from "@/lib/format";
@@ -20,9 +20,13 @@ const LEGEND = [
   { icon: <Target className="size-3.5 text-info" />, label: "Oportunidade aberta" },
   { icon: <Plus className="size-3.5 text-muted" />, label: "Disponível: gerar oportunidade" },
 ];
+const LEGEND_READ_ONLY = [...LEGEND.slice(0, 3), { icon: <Minus className="size-3.5 text-muted" />, label: "Disponível (não contratado)" }];
 
-/** Matriz cliente × produto da carteira; células disponíveis geram oportunidade de upsell/cross-sell. */
-export function UpsellMatrixView({ data }: { data: Pick<Matrix, "products" | "rows"> }) {
+/**
+ * Matriz cliente × produto da carteira; células disponíveis geram oportunidade de upsell/cross-sell. Sem
+ * `canGenerate` (capacidade do servidor) a matriz é somente leitura: a célula disponível só indica o produto.
+ */
+export function UpsellMatrixView({ data, canGenerate = true, clientLink = true }: { data: Pick<Matrix, "products" | "rows">; canGenerate?: boolean; clientLink?: boolean }) {
   const { pending, run } = useCsAction();
   const [selected, setSelected] = React.useState<{ clientId: string; tradeName: string; productId: string; productName: string; monthly: number; setup: number } | null>(null);
   const [need, setNeed] = React.useState("");
@@ -33,7 +37,7 @@ export function UpsellMatrixView({ data }: { data: Pick<Matrix, "products" | "ro
   return (
     <>
       <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 pt-3 text-xs text-muted">
-        {LEGEND.map((l) => (
+        {(canGenerate ? LEGEND : LEGEND_READ_ONLY).map((l) => (
           <span key={l.label} className="inline-flex items-center gap-1">
             {l.icon} {l.label}
           </span>
@@ -57,9 +61,13 @@ export function UpsellMatrixView({ data }: { data: Pick<Matrix, "products" | "ro
             {data.rows.map((r) => (
               <tr key={r.clientId} className="hover:bg-surface-muted/60">
                 <th scope="row" className="sticky left-0 z-10 border-b border-border bg-surface px-4 py-1.5 text-left font-normal">
-                  <Link href={`/clientes/${r.clientId}?aba=produtos`} className="block truncate font-medium hover:underline">
-                    {r.tradeName}
-                  </Link>
+                  {clientLink ? (
+                    <Link href={`/clientes/${r.clientId}?aba=produtos`} className="block truncate font-medium hover:underline">
+                      {r.tradeName}
+                    </Link>
+                  ) : (
+                    <span className="block truncate font-medium">{r.tradeName}</span>
+                  )}
                   <HealthIndicator score={r.healthScore} level={r.healthLevel} className="text-xs" />
                 </th>
                 {data.products.map((p) => {
@@ -72,6 +80,8 @@ export function UpsellMatrixView({ data }: { data: Pick<Matrix, "products" | "ro
                         <Clock className="mx-auto size-4 text-warning" aria-label="Em implantação" />
                       ) : state === "oportunidade" ? (
                         <Target className="mx-auto size-4 text-info" aria-label="Oportunidade aberta" />
+                      ) : !canGenerate ? (
+                        <Minus className="mx-auto size-4 text-muted-light" aria-label="Disponível (não contratado)" />
                       ) : (
                         <button
                           type="button"

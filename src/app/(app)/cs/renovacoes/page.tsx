@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { CalendarClock, CircleDollarSign, Handshake, RefreshCw, TrendingDown } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
+import { csCapabilities, csLinks } from "@/server/cs/access";
 import { listRenewals, type RenewalRow } from "@/server/cs/queries";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { RENEWAL_STATUS_LABELS, RENEWAL_STATUS_VARIANT } from "@/server/cs/schemas";
@@ -20,6 +20,16 @@ import { CreateRenewalButton, RenewalActions } from "@/components/cs/renewal-act
 
 export const metadata: Metadata = { title: "Renovações" };
 
+/** Nome do cliente com link para a aba CS da ficha 360º (quando o usuário a vê). */
+function ClientLink({ clientId, tradeName, show, className }: { clientId: string; tradeName: string; show: boolean; className: string }) {
+  if (!show) return <span className="text-sm font-medium">{tradeName}</span>;
+  return (
+    <Link href={`/clientes/${clientId}?aba=cs`} className={className}>
+      {tradeName}
+    </Link>
+  );
+}
+
 function StatusBadge({ status }: { status: RenewalRow["status"] }) {
   return (
     <Badge variant={RENEWAL_STATUS_VARIANT[status]} size="sm">
@@ -28,13 +38,20 @@ function StatusBadge({ status }: { status: RenewalRow["status"] }) {
   );
 }
 
-/** Renovações: abertas (com ações), contratos vencendo sem renovação e encerradas nos últimos 90 dias. */
+/**
+ * Renovações: abertas (com ações), contratos vencendo sem renovação e encerradas nos últimos 90 dias. Tela
+ * cs.renovacoes; as listas respeitam o escopo efetivo e cada ação (negociar, renovar, perder, criar) segue a
+ * capacidade do usuário.
+ */
 export default async function RenewalsPage() {
-  const user = await requireUser();
-  if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("cs.renovacoes");
+  const caps = csCapabilities(user);
+  const links = csLinks(user);
   // Cria renovações da janela de 90 dias e emite renewal.due pela varredura central (padrão: 1x por dia).
   await runDueSweeps(["renovacoes"]);
-  const data = await listRenewals();
+  const data = await listRenewals(user);
+  const actionCaps = { negotiate: caps.negotiate, renew: caps.renew, lose: caps.loseRenewal, registerChurn: caps.churn && links.churn };
+  const hasActions = actionCaps.negotiate || actionCaps.renew || actionCaps.lose;
   const { totals } = data;
 
   return (
@@ -42,7 +59,7 @@ export default async function RenewalsPage() {
       <PageHeader
         title="Renovações"
         description="Contratos liberados vencendo nos próximos meses. A renovação é criada automaticamente 90 dias antes do vencimento."
-        breadcrumbs={[{ label: "Customer Success", href: "/cs" }, { label: "Renovações" }]}
+        breadcrumbs={[{ label: "Customer Success", href: links.portfolio ? "/cs" : undefined }, { label: "Renovações" }]}
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -50,7 +67,7 @@ export default async function RenewalsPage() {
         <StatCard label="Vencendo em 60 dias" value={formatNumber(totals.in60)} icon={<CalendarClock />} tone={totals.in60 > 0 ? "warning" : "neutral"} compact />
         <StatCard label="Em negociação" value={formatNumber(totals.negotiating)} icon={<Handshake />} tone="info" compact />
         <StatCard label="MRR renovado (90 dias)" value={formatCurrency(totals.renewedMrr90)} icon={<CircleDollarSign />} tone="success" compact />
-        <StatCard label="MRR perdido (90 dias)" value={formatCurrency(totals.lostMrr90)} icon={<TrendingDown />} tone={totals.lostMrr90 > 0 ? "danger" : "success"} href="/cs/churn" compact />
+        <StatCard label="MRR perdido (90 dias)" value={formatCurrency(totals.lostMrr90)} icon={<TrendingDown />} tone={totals.lostMrr90 > 0 ? "danger" : "success"} href={links.churn ? "/cs/churn" : undefined} compact />
       </div>
 
       <section className="mb-8">
@@ -74,21 +91,23 @@ export default async function RenewalsPage() {
                     <TableHead>Responsável</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Negociação</TableHead>
-                    <TableHead className="text-right">Ações</TableHead>
+                    {hasActions ? <TableHead className="text-right">Ações</TableHead> : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {data.open.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="font-medium">
-                        <Link href={`/clientes/${r.clientId}?aba=cs`} className="hover:text-brand hover:underline">
-                          {r.tradeName}
-                        </Link>
+                        <ClientLink clientId={r.clientId} tradeName={r.tradeName} show={links.client} className="hover:text-brand hover:underline" />
                       </TableCell>
                       <TableCell>
-                        <Link href={`/financeiro/contratos?contrato=${r.contractId}`} className="text-sm text-muted hover:underline">
-                          {r.contractNumber}
-                        </Link>
+                        {links.contracts ? (
+                          <Link href={`/financeiro/contratos?contrato=${r.contractId}`} className="text-sm text-muted hover:underline">
+                            {r.contractNumber}
+                          </Link>
+                        ) : (
+                          <span className="text-sm text-muted">{r.contractNumber}</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{formatCurrency(r.mrr)}</TableCell>
                       <TableCell className="whitespace-nowrap">{formatDate(r.dueDate)}</TableCell>
@@ -105,9 +124,11 @@ export default async function RenewalsPage() {
                         <StatusBadge status={r.status} />
                       </TableCell>
                       <TableCell className="max-w-[240px] text-sm text-muted">{r.notes ?? (r.windowOpen ? "Janela de negociação aberta" : "Janela ainda não aberta")}</TableCell>
-                      <TableCell>
-                        <RenewalActions renewalId={r.id} status={r.status} tradeName={r.tradeName} contractNumber={r.contractNumber} dueDate={r.dueDate} mrr={r.mrr} />
-                      </TableCell>
+                      {hasActions ? (
+                        <TableCell>
+                          <RenewalActions renewalId={r.id} status={r.status} tradeName={r.tradeName} contractNumber={r.contractNumber} dueDate={r.dueDate} mrr={r.mrr} capabilities={actionCaps} />
+                        </TableCell>
+                      ) : null}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -118,9 +139,7 @@ export default async function RenewalsPage() {
                 <li key={r.id}>
                   <Card className="flex flex-col gap-2 p-4">
                     <div className="flex items-start justify-between gap-2">
-                      <Link href={`/clientes/${r.clientId}?aba=cs`} className="font-medium hover:underline">
-                        {r.tradeName}
-                      </Link>
+                      <ClientLink clientId={r.clientId} tradeName={r.tradeName} show={links.client} className="font-medium hover:underline" />
                       <StatusBadge status={r.status} />
                     </div>
                     <p className="text-sm text-muted">
@@ -131,7 +150,7 @@ export default async function RenewalsPage() {
                       <HealthIndicator score={r.healthScore} level={r.healthLevel} showLabel />
                     </div>
                     {r.notes ? <p className="text-sm">{r.notes}</p> : null}
-                    <RenewalActions renewalId={r.id} status={r.status} tradeName={r.tradeName} contractNumber={r.contractNumber} dueDate={r.dueDate} mrr={r.mrr} />
+                    {hasActions ? <RenewalActions renewalId={r.id} status={r.status} tradeName={r.tradeName} contractNumber={r.contractNumber} dueDate={r.dueDate} mrr={r.mrr} capabilities={actionCaps} /> : null}
                   </Card>
                 </li>
               ))}
@@ -151,16 +170,14 @@ export default async function RenewalsPage() {
                 {data.unscheduled.map((c) => (
                   <li key={c.contractId} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
-                      <Link href={`/clientes/${c.clientId}?aba=cs`} className="text-sm font-medium hover:underline">
-                        {c.tradeName}
-                      </Link>
+                      <ClientLink clientId={c.clientId} tradeName={c.tradeName} show={links.client} className="text-sm font-medium hover:underline" />
                       <p className="text-xs text-muted">
                         {c.contractNumber} · {formatCurrency(c.mrr)}/mês · vence {formatDate(c.endDate)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <DaysLeftBadge days={c.daysLeft} />
-                      <CreateRenewalButton contractId={c.contractId} />
+                      {caps.createRenewal ? <CreateRenewalButton contractId={c.contractId} /> : null}
                     </div>
                   </li>
                 ))}
@@ -178,9 +195,7 @@ export default async function RenewalsPage() {
                 {data.closed.map((r) => (
                   <li key={r.id} className="px-4 py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <Link href={`/clientes/${r.clientId}?aba=cs`} className="text-sm font-medium hover:underline">
-                        {r.tradeName}
-                      </Link>
+                      <ClientLink clientId={r.clientId} tradeName={r.tradeName} show={links.client} className="text-sm font-medium hover:underline" />
                       <StatusBadge status={r.status} />
                     </div>
                     <p className="text-xs text-muted">

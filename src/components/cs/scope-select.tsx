@@ -3,8 +3,11 @@
 import { Select } from "@/components/ui/select";
 import { useCsUrl } from "./use-cs";
 
-/** Escopo da carteira: um responsável de CS ou a equipe inteira (?responsavel=todos|<id>). */
-export function ScopeSelect({ owners, value, className }: { owners: { id: string; name: string }[]; value: string; className?: string }) {
+/**
+ * Escopo da carteira: um responsável de CS ou a equipe inteira (?responsavel=todos|<id>). Com o escopo do usuário
+ * restrito (`restricted`), "todos" significa toda a carteira que ele pode ver e só os responsáveis dela aparecem.
+ */
+export function ScopeSelect({ owners, value, className, restricted }: { owners: { id: string; name: string }[]; value: string; className?: string; restricted?: boolean }) {
   const { navigate } = useCsUrl();
   return (
     <Select
@@ -13,7 +16,7 @@ export function ScopeSelect({ owners, value, className }: { owners: { id: string
       className={className ?? "w-full sm:w-56"}
       value={value}
       onChange={(e) => navigate({ responsavel: e.target.value })}
-      options={[{ value: "todos", label: "Toda a equipe" }, ...owners.map((o) => ({ value: o.id, label: `Carteira de ${o.name}` }))]}
+      options={[{ value: "todos", label: restricted ? "Toda a sua carteira" : "Toda a equipe" }, ...owners.map((o) => ({ value: o.id, label: `Carteira de ${o.name}` }))]}
     />
   );
 }
