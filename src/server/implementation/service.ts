@@ -13,6 +13,8 @@ import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import { batchSet, col, create, getById, getManyByIds, list, newId, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { can } from "@/server/auth/permissions";
+import type { EffectivePermissions } from "@/domain/permissions";
 import { registerHandler } from "@/server/events/emit";
 import { registerImplementationHandlers } from "@/server/events/handlers/implementation";
 import { notify } from "@/server/notifications";
@@ -174,9 +176,17 @@ export async function saveGoLiveSettings(value: GoLiveSettings, actor: UserRef):
   else await create<Settings>(COLLECTIONS.settings, { key: GO_LIVE_SETTING_KEY, value: { ...value }, description: "Regras de aprovação do go-live da implantação.", createdBy: actor.id }, `setting_${GO_LIVE_SETTING_KEY}`);
 }
 
-/** Pode aprovar o go-live: gestor/admin/diretoria; o responsável do projeto só quando a configuração permitir. */
-export function canApproveGoLive(project: Pick<ImplementationProject, "ownerId">, actor: Pick<ImplementationActor, "id" | "isManager">, settings: GoLiveSettings): boolean {
-  if (actor.isManager) return true;
+/**
+ * Pode aprovar o go-live (A22, helper único): quem tem `implantacao.go-live.aprovar-qualquer` (padrão: gestores);
+ * o responsável do projeto só quando a configuração permitir. Sem papel no ator, vale isManager (regra padrão).
+ */
+export function canApproveGoLive(
+  project: Pick<ImplementationProject, "ownerId">,
+  actor: Pick<ImplementationActor, "id" | "isManager"> & { role?: RoleKey; departmentId?: string; permissions?: EffectivePermissions },
+  settings: GoLiveSettings,
+): boolean {
+  const anyProject = actor.role ? can({ role: actor.role, departmentId: actor.departmentId, permissions: actor.permissions }, "implantacao.go-live.aprovar-qualquer") : actor.isManager;
+  if (anyProject) return true;
   return !settings.exigeAprovacaoGestor && project.ownerId === actor.id;
 }
 

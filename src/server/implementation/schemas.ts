@@ -3,6 +3,8 @@
  * usadas pelo serviço no servidor e pelos componentes (progresso, fases, gate de go-live).
  */
 import { z } from "zod";
+import type { EffectivePermissions } from "@/domain/permissions";
+import { can, type PermissionHolder } from "@/server/auth/permissions";
 import {
   IMPLEMENTATION_PHASES,
   type ImplementationPhase,
@@ -43,9 +45,12 @@ export function isActiveProject(status: ImplementationStatus): boolean {
   return ACTIVE_PROJECT_STATUSES.includes(status);
 }
 
-/** Quem opera a implantação (Suporte e CS apenas consultam). */
-export function canOperateImplementation(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string }): boolean {
-  return user.isAdmin || user.isManager || user.role === "implantacao" || user.departmentId === "implantacao";
+/**
+ * Quem opera a implantação (Suporte e CS apenas consultam): equipe de implantação e gestores, com o módulo.
+ * Fachada do catálogo (`implantacao.projetos.atribuir`; as operações de implantação têm a mesma regra padrão).
+ */
+export function canOperateImplementation(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string; permissions?: EffectivePermissions }): boolean {
+  return can(user as PermissionHolder, "implantacao.projetos.atribuir");
 }
 
 // ---------------------------------------------------------------------------

@@ -7,8 +7,7 @@ import { getById, getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { dateLabel, listAssignableUsers as listAssignableTaskUsers, listTasksByProcess, todayKey } from "@/server/tasks/queries";
 import { COLLECTIONS, type Client, type Comment, type CurrentUser, type DomainEvent, type SlaInstance, type TimelineEvent, type User, type WorkflowInstance, type WorkflowStage, type WorkflowStep, type WorkflowTemplate } from "@/domain/types";
-import type { RoleKey } from "@/domain/constants";
-import { OPEN_STEP_STATUSES, evaluateStepGate, findStage, getPublishedTemplate, getTemplateForInstance, nextStageOf, resolveApprovers, sortedStages } from "./service";
+import { OPEN_STEP_STATUSES, canApproveStage, canCompleteWithException, evaluateStepGate, findStage, getPublishedTemplate, getTemplateForInstance, nextStageOf, resolveApprovers, sortedStages } from "./service";
 import {
   boardColumnsFrom,
   sortStepCards,
@@ -132,10 +131,6 @@ function toEventView(e: Pick<DomainEvent, "id" | "type" | "title" | "description
   return { id: e.id, type: e.type, title: e.title, description: e.description, actorName: e.actorName, occurredAt: e.occurredAt, occurredAtLabel: dateLabel(e.occurredAt, today) };
 }
 
-function isManager(role: RoleKey): boolean {
-  return role === "admin" || role === "diretoria" || role === "gestor";
-}
-
 export async function getStepDetail(stepId: string, user: CurrentUser): Promise<StepDetail | null> {
   const step = await getById<WorkflowStep>(COLLECTIONS.workflowSteps, stepId);
   if (!step) return null;
@@ -159,7 +154,7 @@ export async function getStepDetail(stepId: string, user: CurrentUser): Promise<
   ]);
 
   const next = nextStageOf(template, stage.key);
-  const canApprove = isManager(user.role) || (Boolean(stage.gate.approverRole) && user.role === stage.gate.approverRole);
+  const canApprove = canApproveStage(stage, user.role, user.permissions);
 
   return {
     step: { ...step, checklist: step.checklist ?? [], fields: step.fields ?? {}, taskIds: step.taskIds ?? [] },
@@ -177,7 +172,7 @@ export async function getStepDetail(stepId: string, user: CurrentUser): Promise<
     completedAtLabel: step.completedAt ? dateLabel(step.completedAt, today) : undefined,
     dueAtLabel: step.dueAt ? dateLabel(step.dueAt, today) : undefined,
     canApprove,
-    canException: isManager(user.role),
+    canException: canCompleteWithException(user.role, user.permissions),
     approverNames: approvers.map((u) => u.name),
   };
 }

@@ -119,9 +119,10 @@ export async function enrichTasks(tasks: Task[]): Promise<TaskListItem[]> {
 
 /**
  * "mine": tarefas do usuário. "team": gestor/diretoria/admin veem toda a organização; os demais veem
- * o próprio departamento mais as suas tarefas (caso estejam alocadas fora dele).
+ * o próprio departamento mais as suas tarefas (caso estejam alocadas fora dele). Exportada para a equivalência com
+ * resolveDataScope (tests/permissions).
  */
-async function loadScope(user: CurrentUser, scope: "mine" | "team"): Promise<Task[]> {
+export async function loadScope(user: CurrentUser, scope: "mine" | "team"): Promise<Task[]> {
   if (scope === "mine") return list<Task>(COLLECTIONS.tasks, { where: [["assigneeId", "==", user.id]] });
   if (user.isManager) return list<Task>(COLLECTIONS.tasks);
   const [dept, own] = await Promise.all([

@@ -9,6 +9,7 @@ import "server-only";
  * (carga única e cache por período) para os volumes que não são indicadores.
  */
 import { getById, list } from "@/server/db";
+import { can } from "@/server/auth/permissions";
 import { computeSlaState } from "@/server/sla";
 import { dateLabel, dayKey, todayKey } from "@/server/tasks/queries";
 import { evaluateInsights, evaluateInsightsForDepartments, type Insight } from "@/server/insights/engine";
@@ -159,8 +160,12 @@ export async function resolveManagerScope(user: CurrentUser, requested?: string)
   return scopeFrom(user, requested, users, departments);
 }
 
-/** O gestor pode ver o colaborador? Diretoria/admin: qualquer usuário ativo; gestor: a própria equipe. */
+/**
+ * O gestor pode ver o colaborador? Exige `gestao.dashboard.colaborador.ver` (padrão: gestores); diretoria/admin:
+ * qualquer usuário ativo; gestor: a própria equipe.
+ */
 export function canManageMember(user: CurrentUser, memberId: string, users: User[]): boolean {
+  if (!can(user, "gestao.dashboard.colaborador.ver")) return false;
   if (user.isDirector) return users.some((u) => u.id === memberId);
   if (!user.isManager) return false;
   return teamOf(user.id, users).some((u) => u.id === memberId);

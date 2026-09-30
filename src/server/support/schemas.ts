@@ -4,6 +4,8 @@
  */
 import { z } from "zod";
 import type { SupportTicket, TicketInteraction } from "@/domain/types";
+import type { EffectivePermissions } from "@/domain/permissions";
+import { can, type PermissionHolder } from "@/server/auth/permissions";
 
 // ---------------------------------------------------------------------------
 // Enums e rótulos
@@ -79,12 +81,14 @@ export const INTERACTION_KIND_LABELS: Record<TicketInteraction["kind"], string> 
 /** Categorias sugeridas no formulário (texto livre também é aceito). */
 export const TICKET_CATEGORY_SUGGESTIONS = ["PDV", "Fiscal", "Financeiro", "Estoque", "TEF", "Hardware", "Desempenho", "Omnichannel", "Telefonia", "Ponto", "Cadastro", "Dúvida", "Outro"];
 
-export function canOperateSupport(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string }): boolean {
-  return user.isAdmin || user.isManager || user.role === "suporte" || user.departmentId === "suporte" || user.role === "implantacao";
+/** Operar chamados (fachada do catálogo: `suporte.chamados.assumir`; as operações de chamado têm a mesma regra). */
+export function canOperateSupport(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string; permissions?: EffectivePermissions }): boolean {
+  return can(user as PermissionHolder, "suporte.chamados.assumir");
 }
 
-export function canEditArticles(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string }): boolean {
-  return user.isAdmin || user.isManager || user.role === "suporte" || user.departmentId === "suporte";
+/** Criar/editar artigos da base de conhecimento (fachada do catálogo: `suporte.base-de-conhecimento.editar`). */
+export function canEditArticles(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string; permissions?: EffectivePermissions }): boolean {
+  return can(user as PermissionHolder, "suporte.base-de-conhecimento.editar");
 }
 
 // ---------------------------------------------------------------------------

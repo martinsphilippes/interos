@@ -142,7 +142,7 @@ export default async function ProjectPage({ params }: { params: Params }) {
                 validation={project.validation}
                 acceptance={project.acceptance}
                 editable={canOperate}
-                canApprove={canApproveGoLive(project, { id: user.id, isManager: user.isManager }, detail.settings)}
+                canApprove={canApproveGoLive(project, user, detail.settings)}
                 requiresManager={detail.settings.exigeAprovacaoGestor}
                 currentUserName={user.name}
                 defaultContactName={detail.primaryContactName}

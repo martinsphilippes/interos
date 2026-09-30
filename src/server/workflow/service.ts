@@ -10,6 +10,8 @@ import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import { col, create, getById, getManyByIds, list, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { can } from "@/server/auth/permissions";
+import type { EffectivePermissions } from "@/domain/permissions";
 import { registerHandler } from "@/server/events/emit";
 import { registerWorkflowHandlers } from "@/server/events/handlers/workflow";
 import { notify } from "@/server/notifications";
@@ -62,11 +64,6 @@ export const JOURNEY_TEMPLATE_KEY = "jornada-cliente";
 /** Ator das operações: referência do usuário com papel opcional (resolvido no banco quando ausente). */
 export type WorkflowActor = UserRef & { role?: RoleKey };
 
-const MANAGER_ROLES: readonly RoleKey[] = ["admin", "diretoria", "gestor"];
-
-function isManagerRole(role: RoleKey | undefined): boolean {
-  return role !== undefined && MANAGER_ROLES.includes(role);
-}
 
 async function resolveActorRole(actor: WorkflowActor): Promise<RoleKey | undefined> {
   if (actor.role) return actor.role;
@@ -158,9 +155,18 @@ export async function resolveApprovers(stage: WorkflowStage): Promise<User[]> {
   return Array.from(approvers.values());
 }
 
-function canApproveStage(stage: WorkflowStage, role: RoleKey | undefined): boolean {
-  if (isManagerRole(role)) return true;
+/**
+ * Pode aprovar/rejeitar o gate (A22, helper único): quem tem `operacao.workflow.aprovar-qualquer` (padrão: gestores)
+ * ou o papel aprovador da etapa. O ator do workflow só traz o papel: vale a matriz padrão desse papel.
+ */
+export function canApproveStage(stage: Pick<WorkflowStage, "gate">, role: RoleKey | undefined, permissions?: EffectivePermissions): boolean {
+  if (role && can({ role, permissions }, "operacao.workflow.aprovar-qualquer")) return true;
   return Boolean(stage.gate.approverRole && role === stage.gate.approverRole);
+}
+
+/** Pode concluir a etapa com pendências (exceção ao gate): `operacao.workflow.concluir-com-excecao`. */
+export function canCompleteWithException(role: RoleKey | undefined, permissions?: EffectivePermissions): boolean {
+  return Boolean(role) && can({ role: role!, permissions }, "operacao.workflow.concluir-com-excecao");
 }
 
 // ---------------------------------------------------------------------------
@@ -561,7 +567,7 @@ export async function completeGate(input: CompleteGateInput): Promise<CompleteGa
   const evaluation = evaluateGate(current, stage, context.data, { documentsCount: context.documentsCount });
   const exception = input.exceptionReason?.trim();
   if (!evaluation.ok) {
-    const allowed = Boolean(exception) && (input.system || isManagerRole(role));
+    const allowed = Boolean(exception) && (input.system || canCompleteWithException(role));
     if (!allowed) {
       const message = exception ? "Só gestores ou administradores podem concluir uma etapa com pendências." : `Gate "${stage.gate.name}" não atendido — ${describeMissing(evaluation)}`;
       return { status: "blocked", step: current, evaluation, message };

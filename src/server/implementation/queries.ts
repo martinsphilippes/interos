@@ -32,7 +32,7 @@ import {
   type WorkflowStep,
 } from "@/domain/types";
 import type { RoleKey } from "@/domain/constants";
-import { buildSaleSnapshot, getGoLiveSettings } from "./service";
+import { buildSaleSnapshot, canApproveGoLive, getGoLiveSettings } from "./service";
 import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import {
   ACTIVE_PROJECT_STATUSES,
@@ -439,7 +439,7 @@ export async function listGoLiveCandidates(user: CurrentUser, requestedScope?: P
       tasks.filter((t) => t.projectId === row.id),
       projectTrainings,
     );
-    const canApprove = user.isManager || (!settings.exigeAprovacaoGestor && project.ownerId === user.id);
+    const canApprove = canApproveGoLive(project, user, settings);
     return { row, gate, trainingsDone: projectTrainings.filter((t) => t.status === "realizado").length, canApprove };
   });
   const byMissing = (a: GoLiveCandidate, b: GoLiveCandidate) => a.gate.missing.length - b.gate.missing.length || a.row.dueDate.localeCompare(b.row.dueDate);

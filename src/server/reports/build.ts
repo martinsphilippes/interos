@@ -19,6 +19,8 @@ import { ORIGIN_LABELS } from "@/components/tasks/task-model";
 import { REPORT_DEFINITIONS, type ReportDefinition, type ReportFilters, type ReportKey, type ReportValue } from "./definitions";
 import { COMMISSION_STATUS_LABELS, PAYABLE_ORIGIN_LABELS, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { canViewAllCommissions } from "@/server/commissions/permissions";
+import { can } from "@/server/auth/permissions";
+import type { PermissionKey } from "@/domain/permissions";
 import { resolveCommissionScope } from "@/server/commissions/queries";
 
 export type { ReportValue } from "./definitions";
@@ -62,7 +64,12 @@ const OPERATIONAL_OWNER: Partial<Record<ReportKey, DepartmentKey>> = { oportunid
 // Acesso
 // ---------------------------------------------------------------------------
 
-type ReportUser = Pick<CurrentUser, "isManager" | "departmentId"> & Partial<Pick<CurrentUser, "id" | "role" | "isAdmin" | "isDirector">>;
+type ReportUser = Pick<CurrentUser, "isManager" | "departmentId"> & Partial<Pick<CurrentUser, "id" | "role" | "isAdmin" | "isDirector" | "permissions">>;
+
+/** Seção do catálogo (Gestão › Relatórios) de cada relatório. */
+export function reportPermissionKey(key: ReportKey): PermissionKey {
+  return `gestao.relatorios.${key.replace(/_/g, "-")}.ver` as PermissionKey;
+}
 
 /**
  * Gestores, diretoria e admin acessam tudo; os demais, os relatórios do próprio departamento (e Tarefas). Comissões
@@ -70,6 +77,8 @@ type ReportUser = Pick<CurrentUser, "isManager" | "departmentId"> & Partial<Pick
  * buildReport (D15): financeiro/admin/diretoria veem todos; gestor, só a equipe; vendedor, só as próprias.
  */
 export function canAccessReport(user: ReportUser, key: ReportKey): boolean {
+  // Fachada do catálogo: gestao.relatorios.<tipo>.ver (mesma regra padrão). Sem papel informado, a regra antiga.
+  if (user.role) return can({ role: user.role, departmentId: user.departmentId, permissions: user.permissions }, reportPermissionKey(key));
   if (user.isManager) return true;
   const def = REPORT_DEFINITIONS[key];
   if (key === "tarefas") return true;

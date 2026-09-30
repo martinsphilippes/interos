@@ -240,9 +240,9 @@ interface ScopeInfo {
 
 /**
  * Gestores veem quem tem managerId = eles; admin/diretoria veem toda a organização.
- * O próprio usuário sempre faz parte da equipe.
+ * O próprio usuário sempre faz parte da equipe. Exportada para a equivalência com resolveDataScope (tests/permissions).
  */
-async function resolveScope(user: CurrentUser, requested: MeuDiaScope): Promise<ScopeInfo> {
+export async function resolveScope(user: CurrentUser, requested: MeuDiaScope): Promise<ScopeInfo> {
   const allUsers = (await list<User>(COLLECTIONS.users, { where: [["active", "==", true]] })).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   const canToggle = user.isManager;
   if (requested !== "equipe" || !canToggle) return { members: [user], allUsers, canToggle, scope: "eu" };

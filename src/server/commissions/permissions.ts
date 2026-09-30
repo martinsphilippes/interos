@@ -9,10 +9,19 @@
  * - Contas a Pagar (ver): equipe financeira, admin, diretoria e gestores (gestor fora do Financeiro vê só os títulos
  *   da equipe, somente leitura). Vendedor: sem acesso (redirecionado com aviso).
  * - Regras (ver): equipe financeira e gestores; vendedor: sem acesso.
+ *
+ * Fachadas do catálogo de acessos: os predicados de AÇÃO delegam para `can` (chaves financeiro.comissoes.* e
+ * financeiro.contas-a-pagar.*). isFinanceTeam/isFinanceManager (pertencimento) e o escopo (commissionScopeFor)
+ * continuam aqui até a migração do módulo para resolveDataScope.
  */
 import type { CurrentUser } from "@/domain/types";
+import { can } from "@/server/auth/permissions";
 
-export type PermissionUser = Pick<CurrentUser, "id" | "role" | "departmentId" | "isAdmin" | "isManager" | "isDirector">;
+/**
+ * Usuário avaliado. Com `permissions` (CurrentUser) valem perfil, exceções e módulos ativos; sem, a matriz padrão do
+ * papel/departamento — o mesmo resultado de antes do catálogo.
+ */
+export type PermissionUser = Pick<CurrentUser, "id" | "role" | "departmentId" | "isAdmin" | "isManager" | "isDirector"> & Partial<Pick<CurrentUser, "permissions">>;
 
 /** Equipe financeira, diretoria e admin. */
 export function isFinanceTeam(user: PermissionUser): boolean {
@@ -29,32 +38,35 @@ export function canViewAllCommissions(user: PermissionUser): boolean {
 }
 
 export function canManageCommissionRules(user: PermissionUser): boolean {
-  return isFinanceManager(user);
+  return can(user, "financeiro.comissoes.regras.editar");
 }
 
+/** Ver as regras (inclui o acesso ao módulo Financeiro, como a página exige). */
 export function canViewCommissionRules(user: PermissionUser): boolean {
-  return isFinanceTeam(user) || user.isManager;
+  return can(user, "financeiro.comissoes.regras.ver");
 }
 
 export function canApprovePayables(user: PermissionUser): boolean {
-  return isFinanceManager(user);
+  return can(user, "financeiro.contas-a-pagar.aprovar");
 }
 
 export function canPayPayables(user: PermissionUser): boolean {
-  return isFinanceManager(user);
+  return can(user, "financeiro.contas-a-pagar.pagar");
 }
 
+/** Operar títulos (lançar, alterar, programar, cancelar, anexar, fornecedores). Exige o módulo Financeiro (A14). */
 export function canOperatePayables(user: PermissionUser): boolean {
-  return isFinanceTeam(user);
+  return can(user, "financeiro.contas-a-pagar.editar");
 }
 
+/** Ver Contas a Pagar (inclui o acesso ao módulo Financeiro, como a página exige). */
 export function canViewPayables(user: PermissionUser): boolean {
-  return isFinanceTeam(user) || user.isManager;
+  return can(user, "financeiro.contas-a-pagar.ver");
 }
 
 /** Estornar, cancelar manualmente, bloquear/desbloquear ou regerar o título de uma comissão. */
 export function canReverseCommission(user: PermissionUser): boolean {
-  return isFinanceManager(user);
+  return can(user, "financeiro.comissoes.estornar");
 }
 
 export type CommissionScope = { kind: "all" } | { kind: "team"; userIds: string[] } | { kind: "own"; userIds: string[] };
