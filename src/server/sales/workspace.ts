@@ -220,12 +220,16 @@ export async function transferOpportunity(input: { opportunityId: string; ownerI
     eventId: event.id,
   });
   if (previous && previous.id !== actor.id) {
+    // O dono anterior só recebe o link direto se ainda enxerga a oportunidade (originou ou escopo "empresa"); senão
+    // vai para a lista, em vez de um link que cairia no aviso de acesso negado.
+    const previousScope = (await resolvePermissionsForUser(previous))?.scopes["vendas.oportunidades"];
+    const previousSees = opp.originUserId === previous.id || previousScope === "empresa" || previousScope === "unidades";
     await notify({
       userIds: [previous.id],
       kind: "informativa",
       title: `Oportunidade transferida para ${newOwner.name}: ${clientName}`,
       body: `${opp.title} · por ${actor.name}`,
-      href: `/vendas/oportunidades?oportunidade=${opp.id}`,
+      href: previousSees ? `/vendas/oportunidades?oportunidade=${opp.id}` : "/vendas/oportunidades",
       entity: { type: "opportunity", id: opp.id },
       eventId: event.id,
     });
