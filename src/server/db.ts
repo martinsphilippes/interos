@@ -1,4 +1,4 @@
-import type { DocumentData, Query, WhereFilterOp } from "firebase-admin/firestore";
+import type { DocumentData, DocumentReference, DocumentSnapshot, Query, Transaction, WhereFilterOp } from "firebase-admin/firestore";
 import { firestore } from "./firebase-admin";
 import { COLLECTIONS, type BaseEntity, type CollectionName } from "@/domain/types";
 import { ORGANIZATION_ID } from "@/domain/constants";
@@ -54,6 +54,16 @@ export async function getById<T extends BaseEntity>(name: CollectionName, id: st
   const entity = toEntity<T>(snap.id, snap.data());
   if (!entity || !belongsToOrg(entity)) return null;
   return entity;
+}
+
+/**
+ * Leitura dentro de transação com o mesmo isolamento de getById: documento inexistente, sem `organizationId` ou de
+ * outra organização volta como null (o chamador trata como "não encontrado").
+ */
+export async function txGetOwn(tx: Transaction, ref: DocumentReference): Promise<DocumentSnapshot | null> {
+  const snap = await tx.get(ref);
+  if (!snap.exists || snap.get("organizationId") !== ORG_ID) return null;
+  return snap;
 }
 
 export async function getManyByIds<T extends BaseEntity>(name: CollectionName, ids: string[]): Promise<Map<string, T>> {

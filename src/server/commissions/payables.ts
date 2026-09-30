@@ -9,7 +9,7 @@ import "server-only";
  * Toda operação grava o histórico no próprio título e emite evento com auditChanges (from → to) e motivo (D16).
  */
 import { firestore } from "@/server/firebase-admin";
-import { col, create, createIfAbsent, getById, getManyByIds, newId, nowIso, stripUndefined, update } from "@/server/db";
+import { col, create, createIfAbsent, getById, getManyByIds, newId, txGetOwn, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { getSetting } from "@/server/admin/queries";
 import { SETTING_DEFAULTS, type ComissoesPagamentoConfig, type ContasAPagarConfig } from "@/server/admin/schemas";
@@ -115,8 +115,9 @@ async function loadPayable(id: string): Promise<Payable> {
 async function transitionPayable(id: string, allowed: readonly PayableStatus[], patch: Partial<Payable>, entry: PayableHistoryEntry): Promise<{ before: Payable; after: Payable }> {
   const ref = col(COLLECTIONS.payables).doc(id);
   return firestore.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw new Error("Título não encontrado");
+    // Título de outra organização = inexistente (mesmo isolamento de getById).
+    const snap = await txGetOwn(tx, ref);
+    if (!snap) throw new Error("Título não encontrado");
     const before = { ...(snap.data() as Omit<Payable, "id">), id } as Payable;
     if (!allowed.includes(before.status)) throw new Error(`Título ${PAYABLE_STATUS_LABELS[before.status].toLowerCase()} não permite esta ação`);
     const data = cleanPatch({ ...patch, updatedAt: nowIso(), history: [...(before.history ?? []), entry] });
@@ -169,8 +170,9 @@ export async function payPayable(id: string, input: PayPayableInput, actor: User
   const at = options.at ?? nowIso();
   const ref = col(COLLECTIONS.payables).doc(id);
   const result = await firestore.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw new Error("Título não encontrado");
+    // Título de outra organização = inexistente (mesmo isolamento de getById).
+    const snap = await txGetOwn(tx, ref);
+    if (!snap) throw new Error("Título não encontrado");
     const before = { ...(snap.data() as Omit<Payable, "id">), id } as Payable;
     if (before.status !== "aprovado" && before.status !== "a_pagar") throw new Error(before.status === "pago" ? "Este título já está pago" : "Aprove o título antes de pagar");
     const commissionRefs = (before.sourceIds.commissionIds ?? []).map((cid) => col(COLLECTIONS.commissions).doc(cid));
@@ -216,8 +218,9 @@ export async function cancelPayable(id: string, reason: string, actor: UserRef, 
   if (trimmed.length < 5) throw new Error("Descreva o motivo do cancelamento");
   const ref = col(COLLECTIONS.payables).doc(id);
   const result = await firestore.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw new Error("Título não encontrado");
+    // Título de outra organização = inexistente (mesmo isolamento de getById).
+    const snap = await txGetOwn(tx, ref);
+    if (!snap) throw new Error("Título não encontrado");
     const before = { ...(snap.data() as Omit<Payable, "id">), id } as Payable;
     if (before.status === "pago") throw new Error("Título pago não pode ser cancelado: estorne a comissão");
     if (before.status === "cancelado") throw new Error("Este título já está cancelado");

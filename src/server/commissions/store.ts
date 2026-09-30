@@ -7,7 +7,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { firestore } from "@/server/firebase-admin";
-import { col, nextNumber, nowIso, stripUndefined, update } from "@/server/db";
+import { col, nextNumber, nowIso, stripUndefined, txGetOwn, update } from "@/server/db";
 import { dateKey } from "@/lib/format";
 import { COLLECTIONS, type Commission, type CommissionHistoryEntry, type CommissionStatus, type Payable, type UserRef } from "@/domain/types";
 
@@ -51,8 +51,9 @@ export async function transitionCommission(
 ): Promise<{ before: Commission; after: Commission } | null> {
   const ref = col(COLLECTIONS.commissions).doc(id);
   return firestore.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) return null;
+    // Comissão de outra organização = inexistente (mesmo isolamento de getById).
+    const snap = await txGetOwn(tx, ref);
+    if (!snap) return null;
     const before = { ...(snap.data() as Omit<Commission, "id">), id } as Commission;
     if (!allowed.includes(before.status)) return null;
     const resolved = typeof patch === "function" ? patch(before) : patch;
