@@ -5,8 +5,10 @@
 import "./quiet";
 import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile } from "../../src/domain/types";
 import { ROLE_KEYS } from "../../src/domain/constants";
-import { MODULE_KEYS, SCREEN_BY_KEY, isPermissionKey, type ScopeKind } from "../../src/domain/permissions";
-import { col, counterId, list } from "../../src/server/db";
+import { MODULE_KEYS, PROTECTED_KEYS, SCREEN_BY_KEY, isPermissionKey, type ScopeKind } from "../../src/domain/permissions";
+import { sanitizeAdjustments, type PermissionAdjustments } from "../../src/server/auth/permissions";
+import { ADMIN_CORE_KEYS, hasAccessAdministrator, type AccessState } from "../../src/server/auth/invariants";
+import { col, counterId, list, ORG_ID } from "../../src/server/db";
 import { commissionIdFor } from "../../src/server/commissions/store";
 
 const ENTITY_COLLECTION: Record<SlaInstance["entityType"], CollectionName> = {
@@ -227,6 +229,31 @@ async function main(): Promise<void> {
     for (const m of org.activeModules) if (!(MODULE_KEYS as readonly string[]).includes(m)) problems.push(`(t) organização ${org.id}: módulo desconhecido ${m}`);
     for (const m of ["inicio", "admin"] as const) if (!org.activeModules.includes(m)) problems.push(`(t) organização ${org.id}: módulo ${m} precisa estar ativo`);
   }
+  // (u) I1: existe ao menos um usuário ativo com admin.acessos.gerir + admin.usuarios.editar efetivas (perfis, exceções e
+  // módulos gravados aplicados); I3: o perfil admin não nega chave protegida; inactiveModules coerente com activeModules.
+  const roleProfiles: Record<string, PermissionAdjustments> = {};
+  const userOverrides: Record<string, PermissionAdjustments> = {};
+  for (const prof of profiles) {
+    if (prof.kind === "role" && prof.role) roleProfiles[prof.role] = sanitizeAdjustments(prof);
+    if (prof.kind === "user" && prof.userId) userOverrides[prof.userId] = sanitizeAdjustments(prof);
+  }
+  const org = orgs.find((o) => o.id === ORG_ID) ?? orgs[0];
+  const accessState: AccessState = {
+    users: users.map((u) => ({ id: u.id, name: u.name, role: u.role, departmentId: u.departmentId, active: u.active, managerId: u.managerId })),
+    departments: [],
+    roleProfiles,
+    userOverrides,
+    activeModules: org?.activeModules,
+  };
+  if (!hasAccessAdministrator(accessState)) problems.push(`(u) nenhum usuário ativo com ${ADMIN_CORE_KEYS.join(" + ")} efetivas (I1)`);
+  for (const key of PROTECTED_KEYS) if (roleProfiles.admin?.grants?.[key] === false) problems.push(`(u) perfil admin nega a chave protegida ${key} (I3)`);
+  for (const key of ["inicio.acessar", "inicio.meu-dia.ver"]) {
+    for (const [id, adj] of [...Object.entries(roleProfiles), ...Object.entries(userOverrides)]) if (adj.grants?.[key] === false) problems.push(`(u) ${id} nega ${key} (I4)`);
+  }
+  const inactiveField = (org as (Organization & { inactiveModules?: string[] }) | undefined)?.inactiveModules;
+  if (inactiveField && org?.activeModules && inactiveField.some((m) => org.activeModules!.includes(m as never))) problems.push(`(u) organização: inactiveModules e activeModules divergentes`);
+  if (inactiveField && !org?.activeModules) problems.push(`(u) organização: inactiveModules sem activeModules (o núcleo lê activeModules)`);
+
   console.log(`Perfis de acesso: ${profiles.length} (${profiles.filter((p) => Object.keys(p.grants ?? {}).length || Object.keys(p.scopes ?? {}).length).length} com ajustes); módulos ativos: ${orgs.map((o) => (o.activeModules ? o.activeModules.length : "todos")).join(", ")}`);
 
   const activeSlas = slas.filter((s) => s.status !== "concluido");
@@ -234,7 +261,7 @@ async function main(): Promise<void> {
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(t): OK");
+    console.log("\nInvariantes (a)-(u): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);
