@@ -30,6 +30,7 @@ export const SUPORTE = {
         order: 1,
         label: "Central de Suporte",
         icon: "Headset",
+        wave: 3,
       },
       sections: [
         {
@@ -102,6 +103,7 @@ export const SUPORTE = {
         order: 2,
         label: "Chamados",
         icon: "Ticket",
+        wave: 3,
         quickAction: {
           key: "chamado",
           label: "Novo chamado",
@@ -311,6 +313,7 @@ export const SUPORTE = {
         order: 3,
         label: "Base de Conhecimento",
         icon: "BookOpen",
+        wave: 3,
       },
       sections: [
         {

@@ -148,8 +148,13 @@ export interface NavDef {
   readonly order?: number;
   readonly label?: string;
   readonly icon?: string;
+  /** Onda de entrega da tela (NavItem.wave; acima de CURRENT_WAVE o item mostra "em breve"). */
+  readonly wave?: 1 | 2 | 3 | 4 | 5 | 6;
   /** Posição no MOBILE_NAV. */
   readonly mobile?: number;
+  /** Rótulo e ícone na barra inferior do celular, quando diferentes do item de menu. */
+  readonly mobileLabel?: string;
+  readonly mobileIcon?: string;
   /** Regra do ITEM de menu quando a rota é mais aberta que o item. */
   readonly rule?: AccessRule;
   readonly quickAction?: QuickActionDef;

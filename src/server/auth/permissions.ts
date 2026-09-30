@@ -33,6 +33,7 @@ import {
   type ScreenKey,
 } from "@/domain/permissions";
 import { DEPARTMENT_KEYS, type DepartmentKey, type RoleKey } from "@/domain/constants";
+import { compileRoute, findRoute, hrefTab, sortRoutes, type RoutePattern } from "@/domain/permissions/href";
 
 /** Ajustes de acesso (perfil do papel ou exceções do usuário) como gravados em permission_profiles. */
 export interface PermissionAdjustments {
@@ -260,21 +261,17 @@ export function canAny(user: PermissionHolder, keys: readonly PermissionKey[]): 
 // Rotas → nó do catálogo (canSeeHref)
 // ---------------------------------------------------------------------------
 
-interface RouteEntry {
-  pattern: string;
-  segments: string[];
+export interface RouteEntry extends RoutePattern {
   /** Chaves aceitas (qualquer uma). */
   keys: PermissionKey[];
-  score: number;
 }
 
 function buildRouteTable(): RouteEntry[] {
   const entries: RouteEntry[] = [];
   const add = (pattern: string, keys: PermissionKey[]) => {
-    if (pattern.includes("[...")) return; // catch-all não é tela: href sem página própria não é "visível".
-    const segments = pattern.split("/").filter(Boolean);
-    const score = segments.reduce((s, seg) => s + (seg.startsWith("[") ? 1 : 3), 0);
-    entries.push({ pattern, segments, keys, score });
+    // Catch-all não é tela: href sem página própria não é "visível".
+    const route = compileRoute(pattern);
+    if (route) entries.push({ ...route, keys });
   };
   for (const screen of SCREENS) {
     const view = `${screen.key}.ver` as PermissionKey;
@@ -283,55 +280,41 @@ function buildRouteTable(): RouteEntry[] {
     if (screen.nav?.href && !screen.routes.length && !screen.virtual) add(screen.nav.href.split("?")[0], keys);
     for (const section of screen.sections) for (const r of section.routes ?? []) add(r, [section.key as PermissionKey]);
   }
-  return entries.sort((a, b) => b.score - a.score || b.segments.length - a.segments.length);
+  return sortRoutes(entries);
 }
 
 let routeTable: RouteEntry[] | null = null;
 
-function matches(entry: RouteEntry, parts: string[]): boolean {
-  if (entry.segments.length !== parts.length) return false;
-  return entry.segments.every((seg, i) => seg.startsWith("[") || seg === parts[i]);
-}
-
-function safeDecode(segment: string): string | null {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return null;
-  }
+/** Tabela de rotas do catálogo, da mais específica à mais genérica. */
+export function routeTableEntries(): readonly RouteEntry[] {
+  routeTable ??= buildRouteTable();
+  return routeTable;
 }
 
 /** Nó do catálogo dono de um href interno (a query e o hash não entram no casamento), ou null. */
 export function screenForHref(href: string): { pattern: string; keys: readonly PermissionKey[] } | null {
-  const path = href.split(/[?#]/)[0] || "/";
-  if (!path.startsWith("/")) return null;
-  const parts: string[] = [];
-  for (const raw of path.split("/").filter(Boolean)) {
-    // Percent-encoding malformado ("/vendas/%") não é tela: não visível, sem derrubar a renderização.
-    const decoded = safeDecode(raw);
-    if (decoded === null) return null;
-    parts.push(decoded);
-  }
-  routeTable ??= buildRouteTable();
-  const entry = routeTable.find((e) => matches(e, parts));
+  const entry = findRoute(routeTableEntries(), href);
   return entry ? { pattern: entry.pattern, keys: entry.keys } : null;
 }
 
-/** Valor de `?aba=` do href (ou undefined). */
-function tabOf(href: string): string | undefined {
-  const query = href.split("#")[0].split("?")[1];
-  if (!query) return undefined;
-  return new URLSearchParams(query).get("aba") || undefined;
-}
-
 /** Seções (das telas aceitas pela rota) que controlam a aba informada. */
-function sectionKeysForTab(keys: readonly PermissionKey[], tab: string): PermissionKey[] {
+export function sectionKeysForTab(keys: readonly PermissionKey[], tab: string): PermissionKey[] {
   const out: PermissionKey[] = [];
   for (const key of keys) {
     const screen = key.endsWith(".ver") ? SCREEN_BY_KEY.get(key.slice(0, -".ver".length)) : undefined;
     for (const section of screen?.sections ?? []) if (section.tab === tab) out.push(section.key as PermissionKey);
   }
   return out;
+}
+
+/** Abas (`?aba=`) com seções no catálogo entre as telas aceitas pela rota. */
+export function tabsForKeys(keys: readonly PermissionKey[]): string[] {
+  const tabs = new Set<string>();
+  for (const key of keys) {
+    const screen = key.endsWith(".ver") ? SCREEN_BY_KEY.get(key.slice(0, -".ver".length)) : undefined;
+    for (const section of screen?.sections ?? []) if (section.tab) tabs.add(section.tab);
+  }
+  return [...tabs];
 }
 
 /**
@@ -341,7 +324,7 @@ function sectionKeysForTab(keys: readonly PermissionKey[], tab: string): Permiss
 export function canSeeHref(user: PermissionHolder, href: string): boolean {
   const found = screenForHref(href);
   if (!found || !canAny(user, found.keys)) return false;
-  const tab = tabOf(href);
+  const tab = hrefTab(href);
   if (!tab) return true;
   const sections = sectionKeysForTab(found.keys, tab);
   return sections.length === 0 || canAny(user, sections);

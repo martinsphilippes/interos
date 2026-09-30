@@ -31,6 +31,7 @@ export const IMPLANTACAO = {
         order: 1,
         label: "Projetos",
         icon: "Rocket",
+        wave: 3,
       },
       sections: [
         {
@@ -267,6 +268,7 @@ export const IMPLANTACAO = {
         order: 2,
         label: "Kanban",
         icon: "Kanban",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -327,6 +329,7 @@ export const IMPLANTACAO = {
         order: 3,
         label: "Checklists",
         icon: "ListChecks",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -381,6 +384,7 @@ export const IMPLANTACAO = {
         order: 4,
         label: "Treinamentos",
         icon: "GraduationCap",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -456,6 +460,7 @@ export const IMPLANTACAO = {
         order: 5,
         label: "Go-live",
         icon: "Flag",
+        wave: 3,
       },
       sections: [
         {

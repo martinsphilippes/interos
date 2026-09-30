@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronsLeft, ChevronsRight } from "lucide-react";
-import { CURRENT_WAVE, type NavSection } from "@/domain/constants";
+import { CURRENT_WAVE, type NavSection, type ShellLink } from "@/domain/constants";
 import { Tooltip } from "@/components/ui/tooltip";
 import { NavIcon } from "./nav-icon";
 import { InterosLogo } from "./logo";
@@ -58,6 +58,8 @@ function writeSections(keys: string[]) {
 export interface SidebarProps {
   user: ShellUser;
   sections: NavSection[];
+  /** Atalhos do menu do usuário (drawer), já filtrados no servidor. */
+  userLinks?: ShellLink[];
   /** "desktop": fixa, colapsável · "drawer": conteúdo do menu mobile. */
   variant?: "desktop" | "drawer";
   collapsed?: boolean;
@@ -71,7 +73,7 @@ export interface SidebarProps {
  * Sidebar escura: logo, seções recolhíveis (a seção do item ativo fica sempre aberta), item ativo em
  * laranja preenchido, "Recolher menu", marca Intercert e versão no rodapé.
  */
-export function Sidebar({ user, sections, variant = "desktop", collapsed = false, onToggleCollapsed, onNavigate, className }: SidebarProps) {
+export function Sidebar({ user, sections, userLinks = [], variant = "desktop", collapsed = false, onToggleCollapsed, onNavigate, className }: SidebarProps) {
   const pathname = usePathname();
   const isCollapsed = variant === "desktop" && collapsed;
   const allHrefs = React.useMemo(() => sections.flatMap((s) => s.items.map((i) => i.href)), [sections]);
@@ -172,7 +174,7 @@ export function Sidebar({ user, sections, variant = "desktop", collapsed = false
 
       {/* Rodapé: recolher, marca e versão (desktop) · usuário (drawer mobile) */}
       <div className={cn("shrink-0 border-t border-sidebar-border p-3", variant === "drawer" && "safe-bottom")}>
-        {variant === "drawer" ? <UserMenu user={user} variant="sidebar" /> : null}
+        {variant === "drawer" ? <UserMenu user={user} links={userLinks} variant="sidebar" /> : null}
         {variant === "desktop" ? (
           <>
             <Tooltip content={isCollapsed ? "Expandir menu" : null} side="right" enabled={isCollapsed}>

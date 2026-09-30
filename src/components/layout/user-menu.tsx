@@ -3,8 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, ChevronDown, ChevronsUpDown, Gauge, LogOut } from "lucide-react";
-import type { DepartmentKey, RoleKey } from "@/domain/constants";
+import { ChevronDown, ChevronsUpDown, LogOut } from "lucide-react";
+import type { DepartmentKey, RoleKey, ShellLink } from "@/domain/constants";
+import type { HrefAccessMap } from "@/domain/permissions/href";
 import { DEPARTMENT_LABELS, ROLE_LABELS } from "@/domain/constants";
 import type { UserPresence } from "@/domain/types";
 import { Avatar } from "@/components/ui/avatar";
@@ -16,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { performLogout } from "@/components/auth/logout-button";
+import { NavIcon } from "./nav-icon";
 import { cn } from "@/lib/utils";
 
 /** Campos serializáveis do usuário, passados do server layout ao shell. */
@@ -29,10 +31,25 @@ export interface ShellUser {
   jobTitle?: string;
   /** Presença atual (seletor da top bar). */
   presence?: UserPresence;
+  /**
+   * Rotas que o usuário vê (calculado no servidor pelas permissões efetivas). Só para ESCONDER links no cliente
+   * (AccessProvider/ScreenLink); nunca autoriza operação.
+   */
+  access: HrefAccessMap;
+}
+
+/** Links fixos do shell já filtrados no servidor (atalhos da busca, ajuda e menu do usuário). */
+export interface ShellLinks {
+  search: ShellLink[];
+  searchCreate: ShellLink[];
+  help: ShellLink[];
+  userMenu: ShellLink[];
 }
 
 export interface UserMenuProps {
   user: ShellUser;
+  /** Atalhos do menu já filtrados no servidor. */
+  links?: ShellLink[];
   /** "topbar": avatar + nome + cargo (top bar desktop) · "sidebar": linha completa no drawer · "compact": só avatar (top bar mobile). */
   variant?: "topbar" | "sidebar" | "compact";
   /** Na sidebar recolhida mostra só o avatar. */
@@ -40,7 +57,7 @@ export interface UserMenuProps {
   className?: string;
 }
 
-export function UserMenu({ user, variant = "sidebar", collapsed = false, className }: UserMenuProps) {
+export function UserMenu({ user, links = [], variant = "sidebar", collapsed = false, className }: UserMenuProps) {
   const router = useRouter();
   const [loggingOut, setLoggingOut] = React.useState(false);
   const roleLabel = user.jobTitle ?? ROLE_LABELS[user.role];
@@ -112,17 +129,18 @@ export function UserMenu({ user, variant = "sidebar", collapsed = false, classNa
           </div>
         </div>
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link href="/performance">
-            <Gauge /> Meu desempenho
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/notificacoes">
-            <Bell /> Notificações
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
+        {links.length ? (
+          <>
+            {links.map((link) => (
+              <DropdownMenuItem key={link.href} asChild>
+                <Link href={link.href}>
+                  <NavIcon name={link.icon} /> {link.label}
+                </Link>
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         <DropdownMenuItem destructive disabled={loggingOut} onSelect={(e) => { e.preventDefault(); void logout(); }}>
           <LogOut /> {loggingOut ? "Saindo…" : "Sair"}
         </DropdownMenuItem>

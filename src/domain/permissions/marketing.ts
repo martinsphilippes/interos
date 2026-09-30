@@ -32,6 +32,7 @@ export const MARKETING = {
         order: 1,
         label: "Visão Geral",
         icon: "Megaphone",
+        wave: 2,
       },
       sections: [
         {
@@ -88,6 +89,7 @@ export const MARKETING = {
         order: 2,
         label: "Leads",
         icon: "UserPlus",
+        wave: 2,
         quickAction: {
           key: "lead",
           label: "Novo lead",
@@ -218,6 +220,7 @@ export const MARKETING = {
         order: 3,
         label: "Campanhas",
         icon: "Flag",
+        wave: 2,
       },
       sections: [],
       actions: [
@@ -277,6 +280,7 @@ export const MARKETING = {
         order: 4,
         label: "Caixa de Entrada",
         icon: "Inbox",
+        wave: 2,
       },
       sections: [],
       actions: [
@@ -341,6 +345,7 @@ export const MARKETING = {
         order: 5,
         label: "Prospecção Ativa",
         icon: "Crosshair",
+        wave: 2,
       },
       sections: [],
       actions: [

@@ -57,6 +57,7 @@ import {
   Zap,
   BadgePercent,
   HandCoins,
+  LayoutGrid,
   type LucideIcon,
   type LucideProps,
 } from "lucide-react";
@@ -120,6 +121,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   Plug,
   BadgePercent,
   HandCoins,
+  LayoutGrid,
 };
 
 export interface NavIconProps extends LucideProps {

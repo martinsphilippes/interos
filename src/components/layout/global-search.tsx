@@ -9,12 +9,14 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
-import { Activity, BarChart3, Bell, BookOpen, Building2, Gauge, Sparkles, Zap, CheckSquare, Contact, FileSignature, FileText, GitBranch, Loader2, Route, Megaphone, Plus, Rocket, Search, Sun, Target, Ticket, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Building2, Sparkles, Zap, CheckSquare, Contact, FileSignature, FileText, Loader2, Route, Megaphone, Rocket, Search, Target, Ticket, UserPlus, Users, type LucideIcon } from "lucide-react";
+import type { ShellLink } from "@/domain/constants";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { searchGlobal } from "@/server/search/actions";
 import type { SearchKind, SearchResponse } from "@/server/search/queries";
 import { cn } from "@/lib/utils";
+import { NavIcon } from "./nav-icon";
 
 const DEBOUNCE_MS = 250;
 const MIN_CHARS = 2;
@@ -39,22 +41,20 @@ const KIND_ICONS: Record<SearchKind, LucideIcon> = {
   usuario: Users,
 };
 
-const SHORTCUTS: { label: string; href: string; icon: LucideIcon; hint?: string }[] = [
-  { label: "Meu Dia", href: "/meu-dia", icon: Sun },
-  { label: "Tarefas", href: "/tarefas", icon: CheckSquare },
-  { label: "Clientes 360º", href: "/clientes", icon: Building2 },
-  { label: "Workflow", href: "/workflow", icon: GitBranch },
-  { label: "Notificações", href: "/notificacoes", icon: Bell },
-  { label: "Meu Desempenho", href: "/performance", icon: Gauge },
-  { label: "Nova tarefa", href: "/tarefas?novo=1", icon: Plus, hint: "Criar" },
-  { label: "Novo cliente", href: "/clientes/novo", icon: Plus, hint: "Criar" },
-];
 
 const itemClass =
   "flex min-h-[44px] cursor-default select-none items-center gap-3 rounded-md px-2.5 py-2 text-sm text-foreground outline-none md:min-h-[40px] " +
   "data-[selected=true]:bg-surface-hover data-[disabled=true]:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted";
 
-export function GlobalSearch({ className }: { className?: string }) {
+export interface GlobalSearchProps {
+  /** Atalhos sem termo digitado, já filtrados no servidor. */
+  shortcuts?: ShellLink[];
+  /** Criação oferecida quando não há resultado, já filtrada no servidor. */
+  createLinks?: ShellLink[];
+  className?: string;
+}
+
+export function GlobalSearch({ shortcuts = [], createLinks = [], className }: GlobalSearchProps) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
@@ -167,9 +167,9 @@ export function GlobalSearch({ className }: { className?: string }) {
             <Command.List className="max-h-[60vh] overflow-y-auto p-2 scrollbar-thin md:max-h-[50vh]">
               {showShortcuts ? (
                 <Command.Group heading="Atalhos" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted">
-                  {SHORTCUTS.map((s) => (
+                  {shortcuts.map((s) => (
                     <Command.Item key={s.href} value={`atalho:${s.href}`} onSelect={() => go(s.href)} className={itemClass}>
-                      <s.icon />
+                      <NavIcon name={s.icon} />
                       <span className="flex-1 truncate">{s.label}</span>
                       {s.hint ? <span className="text-xs text-muted-light">{s.hint}</span> : null}
                     </Command.Item>
@@ -214,16 +214,16 @@ export function GlobalSearch({ className }: { className?: string }) {
                   <p className="px-1 py-4 text-center text-sm text-muted">
                     Nenhum resultado para <strong className="text-foreground">“{results?.term ?? term}”</strong>
                   </p>
-                  <Command.Group heading="Criar" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted">
-                    <Command.Item value="criar:cliente" onSelect={() => go("/clientes/novo")} className={itemClass}>
-                      <Plus />
-                      <span className="flex-1">Criar cliente</span>
-                    </Command.Item>
-                    <Command.Item value="criar:tarefa" onSelect={() => go("/tarefas?novo=1")} className={itemClass}>
-                      <Plus />
-                      <span className="flex-1">Criar tarefa</span>
-                    </Command.Item>
-                  </Command.Group>
+                  {createLinks.length ? (
+                    <Command.Group heading="Criar" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted">
+                      {createLinks.map((link) => (
+                        <Command.Item key={link.href} value={`criar:${link.quickAction ?? link.href}`} onSelect={() => go(link.href)} className={itemClass}>
+                          <NavIcon name={link.icon} />
+                          <span className="flex-1">{link.label}</span>
+                        </Command.Item>
+                      ))}
+                    </Command.Group>
+                  ) : null}
                 </div>
               ) : null}
             </Command.List>

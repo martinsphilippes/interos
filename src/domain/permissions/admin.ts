@@ -53,6 +53,7 @@ export const ADMIN = {
         order: 1,
         label: "Usuários",
         icon: "Users",
+        wave: 1,
       },
       sections: [
         {
@@ -253,6 +254,7 @@ export const ADMIN = {
         order: 2,
         label: "Departamentos",
         icon: "Network",
+        wave: 1,
       },
       sections: [],
       actions: [
@@ -286,6 +288,7 @@ export const ADMIN = {
         order: 3,
         label: "Produtos",
         icon: "Package",
+        wave: 1,
       },
       sections: [],
       actions: [
@@ -338,6 +341,7 @@ export const ADMIN = {
         order: 4,
         label: "Configurações",
         icon: "Settings",
+        wave: 1,
       },
       sections: [
         {
@@ -533,6 +537,7 @@ export const ADMIN = {
         order: 6,
         label: "Indicadores",
         icon: "Activity",
+        wave: 4,
       },
       sections: [],
       actions: [
@@ -579,6 +584,7 @@ export const ADMIN = {
         order: 5,
         label: "Workflows",
         icon: "Workflow",
+        wave: 1,
       },
       sections: [
         {
@@ -710,6 +716,7 @@ export const ADMIN = {
         order: 7,
         label: "Automações",
         icon: "Zap",
+        wave: 5,
       },
       sections: [
         {
@@ -802,6 +809,7 @@ export const ADMIN = {
         order: 8,
         label: "Integrações",
         icon: "Plug",
+        wave: 5,
       },
       sections: [],
       actions: [],

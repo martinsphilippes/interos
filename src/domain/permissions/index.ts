@@ -38,5 +38,7 @@ export {
 } from "./catalog";
 export { evaluateRule, describeRule, deriveSubject, isValidRule, ruleReferences, type RuleSubject, type RuleContext } from "./rules";
 export { deriveNavigation, deriveMobileNav, deriveQuickActions, type DerivedNavItem, type DerivedNavSection } from "./navigation";
+export { buildNavigationTable, buildMobileNavTable, buildQuickActionsTable } from "./nav-table";
+export { canSeeHrefIn, compileRoute, findRoute, hrefTab, sortRoutes, type HrefAccessEntry, type HrefAccessMap, type RoutePattern } from "./href";
 export { EXEMPTIONS, DELIBERATE_CORRECTIONS } from "./exemptions";
 export type { EffectivePermissions, PermissionOrigin } from "./effective";

@@ -8,8 +8,9 @@ import { parsePeriod, periodOptions } from "@/server/kpis/queries";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardContent, CardDescription, CardHeader, CardLink, CardTitle } from "@/components/ui/card";
+import { CanSee, ScreenLink } from "@/components/auth/access-provider";
 import { FilterField } from "@/components/ui/filter-bar";
 import { KpiStrip } from "@/components/ui/kpi-strip";
 import { PageHeader } from "@/components/ui/page-header";
@@ -80,18 +81,12 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
             <FilterField label="Período" className="w-full sm:w-56">
               <PeriodSelect options={periodOptions()} value={period.key} className="w-full min-w-0" />
             </FilterField>
-            {user.isDirector ? (
-              <Button asChild variant="outline" className="h-11 md:h-9">
-                <Link href="/gestao/cockpit">
-                  <Radar /> Cockpit
-                </Link>
-              </Button>
-            ) : null}
-            <Button asChild variant="outline" className="h-11 md:h-9">
-              <Link href="/gestao/relatorios">
-                <BarChart3 /> Relatórios
-              </Link>
-            </Button>
+            <ScreenLink href="/gestao/cockpit" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
+              <Radar /> Cockpit
+            </ScreenLink>
+            <ScreenLink href="/gestao/relatorios" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
+              <BarChart3 /> Relatórios
+            </ScreenLink>
           </div>
         }
       />
@@ -177,7 +172,9 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-3">
             <CardTitle>Metas do departamento</CardTitle>
-            <CardLink href={`/performance/metas?periodo=${encodeURIComponent(period.key)}`}>Ver metas</CardLink>
+            <CanSee href="/performance/metas">
+              <CardLink href={`/performance/metas?periodo=${encodeURIComponent(period.key)}`}>Ver metas</CardLink>
+            </CanSee>
           </CardHeader>
           <CardContent className="pt-1">
             <ProgressList

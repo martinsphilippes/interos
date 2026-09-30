@@ -1,19 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, CircleHelp, Gauge, LayoutGrid } from "lucide-react";
+import { CircleHelp } from "lucide-react";
+import type { ShellLink } from "@/domain/constants";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { NavIcon } from "./nav-icon";
 
-const LINKS = [
-  { href: "/menu", label: "Todos os módulos", icon: LayoutGrid },
-  { href: "/notificacoes", label: "Notificações", icon: Bell },
-  { href: "/performance", label: "Meu desempenho", icon: Gauge },
-];
-
-/** Ajuda rápida da top bar: atalhos de teclado e atalhos de navegação. */
-export function HelpMenu({ className }: { className?: string }) {
+/** Ajuda rápida da top bar: atalhos de teclado e atalhos de navegação (já filtrados no servidor). */
+export function HelpMenu({ links = [], className }: { links?: ShellLink[]; className?: string }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -50,16 +46,18 @@ export function HelpMenu({ className }: { className?: string }) {
             <Kbd>Esc</Kbd>
           </li>
         </ul>
-        <ul className="border-t border-border-strong/70 p-1.5">
-          {LINKS.map((l) => (
-            <li key={l.href}>
-              <Link href={l.href} className="flex min-h-10 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors hover:bg-surface-hover">
-                <l.icon className="size-4 text-muted" aria-hidden />
-                {l.label}
-              </Link>
-            </li>
-          ))}
-        </ul>
+        {links.length ? (
+          <ul className="border-t border-border-strong/70 p-1.5">
+            {links.map((l) => (
+              <li key={l.href}>
+                <Link href={l.href} className="flex min-h-10 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors hover:bg-surface-hover">
+                  <NavIcon name={l.icon} className="size-4 text-muted" />
+                  {l.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

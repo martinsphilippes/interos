@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { ScreenLink } from "@/components/auth/access-provider";
 import type { Insight } from "@/server/insights/rules";
 import { InsightList } from "@/components/insights/insight-list";
 import { CollapsibleBlock } from "./collapsible-block";
@@ -11,9 +11,9 @@ export function InsightsBlock({ insights, director }: { insights: Insight[]; dir
       count={insights.length}
       description={director ? "Gargalos da empresa detectados pelas regras" : "Gargalos dos departamentos que você lidera"}
       action={
-        <Link href={director ? "/gestao/cockpit" : "/gestao"} className="font-medium text-brand hover:underline">
+        <ScreenLink href={director ? "/gestao/cockpit" : "/gestao"} className="font-medium text-brand hover:underline">
           {director ? "Cockpit" : "Dashboard"}
-        </Link>
+        </ScreenLink>
       }
     >
       <InsightList insights={insights} compact emptyText="Nenhum gargalo detectado nos seus indicadores neste mês." />

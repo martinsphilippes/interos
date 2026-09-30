@@ -31,6 +31,7 @@ export const VENDAS = {
         order: 1,
         label: "Central de Vendas",
         icon: "Handshake",
+        wave: 2,
       },
       sections: [
         {
@@ -135,6 +136,7 @@ export const VENDAS = {
         order: 2,
         label: "Pipeline",
         icon: "Kanban",
+        wave: 2,
       },
       sections: [],
       actions: [],
@@ -177,6 +179,7 @@ export const VENDAS = {
         order: 3,
         label: "Oportunidades",
         icon: "Target",
+        wave: 2,
         quickAction: {
           key: "oportunidade",
           label: "Nova oportunidade",
@@ -344,6 +347,7 @@ export const VENDAS = {
         order: 4,
         label: "Agenda",
         icon: "Calendar",
+        wave: 2,
       },
       sections: [],
       actions: [],
@@ -390,6 +394,7 @@ export const VENDAS = {
         order: 5,
         label: "Visitas",
         icon: "MapPin",
+        wave: 2,
         quickAction: {
           key: "visita",
           label: "Registrar visita",
@@ -491,6 +496,7 @@ export const VENDAS = {
         order: 6,
         label: "Propostas",
         icon: "FileText",
+        wave: 2,
       },
       sections: [],
       actions: [

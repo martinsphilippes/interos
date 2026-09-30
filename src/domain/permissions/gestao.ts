@@ -31,6 +31,7 @@ export const GESTAO = {
         order: 1,
         label: "Dashboard do Gestor",
         icon: "LayoutDashboard",
+        wave: 4,
       },
       sections: [
         {
@@ -92,6 +93,7 @@ export const GESTAO = {
         order: 2,
         label: "Cockpit Diretoria",
         icon: "Radar",
+        wave: 4,
       },
       sections: [
         {
@@ -149,6 +151,7 @@ export const GESTAO = {
         order: 3,
         label: "Relatórios",
         icon: "BarChart3",
+        wave: 4,
         rule: { can: "gestao.acessar" },
       },
       sections: [

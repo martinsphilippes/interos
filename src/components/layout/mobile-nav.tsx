@@ -4,13 +4,15 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Plus } from "lucide-react";
-import { MOBILE_NAV, type NavItem, type QuickAction } from "@/domain/constants";
+import type { NavItem, QuickAction } from "@/domain/constants";
 import { NavIcon } from "./nav-icon";
 import { QuickActionsSheet } from "./quick-actions-sheet";
 import { cn } from "@/lib/utils";
 
 export interface MobileNavProps {
-  /** Ações do "+" já filtradas por papel. Sem ações, o botão central não aparece. */
+  /** Itens da barra (MOBILE_NAV) já filtrados no servidor pelas permissões efetivas. */
+  items: NavItem[];
+  /** Ações do "+" já filtradas no servidor. Sem ações, o botão central não aparece. */
   quickActions?: QuickAction[];
   className?: string;
 }
@@ -36,13 +38,15 @@ function NavLink({ item, pathname }: { item: NavItem; pathname: string }) {
  * Barra inferior fixa (< md): Início · Tarefas · [+] · Clientes · Mais. O "+" laranja flutuante abre a
  * folha de ações rápidas. Respeita a safe-area; o AppShell reserva o espaço para o conteúdo não ficar atrás.
  */
-export function MobileNav({ quickActions = [], className }: MobileNavProps) {
+export function MobileNav({ items, quickActions = [], className }: MobileNavProps) {
   const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
-  const half = Math.ceil(MOBILE_NAV.length / 2);
-  const left = MOBILE_NAV.slice(0, half);
-  const right = MOBILE_NAV.slice(half);
+  const half = Math.ceil(items.length / 2);
+  const left = items.slice(0, half);
+  const right = items.slice(half);
   const hasActions = quickActions.length > 0;
+  // Uma coluna por item visível (+ o botão central): a barra se ajusta quando um módulo está oculto.
+  const columns = items.length + (hasActions ? 1 : 0);
 
   return (
     <>
@@ -50,7 +54,7 @@ export function MobileNav({ quickActions = [], className }: MobileNavProps) {
         aria-label="Navegação principal"
         className={cn("fixed inset-x-0 bottom-0 z-40 border-t border-sidebar-border bg-sidebar/95 backdrop-blur-md safe-bottom md:hidden", className)}
       >
-        <ul className={cn("grid h-mobile-nav", hasActions ? "grid-cols-5" : "grid-cols-4")}>
+        <ul className="grid h-mobile-nav" style={{ gridTemplateColumns: `repeat(${Math.max(columns, 1)}, minmax(0, 1fr))` }}>
           {left.map((item) => (
             <li key={item.href} className="flex">
               <NavLink item={item} pathname={pathname} />

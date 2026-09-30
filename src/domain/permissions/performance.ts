@@ -30,6 +30,7 @@ export const PERFORMANCE = {
         order: 1,
         label: "Meu Desempenho",
         icon: "Gauge",
+        wave: 4,
       },
       sections: [
         {
@@ -113,6 +114,7 @@ export const PERFORMANCE = {
         order: 2,
         label: "Metas",
         icon: "Goal",
+        wave: 4,
       },
       sections: [],
       actions: [
@@ -209,6 +211,7 @@ export const PERFORMANCE = {
         order: 3,
         label: "Bônus",
         icon: "Award",
+        wave: 4,
       },
       sections: [
         {
@@ -334,6 +337,7 @@ export const PERFORMANCE = {
         order: 4,
         label: "Ranking",
         icon: "Trophy",
+        wave: 4,
       },
       sections: [],
       actions: [],
@@ -355,6 +359,7 @@ export const PERFORMANCE = {
         order: 5,
         label: "Campanhas",
         icon: "Sparkles",
+        wave: 4,
       },
       sections: [],
       actions: [

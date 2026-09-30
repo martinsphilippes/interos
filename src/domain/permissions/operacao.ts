@@ -30,9 +30,12 @@ export const OPERACAO = {
         order: 1,
         label: "Tarefas",
         icon: "CheckSquare",
+        wave: 1,
         // Hoje: MOBILE_NAV (src/domain/constants.ts:223) sem filtro hoje (mobile-nav.tsx:42-44); derivado de
         // can(tela.ver), equivalente porque a regra efetiva é 'todos'
         mobile: 2,
+        mobileLabel: "Tarefas",
+        mobileIcon: "CheckSquare",
         quickAction: {
           key: "tarefa",
           label: "Nova tarefa",
@@ -241,9 +244,12 @@ export const OPERACAO = {
         order: 3,
         label: "Clientes 360º",
         icon: "Building2",
+        wave: 1,
         // Hoje: MOBILE_NAV (src/domain/constants.ts:224) sem filtro hoje (mobile-nav.tsx:42-44); derivado de
         // can(tela.ver), equivalente porque a regra efetiva é 'todos'
         mobile: 3,
+        mobileLabel: "Clientes",
+        mobileIcon: "Users",
         quickAction: {
           key: "cliente",
           label: "Novo cliente",
@@ -462,6 +468,7 @@ export const OPERACAO = {
         order: 2,
         label: "Workflow",
         icon: "GitBranch",
+        wave: 1,
       },
       sections: [
         {
@@ -619,6 +626,7 @@ export const OPERACAO = {
         order: 4,
         label: "SLA",
         icon: "Timer",
+        wave: 5,
       },
       sections: [
         {

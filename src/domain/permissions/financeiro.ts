@@ -31,6 +31,7 @@ export const FINANCEIRO = {
         order: 1,
         label: "Visão Geral",
         icon: "LayoutDashboard",
+        wave: 2,
       },
       sections: [
         {
@@ -117,6 +118,7 @@ export const FINANCEIRO = {
         order: 2,
         label: "Contratos",
         icon: "FileSignature",
+        wave: 2,
       },
       sections: [
         {
@@ -384,6 +386,7 @@ export const FINANCEIRO = {
         order: 3,
         label: "Assinaturas",
         icon: "PenLine",
+        wave: 2,
       },
       sections: [
         {
@@ -438,6 +441,7 @@ export const FINANCEIRO = {
         order: 4,
         label: "Cobranças",
         icon: "Receipt",
+        wave: 2,
       },
       sections: [
         {
@@ -575,6 +579,7 @@ export const FINANCEIRO = {
         order: 5,
         label: "Contas a Receber",
         icon: "Wallet",
+        wave: 2,
       },
       sections: [
         {
@@ -640,6 +645,7 @@ export const FINANCEIRO = {
         order: 6,
         label: "Recorrência",
         icon: "Repeat",
+        wave: 2,
       },
       sections: [
         {
@@ -709,6 +715,7 @@ export const FINANCEIRO = {
         order: 7,
         label: "Comissões",
         icon: "BadgePercent",
+        wave: 5,
         rule: { can: "financeiro.acessar" },
       },
       sections: [
@@ -911,6 +918,7 @@ export const FINANCEIRO = {
         order: 8,
         label: "Contas a Pagar",
         icon: "HandCoins",
+        wave: 5,
       },
       sections: [
         {

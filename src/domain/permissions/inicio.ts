@@ -34,9 +34,12 @@ export const INICIO = {
         order: 1,
         label: "Meu Dia",
         icon: "Sun",
+        wave: 1,
         // Hoje: MOBILE_NAV (src/domain/constants.ts:222) sem filtro hoje (mobile-nav.tsx:42-44); derivado de
         // can(tela.ver), equivalente porque a regra efetiva é 'todos'
         mobile: 1,
+        mobileLabel: "Início",
+        mobileIcon: "Home",
       },
       sections: [
         {
@@ -202,6 +205,7 @@ export const INICIO = {
         order: 2,
         label: "Notificações",
         icon: "Bell",
+        wave: 1,
       },
       sections: [],
       actions: [
@@ -262,6 +266,8 @@ export const INICIO = {
         // Hoje: MOBILE_NAV (src/domain/constants.ts:225) sem filtro hoje (mobile-nav.tsx:42-44); derivado de
         // can(tela.ver), equivalente porque a regra efetiva é 'todos'
         mobile: 4,
+        mobileLabel: "Mais",
+        mobileIcon: "Menu",
       },
       sections: [],
       actions: [],

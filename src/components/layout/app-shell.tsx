@@ -3,15 +3,16 @@
 import * as React from "react";
 import { usePathname } from "next/navigation";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import type { NavSection, QuickAction } from "@/domain/constants";
+import type { NavItem, NavSection, QuickAction } from "@/domain/constants";
+import { AccessProvider } from "@/components/auth/access-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { MobileNav } from "./mobile-nav";
-import type { ShellUser } from "./user-menu";
+import type { ShellLinks, ShellUser } from "./user-menu";
 import { cn } from "@/lib/utils";
 
-export type { ShellUser } from "./user-menu";
+export type { ShellLinks, ShellUser } from "./user-menu";
 
 const COLLAPSED_KEY = "interos.sidebar.collapsed";
 
@@ -45,8 +46,12 @@ export interface AppShellProps {
   user: ShellUser;
   /** Seções de NAVIGATION já filtradas por permissão no servidor. */
   sections: NavSection[];
+  /** Itens da barra inferior do celular já filtrados no servidor. */
+  mobileNav?: NavItem[];
+  /** Links fixos (busca, ajuda, menu do usuário) já filtrados no servidor. */
+  links?: ShellLinks;
   unreadCount: number;
-  /** Ações rápidas do "+" mobile, filtradas por papel no servidor. */
+  /** Ações rápidas do "+" mobile, filtradas pelas permissões efetivas no servidor. */
   quickActions?: QuickAction[];
   /** Mostra o seletor de presença na top bar. */
   showPresence?: boolean;
@@ -57,7 +62,7 @@ export interface AppShellProps {
  * Shell autenticado: sidebar fixa (desktop, colapsável), barra inferior com ações rápidas (mobile),
  * top bar com busca/presença/ajuda/notificações/usuário. O conteúdo da página usa PageContainer + PageHeader.
  */
-export function AppShell({ user, sections, unreadCount, quickActions = [], showPresence = false, children }: AppShellProps) {
+export function AppShell({ user, sections, mobileNav = [], links, unreadCount, quickActions = [], showPresence = false, children }: AppShellProps) {
   const pathname = usePathname();
   // No servidor (e na hidratação) a sidebar começa expandida; o cliente aplica a preferência salva.
   const collapsed = React.useSyncExternalStore(subscribeCollapsed, readCollapsed, () => false);
@@ -73,6 +78,7 @@ export function AppShell({ user, sections, unreadCount, quickActions = [], showP
   }
 
   return (
+    <AccessProvider access={user.access}>
     <TooltipProvider delayDuration={300}>
       <div className="min-h-dvh bg-canvas">
         <Sidebar user={user} sections={sections} variant="desktop" collapsed={collapsed} onToggleCollapsed={toggleCollapsed} className="hidden md:flex" />
@@ -84,20 +90,21 @@ export function AppShell({ user, sections, unreadCount, quickActions = [], showP
             <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 w-sidebar max-w-[85vw] shadow-drawer animate-slide-in-left focus:outline-none md:hidden">
               <DialogPrimitive.Title className="sr-only">Menu</DialogPrimitive.Title>
               <DialogPrimitive.Description className="sr-only">Navegação principal do INTEROS.</DialogPrimitive.Description>
-              <Sidebar user={user} sections={sections} variant="drawer" onNavigate={() => setMobileOpen(false)} className="w-full" />
+              <Sidebar user={user} sections={sections} userLinks={links?.userMenu} variant="drawer" onNavigate={() => setMobileOpen(false)} className="w-full" />
             </DialogPrimitive.Content>
           </DialogPrimitive.Portal>
         </DialogPrimitive.Root>
 
         <div className={cn("flex min-h-dvh flex-col transition-[padding] duration-200", collapsed ? "md:pl-sidebar-collapsed" : "md:pl-sidebar")}>
-          <TopBar user={user} unreadCount={unreadCount} onOpenMenu={() => setMobileOpen(true)} sections={sections} showPresence={showPresence} />
+          <TopBar user={user} unreadCount={unreadCount} onOpenMenu={() => setMobileOpen(true)} sections={sections} mobileNav={mobileNav} links={links} showPresence={showPresence} />
           <main id="conteudo" className="flex flex-1 flex-col pb-[calc(var(--spacing-mobile-nav)+env(safe-area-inset-bottom)+12px)] md:pb-0">
             {children}
           </main>
         </div>
 
-        <MobileNav quickActions={quickActions} />
+        <MobileNav items={mobileNav} quickActions={quickActions} />
       </div>
     </TooltipProvider>
+    </AccessProvider>
   );
 }

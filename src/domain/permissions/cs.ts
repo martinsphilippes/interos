@@ -30,6 +30,7 @@ export const CS = {
         order: 1,
         label: "Carteira",
         icon: "Briefcase",
+        wave: 3,
       },
       sections: [
         {
@@ -116,6 +117,7 @@ export const CS = {
         order: 2,
         label: "Saúde",
         icon: "HeartPulse",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -194,6 +196,7 @@ export const CS = {
         order: 3,
         label: "Checkpoints",
         icon: "CalendarCheck",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -259,6 +262,7 @@ export const CS = {
         order: 4,
         label: "Plano de Sucesso",
         icon: "Route",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -342,6 +346,7 @@ export const CS = {
         order: 5,
         label: "Renovações",
         icon: "RefreshCw",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -423,6 +428,7 @@ export const CS = {
         order: 6,
         label: "Riscos",
         icon: "AlertTriangle",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -487,6 +493,7 @@ export const CS = {
         order: 7,
         label: "Upsell",
         icon: "TrendingUp",
+        wave: 3,
       },
       sections: [],
       actions: [
@@ -552,6 +559,7 @@ export const CS = {
         order: 8,
         label: "Churn",
         icon: "UserMinus",
+        wave: 3,
       },
       sections: [],
       actions: [
