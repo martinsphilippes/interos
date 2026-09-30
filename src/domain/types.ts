@@ -84,6 +84,8 @@ export const COLLECTIONS = {
   processDefinitions: "process_definitions",
   /** Execuções das definições de processo (uma por gatilho disparado). */
   processRuns: "process_runs",
+  /** Contadores transacionais de numeração (VEN, CT, PR…): um documento por prefixo e ano. Ver `nextNumber` em db.ts. */
+  counters: "counters",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -406,6 +408,36 @@ export interface Opportunity extends BaseEntity {
   lossNotes?: string;
   proposalId?: string;
   contractId?: string;
+  /** Número da venda "VEN-AAAA-NNNN", gravado quando a oportunidade é ganha (contador transacional). */
+  saleNumber?: string;
+  /** Condições estruturadas do fechamento (vendas antigas não têm; o contrato usa os padrões). */
+  closing?: OpportunityClosing;
+}
+
+export const SALE_PAYMENT_METHODS = ["boleto", "pix", "cartao", "transferencia", "dinheiro"] as const;
+export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
+
+/** Condições comerciais combinadas no fechamento da venda (bloco "Condições do fechamento" do WonDialog). */
+export interface OpportunityClosing {
+  paymentMethod: SalePaymentMethod;
+  /** Dia de vencimento da mensalidade (1–28). */
+  billingDay: number;
+  /** 1º vencimento combinado (ISO); sem valor, o Financeiro usa o próximo dia de vencimento. */
+  firstDueDate?: string;
+  termMonths: number;
+  recurrence: "mensal" | "anual" | "unico";
+  /** Em quantas cobranças a adesão é dividida (1 = à vista). */
+  setupInstallments: number;
+  /** Contato responsável do cliente (vira o signatário principal do contrato). */
+  contactId?: string;
+  contactName?: string;
+  implementationRequired: boolean;
+  implementationNotes?: string;
+  commercialNotes?: string;
+  /** Proposta aceita usada como base dos itens (quando houver). */
+  proposalId?: string;
+  closedAt: string;
+  closedBy: string;
 }
 
 export interface Visit extends BaseEntity {
@@ -516,6 +548,24 @@ export interface Contract extends BaseEntity {
   pendingReason?: string;
   ownerId?: string;
   documentIds: string[];
+  // Campos do circuito Venda → Contrato (opcionais: contratos antigos não têm).
+  /** Forma de pagamento combinada na venda (usada nas cobranças geradas). */
+  paymentMethod?: SalePaymentMethod;
+  /** Adesão dividida em N cobranças (1 = à vista). */
+  setupInstallments?: number;
+  /** false quando a venda não contratou implantação (o projeto é criado com aviso). */
+  implementationRequired?: boolean;
+  commercialNotes?: string;
+  implementationNotes?: string;
+  /** Número da venda (VEN-AAAA-NNNN) que originou o contrato. */
+  saleNumber?: string;
+  /** Vendedor da venda (dono da oportunidade). */
+  sellerId?: string;
+  /** Contato responsável do cliente (signatário principal). */
+  contactId?: string;
+  cancelledAt?: string;
+  cancelReason?: string;
+  cancelledBy?: string;
 }
 
 export interface Billing extends BaseEntity {
@@ -599,6 +649,33 @@ export interface ImplementationProject extends BaseEntity {
   validation?: { validatedBy: string; validatedAt: string; notes?: string };
   /** Bloqueio interno ativo (atraso contado em internalDelayDays ao desbloquear). */
   blocked?: { reason: string; since: string; byId: string };
+  /** Dados da venda congelados na criação do projeto (handoff Vendas → Implantação). Projetos antigos não têm. */
+  saleSnapshot?: SaleSnapshot;
+}
+
+/** Resumo da venda entregue à Implantação (fotografia no momento da liberação do contrato). */
+export interface SaleSnapshot {
+  opportunityId?: string;
+  saleNumber?: string;
+  contractNumber?: string;
+  sellerId?: string;
+  contactId?: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  paymentMethod?: SalePaymentMethod;
+  commercialNotes?: string;
+  implementationNotes?: string;
+  /** false: a venda não contratou implantação (projeto criado apenas para não quebrar a jornada). */
+  implementationRequired?: boolean;
+  items: { productId: string; productName: string; quantity: number; setupValue: number; monthlyValue: number; hardwareValue: number }[];
+  termMonths?: number;
+  billingDay?: number;
+  monthlyTotal: number;
+  setupTotal: number;
+  hardwareTotal: number;
+  setupInstallments?: number;
+  capturedAt: string;
 }
 
 export interface ImplementationTask extends BaseEntity {
@@ -1250,6 +1327,13 @@ export interface Settings extends BaseEntity {
   key: string;
   value: Record<string, unknown>;
   description?: string;
+}
+
+/** Contador de numeração (coleção `counters`): último número emitido para prefixo + ano. */
+export interface Counter extends BaseEntity {
+  prefix: string;
+  year?: string;
+  value: number;
 }
 
 /** Usuário autenticado com dados de sessão. */

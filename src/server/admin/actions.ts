@@ -6,6 +6,7 @@ import { requireUser } from "@/server/auth/session";
 import { adminAuth } from "@/server/firebase-admin";
 import { batchSet, create, getById, list, remove, update, nowIso, type CreateInput } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { DEPARTMENT_LABELS, ROLE_LABELS } from "@/domain/constants";
 import { COLLECTIONS, type ActionResult, type BaseEntity, type CollectionName, type CurrentUser, type Department, type Product, type Settings, type SlaRule, type User, type UserRef } from "@/domain/types";
 import { countOpenTasksForUser } from "./queries";
@@ -490,11 +491,27 @@ export async function upsertSetting(input: unknown): Promise<ActionResult<{ key:
     const value = SETTING_SCHEMAS[key].parse(raw) as Record<string, unknown>;
 
     const existing = await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", key]] });
+    const before = existing[0]?.value ?? null;
     if (existing.length > 0) {
       // `create` sem merge substitui o valor inteiro (chaves removidas pelo usuário somem de fato).
       await replaceDoc<Settings>(COLLECTIONS.settings, existing[0], { value, description: existing[0].description ?? SETTING_DESCRIPTIONS[key] });
     } else {
       await create<Settings>(COLLECTIONS.settings, { key, value, description: SETTING_DESCRIPTIONS[key], createdBy: user.id }, `setting_${key.replace(/\./g, "_")}`);
+    }
+
+    // Auditoria (D16): valor anterior → novo de cada campo alterado.
+    const fields = Array.from(new Set([...Object.keys(before ?? {}), ...Object.keys(value)]));
+    const audit = auditChanges<Record<string, unknown>>(before, value, fields);
+    if (hasChanges(audit)) {
+      await emitEvent({
+        type: "settings.updated",
+        actor: actor(user),
+        entity: { type: "setting", id: key },
+        title: `Configuração "${SETTING_DESCRIPTIONS[key]?.replace(/\.$/, "") ?? key}" alterada`,
+        description: describeChanges(audit),
+        payload: { kind: "setting", setting: key, created: !before, ...audit },
+        timeline: false,
+      });
     }
 
     revalidateSettings();

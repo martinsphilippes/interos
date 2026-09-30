@@ -30,6 +30,10 @@ service cloud.firestore {
     match /process_runs/{docId} {
       allow read, write: if false;
     }
+    // Contadores transacionais de numeração (VEN, CT, PR…): escritos só pelo servidor.
+    match /counters/{docId} {
+      allow read, write: if false;
+    }
 
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {

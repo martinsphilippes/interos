@@ -7,6 +7,7 @@ import {
   type Billing,
   type Communication,
   type Contract,
+  type Counter,
   type Lead,
   type Opportunity,
   type OpportunityProduct,
@@ -18,6 +19,7 @@ import {
 } from "../../src/domain/types";
 import { CITIES, NOW, addDays, businessTime, cnpj, competence, dayInCompetence, daysAgo, daysFromNow, emailFor, hoursAgo, id, isPast, minIso, pad, pastOnly, personName, phone, pickCity, rng, type SeedDoc } from "./lib";
 import { clientById, type SeedContext, type SeededClient } from "./context";
+import { counterId } from "../../src/server/db";
 import { LEAD_SCORING, LEAD_SOURCE_KEYS, PRODUCT_IDS, splitOrigin } from "./catalog";
 
 const INTERESTS: Record<string, string> = {
@@ -651,6 +653,30 @@ function manualEvidence(signedAt: string, evidence: string, registeredBy: string
   return { method: "manual" as const, evidence, registeredBy, registeredAt: signedAt };
 }
 
+/**
+ * Contadores de numeração (coleção `counters`) coerentes com os números gravados pelo seed: cada prefixo/ano
+ * parte do maior número existente, como `nextNumber` faria na primeira emissão (CT, PR e VEN).
+ */
+function seedCounters(ctx: SeedContext): void {
+  const { store } = ctx;
+  const numbers = [
+    ...store.all<Contract>(COLLECTIONS.contracts).map((c) => c.number),
+    ...store.all<Proposal>(COLLECTIONS.proposals).map((p) => p.number),
+    ...store.all<Opportunity>(COLLECTIONS.opportunities).map((o) => o.saleNumber),
+  ];
+  const max = new Map<string, { prefix: string; year: string; value: number }>();
+  for (const n of numbers) {
+    const m = n?.match(/^([A-Z]+)-(\d{4})-(\d+)$/);
+    if (!m) continue;
+    const key = `${m[1]}_${m[2]}`;
+    const value = Number(m[3]);
+    if (value > (max.get(key)?.value ?? 0)) max.set(key, { prefix: m[1], year: m[2], value });
+  }
+  for (const c of max.values()) {
+    store.add(COLLECTIONS.counters, counterId(c.prefix, c.year), { prefix: c.prefix, year: c.year, value: c.value } satisfies SeedDoc<Counter>);
+  }
+}
+
 export async function seedSales(ctx: SeedContext): Promise<void> {
   seedLeads(ctx);
   seedOpportunities(ctx);
@@ -658,4 +684,5 @@ export async function seedSales(ctx: SeedContext): Promise<void> {
   seedVisits(ctx);
   seedProspecting(ctx);
   seedCommunications(ctx);
+  seedCounters(ctx);
 }

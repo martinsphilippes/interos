@@ -11,7 +11,7 @@ import "server-only";
  * como Error com mensagem em português (as actions devolvem a mensagem ao usuário).
  */
 import { FieldValue } from "firebase-admin/firestore";
-import { batchSet, col, create, getById, list, newId, nowIso, update } from "@/server/db";
+import { batchSet, col, create, getById, list, newId, nextNumber, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { registerHandler } from "@/server/events/emit";
 import { registerFinanceHandlers } from "@/server/events/handlers/finance";
@@ -90,18 +90,9 @@ async function clearFields(name: typeof COLLECTIONS.contracts | typeof COLLECTIO
   await col(name).doc(id).update(patch);
 }
 
-/** Próximo número "CT-AAAA-NNNN" no ano corrente (mesmo formato do módulo de Vendas). */
-async function nextContractNumber(): Promise<string> {
-  const year = dateKey(new Date()).slice(0, 4);
-  const docs = await list<Contract>(COLLECTIONS.contracts);
-  const head = `CT-${year}-`;
-  let max = 0;
-  for (const d of docs) {
-    if (!d.number?.startsWith(head)) continue;
-    const seq = Number(d.number.slice(head.length));
-    if (Number.isFinite(seq) && seq > max) max = seq;
-  }
-  return `${head}${String(max + 1).padStart(4, "0")}`;
+/** Próximo número "CT-AAAA-NNNN" no ano corrente: contador transacional (parte do maior número já gravado). */
+function nextContractNumber(): Promise<string> {
+  return nextNumber("CT", { pad: 4, initFrom: { collection: COLLECTIONS.contracts } });
 }
 
 async function contractBillings(contractId: string): Promise<Billing[]> {

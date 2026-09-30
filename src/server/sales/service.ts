@@ -8,7 +8,7 @@ import "server-only";
  * como Error com mensagem em português (as actions devolvem a mensagem ao usuário).
  */
 import { FieldValue } from "firebase-admin/firestore";
-import { col, create, getById, getManyByIds, list, nowIso, update } from "@/server/db";
+import { col, create, getById, getManyByIds, list, nextNumber, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { registerHandler } from "@/server/events/emit";
 import { registerSalesHandlers } from "@/server/events/handlers/sales";
@@ -97,18 +97,9 @@ function normalizeLines(lines: OpportunityProduct[]): OpportunityProduct[] {
   }));
 }
 
-/** Próximo número sequencial "<PREFIXO>-AAAA-NNNN" no ano corrente (fuso da operação). */
-async function nextSequence(name: CollectionName, prefix: string): Promise<string> {
-  const year = dateKey(new Date()).slice(0, 4);
-  const docs = await list<{ id: string; organizationId: string; createdAt: string; updatedAt: string; number?: string }>(name);
-  const head = `${prefix}-${year}-`;
-  let max = 0;
-  for (const d of docs) {
-    if (!d.number?.startsWith(head)) continue;
-    const seq = Number(d.number.slice(head.length));
-    if (Number.isFinite(seq) && seq > max) max = seq;
-  }
-  return `${head}${String(max + 1).padStart(4, "0")}`;
+/** Próximo número sequencial "<PREFIXO>-AAAA-NNNN" no ano corrente: contador transacional (parte do maior já gravado). */
+function nextSequence(name: CollectionName, prefix: string): Promise<string> {
+  return nextNumber(prefix, { pad: 4, initFrom: { collection: name } });
 }
 
 /** Grava (cria ou substitui o valor de) uma configuração em `settings` com id determinístico. */
