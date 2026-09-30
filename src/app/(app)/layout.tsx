@@ -8,7 +8,10 @@ const PRESENCE_ROLES: readonly RoleKey[] = ["vendas", "suporte", "cs", "implanta
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
-  const sections = NAVIGATION.filter((section) => canAccessModule(user, section.key));
+  const sections = NAVIGATION.filter((section) => canAccessModule(user, section.key)).map((section) => ({
+    ...section,
+    items: section.items.filter((item) => user.isAdmin || !item.roles || item.roles.includes(user.role)),
+  }));
   const quickActions = QUICK_ACTIONS.filter(
     (action) => canAccessModule(user, action.module) && (user.isAdmin || !action.roles || action.roles.includes(user.role)),
   );

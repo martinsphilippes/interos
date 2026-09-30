@@ -78,6 +78,8 @@ export type NavItem = {
   icon: string;
   /** Onda em que a tela é entregue; acima de CURRENT_WAVE a rota ainda mostra "em construção". */
   wave?: 1 | 2 | 3 | 4 | 5 | 6;
+  /** Só estes papéis veem o item (admin sempre vê). Ausente = todos com acesso à seção. */
+  roles?: readonly RoleKey[];
 };
 
 export type NavSection = {
@@ -138,6 +140,8 @@ export const NAVIGATION: NavSection[] = [
       { label: "Cobranças", href: "/financeiro/cobrancas", icon: "Receipt", wave: 2 },
       { label: "Contas a Receber", href: "/financeiro/contas-a-receber", icon: "Wallet", wave: 2 },
       { label: "Recorrência", href: "/financeiro/recorrencia", icon: "Repeat", wave: 2 },
+      { label: "Comissões", href: "/financeiro/comissoes", icon: "BadgePercent", wave: 5 },
+      { label: "Contas a Pagar", href: "/financeiro/contas-a-pagar", icon: "HandCoins", wave: 5, roles: ["diretoria", "gestor", "financeiro"] },
     ],
   },
   {

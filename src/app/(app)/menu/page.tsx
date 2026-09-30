@@ -13,7 +13,10 @@ export const metadata: Metadata = { title: "Menu" };
 /** Página "Mais" (mobile): todas as seções e itens acessíveis. */
 export default async function MenuPage() {
   const user = await requireUser();
-  const sections = NAVIGATION.filter((section) => canAccessModule(user, section.key));
+  const sections = NAVIGATION.filter((section) => canAccessModule(user, section.key)).map((section) => ({
+    ...section,
+    items: section.items.filter((item) => user.isAdmin || !item.roles || item.roles.includes(user.role)),
+  }));
 
   return (
     <PageContainer>

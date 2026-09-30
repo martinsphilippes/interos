@@ -55,6 +55,8 @@ import {
   Wallet,
   Workflow,
   Zap,
+  BadgePercent,
+  HandCoins,
   type LucideIcon,
   type LucideProps,
 } from "lucide-react";
@@ -116,6 +118,8 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   Activity,
   Menu,
   Plug,
+  BadgePercent,
+  HandCoins,
 };
 
 export interface NavIconProps extends LucideProps {
