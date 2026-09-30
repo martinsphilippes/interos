@@ -1,0 +1,105 @@
+/**
+ * Esquemas (zod) das ações de Comissões e Contas a Pagar. Sem dependências de servidor: importado pelas Server Actions
+ * e pelos formulários (mesmas mensagens em português).
+ */
+import { z } from "zod";
+import { PRODUCT_CATEGORIES } from "@/domain/constants";
+
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}/, "Data inválida");
+const optionalText = (max: number) => z.string().trim().max(max, `Máximo de ${max} caracteres`).optional().or(z.literal("").transform(() => undefined));
+
+export const COMMISSION_TRIGGERS = ["venda", "contrato_assinado", "primeiro_pagamento", "pagamento", "permanencia", "pagamento_e_permanencia", "mensalidade_n"] as const;
+/** Recorrência: cada competência depende do recebimento da mensalidade correspondente (a partir da N-ésima). */
+export const RECURRING_TRIGGERS = ["pagamento", "pagamento_e_permanencia", "mensalidade_n"] as const;
+
+export const ruleInputSchema = z
+  .object({
+    id: z.string().trim().min(1).optional(),
+    name: z.string().trim().min(3, "Dê um nome à regra (mín. 3 caracteres)").max(80, "Nome muito longo"),
+    scope: z.enum(["padrao", "vendedor", "contrato"], { message: "Abrangência inválida" }),
+    userId: optionalText(60),
+    contractId: optionalText(60),
+    revenueType: z.enum(["setup", "recorrencia", "hardware"], { message: "Tipo de receita inválido" }),
+    productId: optionalText(60),
+    productCategory: z.enum(PRODUCT_CATEGORIES).optional().or(z.literal("").transform(() => undefined)),
+    mode: z.enum(["percentual", "valor"], { message: "Forma de cálculo inválida" }),
+    value: z.number("Informe o valor da comissão").positive("O valor da comissão deve ser maior que zero").max(1_000_000, "Valor muito alto"),
+    trigger: z.enum(COMMISSION_TRIGGERS, { message: "Gatilho inválido" }),
+    baseSource: z.enum(["contratado", "recebido"], { message: "Base inválida" }),
+    minTenureDays: z.number("Carência inválida").int("Use dias inteiros").min(0, "Carência não pode ser negativa").max(730, "Carência máxima de 730 dias"),
+    /** null = enquanto ativo. */
+    recurringCompetences: z.number("Competências inválidas").int("Use um número inteiro").min(1, "Mínimo de 1 competência").max(120, "Máximo de 120 competências").nullable(),
+    releaseInstallment: z.number("Mensalidade inicial inválida").int("Use um número inteiro").min(1, "Mínimo: 1ª mensalidade").max(60, "Máximo: 60ª mensalidade"),
+    validFrom: isoDay.optional().or(z.literal("").transform(() => undefined)),
+    validTo: isoDay.optional().or(z.literal("").transform(() => undefined)),
+    overridesDefault: z.boolean("Informe se a regra substitui a padrão"),
+    reason: optionalText(500),
+    active: z.boolean().default(true),
+  })
+  .superRefine((v, ctx) => {
+    if (v.scope === "vendedor" && !v.userId) ctx.addIssue({ code: "custom", path: ["userId"], message: "Escolha o vendedor da regra" });
+    if (v.scope === "contrato" && !v.contractId) ctx.addIssue({ code: "custom", path: ["contractId"], message: "Escolha o contrato da exceção" });
+    if (v.scope === "contrato" && (v.reason?.length ?? 0) < 10) ctx.addIssue({ code: "custom", path: ["reason"], message: "Exceção por contrato exige o motivo (mín. 10 caracteres)" });
+    if (v.mode === "percentual" && v.value > 100) ctx.addIssue({ code: "custom", path: ["value"], message: "Percentual máximo de 100%" });
+    if (v.productId && v.productCategory) ctx.addIssue({ code: "custom", path: ["productCategory"], message: "Use produto OU categoria, não os dois" });
+    if (v.revenueType === "recorrencia" && !(RECURRING_TRIGGERS as readonly string[]).includes(v.trigger)) {
+      ctx.addIssue({ code: "custom", path: ["trigger"], message: "Recorrência é liberada pelo recebimento de cada mensalidade (com ou sem carência)" });
+    }
+    if (v.validFrom && v.validTo && v.validTo.slice(0, 10) < v.validFrom.slice(0, 10)) ctx.addIssue({ code: "custom", path: ["validTo"], message: "Fim da vigência antes do início" });
+  });
+export type RuleInput = z.infer<typeof ruleInputSchema>;
+
+export const ruleActiveSchema = z.object({
+  id: z.string().trim().min(1, "Regra inválida"),
+  active: z.boolean(),
+  reason: z.string().trim().min(5, "Informe o motivo (mín. 5 caracteres)").max(500, "Motivo muito longo"),
+});
+
+export const paymentDaySchema = z.object({ diaPagamento: z.number("Dia inválido").int("Use um dia inteiro").min(1, "Dia mínimo é 1").max(28, "Dia máximo é 28") });
+
+const reason = z.string().trim().min(5, "Informe o motivo (mín. 5 caracteres)").max(500, "Motivo muito longo");
+
+export const commissionReasonSchema = z.object({ commissionId: z.string().trim().min(1, "Comissão inválida"), reason });
+export const commissionIdSchema = z.object({ commissionId: z.string().trim().min(1, "Comissão inválida") });
+
+export const payableIdSchema = z.object({ payableId: z.string().trim().min(1, "Título inválido"), note: optionalText(500) });
+export const schedulePayableSchema = z.object({ payableId: z.string().trim().min(1, "Título inválido"), dueDate: isoDay.optional().or(z.literal("").transform(() => undefined)), note: optionalText(500) });
+export const payPayableSchema = z.object({
+  payableId: z.string().trim().min(1, "Título inválido"),
+  paidAt: isoDay,
+  paymentMethod: z.enum(["pix", "transferencia", "boleto", "dinheiro", "folha"], { message: "Forma de pagamento inválida" }),
+  receiptUrl: z.string().trim().url("Link do comprovante inválido").max(500).optional().or(z.literal("").transform(() => undefined)),
+  notes: optionalText(500),
+});
+export const cancelPayableSchema = z.object({ payableId: z.string().trim().min(1, "Título inválido"), reason });
+export const updatePayableSchema = z.object({
+  payableId: z.string().trim().min(1, "Título inválido"),
+  description: optionalText(200),
+  dueDate: isoDay.optional().or(z.literal("").transform(() => undefined)),
+  amount: z.number("Valor inválido").positive("Valor deve ser maior que zero").max(10_000_000).optional(),
+  notes: optionalText(500),
+  reason,
+});
+export const manualPayableSchema = z
+  .object({
+    creditorType: z.enum(["colaborador", "fornecedor"], { message: "Tipo de credor inválido" }),
+    creditorId: optionalText(60),
+    creditorName: optionalText(120),
+    category: z.enum(["bonus", "outros"], { message: "Categoria inválida" }),
+    description: z.string().trim().min(3, "Descreva o título").max(200, "Descrição muito longa"),
+    amount: z.number("Informe o valor").positive("Valor deve ser maior que zero").max(10_000_000, "Valor muito alto"),
+    competence: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Competência inválida (AAAA-MM)"),
+    dueDate: isoDay,
+    notes: optionalText(500),
+  })
+  .superRefine((v, ctx) => {
+    if (v.creditorType === "colaborador" && !v.creditorId) ctx.addIssue({ code: "custom", path: ["creditorId"], message: "Escolha o colaborador" });
+    if (v.creditorType === "fornecedor" && !v.creditorName) ctx.addIssue({ code: "custom", path: ["creditorName"], message: "Informe o fornecedor" });
+  });
+
+export const PAYOUT_METHODS = ["pix", "transferencia", "folha", "boleto", "dinheiro"] as const;
+export const PAYOUT_METHOD_LABELS: Record<(typeof PAYOUT_METHODS)[number], string> = { pix: "PIX", transferencia: "Transferência", folha: "Folha de pagamento", boleto: "Boleto", dinheiro: "Dinheiro" };
+
+export function zodMessage(error: z.ZodError): string {
+  return error.issues[0]?.message ?? "Dados inválidos";
+}

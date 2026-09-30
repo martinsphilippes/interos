@@ -1,0 +1,95 @@
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock } from "lucide-react";
+import { canAccessModule, requireUser } from "@/server/auth/session";
+import { canViewPayables } from "@/server/commissions/permissions";
+import { getPayablesWorkspace, parsePayableFilters } from "@/server/commissions/queries";
+import { PAYABLE_CATEGORIES, PAYABLE_CATEGORY_LABELS, PAYABLE_STATUSES, PAYABLE_STATUS_LABELS } from "@/domain/commissions";
+import { formatCurrency } from "@/lib/format";
+import { PageContainer } from "@/components/layout/page-container";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { KpiStrip } from "@/components/ui/kpi-strip";
+import { PageHeader } from "@/components/ui/page-header";
+import { SidePanelShell } from "@/components/ui/side-panel-shell";
+import { StatCard } from "@/components/ui/stat-card";
+import { FinanceFilters } from "@/components/finance/finance-filters";
+import { ManualPayableButton, PayablePanel } from "@/components/commissions/payable-panel";
+import { PayablesTable } from "@/components/commissions/payables-table";
+
+export const metadata: Metadata = { title: "Contas a Pagar" };
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+const VENCIMENTO_OPTIONS = [
+  { value: "vencidos", label: "Vencidos" },
+  { value: "7dias", label: "Próximos 7 dias" },
+  { value: "mes", label: "Este mês" },
+  { value: "proximo_mes", label: "Próximo mês" },
+];
+
+/**
+ * Financeiro › Contas a Pagar (D13): títulos de comissão (gerados pelo motor quando a comissão fica elegível), bônus e
+ * lançamentos manuais. Fluxo previsto → aprovado → a pagar → pago, com origem rastreável e histórico. Vendedor não tem
+ * acesso (volta para Comissões com aviso); gestor fora do Financeiro vê só os títulos da equipe, em modo leitura.
+ */
+export default async function PayablesPage({ searchParams }: { searchParams: SearchParams }) {
+  const user = await requireUser();
+  if (!canAccessModule(user, "financeiro") || !canViewPayables(user)) redirect("/financeiro/comissoes?erro=sem-permissao");
+  const sp = await searchParams;
+  const filters = parsePayableFilters(sp);
+  const requested = (Array.isArray(sp.titulo) ? sp.titulo[0] : sp.titulo)?.trim() || undefined;
+  const ws = await getPayablesWorkspace(user, filters, requested);
+  const { kpis } = ws;
+  const count = (n: number) => `${n} título(s)`;
+
+  return (
+    <PageContainer size="full" className="max-w-[1680px]">
+      <PageHeader
+        title="Contas a Pagar"
+        description={ws.can.readOnly ? "Títulos da sua equipe (somente leitura)" : "Comissões elegíveis, bônus e lançamentos: aprovação, programação e pagamento"}
+        breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contas a Pagar" }]}
+        actions={ws.can.operate ? <ManualPayableButton users={ws.users} /> : undefined}
+      />
+
+      <KpiStrip columns={5} mobileColumns={2}>
+        <StatCard label="Previstos" value={formatCurrency(kpis.previsto.amount)} icon={<Clock />} tone="neutral" hint={count(kpis.previsto.count)} href="/financeiro/contas-a-pagar?status=previsto" compact />
+        <StatCard label="Aprovados" value={formatCurrency(kpis.aprovado.amount)} icon={<CheckCircle2 />} tone="info" hint={count(kpis.aprovado.count)} href="/financeiro/contas-a-pagar?status=aprovado" compact />
+        <StatCard label="A pagar" value={formatCurrency(kpis.a_pagar.amount)} icon={<CalendarCheck />} tone="warning" hint={count(kpis.a_pagar.count)} href="/financeiro/contas-a-pagar?status=a_pagar" compact />
+        <StatCard label="Vencidos" value={formatCurrency(kpis.vencidos.amount)} icon={<AlertCircle />} tone="danger" hint={count(kpis.vencidos.count)} href="/financeiro/contas-a-pagar?vencimento=vencidos" compact />
+        <StatCard label="Pagos no mês" value={formatCurrency(kpis.pagosMes.amount)} icon={<CircleDollarSign />} tone="success" hint={count(kpis.pagosMes.count)} href="/financeiro/contas-a-pagar?status=pago" compact />
+      </KpiStrip>
+
+      <FinanceFilters
+        className="mb-4"
+        fields={[
+          { param: "status", label: "Situação", allLabel: "Todas as situações", options: PAYABLE_STATUSES.map((s) => ({ value: s, label: PAYABLE_STATUS_LABELS[s] })) },
+          { param: "categoria", label: "Categoria", allLabel: "Todas as categorias", options: PAYABLE_CATEGORIES.map((c) => ({ value: c, label: PAYABLE_CATEGORY_LABELS[c] })) },
+          { param: "credor", label: "Credor", allLabel: "Todos os credores", options: ws.facets.creditors },
+          { param: "competencia", label: "Competência", allLabel: "Todas as competências", options: ws.facets.competences },
+          { param: "vencimento", label: "Vencimento", allLabel: "Qualquer vencimento", options: VENCIMENTO_OPTIONS },
+        ]}
+      />
+
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
+        <Card className="min-w-0 overflow-hidden">
+          <CardHeader className="flex-row items-center justify-between gap-3">
+            <CardTitle>Títulos</CardTitle>
+            <span className="text-sm text-muted">
+              {ws.rows.length} de {ws.total}
+            </span>
+          </CardHeader>
+          <PayablesTable key={JSON.stringify(filters)} rows={ws.rows} selectedId={ws.selected?.id} />
+        </Card>
+        {ws.selected ? (
+          <SidePanelShell explicit={Boolean(requested)} param="titulo" ariaLabel="Título selecionado" title={`${ws.selected.code} · ${ws.selected.creditorName}`}>
+            <PayablePanel key={ws.selected.id} p={ws.selected} can={ws.can} />
+          </SidePanelShell>
+        ) : (
+          <aside className="hidden xl:block">
+            <Card className="p-5 text-sm text-muted">Selecione um título para ver a origem (venda → contrato → recebimento → regra → comissão → título), a memória de cálculo e o histórico.</Card>
+          </aside>
+        )}
+      </div>
+    </PageContainer>
+  );
+}
