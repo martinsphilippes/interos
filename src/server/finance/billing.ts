@@ -8,6 +8,7 @@ import { col, getManyByIds, list, nowIso, type ListOptions } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import { COLLECTIONS, type Billing, type Client, type Contract, type UserRef } from "@/domain/types";
+import { splitInstallments } from "@/domain/sale-closing";
 import type { FinanceGateSettings, ReleaseCheck, ReleaseGate } from "./schemas";
 
 export const SYSTEM_ACTOR: UserRef = { id: "system", name: "INTEROS (automação)" };
@@ -61,12 +62,23 @@ export type BillingDraft = Pick<Billing, "clientId" | "contractId" | "type" | "c
 /**
  * Cobranças de um contrato: adesão e hardware no primeiro vencimento; mensalidades do prazo
  * (recorrência mensal = 1 por mês; anual = 1 por ano no valor de 12 meses; único = nenhuma).
+ * Forma de pagamento: a combinada na venda (`contract.paymentMethod`), boleto para contratos antigos.
+ * Adesão parcelada (`contract.setupInstallments` > 1): N cobranças "setup" (parcela 1..N), a 1ª no primeiro
+ * vencimento e as demais no dia de vencimento dos meses seguintes; centavos exatos (a última leva o resto).
  */
 export function buildBillingPlan(contract: Contract, firstDueDate: string): BillingDraft[] {
   const drafts: BillingDraft[] = [];
   const firstKey = dateKey(firstDueDate);
-  const base = { clientId: contract.clientId, contractId: contract.id, status: "aberta" as const, method: "boleto" };
-  if (contract.setupTotal > 0) drafts.push({ ...base, type: "setup", competence: firstKey.slice(0, 7), amount: round2(contract.setupTotal), dueDate: firstDueDate });
+  const base = { clientId: contract.clientId, contractId: contract.id, status: "aberta" as const, method: contract.paymentMethod ?? "boleto" };
+  if (contract.setupTotal > 0) {
+    const parts = splitInstallments(round2(contract.setupTotal), contract.setupInstallments ?? 1);
+    if (parts.length === 1) drafts.push({ ...base, type: "setup", competence: firstKey.slice(0, 7), amount: round2(contract.setupTotal), dueDate: firstDueDate });
+    else
+      parts.forEach((amount, i) => {
+        const dueDate = i === 0 ? firstDueDate : dayInMonth(firstKey.slice(0, 7), i, contract.billingDay);
+        drafts.push({ ...base, type: "setup", competence: dateKey(dueDate).slice(0, 7), installment: i + 1, amount, dueDate });
+      });
+  }
   if (contract.hardwareTotal > 0) drafts.push({ ...base, type: "hardware", competence: firstKey.slice(0, 7), amount: round2(contract.hardwareTotal), dueDate: firstDueDate });
   if (contract.monthlyTotal > 0 && contract.recurrence !== "unico") {
     const step = contract.recurrence === "anual" ? 12 : 1;

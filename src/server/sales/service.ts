@@ -672,27 +672,10 @@ export async function processWonOpportunity(opportunityId: string, actor: UserRe
   const contract = await ensureContractForOpportunity(opp.id, actor);
   if (!contract) return null;
 
-  // 3. Produtos do cliente em implantação.
-  let clientProducts = await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["contractId", "==", contract.id]] });
-  if (clientProducts.length === 0) {
-    clientProducts = [];
-    for (const line of opp.products) {
-      clientProducts.push(
-        await create<ClientProduct>(COLLECTIONS.clientProducts, {
-          clientId: client.id,
-          productId: line.productId,
-          productName: line.productName,
-          quantity: line.quantity,
-          setupValue: line.setupValue,
-          monthlyValue: line.monthlyValue,
-          hardwareValue: line.hardwareValue,
-          status: "em_implantacao",
-          contractId: contract.id,
-          createdBy: actor.id,
-        }),
-      );
-    }
-  }
+  // 3. Produtos do cliente em implantação: derivados dos itens EFETIVOS do contrato (líquidos de desconto),
+  // não de opp.products — o contrato é a fonte única (idempotente: só cria o que falta).
+  const { syncClientProductsFromContract } = await import("@/server/finance/service");
+  const clientProducts = (await syncClientProductsFromContract(contract, actor)).products;
 
   // 4. Tarefa para o financeiro (uma por contrato).
   const existingTasks = await list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", contract.id]] });

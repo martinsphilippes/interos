@@ -128,6 +128,9 @@ export const updateConditionsSchema = z.object({
   recurrence: z.enum(["mensal", "anual", "unico"], { message: "Recorrência inválida" }),
   termMonths: z.number("Prazo inválido").int("Prazo deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses"),
   paymentCondition: z.string().trim().max(300, "Condição de pagamento muito longa").optional(),
+  /** Campos do fechamento estruturado (opcionais: contratos antigos não têm). */
+  paymentMethod: z.enum(PAYMENT_METHODS, { message: "Forma de pagamento inválida" }).optional(),
+  setupInstallments: z.number("Parcelas da adesão inválidas").int("Parcelas devem ser inteiras").min(1, "Mínimo 1 parcela").max(12, "Máximo 12 parcelas").optional(),
 });
 export type UpdateConditionsInput = z.input<typeof updateConditionsSchema>;
 

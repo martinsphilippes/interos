@@ -11,7 +11,7 @@ import "server-only";
  * como Error com mensagem em português (as actions devolvem a mensagem ao usuário).
  */
 import { FieldValue } from "firebase-admin/firestore";
-import { batchSet, col, create, getById, list, newId, nextNumber, nowIso, update } from "@/server/db";
+import { batchSet, col, create, getById, list, newId, nextNumber, nowIso, remove, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { registerHandler } from "@/server/events/emit";
 import { registerFinanceHandlers } from "@/server/events/handlers/finance";
@@ -21,12 +21,15 @@ import { completeTaskInternal, createTaskInternal } from "@/server/tasks/service
 import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
+import { auditChanges, describeChanges } from "@/server/audit";
+import { DEFAULT_CLOSING, SALE_PAYMENT_METHOD_LABELS, contractEffectiveItems } from "@/domain/sale-closing";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import {
   COLLECTIONS,
   type Address,
   type Billing,
   type Client,
+  type ClientProduct,
   type Contact,
   type Contract,
   type Document,
@@ -153,7 +156,10 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
     getDepartmentManager("financeiro"),
     opp.proposalId ? getById<Proposal>(COLLECTIONS.proposals, opp.proposalId) : Promise.resolve(null),
   ]);
-  const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
+  // Fechamento estruturado (D5): o contato responsável da venda vira o signatário principal.
+  const closing = opp.closing;
+  const chosen = closing?.contactId ? contacts.find((c) => c.id === closing.contactId) : undefined;
+  const primary = chosen ?? contacts.find((c) => c.isPrimary) ?? contacts[0];
   // Proposta aceita traz itens com desconto; sem ela, os produtos da oportunidade.
   const items: ProposalItem[] = proposal?.status === "aceita" && proposal.items.length > 0 ? proposal.items : opp.products.map((p) => ({ ...p, discountPct: 0 }));
   const totals = proposalTotals(items);
@@ -169,14 +175,24 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
     setupTotal: totals.setupTotal,
     monthlyTotal: totals.monthlyTotal,
     hardwareTotal: totals.hardwareTotal,
-    billingDay: 10,
-    recurrence: "mensal",
-    termMonths: 12,
+    // Condições herdadas do fechamento; vendas antigas (sem closing) mantêm os padrões de antes (dia 10, mensal, 12 meses).
+    billingDay: closing?.billingDay ?? DEFAULT_CLOSING.billingDay,
+    firstDueDate: closing?.firstDueDate,
+    recurrence: closing?.recurrence ?? DEFAULT_CLOSING.recurrence,
+    termMonths: closing?.termMonths ?? DEFAULT_CLOSING.termMonths,
     signers: signerEmail ? [{ name: primary?.name ?? opp.billingData?.legalName ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [],
     paymentCondition: opp.billingData?.paymentCondition,
     financialStatus: "pendente",
     ownerId: financeManager?.id,
     documentIds: [],
+    paymentMethod: closing?.paymentMethod,
+    setupInstallments: closing?.setupInstallments,
+    implementationRequired: closing?.implementationRequired,
+    commercialNotes: closing?.commercialNotes,
+    implementationNotes: closing?.implementationNotes,
+    saleNumber: opp.saleNumber,
+    sellerId: opp.ownerId,
+    contactId: primary?.id,
     createdBy: actor.id,
   });
   await update<Opportunity>(COLLECTIONS.opportunities, opp.id, { contractId: contract.id });
@@ -185,12 +201,86 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
     actor,
     clientId: client.id,
     entity: { type: "contract", id: contract.id },
-    title: `Contrato ${contract.number} criado (aguardando contrato)`,
-    description: [contract.monthlyTotal > 0 ? `${formatCurrency(contract.monthlyTotal)}/mês` : null, contract.setupTotal > 0 ? `adesão ${formatCurrency(contract.setupTotal)}` : null, `${contract.termMonths} meses`].filter(Boolean).join(" · "),
+    title: `Contrato ${contract.number} criado (aguardando contrato)${opp.saleNumber ? ` · venda ${opp.saleNumber}` : ""}`,
+    description: [
+      contract.monthlyTotal > 0 ? `${formatCurrency(contract.monthlyTotal)}/mês` : null,
+      contract.setupTotal > 0 ? `adesão ${formatCurrency(contract.setupTotal)}${(contract.setupInstallments ?? 1) > 1 ? ` em ${contract.setupInstallments}x` : ""}` : null,
+      `${contract.termMonths} meses`,
+      closing ? `vencimento dia ${contract.billingDay}` : null,
+      contract.paymentMethod ? SALE_PAYMENT_METHOD_LABELS[contract.paymentMethod] : null,
+      closing ? "condições herdadas da venda" : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
     department: "financeiro",
-    payload: { opportunityId: opp.id, ownerId: contract.ownerId, number: contract.number, monthlyTotal: contract.monthlyTotal, setupTotal: contract.setupTotal, hardwareTotal: contract.hardwareTotal, source: "financeiro" },
+    payload: {
+      opportunityId: opp.id,
+      ownerId: contract.ownerId,
+      number: contract.number,
+      monthlyTotal: contract.monthlyTotal,
+      setupTotal: contract.setupTotal,
+      hardwareTotal: contract.hardwareTotal,
+      source: "financeiro",
+      saleNumber: opp.saleNumber,
+      inheritedClosing: Boolean(closing),
+      paymentMethod: contract.paymentMethod,
+      setupInstallments: contract.setupInstallments,
+      billingDay: contract.billingDay,
+      termMonths: contract.termMonths,
+    },
   });
   return contract;
+}
+
+/**
+ * Produtos do cliente a partir dos itens EFETIVOS do contrato (D4: depois que o contrato existe, os itens dele
+ * são a verdade; valores líquidos de desconto). Idempotente: cria os que faltam (em implantação), atualiza valores
+ * dos ainda não ativos e remove os não ativos que saíram do contrato. Produtos ativos, suspensos ou cancelados
+ * nunca são tocados (a partir daí quem muda é o CS: churn/upsell).
+ */
+export async function syncClientProductsFromContract(contract: Contract, actor: UserRef): Promise<{ products: ClientProduct[]; created: number; updated: number; removed: number }> {
+  const existing = await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["contractId", "==", contract.id]] });
+  const items = contractEffectiveItems(contract);
+  const pendingStatus = new Set<ClientProduct["status"]>(["em_implantacao"]);
+  const used = new Set<string>();
+  const products: ClientProduct[] = [];
+  let created = 0;
+  let updated = 0;
+  let removed = 0;
+  for (const item of items) {
+    const match = existing.find((p) => p.productId === item.productId && !used.has(p.id));
+    if (match) {
+      used.add(match.id);
+      const values = { productName: item.productName, quantity: item.quantity, setupValue: item.setupValue, monthlyValue: item.monthlyValue, hardwareValue: item.hardwareValue };
+      const differs = (Object.keys(values) as (keyof typeof values)[]).some((k) => match[k] !== values[k]);
+      if (pendingStatus.has(match.status) && differs) {
+        await update<ClientProduct>(COLLECTIONS.clientProducts, match.id, values);
+        products.push({ ...match, ...values });
+        updated += 1;
+      } else products.push(match);
+      continue;
+    }
+    products.push(
+      await create<ClientProduct>(COLLECTIONS.clientProducts, {
+        clientId: contract.clientId,
+        productId: item.productId,
+        productName: item.productName,
+        quantity: item.quantity,
+        setupValue: item.setupValue,
+        monthlyValue: item.monthlyValue,
+        hardwareValue: item.hardwareValue,
+        status: "em_implantacao",
+        contractId: contract.id,
+        createdBy: actor.id,
+      }),
+    );
+    created += 1;
+  }
+  for (const stale of existing.filter((p) => !used.has(p.id) && pendingStatus.has(p.status))) {
+    await remove(COLLECTIONS.clientProducts, stale.id);
+    removed += 1;
+  }
+  return { products, created, updated, removed };
 }
 
 /**
@@ -288,6 +378,10 @@ export async function updateContractItems(contractId: string, items: ContractIte
   const patch: Partial<Contract> = { ...version.patch, items: normalized, setupTotal: totals.setupTotal, monthlyTotal: totals.monthlyTotal, hardwareTotal: totals.hardwareTotal };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
   await clearFields(COLLECTIONS.contracts, contract.id, version.clear);
+  const next: Contract = { ...contract, ...patch };
+  const audit = auditChanges<Contract>(contract, next, ["items", "setupTotal", "monthlyTotal", "hardwareTotal"]);
+  // D4: produtos do cliente acompanham os itens do contrato de venda enquanto não estão ativos.
+  const synced = contract.opportunityId || (await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["contractId", "==", contract.id]] })).length > 0 ? await syncClientProductsFromContract(next, actor) : null;
   if (!version.versioned) {
     await emitEvent({
       type: "client.updated",
@@ -297,11 +391,21 @@ export async function updateContractItems(contractId: string, items: ContractIte
       title: `Itens do contrato ${contract.number} atualizados`,
       description: `${normalized.length} item(ns) · ${formatCurrency(totals.monthlyTotal)}/mês · adesão ${formatCurrency(totals.setupTotal)} · hardware ${formatCurrency(totals.hardwareTotal)}`,
       department: "financeiro",
-      payload: { contractId: contract.id, totals },
+      payload: { contractId: contract.id, totals, ...audit, clientProducts: synced ? { created: synced.created, updated: synced.updated, removed: synced.removed } : null },
     });
   }
-  return { contract: { ...contract, ...patch }, versioned: version.versioned };
+  return { contract: next, versioned: version.versioned };
 }
+
+const CONDITION_LABELS: Record<string, string> = {
+  billingDay: "Dia de vencimento",
+  recurrence: "Recorrência",
+  termMonths: "Prazo (meses)",
+  paymentCondition: "Condição de pagamento",
+  firstDueDate: "1º vencimento",
+  paymentMethod: "Forma de pagamento",
+  setupInstallments: "Parcelas da adesão",
+};
 
 export async function updateContractConditions(input: UpdateConditionsInput, actor: UserRef): Promise<{ versioned: boolean }> {
   const contract = await loadContract(input.contractId);
@@ -314,12 +418,16 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
     termMonths: input.termMonths,
     paymentCondition: input.paymentCondition || undefined,
     firstDueDate: input.firstDueDate ? dueIso(input.firstDueDate) : undefined,
+    // Campos do fechamento: só mudam quando informados (contratos antigos continuam sem eles).
+    ...(input.paymentMethod ? { paymentMethod: input.paymentMethod } : {}),
+    ...(input.setupInstallments ? { setupInstallments: input.setupInstallments } : {}),
   };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
   const clear = [...version.clear];
   if (!input.firstDueDate && contract.firstDueDate) clear.push("firstDueDate");
   if (!input.paymentCondition && contract.paymentCondition) clear.push("paymentCondition");
   await clearFields(COLLECTIONS.contracts, contract.id, clear);
+  const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments"]);
   if (!version.versioned) {
     await emitEvent({
       type: "client.updated",
@@ -327,9 +435,9 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
       clientId: contract.clientId,
       entity: { type: "contract", id: contract.id },
       title: `Condições do contrato ${contract.number} atualizadas`,
-      description: `Vencimento dia ${input.billingDay} · ${input.termMonths} meses · ${input.recurrence}${input.firstDueDate ? ` · 1º vencimento ${formatDate(dueIso(input.firstDueDate))}` : ""}`,
+      description: describeChanges(audit, CONDITION_LABELS, (field, value) => (value === null ? "—" : field === "firstDueDate" ? formatDate(String(value)) : field === "paymentMethod" ? (SALE_PAYMENT_METHOD_LABELS[value as keyof typeof SALE_PAYMENT_METHOD_LABELS] ?? String(value)) : String(value))) || `Vencimento dia ${input.billingDay} · ${input.termMonths} meses · ${input.recurrence}`,
       department: "financeiro",
-      payload: { contractId: contract.id, billingDay: input.billingDay, termMonths: input.termMonths, recurrence: input.recurrence, firstDueDate: input.firstDueDate },
+      payload: { contractId: contract.id, billingDay: input.billingDay, termMonths: input.termMonths, recurrence: input.recurrence, firstDueDate: input.firstDueDate, paymentMethod: input.paymentMethod, setupInstallments: input.setupInstallments, ...audit },
     });
   }
   return { versioned: version.versioned };

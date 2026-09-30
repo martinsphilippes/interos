@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { Pencil } from "lucide-react";
-import type { Contract } from "@/domain/types";
+import { SALE_PAYMENT_METHODS, type Contract } from "@/domain/types";
+import { MAX_SETUP_INSTALLMENTS, SALE_PAYMENT_METHOD_LABELS } from "@/domain/sale-closing";
 import { updateContractConditionsAction } from "@/server/finance/actions";
 import { RECURRENCE_LABELS } from "@/server/finance/schemas";
 import { dateKey, formatDate } from "@/lib/format";
@@ -15,7 +16,7 @@ import { Select } from "@/components/ui/select";
 import { useFinanceAction } from "./use-finance-action";
 
 export interface ContractConditionsCardProps {
-  contract: Pick<Contract, "id" | "billingDay" | "firstDueDate" | "recurrence" | "termMonths" | "paymentCondition" | "startDate" | "endDate" | "version">;
+  contract: Pick<Contract, "id" | "billingDay" | "firstDueDate" | "recurrence" | "termMonths" | "paymentCondition" | "startDate" | "endDate" | "version" | "paymentMethod" | "setupInstallments">;
   canEdit: boolean;
   sent: boolean;
 }
@@ -31,6 +32,8 @@ export function ContractConditionsCard({ contract, canEdit, sent }: ContractCond
       recurrence: contract.recurrence,
       termMonths: String(contract.termMonths),
       paymentCondition: contract.paymentCondition ?? "",
+      paymentMethod: contract.paymentMethod ?? "",
+      setupInstallments: String(contract.setupInstallments ?? 1),
     }),
     [contract],
   );
@@ -47,6 +50,9 @@ export function ContractConditionsCard({ contract, canEdit, sent }: ContractCond
           recurrence: form.recurrence,
           termMonths: Number(form.termMonths),
           paymentCondition: form.paymentCondition,
+          paymentMethod: (form.paymentMethod || undefined) as Contract["paymentMethod"],
+          // Contrato antigo sem parcelamento continua sem o campo enquanto ficar "à vista".
+          setupInstallments: contract.setupInstallments || form.setupInstallments !== "1" ? Number(form.setupInstallments) : undefined,
         }),
       (d) => (d.versioned ? `Condições salvas: contrato v${contract.version + 1} criado (reenvie para assinatura)` : "Condições salvas"),
     );
@@ -58,6 +64,8 @@ export function ContractConditionsCard({ contract, canEdit, sent }: ContractCond
     ["Primeiro vencimento", contract.firstDueDate ? formatDate(contract.firstDueDate) : "Definido ao gerar as cobranças"],
     ["Recorrência", RECURRENCE_LABELS[contract.recurrence]],
     ["Prazo", `${contract.termMonths} meses`],
+    ["Forma de pagamento", contract.paymentMethod ? SALE_PAYMENT_METHOD_LABELS[contract.paymentMethod] : "Não informada (boleto)"],
+    ["Parcelas da adesão", (contract.setupInstallments ?? 1) > 1 ? `${contract.setupInstallments}x` : "À vista"],
     ["Condição de pagamento", contract.paymentCondition || "—"],
     ["Vigência", contract.startDate ? `${formatDate(contract.startDate)} a ${formatDate(contract.endDate)}` : "Começa na liberação"],
   ];
@@ -99,6 +107,18 @@ export function ContractConditionsCard({ contract, canEdit, sent }: ContractCond
               </FormField>
               <FormField label="Prazo (meses)" htmlFor={`${id}-t`} required>
                 <Input id={`${id}-t`} inputMode="numeric" value={form.termMonths} onChange={(e) => setForm({ ...form, termMonths: e.target.value })} className="h-11 md:h-9" />
+              </FormField>
+              <FormField label="Forma de pagamento" htmlFor={`${id}-pm`}>
+                <Select
+                  id={`${id}-pm`}
+                  value={form.paymentMethod}
+                  onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
+                  placeholder={contract.paymentMethod ? undefined : "Não informada (boleto)"}
+                  options={SALE_PAYMENT_METHODS.map((m) => ({ value: m, label: SALE_PAYMENT_METHOD_LABELS[m] }))}
+                />
+              </FormField>
+              <FormField label="Parcelas da adesão" htmlFor={`${id}-pi`}>
+                <Select id={`${id}-pi`} value={form.setupInstallments} onChange={(e) => setForm({ ...form, setupInstallments: e.target.value })} options={Array.from({ length: MAX_SETUP_INSTALLMENTS }, (_, i) => ({ value: String(i + 1), label: i === 0 ? "À vista (1x)" : `${i + 1}x` }))} />
               </FormField>
             </div>
             <FormField label="Condição de pagamento" htmlFor={`${id}-c`}>
