@@ -21,7 +21,7 @@ import { ACCESS_DENIED_MESSAGE, PermissionError } from "./errors";
 
 // Fachada única de identidade e autorização: páginas e actions importam daqui.
 export { can, canAny, canSeeHref, resolvePermissions } from "./permissions";
-export { PermissionError, AuthenticationError, failAction, ACCESS_DENIED_MESSAGE } from "./errors";
+export { PermissionError, AuthenticationError, BusinessError, failAction, isUserFacingError, ACCESS_DENIED_MESSAGE } from "./errors";
 export { resolvePermissionsForUser } from "./permission-store";
 
 export const SESSION_COOKIE = "interos_session";
