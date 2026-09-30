@@ -3,7 +3,6 @@
  */
 import { COLLECTIONS, type Department, type Organization, type PermissionProfile, type User } from "../../src/domain/types";
 import { ROLE_KEYS } from "../../src/domain/constants";
-import { MODULE_KEYS } from "../../src/domain/permissions/types";
 import { adminAuth } from "../../src/server/firebase-admin";
 import { ORG_ID } from "../../src/server/db";
 import { NOW, daysAgo, type SeedDoc } from "./lib";
@@ -50,8 +49,8 @@ export async function seedOrg(ctx: SeedContext): Promise<void> {
     name: "Intercert",
     slug: "intercert",
     timezone: "America/Sao_Paulo",
-    // Todos os módulos ativos (A8): comportamento padrão.
-    activeModules: [...MODULE_KEYS],
+    // Sem `activeModules`: ausente = todos os módulos ativos (A8), inclusive os que o catálogo ganhar no futuro.
+    // Gravar a lista explícita desligaria em silêncio todo módulo novo até alguém ligá-lo.
     createdAt,
   } satisfies SeedDoc<Organization>);
 

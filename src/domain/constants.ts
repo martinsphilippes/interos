@@ -56,9 +56,13 @@ export const ROLE_LABELS: Record<RoleKey, string> = {
 };
 
 /**
- * Módulos do sistema e papéis que podem acessá-los (fachada histórica). A regra efetiva de cada módulo está no
- * catálogo de acessos (`src/domain/permissions`, chave `<modulo>.acessar`), que inclui "admin" explicitamente e
- * admite ajustes por perfil; `canAccessModule` delega para ele. Mantido para leitura e para os testes de equivalência.
+ * Módulos do sistema e papéis que podiam acessá-los ANTES do catálogo de acessos (registro histórico).
+ *
+ * @deprecated Não use para decidir acesso nem para responder "quem acessa o módulo": a fonte de verdade é a chave
+ * `<modulo>.acessar` do catálogo (`src/domain/permissions`), avaliada por `can`/`canAccessModule` com perfil, exceções
+ * e módulos ativos. Já diverge do catálogo em `admin`: aqui só o papel admin, no catálogo `admin.acessar` =
+ * gestores (admin, diretoria e gestor — correção A27 menu × rota). Para tipar módulos use `ModuleKey`. Mantido só
+ * para os testes de integridade (tests/permissions/catalog.test.ts); remover quando eles deixarem de usá-lo.
  */
 export const MODULE_ACCESS: Record<ModuleKey, readonly RoleKey[] | "all"> = {
   inicio: "all",
@@ -89,7 +93,7 @@ export type NavItem = {
 };
 
 export type NavSection = {
-  key: keyof typeof MODULE_ACCESS;
+  key: ModuleKey;
   label: string;
   items: NavItem[];
 };
@@ -239,8 +243,8 @@ export type QuickAction = {
   href: string;
   /** Nome do ícone lucide-react. */
   icon: string;
-  /** Módulo exigido (MODULE_ACCESS). */
-  module: keyof typeof MODULE_ACCESS;
+  /** Módulo exigido (chave `<modulo>.acessar` do catálogo). */
+  module: ModuleKey;
   /** Restringe a papéis específicos dentro do módulo (admin sempre vê). Ausente = todos com acesso ao módulo. */
   roles?: readonly RoleKey[];
 };
