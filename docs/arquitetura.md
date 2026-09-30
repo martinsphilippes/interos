@@ -292,8 +292,10 @@ Resumo da etapa 6A (a versão completa, com invariantes e a tela de perfis, vem 
   APIs: `requireApiPermission(chave)` → usuário ou `Response` 401/403 JSON. Predicados antigos (`canAccessModule`, `canOperateFinance`,
   `canOperateImplementation/Support`, `canEditArticles`, `canApprovePayables`… `canAccessReport`, `canApproveGoLive`,
   `canApproveStage`) mantêm nome e assinatura e delegam para `can`. `requireRole` continua até a migração.
-- **Navegação** (A11): `NAVIGATION`, `MOBILE_NAV` e `QUICK_ACTIONS` (em `constants.ts`, mesmos exports) DERIVAM de
-  `nav` das telas do catálogo (`src/domain/permissions/nav-table.ts`); o href é a chave de lookup. No servidor
+- **Navegação** (A11): `NAVIGATION`, `MOBILE_NAV` e `QUICK_ACTIONS` DERIVAM de `nav` das telas do catálogo
+  (`src/domain/permissions/nav-table.ts`); os valores ficam em `src/domain/navigation.ts` (só servidor — fora de
+  `constants.ts` para o catálogo não ir ao bundle do navegador) e os tipos em `constants.ts`; o href é a chave de
+  lookup. No servidor
   (`src/server/auth/navigation.ts`): `filterNavigation` (layout, drawer e `/menu`), `filterMobileNav` (barra do
   celular), `filterQuickActions` (atalhos "+"), `filterShellLinks` (atalhos da busca, criação sem resultado, menu de
   ajuda e do usuário — listas em `constants.ts`, entregues filtradas por props), `visibleScreens` e `hrefAccessMap`.
