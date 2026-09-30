@@ -9,15 +9,15 @@ import "server-only";
  * Toda operação grava o histórico no próprio título e emite evento com auditChanges (from → to) e motivo (D16).
  */
 import { firestore } from "@/server/firebase-admin";
-import { col, create, createIfAbsent, getById, nowIso } from "@/server/db";
+import { col, create, createIfAbsent, getById, getManyByIds, newId, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { getSetting } from "@/server/admin/queries";
-import { SETTING_DEFAULTS, type ComissoesPagamentoConfig } from "@/server/admin/schemas";
+import { SETTING_DEFAULTS, type ComissoesPagamentoConfig, type ContasAPagarConfig } from "@/server/admin/schemas";
 import { auditChanges, describeChanges } from "@/server/audit";
 import { dayInMonth } from "@/server/finance/billing";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
-import { COMMISSION_REVENUE_LABELS, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
-import { COLLECTIONS, type Client, type Commission, type Payable, type PayableHistoryEntry, type PayableStatus, type User, type UserRef } from "@/domain/types";
+import { COMMISSION_REVENUE_LABELS, PAYABLE_CATEGORIES, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
+import { COLLECTIONS, type Client, type Commission, type Document, type Payable, type PayableHistoryEntry, type PayableRecurrence, type PayableStatus, type Supplier, type User, type UserRef } from "@/domain/types";
 import { assignPayableCode, cleanPatch, deleteField, historyEntry, SYSTEM_ACTOR, transitionCommission } from "./store";
 
 export async function getCommissionPaymentSettings(): Promise<ComissoesPagamentoConfig> {
@@ -267,6 +267,9 @@ export interface UpdatePayableInput {
   dueDate?: string;
   amount?: number;
   notes?: string;
+  costCenter?: string;
+  /** Série recorrente: encerra a série nesta data (AAAA-MM-DD). */
+  recurrenceUntil?: string;
   reason: string;
 }
 
@@ -282,11 +285,13 @@ export async function updatePayable(id: string, input: UpdatePayableInput, actor
     dueDate: input.dueDate ? `${input.dueDate.slice(0, 10)}T12:00:00.000Z` : current.dueDate,
     amount: input.amount ?? current.amount,
     notes: input.notes?.trim() || current.notes,
+    costCenter: input.costCenter?.trim() || current.costCenter,
   };
-  const audit = auditChanges<Payable>(current, { ...current, ...patch }, ["description", "dueDate", "amount", "notes"], reason);
+  if (input.recurrenceUntil && current.recurrence) patch.recurrence = { ...current.recurrence, until: input.recurrenceUntil.slice(0, 10) };
+  const audit = auditChanges<Payable>(current, { ...current, ...patch }, ["description", "dueDate", "amount", "notes", "costCenter", "recurrence"], reason);
   if (Object.keys(audit.changes).length === 0) return current;
   const { after } = await transitionPayable(id, [current.status], patch, payableHistory(actor, "Alterado", { reason, changes: audit.changes }));
-  await emitPayable("payable.updated", actor, after, `Título ${code(after)} alterado`, audit as unknown as Record<string, unknown>, describeChanges(audit, { description: "Descrição", dueDate: "Vencimento", amount: "Valor", notes: "Observações" }, (field, v) => (v === null ? "—" : field === "amount" ? formatCurrency(Number(v)) : field === "dueDate" ? formatDate(String(v)) : String(v))));
+  await emitPayable("payable.updated", actor, after, `Título ${code(after)} alterado`, audit as unknown as Record<string, unknown>, describeChanges(audit, { description: "Descrição", dueDate: "Vencimento", amount: "Valor", notes: "Observações", costCenter: "Centro de custo", recurrence: "Recorrência" }, (field, v) => (v === null ? "—" : field === "amount" ? formatCurrency(Number(v)) : field === "dueDate" ? formatDate(String(v)) : typeof v === "object" ? JSON.stringify(v) : String(v))));
   return after;
 }
 
@@ -294,40 +299,155 @@ export interface ManualPayableInput {
   creditorType: "colaborador" | "fornecedor";
   creditorId?: string;
   creditorName?: string;
-  category: "bonus" | "outros";
+  supplierId?: string;
+  category: string;
+  costCenter?: string;
   description: string;
   amount: number;
   competence: string;
   dueDate: string;
   notes?: string;
+  installments?: number;
+  recurrence?: PayableRecurrence;
+  attachmentUrl?: string;
+  attachmentName?: string;
 }
 
-export async function createManualPayable(input: ManualPayableInput, actor: UserRef): Promise<Payable> {
+/** Categorias e centros de custo aceitos (setting `contas_a_pagar` + as fixas do circuito). */
+export async function getPayablesSettings(): Promise<ContasAPagarConfig & { categoriasComRotulo: { value: string; label: string }[] }> {
+  const value = await getSetting<ContasAPagarConfig>("contas_a_pagar", SETTING_DEFAULTS.contas_a_pagar);
+  const categorias = Array.from(new Set([...(Array.isArray(value.categorias) ? value.categorias : SETTING_DEFAULTS.contas_a_pagar.categorias), ...PAYABLE_CATEGORIES])).filter((c) => typeof c === "string" && c);
+  const centrosDeCusto = Array.isArray(value.centrosDeCusto) ? value.centrosDeCusto.filter((c) => typeof c === "string" && c) : [];
+  return { categorias, centrosDeCusto, categoriasComRotulo: categorias.map((c) => ({ value: c, label: payableCategoryLabel(c) })) };
+}
+
+/** Parcelas com centavos exatos (a última leva o resto). */
+function splitAmount(total: number, n: number): number[] {
+  const cents = Math.round(total * 100);
+  const base = Math.floor(cents / n);
+  return Array.from({ length: n }, (_, i) => (i === n - 1 ? cents - base * (n - 1) : base) / 100);
+}
+
+function shiftDue(dueDate: string, months: number): string {
+  const key = dueDate.slice(0, 10);
+  const [y, m, d] = key.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1 + months, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last), 12)).toISOString();
+}
+
+/**
+ * Título manual (D28): valida credor (fornecedor cadastrado ou nome livre; colaborador do cadastro), categoria do
+ * setting, centro de custo; parcelamento gera N títulos `pag_<base>_p<n>` (createIfAbsent) com vencimentos mensais;
+ * recorrência marca o título como série (`seriesId` = próprio id) para a varredura `contas_recorrentes`; anexo vira
+ * documento (entityType "payable"). Devolve o primeiro título (e os demais em `parcels`).
+ */
+export async function createManualPayable(input: ManualPayableInput, actor: UserRef): Promise<Payable & { parcels?: Payable[] }> {
   let creditorName = input.creditorName?.trim() ?? "";
+  let supplierId: string | undefined;
   if (input.creditorType === "colaborador") {
     const user = input.creditorId ? await getById<User>(COLLECTIONS.users, input.creditorId) : null;
     if (!user) throw new Error("Selecione o colaborador");
     creditorName = user.name;
+  } else if (input.supplierId) {
+    const supplier = await getById<Supplier>(COLLECTIONS.suppliers, input.supplierId);
+    if (!supplier) throw new Error("Fornecedor não encontrado");
+    if (supplier.active === false) throw new Error(`O fornecedor ${supplier.name} está inativo`);
+    creditorName = supplier.name;
+    supplierId = supplier.id;
   }
   if (!creditorName) throw new Error("Informe o credor");
+  const settings = await getPayablesSettings();
+  if (!settings.categorias.includes(input.category)) throw new Error(`Categoria "${input.category}" não está em Configurações › Contas a pagar`);
+  if (input.costCenter && settings.centrosDeCusto.length > 0 && !settings.centrosDeCusto.includes(input.costCenter)) throw new Error(`Centro de custo "${input.costCenter}" não está em Configurações › Contas a pagar`);
+  const n = Math.max(1, Math.min(48, Math.floor(input.installments ?? 1)));
   const now = nowIso();
-  const payable = await create<Payable>(COLLECTIONS.payables, {
+  const amount = Math.round(input.amount * 100) / 100;
+  const base = {
     creditorType: input.creditorType,
     creditorId: input.creditorType === "colaborador" ? input.creditorId : undefined,
     creditorName,
+    supplierId,
     category: input.category,
-    description: input.description.trim(),
-    amount: Math.round(input.amount * 100) / 100,
-    competence: input.competence,
-    dueDate: `${input.dueDate.slice(0, 10)}T12:00:00.000Z`,
-    status: "previsto",
-    origin: "manual",
+    costCenter: input.costCenter,
+    status: "previsto" as const,
+    origin: "manual" as const,
     sourceIds: { commissionIds: [] },
     notes: input.notes?.trim() || undefined,
-    history: [payableHistory(actor, "Lançamento manual", { to: "previsto" }, now)],
+    createdBy: actor.id,
+  };
+  const emitCreated = async (p: Payable, extra: Record<string, unknown> = {}) => {
+    await emitPayable("payable.created", actor, p, `Título ${p.code} lançado: ${formatCurrency(p.amount)} para ${creditorName}`, { origin: "manual", category: input.category, supplierId: supplierId ?? null, costCenter: input.costCenter ?? null, ...extra, ...auditChanges<Payable>(null, p, ["creditorName", "category", "description", "amount", "competence", "dueDate"]) }, `${payableCategoryLabel(input.category)}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}${p.recurrence ? ` · recorrente (${p.recurrence.frequency})` : ""} · vence ${formatDate(p.dueDate)}`);
+  };
+
+  if (n > 1) {
+    const baseId = newId(COLLECTIONS.payables);
+    const parts = splitAmount(amount, n);
+    const parcels: Payable[] = [];
+    for (let i = 0; i < n; i++) {
+      const id = `pag_${baseId}_p${i + 1}`;
+      const dueDate = shiftDue(input.dueDate, i);
+      const competence = dateKey(dueDate).slice(0, 7);
+      const { created, doc } = await createIfAbsent<Payable>(COLLECTIONS.payables, id, {
+        ...base,
+        description: `${input.description.trim()} (parcela ${i + 1}/${n})`,
+        amount: parts[i],
+        competence,
+        dueDate,
+        installment: i + 1,
+        installments: n,
+        seriesId: baseId,
+        history: [payableHistory(actor, `Lançamento manual parcelado (${i + 1}/${n})`, { to: "previsto" }, now)],
+      });
+      const p = created ? { ...doc, code: await assignPayableCode(id, now) } : doc;
+      parcels.push(p);
+      if (created) await emitCreated(p, { installment: i + 1, installments: n, seriesId: baseId });
+    }
+    if (input.attachmentUrl) await addPayableAttachment(parcels[0].id, { name: input.attachmentName?.trim() || `Anexo · ${input.description.trim()}`, url: input.attachmentUrl }, actor, { emit: false });
+    return { ...parcels[0], parcels };
+  }
+
+  const payable = await create<Payable>(COLLECTIONS.payables, {
+    ...base,
+    description: input.description.trim(),
+    amount,
+    competence: input.competence,
+    dueDate: `${input.dueDate.slice(0, 10)}T12:00:00.000Z`,
+    recurrence: input.recurrence ? stripUndefined({ frequency: input.recurrence.frequency, dayOfMonth: input.recurrence.dayOfMonth, until: input.recurrence.until?.slice(0, 10) }) : undefined,
+    history: [payableHistory(actor, input.recurrence ? `Lançamento manual recorrente (${input.recurrence.frequency}, dia ${input.recurrence.dayOfMonth})` : "Lançamento manual", { to: "previsto" }, now)],
+  });
+  // Série recorrente: o próprio título é o modelo (seriesId = id); as ocorrências vêm da varredura.
+  if (input.recurrence) await update<Payable>(COLLECTIONS.payables, payable.id, { seriesId: payable.id });
+  const withCode = { ...payable, seriesId: input.recurrence ? payable.id : undefined, code: await assignPayableCode(payable.id, now) };
+  await emitCreated(withCode, input.recurrence ? { recurrence: withCode.recurrence, seriesId: payable.id } : {});
+  if (input.attachmentUrl) {
+    const doc = await addPayableAttachment(payable.id, { name: input.attachmentName?.trim() || `Anexo · ${input.description.trim()}`, url: input.attachmentUrl }, actor, { emit: false });
+    withCode.attachmentIds = [doc.id];
+  }
+  return withCode;
+}
+
+/** Anexo por link (como em documentos): `documents` com entityType "payable" + `attachmentIds` no título. */
+export async function addPayableAttachment(payableId: string, input: { name: string; url: string }, actor: UserRef, options: { emit?: boolean } = {}): Promise<Document> {
+  const p = await loadPayable(payableId);
+  const doc = await create<Document>(COLLECTIONS.documents, {
+    clientId: p.sourceIds?.clientId,
+    entityType: "payable",
+    entityId: p.id,
+    name: input.name.trim(),
+    url: input.url.trim(),
+    version: 1,
+    uploadedBy: actor.id,
+    category: "Contas a pagar",
     createdBy: actor.id,
   });
-  const withCode = { ...payable, code: await assignPayableCode(payable.id, now) };
-  await emitPayable("payable.created", actor, withCode, `Título ${withCode.code} lançado: ${formatCurrency(withCode.amount)} para ${creditorName}`, { origin: "manual", category: input.category, ...auditChanges<Payable>(null, withCode, ["creditorName", "category", "description", "amount", "competence", "dueDate"]) }, `${payableCategoryLabel(input.category)} · vence ${formatDate(withCode.dueDate)}`);
-  return withCode;
+  await update<Payable>(COLLECTIONS.payables, p.id, { attachmentIds: [...(p.attachmentIds ?? []), doc.id] });
+  if (options.emit !== false) await emitPayable("payable.updated", actor, { ...p, attachmentIds: [...(p.attachmentIds ?? []), doc.id] }, `Anexo adicionado ao título ${code(p)}: ${doc.name}`, { attachmentId: doc.id, url: doc.url }, doc.url);
+  return doc;
+}
+
+export async function listPayableAttachments(payable: Pick<Payable, "id" | "attachmentIds">): Promise<Document[]> {
+  if (!payable.attachmentIds?.length) return [];
+  const docs = await getManyByIds<Document>(COLLECTIONS.documents, payable.attachmentIds);
+  return payable.attachmentIds.map((id) => docs.get(id)).filter((d): d is Document => Boolean(d));
 }

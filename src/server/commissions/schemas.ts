@@ -78,24 +78,78 @@ export const updatePayableSchema = z.object({
   dueDate: isoDay.optional().or(z.literal("").transform(() => undefined)),
   amount: z.number("Valor inválido").positive("Valor deve ser maior que zero").max(10_000_000).optional(),
   notes: optionalText(500),
+  costCenter: optionalText(60),
+  /** Série recorrente: nova data limite (AAAA-MM-DD) para encerrar a série. */
+  recurrenceUntil: isoDay.optional().or(z.literal("").transform(() => undefined)),
   reason,
 });
+const categoryKey = z.string().trim().min(2, "Categoria inválida").max(40, "Categoria muito longa").regex(/^[a-z0-9][a-z0-9_]*$/, "Categoria inválida");
+const attachmentUrl = z.string().trim().url("Link do anexo inválido").max(500).optional().or(z.literal("").transform(() => undefined));
+
+/** Recorrência de título manual (D28): a varredura contas_recorrentes cria a próxima ocorrência 30 dias antes do vencimento. */
+export const payableRecurrenceSchema = z.object({
+  frequency: z.enum(["mensal", "anual"], { message: "Frequência inválida" }),
+  dayOfMonth: z.number("Dia inválido").int("Use um dia inteiro").min(1, "Dia mínimo é 1").max(28, "Dia máximo é 28"),
+  until: isoDay.optional().or(z.literal("").transform(() => undefined)),
+});
+
+/**
+ * Título manual (D28): credor colaborador ou fornecedor (cadastrado ou nome livre), categoria do setting `contas_a_pagar`
+ * (as fixas continuam válidas), centro de custo, parcelamento (N títulos), recorrência (série) e anexo por link.
+ */
 export const manualPayableSchema = z
   .object({
     creditorType: z.enum(["colaborador", "fornecedor"], { message: "Tipo de credor inválido" }),
     creditorId: optionalText(60),
     creditorName: optionalText(120),
-    category: z.enum(["bonus", "outros"], { message: "Categoria inválida" }),
+    supplierId: optionalText(60),
+    category: categoryKey,
+    costCenter: optionalText(60),
     description: z.string().trim().min(3, "Descreva o título").max(200, "Descrição muito longa"),
     amount: z.number("Informe o valor").positive("Valor deve ser maior que zero").max(10_000_000, "Valor muito alto"),
     competence: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Competência inválida (AAAA-MM)"),
     dueDate: isoDay,
     notes: optionalText(500),
+    /** Parcelas (1 = à vista; N títulos `pag_<base>_p<n>`, vencimentos mensais). */
+    installments: z.number("Parcelas inválidas").int("Parcelas devem ser inteiras").min(1, "Mínimo 1 parcela").max(48, "Máximo 48 parcelas").optional(),
+    recurrence: payableRecurrenceSchema.optional(),
+    attachmentUrl,
+    attachmentName: optionalText(120),
   })
   .superRefine((v, ctx) => {
     if (v.creditorType === "colaborador" && !v.creditorId) ctx.addIssue({ code: "custom", path: ["creditorId"], message: "Escolha o colaborador" });
-    if (v.creditorType === "fornecedor" && !v.creditorName) ctx.addIssue({ code: "custom", path: ["creditorName"], message: "Informe o fornecedor" });
+    if (v.creditorType === "fornecedor" && !v.creditorName && !v.supplierId) ctx.addIssue({ code: "custom", path: ["creditorName"], message: "Informe ou escolha o fornecedor" });
+    if ((v.installments ?? 1) > 1 && v.recurrence) ctx.addIssue({ code: "custom", path: ["recurrence"], message: "Use parcelamento OU recorrência, não os dois" });
+    if (v.category === "comissao_comercial" || v.category === "estorno_comissao") ctx.addIssue({ code: "custom", path: ["category"], message: "Comissões e estornos nascem do motor de comissões, não de lançamento manual" });
   });
+export type ManualPayableSchemaInput = z.input<typeof manualPayableSchema>;
+
+export const payableAttachmentSchema = z.object({
+  payableId: z.string().trim().min(1, "Título inválido"),
+  name: z.string().trim().min(2, "Informe o nome do anexo").max(120, "Nome muito longo"),
+  url: z.string().trim().url("Link do anexo inválido").max(500),
+});
+
+/** Fornecedor (D28): cadastro simples de credor — não é cliente. */
+export const supplierSchema = z.object({
+  id: z.string().trim().min(1).optional(),
+  name: z.string().trim().min(2, "Informe o nome do fornecedor").max(120, "Nome muito longo"),
+  document: z
+    .string()
+    .trim()
+    .transform((v) => v.replace(/\D/g, ""))
+    .refine((v) => v === "" || v.length === 11 || v.length === 14, "CPF/CNPJ deve ter 11 ou 14 dígitos")
+    .optional(),
+  email: z.string().trim().toLowerCase().email("E-mail inválido").optional().or(z.literal("").transform(() => undefined)),
+  phone: optionalText(30),
+  pixKey: optionalText(120),
+  bank: z.object({ banco: optionalText(60), agencia: optionalText(20), conta: optionalText(30) }).optional(),
+  category: optionalText(40),
+  notes: optionalText(500),
+  active: z.boolean().default(true),
+});
+export type SupplierInput = z.infer<typeof supplierSchema>;
+export const supplierActiveSchema = z.object({ id: z.string().trim().min(1, "Fornecedor inválido"), active: z.boolean() });
 
 export const PAYOUT_METHODS = ["pix", "transferencia", "folha", "boleto", "dinheiro"] as const;
 export const PAYOUT_METHOD_LABELS: Record<(typeof PAYOUT_METHODS)[number], string> = { pix: "PIX", transferencia: "Transferência", folha: "Folha de pagamento", boleto: "Boleto", dinheiro: "Dinheiro" };

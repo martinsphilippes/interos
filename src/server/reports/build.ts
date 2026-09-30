@@ -12,12 +12,12 @@ import { loadDataBundle, type DataBundle } from "@/server/kpis/formulas";
 import { getCompanyScorecard } from "@/server/kpis/queries";
 import { currentMonthKey, inPeriod, localDayKey, monthPeriod, periodFromKey, periodReference, type Period } from "@/server/kpis/period";
 import { STATUS_LABELS, formatKpiValue, type KpiScope, type KpiStatus } from "@/server/kpis/schemas";
-import { COLLECTIONS, type Client, type ClientProduct, type Commission, type CurrentUser, type KpiSnapshot, type Product, type Proposal, type User } from "@/domain/types";
+import { COLLECTIONS, type Client, type ClientProduct, type Commission, type CurrentUser, type KpiSnapshot, type Payable, type Product, type Proposal, type User } from "@/domain/types";
 import { CLIENT_STATUS_LABELS, DEPARTMENT_KEYS, DEPARTMENT_LABELS, PRIORITY_LABELS, TASK_STATUS_LABELS, type DepartmentKey } from "@/domain/constants";
 import { formatCompetence } from "@/lib/format";
 import { ORIGIN_LABELS } from "@/components/tasks/task-model";
 import { REPORT_DEFINITIONS, type ReportDefinition, type ReportFilters, type ReportKey, type ReportValue } from "./definitions";
-import { COMMISSION_STATUS_LABELS } from "@/domain/commissions";
+import { COMMISSION_STATUS_LABELS, PAYABLE_ORIGIN_LABELS, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { canViewAllCommissions } from "@/server/commissions/permissions";
 import { resolveCommissionScope } from "@/server/commissions/queries";
 
@@ -56,7 +56,7 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Departamento dono de cada relatório operacional (acesso de quem não é gestor). */
-const OPERATIONAL_OWNER: Partial<Record<ReportKey, DepartmentKey>> = { oportunidades: "vendas", comissoes: "vendas", contratos: "financeiro", chamados: "suporte", clientes: "cs" };
+const OPERATIONAL_OWNER: Partial<Record<ReportKey, DepartmentKey>> = { oportunidades: "vendas", comissoes: "vendas", contratos: "financeiro", chamados: "suporte", clientes: "cs", contas_a_pagar: "financeiro" };
 
 // ---------------------------------------------------------------------------
 // Acesso
@@ -74,6 +74,7 @@ export function canAccessReport(user: ReportUser, key: ReportKey): boolean {
   const def = REPORT_DEFINITIONS[key];
   if (key === "tarefas") return true;
   if (key === "comissoes" && (user.role === "financeiro" || user.departmentId === "financeiro")) return true;
+  if (key === "contas_a_pagar" && (user.role === "financeiro" || user.departmentId === "financeiro")) return true;
   if (key === "diretoria") return false;
   const owner = def.department ?? OPERATIONAL_OWNER[key];
   return owner === user.departmentId;
@@ -626,6 +627,36 @@ async function buildCommissions(months: Period[], filters: ReportFilters, bundle
     }));
 }
 
+const PAYABLE_STATUS: Record<string, string> = PAYABLE_STATUS_LABELS;
+const PAYABLE_ORIGIN: Record<string, string> = PAYABLE_ORIGIN_LABELS;
+
+/** Contas a pagar (D28): títulos das competências do período, com situação derivada "vencido" para os em aberto. */
+async function buildPayables(months: Period[], filters: ReportFilters): Promise<ReportRow[]> {
+  const keys = new Set(months.map((m) => m.key));
+  const today = localDayKey();
+  const payables = await list<Payable>(COLLECTIONS.payables);
+  const overdue = (p: Payable) => (p.status === "previsto" || p.status === "aprovado" || p.status === "a_pagar") && p.dueDate.slice(0, 10) < today;
+  return payables
+    .filter((p) => keys.has(p.competence))
+    .filter((p) => (filters.status === "vencido" ? overdue(p) : !filters.status || p.status === filters.status))
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.code ?? a.id).localeCompare(b.code ?? b.id))
+    .map((p) => ({
+      cells: {
+        codigo: p.code ?? p.id,
+        credor: p.creditorName,
+        categoria: payableCategoryLabel(p.category),
+        centro: p.costCenter ?? null,
+        competencia: formatCompetence(p.competence),
+        vencimento: p.dueDate,
+        valor: p.amount,
+        status: overdue(p) ? `Vencido (${PAYABLE_STATUS[p.status] ?? p.status})` : (PAYABLE_STATUS[p.status] ?? p.status),
+        origem: `${PAYABLE_ORIGIN[p.origin] ?? p.origin}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}`,
+        pago_em: p.paidAt ?? null,
+      },
+      href: `/financeiro/contas-a-pagar?titulo=${p.id}`,
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // Totais e filtros aplicados
 // ---------------------------------------------------------------------------
@@ -768,6 +799,10 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
       if (scope.kind === "team") notes.push("Gestor: comissões da sua equipe.");
       break;
     }
+    case "contas_a_pagar":
+      rows = await buildPayables(range!.months, filters);
+      notes.push("Situação \"Vencido\" = título em aberto (previsto, aprovado ou a pagar) com vencimento anterior a hoje.");
+      break;
   }
   if (def.group === "departamental" && range && range.months.some((m) => m.key !== currentMonthKey())) {
     notes.push("Indicadores de estado (saúde, backlog, clientes ativos, MRR) de meses fechados usam o snapshot gravado quando o cálculo não é reconstruível.");

@@ -1,18 +1,22 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock } from "lucide-react";
+import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock, Truck } from "lucide-react";
 import { canAccessModule, requireUser } from "@/server/auth/session";
 import { canViewPayables } from "@/server/commissions/permissions";
 import { getPayablesWorkspace, parsePayableFilters } from "@/server/commissions/queries";
-import { PAYABLE_CATEGORIES, PAYABLE_CATEGORY_LABELS, PAYABLE_STATUSES, PAYABLE_STATUS_LABELS } from "@/domain/commissions";
+import { runDueSweeps } from "@/server/automations/lazy";
+import { PAYABLE_ORIGIN_LABELS, PAYABLE_STATUSES, PAYABLE_STATUS_LABELS } from "@/domain/commissions";
 import { formatCurrency } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { KpiStrip } from "@/components/ui/kpi-strip";
 import { PageHeader } from "@/components/ui/page-header";
 import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import { StatCard } from "@/components/ui/stat-card";
 import { FinanceFilters } from "@/components/finance/finance-filters";
+import { CashFlowCard } from "@/components/commissions/cash-flow-card";
 import { ManualPayableButton, PayablePanel } from "@/components/commissions/payable-panel";
 import { PayablesTable } from "@/components/commissions/payables-table";
 
@@ -28,13 +32,17 @@ const VENCIMENTO_OPTIONS = [
 ];
 
 /**
- * Financeiro › Contas a Pagar (D13): títulos de comissão (gerados pelo motor quando a comissão fica elegível), bônus e
- * lançamentos manuais. Fluxo previsto → aprovado → a pagar → pago, com origem rastreável e histórico. Vendedor não tem
- * acesso (volta para Comissões com aviso); gestor fora do Financeiro vê só os títulos da equipe, em modo leitura.
+ * Financeiro › Contas a Pagar (D13 + D28): títulos de comissão (gerados pelo motor quando a comissão fica elegível),
+ * bônus, lançamentos manuais (fornecedor, categoria/centro de custo, parcelados, recorrentes, com anexo) e o fluxo de
+ * caixa simplificado (a receber × a pagar por mês). Fluxo previsto → aprovado → a pagar → pago, com origem rastreável
+ * e histórico. Vendedor não tem acesso (volta para Comissões com aviso); gestor fora do Financeiro vê só os títulos
+ * da equipe, em modo leitura.
  */
 export default async function PayablesPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireUser();
   if (!canAccessModule(user, "financeiro") || !canViewPayables(user)) redirect("/financeiro/comissoes?erro=sem-permissao");
+  // Séries recorrentes e avisos de vencidos: preguiçoso ao abrir a tela (1x/dia), além do cron.
+  await runDueSweeps(["contas_recorrentes", "contas_a_pagar_vencidas"]);
   const sp = await searchParams;
   const filters = parsePayableFilters(sp);
   const requested = (Array.isArray(sp.titulo) ? sp.titulo[0] : sp.titulo)?.trim() || undefined;
@@ -46,9 +54,18 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
     <PageContainer size="full" className="max-w-[1680px]">
       <PageHeader
         title="Contas a Pagar"
-        description={ws.can.readOnly ? "Títulos da sua equipe (somente leitura)" : "Comissões elegíveis, bônus e lançamentos: aprovação, programação e pagamento"}
+        description={ws.can.readOnly ? "Títulos da sua equipe (somente leitura)" : "Comissões elegíveis, bônus, fornecedores e lançamentos: aprovação, programação e pagamento"}
         breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contas a Pagar" }]}
-        actions={ws.can.operate ? <ManualPayableButton users={ws.users} /> : undefined}
+        actions={
+          ws.can.operate ? (
+            <>
+              <Link href="/financeiro/contas-a-pagar/fornecedores" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
+                <Truck /> Fornecedores
+              </Link>
+              <ManualPayableButton users={ws.users} suppliers={ws.suppliers} categories={ws.settings.categorias} costCenters={ws.settings.centrosDeCusto} />
+            </>
+          ) : undefined
+        }
       />
 
       <KpiStrip columns={5} mobileColumns={2}>
@@ -59,12 +76,16 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
         <StatCard label="Pagos no mês" value={formatCurrency(kpis.pagosMes.amount)} icon={<CircleDollarSign />} tone="success" hint={count(kpis.pagosMes.count)} href="/financeiro/contas-a-pagar?status=pago" compact />
       </KpiStrip>
 
+      {!ws.can.readOnly ? <CashFlowCard cashFlow={ws.cashFlow} className="mb-4" /> : null}
+
       <FinanceFilters
         className="mb-4"
         fields={[
           { param: "status", label: "Situação", allLabel: "Todas as situações", options: PAYABLE_STATUSES.map((s) => ({ value: s, label: PAYABLE_STATUS_LABELS[s] })) },
-          { param: "categoria", label: "Categoria", allLabel: "Todas as categorias", options: PAYABLE_CATEGORIES.map((c) => ({ value: c, label: PAYABLE_CATEGORY_LABELS[c] })) },
+          { param: "categoria", label: "Categoria", allLabel: "Todas as categorias", options: ws.facets.categories },
           { param: "credor", label: "Credor", allLabel: "Todos os credores", options: ws.facets.creditors },
+          { param: "centro", label: "Centro de custo", allLabel: "Todos os centros", options: ws.facets.costCenters },
+          { param: "origem", label: "Origem", allLabel: "Todas as origens", options: (Object.keys(PAYABLE_ORIGIN_LABELS) as (keyof typeof PAYABLE_ORIGIN_LABELS)[]).map((o) => ({ value: o, label: PAYABLE_ORIGIN_LABELS[o] })) },
           { param: "competencia", label: "Competência", allLabel: "Todas as competências", options: ws.facets.competences },
           { param: "vencimento", label: "Vencimento", allLabel: "Qualquer vencimento", options: VENCIMENTO_OPTIONS },
         ]}
@@ -82,11 +103,11 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
         </Card>
         {ws.selected ? (
           <SidePanelShell explicit={Boolean(requested)} param="titulo" ariaLabel="Título selecionado" title={`${ws.selected.code} · ${ws.selected.creditorName}`}>
-            <PayablePanel key={ws.selected.id} p={ws.selected} can={ws.can} />
+            <PayablePanel key={ws.selected.id} p={ws.selected} can={ws.can} costCenters={ws.settings.centrosDeCusto} />
           </SidePanelShell>
         ) : (
           <aside className="hidden xl:block">
-            <Card className="p-5 text-sm text-muted">Selecione um título para ver a origem (venda → contrato → recebimento → regra → comissão → título), a memória de cálculo e o histórico.</Card>
+            <Card className="p-5 text-sm text-muted">Selecione um título para ver a origem (venda → contrato → recebimento → regra → comissão → título; ou fornecedor / série), os anexos, a memória de cálculo e o histórico.</Card>
           </aside>
         )}
       </div>

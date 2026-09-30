@@ -14,6 +14,7 @@ import {
   COMMISSION_STATUSES,
   PAYABLE_STATUSES,
   commissionSlotLabel,
+  payableCategoryLabel,
 } from "@/domain/commissions";
 import {
   COLLECTIONS,
@@ -33,7 +34,8 @@ import {
   type Product,
   type User,
 } from "@/domain/types";
-import { getCommissionPaymentSettings } from "./payables";
+import { getCommissionPaymentSettings, getPayablesSettings, listPayableAttachments } from "./payables";
+import { listSuppliers } from "./suppliers";
 import {
   canApprovePayables,
   canManageCommissionRules,
@@ -590,6 +592,9 @@ export interface PayableFilters {
   credor?: string;
   competencia?: string;
   vencimento?: "vencidos" | "7dias" | "mes" | "proximo_mes";
+  centro?: string;
+  origem?: Payable["origin"];
+  serie?: string;
 }
 
 export function parsePayableFilters(sp: SearchParams): PayableFilters {
@@ -603,6 +608,9 @@ export function parsePayableFilters(sp: SearchParams): PayableFilters {
     credor: first(sp.credor),
     competencia: comp && MONTH.test(comp) ? comp : undefined,
     vencimento: venc === "vencidos" || venc === "7dias" || venc === "mes" || venc === "proximo_mes" ? venc : undefined,
+    centro: first(sp.centro),
+    origem: (["comissao_automatica", "bonus", "manual", "estorno", "recorrencia"] as const).find((o) => o === first(sp.origem)),
+    serie: first(sp.serie),
   };
 }
 
@@ -620,6 +628,13 @@ export interface PayableRow {
   status: PayableStatus;
   overdue: boolean;
   paidAt?: string;
+  // Contas a Pagar geral (D28)
+  supplierId?: string;
+  costCenter?: string;
+  installment?: number;
+  installments?: number;
+  seriesId?: string;
+  recurring: boolean;
 }
 
 export interface PayableDetail extends PayableRow {
@@ -633,16 +648,34 @@ export interface PayableDetail extends PayableRow {
   approvedBy?: string;
   approvedAt?: string;
   scheduledAt?: string;
+  attachments: { id: string; name: string; url: string; createdAt: string }[];
+  recurrence?: Payable["recurrence"];
+  /** Outros títulos da mesma série/parcelamento. */
+  siblings: { id: string; code: string; competence: string; dueDate: string; status: PayableStatus; amount: number }[];
+}
+
+/** Fluxo de caixa simplificado (D28): a receber (cobranças abertas/vencidas) × a pagar (títulos abertos) por mês. */
+export interface CashFlowMonth {
+  key: string;
+  label: string;
+  receivable: number;
+  receivableCount: number;
+  payable: number;
+  payableCount: number;
+  net: number;
 }
 
 export interface PayablesWorkspace {
   kpis: { previsto: CountAmount; aprovado: CountAmount; a_pagar: CountAmount; vencidos: CountAmount; pagosMes: CountAmount };
   rows: PayableRow[];
   total: number;
-  facets: { creditors: Opt[]; competences: Opt[] };
+  facets: { creditors: Opt[]; competences: Opt[]; categories: Opt[]; costCenters: Opt[] };
   selected: PayableDetail | null;
   can: { approve: boolean; pay: boolean; operate: boolean; readOnly: boolean };
   users: Opt[];
+  suppliers: Opt[];
+  settings: { categorias: Opt[]; centrosDeCusto: string[] };
+  cashFlow: { overdue: CashFlowMonth; months: CashFlowMonth[] };
 }
 
 function isOverduePayable(p: Pick<Payable, "status" | "dueDate">, today: string): boolean {
@@ -674,6 +707,12 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
     status: p.status,
     overdue: isOverduePayable(p, today),
     paidAt: p.paidAt,
+    supplierId: p.supplierId,
+    costCenter: p.costCenter,
+    installment: p.installment,
+    installments: p.installments,
+    seriesId: p.seriesId,
+    recurring: Boolean(p.recurrence) || p.origin === "recorrencia",
   });
   const rowsAll = all.map(toRow);
   const kpis = { previsto: z(), aprovado: z(), a_pagar: z(), vencidos: z(), pagosMes: z() };
@@ -694,6 +733,9 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
     .filter((r) => !filters.categoria || r.category === filters.categoria)
     .filter((r) => !filters.credor || r.creditorId === filters.credor || r.creditorName === filters.credor)
     .filter((r) => !filters.competencia || r.competence === filters.competencia)
+    .filter((r) => !filters.centro || r.costCenter === filters.centro)
+    .filter((r) => !filters.origem || r.origin === filters.origem)
+    .filter((r) => !filters.serie || r.seriesId === filters.serie)
     .filter((r) => {
       if (!filters.vencimento) return true;
       const due = dateKey(r.dueDate);
@@ -714,30 +756,72 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
     .map((c) => ({ value: c, label: competenceLabel(c) }));
 
   const chosen = selectedId ? all.find((p) => p.id === selectedId) : undefined;
-  const selected = chosen ? await payableDetail(chosen, toRow(chosen)) : null;
+  const selected = chosen ? await payableDetail(chosen, toRow(chosen), all) : null;
   const operate = canOperatePayables(viewer);
-  const users = operate ? (await list<User>(COLLECTIONS.users)).filter((u) => u.active !== false).map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")) : [];
+  const [users, suppliers, settings, cashFlow] = await Promise.all([
+    operate ? list<User>(COLLECTIONS.users).then((us) => us.filter((u) => u.active !== false).map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"))) : Promise.resolve([] as Opt[]),
+    operate ? listSuppliers({ activeOnly: true }).then((ss) => ss.map((s) => ({ value: s.id, label: s.name }))) : Promise.resolve([] as Opt[]),
+    getPayablesSettings(),
+    full ? buildCashFlow(all, today) : Promise.resolve({ overdue: emptyCashMonth("atraso", "Em atraso"), months: [] }),
+  ]);
+  const categories = Array.from(new Set([...settings.categorias, ...rowsAll.map((r) => r.category)])).map((c) => ({ value: c, label: payableCategoryLabel(c) })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  const costCenters = Array.from(new Set([...settings.centrosDeCusto, ...rowsAll.map((r) => r.costCenter).filter((c): c is string => Boolean(c))])).map((c) => ({ value: c, label: c })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   return {
     kpis,
     rows,
     total: rowsAll.length,
-    facets: { creditors, competences },
+    facets: { creditors, competences, categories, costCenters },
     selected,
     can: { approve: canApprovePayables(viewer), pay: canPayPayables(viewer), operate, readOnly: !operate },
     users,
+    suppliers,
+    settings: { categorias: settings.categoriasComRotulo.filter((c) => c.value !== "comissao_comercial" && c.value !== "estorno_comissao"), centrosDeCusto: settings.centrosDeCusto },
+    cashFlow,
   };
 }
 
-async function payableDetail(p: Payable, row: PayableRow): Promise<PayableDetail> {
+const emptyCashMonth = (key: string, label: string): CashFlowMonth => ({ key, label, receivable: 0, receivableCount: 0, payable: 0, payableCount: 0, net: 0 });
+
+/** Próximos 3 meses (mês atual + 2) por mês de vencimento, mais o que já está em atraso; números reais das coleções. */
+async function buildCashFlow(payables: Payable[], today: string): Promise<PayablesWorkspace["cashFlow"]> {
+  const { listBillingsSwept } = await import("@/server/finance/billing");
+  const billings = await listBillingsSwept({ where: [["status", "in", ["aberta", "vencida"]]] });
+  const openPayables = payables.filter((p) => p.status === "previsto" || p.status === "aprovado" || p.status === "a_pagar");
+  const month = today.slice(0, 7);
+  const months = [0, 1, 2].map((i) => emptyCashMonth(addMonthsKey(month, i), competenceLabel(addMonthsKey(month, i))));
+  const overdue = emptyCashMonth("atraso", "Em atraso");
+  const byKey = new Map(months.map((m) => [m.key, m]));
+  for (const b of billings) {
+    const due = dateKey(b.dueDate);
+    const bucket = due < today ? overdue : byKey.get(due.slice(0, 7));
+    if (!bucket) continue;
+    bucket.receivable = round2(bucket.receivable + b.amount);
+    bucket.receivableCount += 1;
+  }
+  for (const p of openPayables) {
+    const due = dateKey(p.dueDate);
+    const bucket = due < today ? overdue : byKey.get(due.slice(0, 7));
+    if (!bucket) continue;
+    bucket.payable = round2(bucket.payable + p.amount);
+    bucket.payableCount += 1;
+  }
+  for (const m of [overdue, ...months]) m.net = round2(m.receivable - m.payable);
+  return { overdue, months };
+}
+
+async function payableDetail(p: Payable, row: PayableRow, all: Payable[] = []): Promise<PayableDetail> {
   const commissionId = p.sourceIds.commissionIds?.[0];
-  const [commission, contract, billing, events, approver] = await Promise.all([
+  const [commission, contract, billing, events, approver, attachments] = await Promise.all([
     commissionId ? getById<Commission>(COLLECTIONS.commissions, commissionId) : Promise.resolve(null),
     p.sourceIds.contractId ? getById<Contract>(COLLECTIONS.contracts, p.sourceIds.contractId) : Promise.resolve(null),
     p.sourceIds.billingId ? getById<Billing>(COLLECTIONS.billing, p.sourceIds.billingId) : Promise.resolve(null),
     list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", p.id]] }),
     p.approvedBy ? getById<User>(COLLECTIONS.users, p.approvedBy) : Promise.resolve(null),
+    listPayableAttachments(p),
   ]);
   const trace: TraceLink[] = [];
+  if (p.supplierId) trace.push({ key: "fornecedor", label: "Fornecedor", value: p.creditorName, href: `/financeiro/contas-a-pagar/fornecedores?fornecedor=${p.supplierId}` });
+  if (p.seriesId && p.seriesId !== p.id) trace.push({ key: "serie", label: p.installments ? "Parcelamento" : "Série", value: p.installments ? `parcela ${p.installment}/${p.installments}` : `ocorrência da série ${all.find((x) => x.id === p.seriesId)?.code ?? p.seriesId}`, href: `/financeiro/contas-a-pagar?serie=${p.seriesId}` });
   if (p.sourceIds.saleNumber || p.sourceIds.opportunityId) trace.push({ key: "venda", label: "Venda", value: p.sourceIds.saleNumber ?? "Oportunidade", href: p.sourceIds.opportunityId ? `/vendas/oportunidades?oportunidade=${p.sourceIds.opportunityId}` : undefined });
   if (contract) trace.push({ key: "contrato", label: "Contrato", value: contract.number, href: `/financeiro/contratos/${contract.id}` });
   if (billing) {
@@ -765,5 +849,13 @@ async function payableDetail(p: Payable, row: PayableRow): Promise<PayableDetail
     approvedBy: approver?.name,
     approvedAt: p.approvedAt,
     scheduledAt: p.scheduledAt,
+    attachments: attachments.map((d) => ({ id: d.id, name: d.name, url: d.url, createdAt: d.createdAt })),
+    recurrence: p.recurrence,
+    siblings: p.seriesId
+      ? all
+          .filter((x) => x.seriesId === p.seriesId && x.id !== p.id)
+          .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+          .map((x) => ({ id: x.id, code: x.code ?? x.id, competence: x.competence, dueDate: x.dueDate, status: x.status, amount: x.amount }))
+      : [],
   };
 }

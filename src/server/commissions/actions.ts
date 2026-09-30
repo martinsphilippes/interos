@@ -7,14 +7,18 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import type { ActionResult, CurrentUser, UserRef } from "@/domain/types";
-import { approvePayable, cancelPayable, createManualPayable, payPayable, schedulePayable, updatePayable } from "./payables";
+import { addPayableAttachment, approvePayable, cancelPayable, createManualPayable, payPayable, schedulePayable, updatePayable } from "./payables";
+import { saveSupplier, setSupplierActive } from "./suppliers";
 import { canApprovePayables, canManageCommissionRules, canOperatePayables, canPayPayables, canReverseCommission } from "./permissions";
 import {
   cancelPayableSchema,
   commissionIdSchema,
   commissionReasonSchema,
   manualPayableSchema,
+  payableAttachmentSchema,
   payableIdSchema,
+  supplierActiveSchema,
+  supplierSchema,
   payPayableSchema,
   paymentDaySchema,
   ruleActiveSchema,
@@ -212,14 +216,54 @@ export async function updatePayableAction(input: unknown): Promise<ActionResult<
   }
 }
 
-export async function createManualPayableAction(input: unknown): Promise<ActionResult<{ id: string; code?: string }>> {
+export async function createManualPayableAction(input: unknown): Promise<ActionResult<{ id: string; code?: string; parcels: number }>> {
   try {
     const user = await requireWith(canOperatePayables, "Somente a equipe financeira lança títulos");
     const data = manualPayableSchema.parse(input);
     const p = await createManualPayable(data, actorOf(user));
     revalidateCommissions();
-    return { ok: true, data: { id: p.id, code: p.code } };
+    return { ok: true, data: { id: p.id, code: p.code, parcels: p.parcels?.length ?? 1 } };
   } catch (error) {
     return fail(error, "Não foi possível lançar o título");
+  }
+}
+
+export async function addPayableAttachmentAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const user = await requireWith(canOperatePayables, "Somente a equipe financeira anexa documentos a títulos");
+    const data = payableAttachmentSchema.parse(input);
+    const doc = await addPayableAttachment(data.payableId, { name: data.name, url: data.url }, actorOf(user));
+    revalidateCommissions();
+    return { ok: true, data: { id: doc.id } };
+  } catch (error) {
+    return fail(error, "Não foi possível anexar o documento");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fornecedores (D28) — equipe financeira
+// ---------------------------------------------------------------------------
+
+export async function saveSupplierAction(input: unknown): Promise<ActionResult<{ id: string; created: boolean }>> {
+  try {
+    const user = await requireWith(canOperatePayables, "Somente a equipe financeira cadastra fornecedores");
+    const data = supplierSchema.parse(input);
+    const r = await saveSupplier(data, actorOf(user));
+    revalidatePath("/financeiro", "layout");
+    return { ok: true, data: { id: r.supplier.id, created: r.created } };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar o fornecedor");
+  }
+}
+
+export async function setSupplierActiveAction(input: unknown): Promise<ActionResult<{ active: boolean }>> {
+  try {
+    const user = await requireWith(canOperatePayables, "Somente a equipe financeira altera fornecedores");
+    const data = supplierActiveSchema.parse(input);
+    const s = await setSupplierActive(data.id, data.active, actorOf(user));
+    revalidatePath("/financeiro", "layout");
+    return { ok: true, data: { active: s.active } };
+  } catch (error) {
+    return fail(error, "Não foi possível alterar o fornecedor");
   }
 }

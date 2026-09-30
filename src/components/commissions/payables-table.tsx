@@ -42,7 +42,7 @@ export function PayablesTable({ rows, selectedId }: { rows: PayableRow[]; select
                 <span className={cn("shrink-0 font-semibold tabular-nums", r.amount < 0 && "text-danger-fg")}>{formatCurrency(r.amount)}</span>
               </span>
               <span className="truncate text-xs text-muted">
-                {r.code} · {payableCategoryLabel(r.category)} · vence {formatDate(r.dueDate)}
+                {r.code} · {payableCategoryLabel(r.category)}{r.installments ? ` · ${r.installment}/${r.installments}` : ""}{r.recurring ? " · recorrente" : ""} · vence {formatDate(r.dueDate)}
               </span>
               <span className="flex flex-wrap items-center gap-1.5">
                 <PayableStatusBadge status={r.status} overdue={r.overdue} />
@@ -79,7 +79,11 @@ export function PayablesTable({ rows, selectedId }: { rows: PayableRow[]; select
                   >
                     {r.code}
                   </button>
-                  <span className="block truncate text-xs text-muted">{payableCategoryLabel(r.category)}</span>
+                  <span className="block truncate text-xs text-muted">
+                    {payableCategoryLabel(r.category)}
+                    {r.installments ? ` · ${r.installment}/${r.installments}` : ""}
+                    {r.recurring ? " · recorrente" : ""}
+                  </span>
                 </TableCell>
                 <TableCell className="max-w-[260px]">
                   <span className="block truncate">{r.creditorName}</span>

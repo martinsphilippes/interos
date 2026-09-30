@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, History, Pencil, Plus, Route } from "lucide-react";
+import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, ExternalLink, FileText, History, Paperclip, Pencil, Plus, Repeat, Route } from "lucide-react";
 import type { PayableDetail } from "@/server/commissions/queries";
-import { approvePayableAction, cancelPayableAction, createManualPayableAction, payPayableAction, schedulePayableAction, updatePayableAction } from "@/server/commissions/actions";
+import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, createManualPayableAction, payPayableAction, schedulePayableAction, updatePayableAction } from "@/server/commissions/actions";
 import { PAYOUT_METHOD_LABELS, PAYOUT_METHODS } from "@/server/commissions/schemas";
 import { PAYABLE_ORIGIN_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { dateKey, formatCompetence, formatCurrency, formatDate } from "@/lib/format";
@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useFinanceAction } from "@/components/finance/use-finance-action";
 import { CalcMemory, CommissionStatusBadge, HistoryList, PayableStatusBadge, ReasonDialog, TraceChain } from "./commission-ui";
 
-type Dialogs = null | "schedule" | "pay" | "cancel" | "edit";
+type Dialogs = null | "schedule" | "pay" | "cancel" | "edit" | "attach";
 
 export interface PayableCan {
   approve: boolean;
@@ -29,8 +29,8 @@ export interface PayableCan {
 
 const today = () => dateKey(new Date());
 
-/** Painel do título: valores, ações (aprovar → programar → pagar; cancelar), origem rastreável, memória da comissão e histórico. */
-export function PayablePanel({ p, can }: { p: PayableDetail; can: PayableCan }) {
+/** Painel do título: valores, ações (aprovar → programar → pagar; cancelar), origem rastreável, anexos, série, memória da comissão e histórico. */
+export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; can: PayableCan; costCenters?: string[] }) {
   const { pending, run } = useFinanceAction();
   const [dialog, setDialog] = React.useState<Dialogs>(null);
   const open = p.status !== "pago" && p.status !== "cancelado";
@@ -54,9 +54,11 @@ export function PayablePanel({ p, can }: { p: PayableDetail; can: PayableCan }) 
           <DataList
             labelWidth="8rem"
             items={[
-              { label: "Credor", value: p.creditorName },
+              { label: "Credor", value: p.creditorName, href: p.supplierId ? `/financeiro/contas-a-pagar/fornecedores?fornecedor=${p.supplierId}` : undefined },
               { label: "Categoria", value: payableCategoryLabel(p.category) },
-              { label: "Origem", value: PAYABLE_ORIGIN_LABELS[p.origin] },
+              ...(p.costCenter ? [{ label: "Centro de custo", value: p.costCenter }] : []),
+              { label: "Origem", value: `${PAYABLE_ORIGIN_LABELS[p.origin]}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}` },
+              ...(p.recurrence ? [{ label: "Recorrência", value: `${p.recurrence.frequency === "anual" ? "Anual" : "Mensal"} · dia ${p.recurrence.dayOfMonth}${p.recurrence.until ? ` · até ${formatDate(`${p.recurrence.until}T12:00:00.000Z`)}` : " · sem data limite"}` }] : []),
               { label: "Competência", value: formatCompetence(p.competence) },
               { label: "Vencimento", value: formatDate(p.dueDate) },
               ...(p.approvedBy ? [{ label: "Aprovado por", value: `${p.approvedBy}${p.approvedAt ? ` em ${formatDate(p.approvedAt)}` : ""}` }] : []),
@@ -100,6 +102,11 @@ export function PayablePanel({ p, can }: { p: PayableDetail; can: PayableCan }) 
                 </Button>
               ) : null}
               {can.operate ? (
+                <Button variant="outline" className="h-11 md:h-9" onClick={() => setDialog("attach")}>
+                  <Paperclip /> Anexar
+                </Button>
+              ) : null}
+              {can.operate ? (
                 <Button variant="outline" className="h-11 text-danger-fg md:h-9" onClick={() => setDialog("cancel")}>
                   <Ban /> Cancelar título
                 </Button>
@@ -120,6 +127,65 @@ export function PayablePanel({ p, can }: { p: PayableDetail; can: PayableCan }) 
           <TraceChain links={p.trace} />
         </CardContent>
       </Card>
+
+      {p.attachments.length > 0 || (!open ? false : can.operate) ? (
+        <Card>
+          <CardHeader className="flex-row items-center justify-between gap-3">
+            <CardTitle className="flex items-center gap-2">
+              <Paperclip className="size-4 text-muted" /> Anexos
+            </CardTitle>
+            {can.operate && p.status !== "cancelado" ? (
+              <Button variant="ghost" size="sm" className="h-9 md:h-8" onClick={() => setDialog("attach")}>
+                <Plus /> Anexar
+              </Button>
+            ) : null}
+          </CardHeader>
+          <CardContent className="pt-0" data-testid="payable-attachments">
+            {p.attachments.length === 0 ? (
+              <p className="text-sm text-muted">Nenhum anexo (nota fiscal, boleto do fornecedor, contrato). Anexe por link.</p>
+            ) : (
+              <ul className="flex flex-col divide-y divide-border">
+                {p.attachments.map((d) => (
+                  <li key={d.id}>
+                    <a href={d.url} target="_blank" rel="noreferrer" className="flex min-h-[44px] items-center gap-3 py-2 hover:text-brand">
+                      <FileText className="size-4 shrink-0 text-muted" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{d.name}</span>
+                        <span className="block text-xs text-muted">{formatDate(d.createdAt)}</span>
+                      </span>
+                      <ExternalLink className="size-3.5 shrink-0 text-muted" aria-hidden />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {p.siblings.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Repeat className="size-4 text-muted" /> {p.installments ? "Parcelas" : "Série recorrente"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0" data-testid="payable-siblings">
+            <ul className="flex flex-col divide-y divide-border text-sm">
+              {p.siblings.map((sib) => (
+                <li key={sib.id} className="flex items-center justify-between gap-2 py-1.5">
+                  <Link href={`/financeiro/contas-a-pagar?titulo=${sib.id}`} className="font-medium hover:text-brand-fg">
+                    {sib.code}
+                  </Link>
+                  <span className="text-muted">{formatCompetence(sib.competence)}</span>
+                  <span className="tabular-nums">{formatCurrency(sib.amount)}</span>
+                  <PayableStatusBadge status={sib.status} />
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {p.commission ? (
         <Card>
@@ -151,7 +217,8 @@ export function PayablePanel({ p, can }: { p: PayableDetail; can: PayableCan }) 
 
       {dialog === "schedule" ? <ScheduleDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => schedulePayableAction({ payableId: p.id, ...v }), "Pagamento programado").then(close)} /> : null}
       {dialog === "pay" ? <PayDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => payPayableAction({ payableId: p.id, ...v }), (d) => (d.commissions > 0 ? "Título pago · comissão marcada como paga" : "Título pago")).then(close)} /> : null}
-      {dialog === "edit" ? <EditDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updatePayableAction({ payableId: p.id, ...v }), "Título alterado").then(close)} /> : null}
+      {dialog === "edit" ? <EditDialog p={p} costCenters={costCenters} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updatePayableAction({ payableId: p.id, ...v }), "Título alterado").then(close)} /> : null}
+      {dialog === "attach" ? <AttachDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => addPayableAttachmentAction({ payableId: p.id, ...v }), "Anexo adicionado").then(close)} /> : null}
       <ReasonDialog
         open={dialog === "cancel"}
         onOpenChange={(o) => setDialog(o ? "cancel" : null)}
@@ -240,12 +307,14 @@ function PayDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pendin
   );
 }
 
-function EditDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pending: boolean; onClose: () => void; onSubmit: (v: { description?: string; dueDate?: string; amount?: number; notes?: string; reason: string }) => Promise<boolean> }) {
+function EditDialog({ p, costCenters, pending, onClose, onSubmit }: { p: PayableDetail; costCenters: string[]; pending: boolean; onClose: () => void; onSubmit: (v: { description?: string; dueDate?: string; amount?: number; notes?: string; costCenter?: string; recurrenceUntil?: string; reason: string }) => Promise<boolean> }) {
   const id = React.useId();
   const [description, setDescription] = React.useState(p.description);
   const [dueDate, setDueDate] = React.useState(dateKey(p.dueDate));
   const [amount, setAmount] = React.useState(String(p.amount));
   const [notes, setNotes] = React.useState(p.notes ?? "");
+  const [costCenter, setCostCenter] = React.useState(p.costCenter ?? "");
+  const [recurrenceUntil, setRecurrenceUntil] = React.useState(p.recurrence?.until ?? "");
   const [reason, setReason] = React.useState("");
   const amountEditable = p.origin === "manual" && p.status === "previsto";
   return (
@@ -265,6 +334,16 @@ function EditDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pendi
           <FormField label="Valor (R$)" htmlFor={`${id}-amount`} hint={amountEditable ? undefined : "Só em título manual previsto"}>
             <Input id={`${id}-amount`} type="number" inputMode="decimal" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={!amountEditable} />
           </FormField>
+          {costCenters.length > 0 ? (
+            <FormField label="Centro de custo" htmlFor={`${id}-cc`}>
+              <Select id={`${id}-cc`} value={costCenter} onChange={(e) => setCostCenter(e.target.value)} placeholder="Sem centro de custo" options={costCenters.map((c) => ({ value: c, label: c }))} />
+            </FormField>
+          ) : null}
+          {p.recurrence ? (
+            <FormField label="Repetir até" htmlFor={`${id}-until`} hint="Encerra a série recorrente nesta data">
+              <Input id={`${id}-until`} type="date" value={recurrenceUntil} onChange={(e) => setRecurrenceUntil(e.target.value)} />
+            </FormField>
+          ) : null}
           <FormField label="Observações" htmlFor={`${id}-notes`} className="sm:col-span-2">
             <Textarea id={`${id}-notes`} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </FormField>
@@ -276,7 +355,7 @@ function EditDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pendi
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Voltar
           </Button>
-          <Button onClick={() => onSubmit({ description, dueDate, amount: amountEditable ? Number(amount) : undefined, notes, reason })} loading={pending} disabled={reason.trim().length < 5}>
+          <Button onClick={() => onSubmit({ description, dueDate, amount: amountEditable ? Number(amount) : undefined, notes, costCenter: costCenter || undefined, recurrenceUntil: recurrenceUntil || undefined, reason })} loading={pending} disabled={reason.trim().length < 5}>
             Salvar alteração
           </Button>
         </DialogFooter>
@@ -285,31 +364,118 @@ function EditDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pendi
   );
 }
 
-/** "Lançar título": título manual do Financeiro (bônus ou outros), para colaborador ou fornecedor. */
-export function ManualPayableButton({ users }: { users: { value: string; label: string }[] }) {
+function AttachDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pending: boolean; onClose: () => void; onSubmit: (v: { name: string; url: string }) => Promise<boolean> }) {
+  const id = React.useId();
+  const [name, setName] = React.useState("");
+  const [url, setUrl] = React.useState("");
+  return (
+    <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>Anexar documento a {p.code}</DialogTitle>
+          <DialogDescription>Link do documento (nota fiscal, boleto do fornecedor, contrato). Entra nos documentos do sistema ligado a este título.</DialogDescription>
+        </DialogHeader>
+        <DialogBody className="flex flex-col gap-4">
+          <FormField label="Nome" htmlFor={`${id}-n`} required>
+            <Input id={`${id}-n`} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: NF 1234 — Aluguel setembro" />
+          </FormField>
+          <FormField label="Link" htmlFor={`${id}-u`} required>
+            <Input id={`${id}-u`} type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" />
+          </FormField>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
+            Voltar
+          </Button>
+          <Button onClick={() => onSubmit({ name, url })} loading={pending} disabled={name.trim().length < 2 || !/^https?:\/\//.test(url.trim())}>
+            <Paperclip /> Anexar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export interface ManualPayableButtonProps {
+  users: { value: string; label: string }[];
+  suppliers?: { value: string; label: string }[];
+  categories?: { value: string; label: string }[];
+  costCenters?: string[];
+}
+
+const SUPPLIER_FREE = "__livre__";
+
+/**
+ * "Lançar título": título manual do Financeiro (D28) — colaborador ou fornecedor (cadastrado ou nome livre), categoria e
+ * centro de custo do setting, parcelamento (N títulos) ou recorrência (série), anexo por link. Entra como "Previsto"
+ * e segue o mesmo fluxo de aprovação e pagamento.
+ */
+export function ManualPayableButton({ users, suppliers = [], categories = [{ value: "bonus", label: payableCategoryLabel("bonus") }, { value: "outros", label: payableCategoryLabel("outros") }], costCenters = [] }: ManualPayableButtonProps) {
   const id = React.useId();
   const [open, setOpen] = React.useState(false);
   const { pending, run } = useFinanceAction();
   const month = today().slice(0, 7);
-  const [f, setF] = React.useState({ creditorType: "colaborador" as "colaborador" | "fornecedor", creditorId: "", creditorName: "", category: "bonus" as "bonus" | "outros", description: "", amount: "", competence: month, dueDate: today(), notes: "" });
+  const [f, setF] = React.useState({
+    creditorType: "colaborador" as "colaborador" | "fornecedor",
+    creditorId: "",
+    supplierId: suppliers[0]?.value ?? SUPPLIER_FREE,
+    creditorName: "",
+    category: categories.find((c) => c.value === "bonus")?.value ?? categories[0]?.value ?? "outros",
+    costCenter: "",
+    description: "",
+    amount: "",
+    competence: month,
+    dueDate: today(),
+    notes: "",
+    mode: "unico" as "unico" | "parcelado" | "recorrente",
+    installments: "2",
+    frequency: "mensal" as "mensal" | "anual",
+    dayOfMonth: "10",
+    until: "",
+    attachmentUrl: "",
+    attachmentName: "",
+  });
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((prev) => ({ ...prev, [k]: v }));
+  const supplierFree = f.supplierId === SUPPLIER_FREE || suppliers.length === 0;
   const submit = async () => {
-    const ok = await run(() => createManualPayableAction({ ...f, amount: Number(f.amount) }), (d) => `Título ${d.code ?? ""} lançado`);
+    const ok = await run(
+      () =>
+        createManualPayableAction({
+          creditorType: f.creditorType,
+          creditorId: f.creditorType === "colaborador" ? f.creditorId : undefined,
+          supplierId: f.creditorType === "fornecedor" && !supplierFree ? f.supplierId : undefined,
+          creditorName: f.creditorType === "fornecedor" && supplierFree ? f.creditorName : undefined,
+          category: f.category,
+          costCenter: f.costCenter || undefined,
+          description: f.description,
+          amount: Number(f.amount),
+          competence: f.competence,
+          dueDate: f.dueDate,
+          notes: f.notes,
+          installments: f.mode === "parcelado" ? Number(f.installments) : undefined,
+          recurrence: f.mode === "recorrente" ? { frequency: f.frequency, dayOfMonth: Number(f.dayOfMonth), until: f.until || undefined } : undefined,
+          attachmentUrl: f.attachmentUrl || undefined,
+          attachmentName: f.attachmentName || undefined,
+        }),
+      (d) => (d.parcels > 1 ? `${d.parcels} títulos lançados (${d.code ?? ""} …)` : `Título ${d.code ?? ""} lançado`),
+    );
     if (ok) {
       setOpen(false);
-      setF((prev) => ({ ...prev, description: "", amount: "", notes: "" }));
+      setF((prev) => ({ ...prev, description: "", amount: "", notes: "", attachmentUrl: "", attachmentName: "", mode: "unico" }));
     }
   };
+  const creditorOk = f.creditorType === "colaborador" ? Boolean(f.creditorId) : supplierFree ? f.creditorName.trim().length >= 2 : Boolean(f.supplierId);
+  const valid = creditorOk && f.description.trim().length >= 3 && Number(f.amount) > 0 && Boolean(f.category) && (f.mode !== "parcelado" || Number(f.installments) >= 2) && (f.mode !== "recorrente" || (Number(f.dayOfMonth) >= 1 && Number(f.dayOfMonth) <= 28));
   return (
     <>
       <Button className="h-11 md:h-9" onClick={() => setOpen(true)}>
         <Plus /> Lançar título
       </Button>
       <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
-        <DialogContent size="md">
+        <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>Lançar título a pagar</DialogTitle>
-            <DialogDescription>Título manual (bônus ou outros). Entra como &quot;Previsto&quot; e segue o mesmo fluxo de aprovação e pagamento.</DialogDescription>
+            <DialogDescription>Título manual (fornecedor, imposto, folha, bônus, outros). Entra como &quot;Previsto&quot; e segue o mesmo fluxo de aprovação e pagamento. Comissões nascem do motor, não daqui.</DialogDescription>
           </DialogHeader>
           <DialogBody className="grid gap-4 sm:grid-cols-2">
             <FormField label="Credor" htmlFor={`${id}-tipo`} required>
@@ -323,27 +489,68 @@ export function ManualPayableButton({ users }: { users: { value: string; label: 
                 <Select id={`${id}-user`} value={f.creditorId} onChange={(e) => set("creditorId", e.target.value)} placeholder="Escolha" options={users} />
               </FormField>
             ) : (
-              <FormField label="Fornecedor" htmlFor={`${id}-forn`} required>
-                <Input id={`${id}-forn`} value={f.creditorName} onChange={(e) => set("creditorName", e.target.value)} />
-              </FormField>
+              <>
+                <FormField label="Fornecedor" htmlFor={`${id}-sup`} required hint={suppliers.length === 0 ? "Nenhum fornecedor cadastrado: informe o nome (ou cadastre em Fornecedores)" : undefined}>
+                  <Select id={`${id}-sup`} value={f.supplierId} onChange={(e) => set("supplierId", e.target.value)} options={[...suppliers, { value: SUPPLIER_FREE, label: "Outro (nome livre)" }]} />
+                </FormField>
+                {supplierFree ? (
+                  <FormField label="Nome do fornecedor" htmlFor={`${id}-forn`} required className="sm:col-span-2">
+                    <Input id={`${id}-forn`} value={f.creditorName} onChange={(e) => set("creditorName", e.target.value)} />
+                  </FormField>
+                ) : null}
+              </>
             )}
-            <FormField label="Categoria" htmlFor={`${id}-cat`} required>
-              <Select id={`${id}-cat`} value={f.category} onChange={(e) => set("category", e.target.value as "bonus" | "outros")}>
-                <option value="bonus">{payableCategoryLabel("bonus")}</option>
-                <option value="outros">{payableCategoryLabel("outros")}</option>
-              </Select>
+            <FormField label="Categoria" htmlFor={`${id}-cat`} required hint="Lista em Configurações › Contas a pagar">
+              <Select id={`${id}-cat`} value={f.category} onChange={(e) => set("category", e.target.value)} options={categories} />
             </FormField>
-            <FormField label="Valor (R$)" htmlFor={`${id}-valor`} required>
-              <Input id={`${id}-valor`} type="number" inputMode="decimal" min={0} step="0.01" value={f.amount} onChange={(e) => set("amount", e.target.value)} />
+            <FormField label="Centro de custo" htmlFor={`${id}-cc`} hint={costCenters.length === 0 ? "Nenhum centro cadastrado em Configurações" : undefined}>
+              <Select id={`${id}-cc`} value={f.costCenter} onChange={(e) => set("costCenter", e.target.value)} placeholder="Sem centro de custo" options={costCenters.map((c) => ({ value: c, label: c }))} disabled={costCenters.length === 0} />
             </FormField>
             <FormField label="Descrição" htmlFor={`${id}-desc`} required className="sm:col-span-2">
               <Input id={`${id}-desc`} value={f.description} onChange={(e) => set("description", e.target.value)} />
             </FormField>
+            <FormField label={f.mode === "parcelado" ? "Valor total (R$)" : "Valor (R$)"} htmlFor={`${id}-valor`} required>
+              <Input id={`${id}-valor`} type="number" inputMode="decimal" min={0} step="0.01" value={f.amount} onChange={(e) => set("amount", e.target.value)} />
+            </FormField>
+            <FormField label="Lançamento" htmlFor={`${id}-mode`} required>
+              <Select id={`${id}-mode`} value={f.mode} onChange={(e) => set("mode", e.target.value as typeof f.mode)}>
+                <option value="unico">Único</option>
+                <option value="parcelado">Parcelado (N títulos)</option>
+                <option value="recorrente">Recorrente (série)</option>
+              </Select>
+            </FormField>
             <FormField label="Competência" htmlFor={`${id}-comp`} required>
               <Input id={`${id}-comp`} type="month" value={f.competence} onChange={(e) => set("competence", e.target.value)} />
             </FormField>
-            <FormField label="Vencimento" htmlFor={`${id}-due`} required>
+            <FormField label={f.mode === "parcelado" ? "Vencimento da 1ª parcela" : "Vencimento"} htmlFor={`${id}-due`} required>
               <Input id={`${id}-due`} type="date" value={f.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
+            </FormField>
+            {f.mode === "parcelado" ? (
+              <FormField label="Parcelas" htmlFor={`${id}-inst`} required hint="Vencimentos mensais a partir da 1ª parcela; centavos exatos">
+                <Input id={`${id}-inst`} type="number" inputMode="numeric" min={2} max={48} value={f.installments} onChange={(e) => set("installments", e.target.value)} />
+              </FormField>
+            ) : null}
+            {f.mode === "recorrente" ? (
+              <>
+                <FormField label="Frequência" htmlFor={`${id}-freq`} required>
+                  <Select id={`${id}-freq`} value={f.frequency} onChange={(e) => set("frequency", e.target.value as "mensal" | "anual")}>
+                    <option value="mensal">Mensal</option>
+                    <option value="anual">Anual</option>
+                  </Select>
+                </FormField>
+                <FormField label="Dia do vencimento" htmlFor={`${id}-dom`} required hint="1 a 28">
+                  <Input id={`${id}-dom`} type="number" inputMode="numeric" min={1} max={28} value={f.dayOfMonth} onChange={(e) => set("dayOfMonth", e.target.value)} />
+                </FormField>
+                <FormField label="Repetir até" htmlFor={`${id}-until`} hint="Vazio = sem data limite. A próxima ocorrência nasce 30 dias antes do vencimento.">
+                  <Input id={`${id}-until`} type="date" value={f.until} onChange={(e) => set("until", e.target.value)} />
+                </FormField>
+              </>
+            ) : null}
+            <FormField label="Anexo (link)" htmlFor={`${id}-att`} hint="Nota fiscal, boleto do fornecedor…">
+              <Input id={`${id}-att`} type="url" value={f.attachmentUrl} onChange={(e) => set("attachmentUrl", e.target.value)} placeholder="https://" />
+            </FormField>
+            <FormField label="Nome do anexo" htmlFor={`${id}-attn`}>
+              <Input id={`${id}-attn`} value={f.attachmentName} onChange={(e) => set("attachmentName", e.target.value)} disabled={!f.attachmentUrl} />
             </FormField>
             <FormField label="Observações (opcional)" htmlFor={`${id}-obs`} className="sm:col-span-2">
               <Textarea id={`${id}-obs`} value={f.notes} onChange={(e) => set("notes", e.target.value)} />
@@ -353,8 +560,8 @@ export function ManualPayableButton({ users }: { users: { value: string; label: 
             <Button variant="outline" onClick={() => setOpen(false)} disabled={pending}>
               Cancelar
             </Button>
-            <Button onClick={submit} loading={pending} disabled={!f.description.trim() || !(Number(f.amount) > 0)}>
-              Lançar título
+            <Button onClick={submit} loading={pending} disabled={!valid}>
+              {f.mode === "parcelado" ? `Lançar ${Number(f.installments) || 0} títulos` : "Lançar título"}
             </Button>
           </DialogFooter>
         </DialogContent>

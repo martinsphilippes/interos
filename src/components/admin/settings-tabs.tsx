@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Activity, Award, BadgeCheck, BellRing, CalendarOff, Clock, Gauge, HeartPulse, ShieldCheck, Target, Timer, TrendingUp } from "lucide-react";
+import { Activity, Award, BadgeCheck, BellRing, CalendarOff, Clock, Gauge, HandCoins, HeartPulse, ShieldCheck, Target, Timer, TrendingUp } from "lucide-react";
 import type { SlaRule } from "@/domain/types";
 import type { SettingKey, SettingValues } from "@/server/admin/schemas";
 import type { ReguaPreview } from "@/server/finance/regua";
@@ -18,6 +18,7 @@ import { SettingsLeadScoring } from "./settings-lead-scoring";
 import { SettingsOpportunity } from "./settings-opportunity";
 import { SettingsFinanceAlerts, SettingsFinanceGate } from "./settings-finance-gate";
 import { SettingsCobrancaCanais, SettingsFinanceiroBaixa, SettingsRegua } from "./settings-cobranca";
+import { SettingsContasAPagar } from "./settings-contas-a-pagar";
 import { SettingsDeliveryGates } from "./settings-delivery-gates";
 import { SettingsSlaRules } from "./settings-sla-rules";
 import { SettingsGamification, SettingsSalesPrizes, SettingsStreak } from "./settings-performance";
@@ -35,6 +36,7 @@ const TAB_ITEMS: { value: SettingsTab; label: string; icon: React.ReactNode }[] 
   { value: "oportunidades", label: "Oportunidades", icon: <Gauge /> },
   { value: "gate-financeiro", label: "Gate financeiro", icon: <ShieldCheck /> },
   { value: "cobranca", label: "Cobrança", icon: <BellRing /> },
+  { value: "contas-a-pagar", label: "Contas a pagar", icon: <HandCoins /> },
   { value: "entrega", label: "Go-live e ativação", icon: <BadgeCheck /> },
   { value: "performance", label: "Gamificação e prêmios", icon: <Award /> },
   { value: "saude-indice", label: "Saúde e índice", icon: <Activity /> },
@@ -108,6 +110,9 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
           <SettingsCobrancaCanais key={JSON.stringify(values.cobranca_canais)} value={values.cobranca_canais} stored={has("cobranca_canais")} />
           <SettingsFinanceiroBaixa key={JSON.stringify(values.financeiro_baixa)} value={values.financeiro_baixa} stored={has("financeiro_baixa")} />
         </div>
+      </TabsContent>
+      <TabsContent value="contas-a-pagar">
+        <SettingsContasAPagar key={JSON.stringify(values.contas_a_pagar)} value={values.contas_a_pagar} stored={has("contas_a_pagar")} />
       </TabsContent>
       <TabsContent value="entrega">
         <SettingsDeliveryGates key={JSON.stringify([values.go_live, values.cs_ativacao])} goLive={values.go_live} activation={values.cs_ativacao} storedGoLive={has("go_live")} storedActivation={has("cs_ativacao")} />
