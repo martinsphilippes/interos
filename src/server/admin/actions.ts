@@ -113,6 +113,20 @@ async function syncAuthDisabled(uid: string, active: boolean): Promise<void> {
   }
 }
 
+/**
+ * Revoga os refresh tokens do usuário no Firebase Auth: sessões abertas deixam de valer na próxima requisição
+ * (`verifySessionCookie(token, true)` confere a revogação) e ele precisa entrar de novo com o papel/situação atuais.
+ * Usuário sem login (só documento) não bloqueia a operação.
+ */
+async function revokeSessions(uid: string): Promise<void> {
+  try {
+    await adminAuth.revokeRefreshTokens(uid);
+  } catch (error) {
+    if (!isAuthNotFound(error)) throw error;
+    console.warn(`[admin] usuário ${uid} sem login no Firebase Auth; nada a revogar`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Usuários
 // ---------------------------------------------------------------------------
@@ -208,6 +222,8 @@ export async function updateUser(input: unknown): Promise<ActionResult<{ id: str
 
     await replaceDoc<User>(COLLECTIONS.users, current, patch);
     if (current.active !== data.active) await syncAuthDisabled(data.id, data.active);
+    // Desativado ou com papel alterado: derruba as sessões abertas para valer o novo acesso.
+    if ((!data.active && current.active !== data.active) || current.role !== data.role) await revokeSessions(data.id);
     if (current.name !== data.name) {
       await adminAuth.updateUser(data.id, { displayName: data.name }).catch((error: unknown) => {
         if (!isAuthNotFound(error)) throw error;
@@ -242,6 +258,7 @@ export async function setUserActive(input: unknown): Promise<ActionResult<{ acti
 
     await syncAuthDisabled(data.id, data.active);
     await update<User>(COLLECTIONS.users, data.id, { active: data.active });
+    if (!data.active) await revokeSessions(data.id);
 
     await emitEvent({
       type: "user.updated",

@@ -16,7 +16,8 @@ const bodySchema = z.object({
 /** Mensagem clara quando a conta do Firebase Auth não corresponde a um usuário do INTEROS. */
 async function rejectionFor(uid: string, email: string | undefined, provider: string | undefined): Promise<string | null> {
   const user = await getById<User>(COLLECTIONS.users, uid);
-  if (user) return user.active === false ? "Este usuário está desativado. Fale com o administrador." : null;
+  // Só usuário explicitamente ativo recebe sessão (documento sem `active` é tratado como desativado).
+  if (user) return user.active === true ? null : "Este usuário está desativado. Fale com o administrador.";
   // O uid não existe em users: pode ser um login Microsoft com e-mail já cadastrado por outro método.
   const normalized = email?.trim().toLowerCase();
   if (normalized) {

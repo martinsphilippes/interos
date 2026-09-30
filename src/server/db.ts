@@ -42,11 +42,17 @@ function toEntity<T extends BaseEntity>(id: string, data: DocumentData | undefin
   return { ...(data as Omit<T, "id">), id } as T;
 }
 
+/** true quando o documento pertence à organização do processo. Documento sem `organizationId` é negado. */
+function belongsToOrg(entity: BaseEntity): boolean {
+  return entity.organizationId === ORG_ID;
+}
+
+/** Documento pelo id, ou null se não existe, não tem `organizationId` ou é de outra organização. */
 export async function getById<T extends BaseEntity>(name: CollectionName, id: string): Promise<T | null> {
   if (!id) return null;
   const snap = await col(name).doc(id).get();
   const entity = toEntity<T>(snap.id, snap.data());
-  if (entity && entity.organizationId && entity.organizationId !== ORG_ID) return null;
+  if (!entity || !belongsToOrg(entity)) return null;
   return entity;
 }
 
@@ -58,7 +64,8 @@ export async function getManyByIds<T extends BaseEntity>(name: CollectionName, i
   const snaps = await firestore.getAll(...refs);
   for (const snap of snaps) {
     const entity = toEntity<T>(snap.id, snap.data());
-    if (entity) result.set(snap.id, entity);
+    // Mesma checagem de getById: fora da organização (ou sem organizationId) não entra no mapa.
+    if (entity && belongsToOrg(entity)) result.set(snap.id, entity);
   }
   return result;
 }

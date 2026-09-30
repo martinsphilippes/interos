@@ -55,7 +55,8 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   try {
     const decoded = await adminAuth.verifySessionCookie(token, true);
     const user = await getById<User>(COLLECTIONS.users, decoded.uid);
-    if (!user || user.active === false) return null;
+    // Sessão estrita: só usuário explicitamente ativo (documento sem `active` não entra).
+    if (!user || user.active !== true) return null;
     return decorate(user);
   } catch {
     return null;

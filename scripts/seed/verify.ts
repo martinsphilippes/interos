@@ -4,7 +4,7 @@
  */
 import "./quiet";
 import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName } from "../../src/domain/types";
-import { counterId, list } from "../../src/server/db";
+import { col, counterId, list } from "../../src/server/db";
 import { commissionIdFor } from "../../src/server/commissions/store";
 
 const ENTITY_COLLECTION: Record<SlaInstance["entityType"], CollectionName> = {
@@ -186,12 +186,23 @@ async function main(): Promise<void> {
   }
   console.log(`Aditivos: ${amendments.length} (${amendments.filter((a) => a.status === "aplicado").length} aplicados); fornecedores: ${suppliers.length}; títulos parcelados/recorrentes: ${payables.filter((p) => p.installments).length}/${payables.filter((p) => p.recurrence || p.origin === "recorrencia").length}`);
 
+  // (q) todo documento de toda coleção tem organizationId: getById/getManyByIds negam documento sem ele (hardening A0).
+  //     Varre sem o filtro de organização (list() o aplicaria e esconderia justamente os documentos sem o campo).
+  for (const name of names) {
+    const snap = await col(name).select("organizationId").get();
+    const missing = snap.docs.filter((d) => !d.get("organizationId")).map((d) => d.id);
+    if (missing.length > 0) problems.push(`(q) ${name}: ${missing.length} documento(s) sem organizationId (${missing.slice(0, 5).join(", ")})`);
+  }
+  // (r) todo usuário tem `active` booleano: a sessão só aceita active === true (documento sem o campo não entra).
+  for (const u of users) if (typeof u.active !== "boolean") problems.push(`(r) usuário ${u.id} sem active booleano`);
+  console.log(`Usuários: ${users.length} (${users.filter((u) => u.active === true).length} ativos)`);
+
   const activeSlas = slas.filter((s) => s.status !== "concluido");
   console.log(`SLA ativos: ${activeSlas.length}, violados: ${activeSlas.filter((s) => s.breachedAt).length}`);
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(p): OK");
+    console.log("\nInvariantes (a)-(r): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);
