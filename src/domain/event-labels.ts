@@ -139,6 +139,9 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "payable.paid": "Título pago",
   "payable.cancelled": "Título a pagar cancelado",
   "payable.updated": "Título a pagar alterado",
+  "billing.updated": "Cobrança atualizada (boleto/PIX)",
+  "payment.reversed": "Pagamento estornado",
+  "billing.reminder_due": "Lembrete de cobrança (régua)",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {

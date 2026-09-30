@@ -38,6 +38,10 @@ service cloud.firestore {
     match /payables/{docId} {
       allow read, write: if false;
     }
+    // Eventos de pagamento do provedor de cobrança (deduplicação da baixa automática): só pelo servidor.
+    match /payment_events/{docId} {
+      allow read, write: if false;
+    }
 
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {

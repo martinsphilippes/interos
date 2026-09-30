@@ -10,8 +10,7 @@ import "server-only";
  * O recebimento grava a mensagem de entrada (webhook /api/webhooks/whatsapp).
  */
 import { emitEvent } from "@/server/events";
-import { MANUAL, recordCommunication } from "@/server/integrations/communications";
-import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
+import { recordCommunication, sendOrRecord } from "@/server/integrations/communications";
 import { isConnected } from "@/server/integrations/status";
 import type { Communication, UserRef } from "@/domain/types";
 
@@ -46,49 +45,35 @@ export interface ChannelAdapter {
 
 const SYSTEM_ACTOR: UserRef = { id: "sistema", name: "INTEROS" };
 
-/** Envia pelo provedor quando o canal está conectado; senão devolve null (registro manual). */
-async function deliver(message: OutgoingMessage): Promise<{ provider: "meta" | "resend"; ok: boolean; externalId?: string } | null> {
-  if (!message.to) return null;
-  if (message.channel === "whatsapp" && isConnected("whatsapp")) {
-    const r = await sendWhatsappText(message.to, message.body);
-    return { provider: "meta", ok: r.ok, externalId: r.ok ? r.externalId : undefined };
-  }
-  if (message.channel === "email" && isConnected("email")) {
-    const r = await sendEmail({ to: message.to, subject: "Intercert", text: message.body });
-    return { provider: "resend", ok: r.ok, externalId: r.ok ? r.externalId : undefined };
-  }
-  return null;
-}
-
 const adapter: ChannelAdapter = {
   // Tipo público mantido; o provider real de cada envio fica gravado na comunicação.
   provider: "outro",
 
   async sendMessage(message) {
-    const sent = await deliver(message);
-    const communication = await recordCommunication({
+    // Helper único (src/server/integrations/communications.ts): envia se conectado, senão registro manual.
+    const sent = await sendOrRecord({
+      channel: message.channel,
+      to: message.to,
+      subject: "Intercert",
+      text: message.body,
       clientId: message.clientId,
       contactId: message.contactId,
-      channel: message.channel,
-      direction: "saida",
-      userId: message.sender.id,
-      entityType: message.entity?.type,
-      entityId: message.entity?.id,
-      body: message.body,
-      ...(sent ? { status: sent.ok ? "enviada" : "falha", provider: sent.provider, externalId: sent.externalId } : MANUAL),
-      createdBy: message.sender.id,
+      entity: message.entity,
+      actor: message.sender,
     });
+    const { communication } = sent;
     if (message.channel === "whatsapp") {
-      const how = !sent ? " (registro manual)" : sent.ok ? "" : " (falha no envio)";
+      const manual = sent.delivery === "manual";
+      const how = manual ? " (registro manual)" : sent.delivery === "enviada" ? "" : sent.delivery === "nao_enviada" ? " (não enviado: opt-out)" : " (falha no envio)";
       await emitEvent({
         type: "whatsapp.message.sent",
         actor: message.sender,
         clientId: message.clientId,
         entity: message.entity ?? { type: "communication", id: communication.id },
-        title: `WhatsApp ${sent ? "enviado" : "registrado"}${message.to ? ` para ${message.to}` : ""}${how}`,
+        title: `WhatsApp ${manual ? "registrado" : "enviado"}${message.to ? ` para ${message.to}` : ""}${how}`,
         description: message.body,
         department: "marketing",
-        payload: { communicationId: communication.id, to: message.to, provider: sent?.provider ?? "manual", manual: !sent, delivered: sent?.ok ?? false },
+        payload: { communicationId: communication.id, to: message.to, provider: sent.provider, manual, delivered: sent.delivery === "enviada", delivery: sent.delivery },
       });
     }
     return communication;

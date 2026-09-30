@@ -324,7 +324,10 @@ export const TRIGGER_ENTITY_TYPES: Partial<Record<EventType, string>> = {
   // payment.pending é emitido na pendência do contrato; payment.approved no pagamento de uma cobrança.
   "payment.pending": "contract",
   "payment.approved": "billing",
+  "payment.reversed": "billing",
   "billing.created": "billing",
+  "billing.updated": "billing",
+  "billing.reminder_due": "billing",
   "contract.created": "contract",
   "contract.signed": "contract",
   "contract.cancelled": "contract",

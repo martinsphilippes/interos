@@ -509,6 +509,10 @@ export const EVENT_TYPES = [
   "payable.paid",
   "payable.cancelled",
   "payable.updated",
+  // financeiro: boleto, baixa, estorno e régua de cobrança (etapa 4)
+  "billing.updated",
+  "payment.reversed",
+  "billing.reminder_due",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

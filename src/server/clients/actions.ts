@@ -209,10 +209,13 @@ export async function updateClient(input: unknown): Promise<ActionResult<{ id: s
       ownerCsId: data.ownerCsId,
       tags: data.tags,
       notes: data.notes,
+      // Opt-out: só muda quando o formulário envia o bloco (cadastros antigos continuam sem o campo).
+      ...(data.communicationOptOut ? { communicationOptOut: data.communicationOptOut } : {}),
     };
     const changed = TRACKED_FIELDS.filter(({ key }) => (current[key] ?? "") !== (patch[key] ?? "")).map((f) => f.label);
     const addressChanged = JSON.stringify(current.address ?? {}) !== JSON.stringify(data.address ?? {});
     if (addressChanged) changed.push("endereço");
+    if (data.communicationOptOut && JSON.stringify(current.communicationOptOut ?? {}) !== JSON.stringify(data.communicationOptOut)) changed.push("opt-out de comunicação");
     const tagsChanged = JSON.stringify([...(current.tags ?? [])].sort()) !== JSON.stringify([...data.tags].sort());
     if (tagsChanged) changed.push("tags");
 

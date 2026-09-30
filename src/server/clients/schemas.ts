@@ -99,6 +99,8 @@ const clientFieldsSchema = z.object({
   ownerCsId: optionalText(60),
   tags: tagsSchema,
   notes: optionalText(2000),
+  /** Opt-out de comunicação por canal (opcional: cadastros antigos não têm). */
+  communicationOptOut: z.object({ whatsapp: z.boolean().optional(), email: z.boolean().optional() }).optional(),
 });
 
 export const createClientSchema = clientFieldsSchema.extend({

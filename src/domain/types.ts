@@ -88,6 +88,8 @@ export const COLLECTIONS = {
   counters: "counters",
   /** Contas a pagar (títulos): comissões elegíveis, bônus e lançamentos manuais do Financeiro. */
   payables: "payables",
+  /** Eventos de pagamento recebidos do provedor de cobrança (id `<provedor>_<eventId>`): deduplicação da baixa automática. */
+  paymentEvents: "payment_events",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -209,6 +211,8 @@ export interface Client extends BaseEntity {
   /** Instância de workflow atual (jornada principal). */
   workflowInstanceId?: string;
   currentStage?: JourneyStage;
+  /** Opt-out de comunicação por canal (respeitado por `sendOrRecord`: nada é enviado e o registro fica "não enviada"). */
+  communicationOptOut?: { whatsapp?: boolean; email?: boolean };
 }
 
 export interface Contact extends BaseEntity {
@@ -570,6 +574,37 @@ export interface Contract extends BaseEntity {
   cancelledBy?: string;
 }
 
+/** Situação da cobrança no provedor (ou no controle manual do boleto). */
+export type BillingChargeStatus = "aguardando_emissao_manual" | "pendente" | "pago" | "vencido" | "cancelado" | "desconhecido";
+
+/** Origem da baixa: registro manual do Financeiro, webhook do provedor ou conciliação (varredura). */
+export type PaymentSource = "manual" | "provedor" | "conciliacao";
+
+/** Dados do boleto (emitido no banco/ERP e registrado à mão, ou devolvido pelo provedor). */
+export interface BillingBoleto {
+  linhaDigitavel?: string;
+  nossoNumero?: string;
+  codigoBarras?: string;
+  pdfUrl?: string;
+  /** Documento em `documents` (categoria "Boleto") quando há PDF. */
+  documentId?: string;
+  emitidoEm?: string;
+  banco?: string;
+}
+
+/** Pagamento estornado (a cobrança voltou a aberta/vencida). */
+export interface BillingReversedPayment {
+  paidAt: string;
+  paidAmount: number;
+  method?: string;
+  source?: PaymentSource;
+  externalPaymentId?: string;
+  receiptDocumentId?: string;
+  reversedAt: string;
+  reversedBy: string;
+  reason: string;
+}
+
 export interface Billing extends BaseEntity {
   clientId: string;
   contractId: string;
@@ -583,6 +618,42 @@ export interface Billing extends BaseEntity {
   status: "aberta" | "paga" | "vencida" | "cancelada";
   method?: string;
   receiptDocumentId?: string;
+  // Boleto, provedor e baixa (etapa 4) — opcionais: cobranças antigas não têm.
+  /** "manual" (boleto registrado à mão) ou nome do provedor de cobrança. */
+  provider?: string;
+  /** Id da cobrança no provedor. */
+  externalId?: string;
+  chargeStatus?: BillingChargeStatus;
+  /** Link de pagamento (boleto/PIX) devolvido pelo provedor. */
+  paymentUrl?: string;
+  boleto?: BillingBoleto;
+  pix?: { copiaECola?: string; qrCodeUrl?: string };
+  /** Origem da baixa registrada. */
+  paymentSource?: PaymentSource;
+  /** Id do pagamento no provedor (deduplicação da baixa automática). */
+  externalPaymentId?: string;
+  /** Pagamento parcial recebido automaticamente que NÃO baixou a cobrança (pendência registrada). */
+  partialPaidAmount?: number;
+  partialPaidAt?: string;
+  reversedPayments?: BillingReversedPayment[];
+}
+
+/**
+ * Evento de pagamento recebido de fora (webhook do provedor ou conciliação). Id determinístico
+ * `<provedor>_<eventId>`, criado com createIfAbsent ANTES da baixa: o reenvio do mesmo evento é "já processado".
+ */
+export interface PaymentEvent extends BaseEntity {
+  provider: string;
+  eventId: string;
+  source: PaymentSource;
+  billingId?: string;
+  externalId?: string;
+  externalPaymentId?: string;
+  paidAmount?: number;
+  paidAt?: string;
+  receivedAt: string;
+  result?: "processado" | "ja_processado" | "parcial" | "ignorado" | "erro";
+  message?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1484,12 +1555,16 @@ export interface Communication extends BaseEntity {
    * "manual": contato feito fora do sistema (canal não conectado) e registrado à mão.
    * "simulada": legado de registros antigos; não é mais gravado.
    */
-  status: "enviada" | "entregue" | "lida" | "falha" | "simulada" | "recebida" | "manual";
+  status: "enviada" | "entregue" | "lida" | "falha" | "simulada" | "recebida" | "manual" | "nao_enviada";
   durationSeconds?: number;
   recordingUrl?: string;
   externalId?: string;
   /** "manual" = sem provedor (registro manual); "resend" = e-mail transacional; "mock" = legado. */
   provider: "mock" | "meta" | "twilio" | "outro" | "manual" | "resend";
+  /** Última atualização de status vinda do provedor (webhook: entregue/lida/falha). */
+  statusUpdatedAt?: string;
+  /** Motivo de "falha"/"nao_enviada" (erro do provedor, opt-out, canal não conectado). */
+  error?: string;
 }
 
 export interface Settings extends BaseEntity {

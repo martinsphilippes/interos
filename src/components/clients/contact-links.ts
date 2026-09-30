@@ -19,3 +19,8 @@ export function telHref(phone: string | undefined): string | null {
   const d = toInternationalDigits(phone);
   return d ? `tel:+${d}` : null;
 }
+
+/** mailto: com destinatários, assunto e corpo (envio manual quando o e-mail não está conectado). */
+export function mailtoHref(to: string[], subject: string, body: string): string {
+  return `mailto:${to.map(encodeURIComponent).join(",")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
