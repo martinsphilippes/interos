@@ -90,6 +90,10 @@ export const COLLECTIONS = {
   payables: "payables",
   /** Eventos de pagamento recebidos do provedor de cobrança (id `<provedor>_<eventId>`): deduplicação da baixa automática. */
   paymentEvents: "payment_events",
+  /** Aditivos do MESMO contrato (id `cta_<contractId>_<n>`): itens, condições, renovação e reajuste com antes/depois. */
+  contractAmendments: "contract_amendments",
+  /** Fornecedores (credores de Contas a Pagar) — NÃO é cadastro de clientes. */
+  suppliers: "suppliers",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -444,6 +448,20 @@ export interface OpportunityClosing {
   proposalId?: string;
   closedAt: string;
   closedBy: string;
+  // Renovação (D26) — opcionais: vendas antigas não têm.
+  autoRenew?: boolean;
+  renewalTermMonths?: number;
+  readjustment?: ContractReadjustment;
+  noticeDays?: number;
+}
+
+/** Reajuste combinado para a renovação: nenhum, percentual informado ou índice (informado pelo CS a cada renovação). */
+export interface ContractReadjustment {
+  type: "nenhum" | "percentual" | "indice";
+  percent?: number;
+  index?: "ipca" | "igpm" | "inpc";
+  /** Renovação automática com índice: o índice NÃO é buscado — renova sem reajuste e fica pendente para o CS informar. */
+  pending?: boolean;
 }
 
 export interface Visit extends BaseEntity {
@@ -572,6 +590,102 @@ export interface Contract extends BaseEntity {
   cancelledAt?: string;
   cancelReason?: string;
   cancelledBy?: string;
+  // Renovação (D26) — opcionais: contratos antigos não têm (renovação pelo fluxo humano do CS).
+  /** Renova automaticamente ao fim da vigência (varredura `renovacoes`). */
+  autoRenew?: boolean;
+  /** Prazo de cada renovação em meses (padrão: o prazo do contrato). */
+  renewalTermMonths?: number;
+  readjustment?: ContractReadjustment;
+  /** Dias antes do fim da vigência em que a renovação automática é aplicada (padrão 30). */
+  noticeDays?: number;
+  // Aditivos e versões (D25) — opcionais.
+  /** Aditivos APLICADOS a este contrato, na ordem (`contract_amendments`). */
+  amendmentIds?: string[];
+  /** Versões anteriores: snapshot completo de cada revisão pré-assinatura e de cada aditivo aplicado. */
+  previousVersions?: ContractVersionEntry[];
+}
+
+/**
+ * Snapshot das cláusulas que o documento/hash cobre: itens, totais e condições (+ signatários e vigência).
+ * Guardado em `previousVersions` (versão anterior) e em `ContractAmendment.before/after`.
+ */
+export interface ContractSnapshot {
+  version: number;
+  items: ProposalItem[];
+  setupTotal: number;
+  monthlyTotal: number;
+  hardwareTotal: number;
+  billingDay: number;
+  recurrence: Contract["recurrence"];
+  termMonths: number;
+  firstDueDate?: string;
+  startDate?: string;
+  endDate?: string;
+  paymentMethod?: SalePaymentMethod;
+  setupInstallments?: number;
+  paymentCondition?: string;
+  documentHash?: string;
+  signers?: { name: string; email: string; role: string }[];
+  autoRenew?: boolean;
+  renewalTermMonths?: number;
+  readjustment?: ContractReadjustment;
+  noticeDays?: number;
+}
+
+/** Entrada de `Contract.previousVersions`: como o contrato estava antes da revisão/aditivo. */
+export interface ContractVersionEntry {
+  version: number;
+  kind: "revisao" | "aditivo";
+  at: string;
+  by: string;
+  reason?: string;
+  amendmentId?: string;
+  /** Documento gerado para assinatura naquela versão (quando havia). */
+  envelopeId?: string;
+  snapshot: ContractSnapshot;
+}
+
+export type ContractAmendmentKind = "itens" | "condicoes" | "renovacao" | "reajuste" | "misto";
+export type ContractAmendmentStatus = "rascunho" | "aguardando_assinatura" | "assinado" | "aplicado" | "cancelado";
+
+/**
+ * Aditivo do MESMO contrato (D25): id `cta_<contractId>_<n>`, número `<contrato>-A<nn>`. Fluxo
+ * rascunho → aguardando_assinatura → assinado → aplicado (ou cancelado). `before/after` são snapshots completos;
+ * `changes` = de → para (auditChanges). A assinatura do aditivo tem hash próprio e NÃO altera o hash do contrato.
+ */
+export interface ContractAmendment extends BaseEntity {
+  number: string;
+  contractId: string;
+  clientId: string;
+  kind: ContractAmendmentKind;
+  status: ContractAmendmentStatus;
+  /** Vigência do aditivo (AAAA-MM-DD): cobranças abertas com competência ≥ esta data são refeitas. */
+  effectiveFrom: string;
+  reason: string;
+  requiresSignature: boolean;
+  before: ContractSnapshot;
+  after: ContractSnapshot;
+  changes: Record<string, { from: unknown; to: unknown }>;
+  signers?: ContractSignerEntry[];
+  documentHash?: string;
+  sentAt?: string;
+  signedAt?: string;
+  appliedAt?: string;
+  appliedBy?: string;
+  /** Versão do contrato depois da aplicação. */
+  appliedVersion?: number;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+  /** Origem: página do contrato, renovação pelo CS ou renovação automática (varredura). */
+  source?: "financeiro" | "renovacao_cs" | "renovacao_automatica";
+  renewalId?: string;
+  /** Reajuste aplicado na renovação (percentual) ou pendente (índice a informar). */
+  readjustment?: ContractReadjustment;
+  /** Cobranças refeitas na aplicação (canceladas → recriadas com a mesma numeração). */
+  billingsRebuilt?: { cancelled: string[]; created: string[] };
+  /** Itens novos que exigem implantação: só aviso ao gestor (nenhum projeto automático). */
+  implementationNoticeProductIds?: string[];
 }
 
 /** Situação da cobrança no provedor (ou no controle manual do boleto). */
@@ -1294,6 +1408,9 @@ export interface Commission extends BaseEntity {
   /** Cobrança que originou/libera a comissão. */
   billingId?: string;
   installment?: number;
+  /** Gatilho "N-ésima mensalidade paga" (D27): cobrança da N-ésima mensalidade e o vencimento dela (previsão). */
+  gateBillingId?: string;
+  expectedAt?: string;
   /** Data em que ficou (ou fica, na carência) elegível. */
   eligibleAt?: string;
   payableId?: string;
@@ -1315,8 +1432,31 @@ export interface Commission extends BaseEntity {
 // ---------------------------------------------------------------------------
 
 export type PayableStatus = "previsto" | "aprovado" | "a_pagar" | "pago" | "cancelado";
-export type PayableCategory = "comissao_comercial" | "bonus" | "outros" | "estorno_comissao";
-export type PayableOrigin = "comissao_automatica" | "bonus" | "manual" | "estorno";
+/** Categorias fixas do circuito + qualquer categoria do setting `contas_a_pagar` (valores antigos preservados). */
+export type PayableCategory = "comissao_comercial" | "bonus" | "outros" | "estorno_comissao" | (string & {});
+export type PayableOrigin = "comissao_automatica" | "bonus" | "manual" | "estorno" | "recorrencia";
+
+/** Recorrência de um título manual: a varredura `contas_recorrentes` cria a próxima ocorrência 30 dias antes do vencimento. */
+export interface PayableRecurrence {
+  frequency: "mensal" | "anual";
+  dayOfMonth: number;
+  /** AAAA-MM-DD: nada é gerado depois desta data. */
+  until?: string;
+}
+
+/** Fornecedor (credor de Contas a Pagar). Não é cliente. */
+export interface Supplier extends BaseEntity {
+  name: string;
+  document?: string;
+  email?: string;
+  phone?: string;
+  pixKey?: string;
+  bank?: { banco?: string; agencia?: string; conta?: string };
+  category?: string;
+  notes?: string;
+  active: boolean;
+  updatedBy?: string;
+}
 
 export interface PayableHistoryEntry {
   at: string;
@@ -1366,6 +1506,19 @@ export interface Payable extends BaseEntity {
   cancelReason?: string;
   notes?: string;
   history: PayableHistoryEntry[];
+  // Contas a Pagar geral (D28) — opcionais: títulos antigos não têm.
+  supplierId?: string;
+  costCenter?: string;
+  /** Parcela n de N (títulos parcelados: `pag_<base>_p<n>`). */
+  installment?: number;
+  installments?: number;
+  /** Série recorrente (`seriesId`) e regra; ocorrências: `pag_rec_<seriesId>_<AAAA-MM>`. */
+  seriesId?: string;
+  recurrence?: PayableRecurrence;
+  /** Anexos em `documents` (entityType "payable"). */
+  attachmentIds?: string[];
+  /** Vencido: aviso ao Financeiro já enviado (1× por título). */
+  overdueNotifiedAt?: string;
 }
 
 export interface GamificationPoints extends BaseEntity {

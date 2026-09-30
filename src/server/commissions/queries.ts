@@ -12,7 +12,6 @@ import {
   COMMISSION_REVENUE_LABELS,
   COMMISSION_STATUS_LABELS,
   COMMISSION_STATUSES,
-  PAYABLE_CATEGORY_LABELS,
   PAYABLE_STATUSES,
   commissionSlotLabel,
 } from "@/domain/commissions";
@@ -583,7 +582,7 @@ export function parsePayableFilters(sp: SearchParams): PayableFilters {
   const venc = first(sp.vencimento);
   return {
     status: status && (PAYABLE_STATUSES as string[]).includes(status) ? (status as PayableStatus) : undefined,
-    categoria: categoria && categoria in PAYABLE_CATEGORY_LABELS ? (categoria as Payable["category"]) : undefined,
+    categoria: categoria && /^[a-z0-9_]{2,40}$/.test(categoria) ? (categoria as Payable["category"]) : undefined,
     credor: first(sp.credor),
     competencia: comp && MONTH.test(comp) ? comp : undefined,
     vencimento: venc === "vencidos" || venc === "7dias" || venc === "mes" || venc === "proximo_mes" ? venc : undefined,

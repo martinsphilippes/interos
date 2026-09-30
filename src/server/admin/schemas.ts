@@ -144,7 +144,7 @@ export const setProductActiveSchema = z.object({ id: idSchema, active: z.boolean
 // Configurações do sistema (coleção settings, um documento por key)
 // ---------------------------------------------------------------------------
 
-export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia", "financeiro_alertas", "comissoes_pagamento", "financeiro_baixa", "cobranca_canais", "regua_cobranca"] as const;
+export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia", "financeiro_alertas", "comissoes_pagamento", "financeiro_baixa", "cobranca_canais", "regua_cobranca", "contas_a_pagar"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const fraction = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(1, `${label} deve ser uma fração entre 0 e 1`);
@@ -226,6 +226,8 @@ export const financeiroAlertasSchema = z.object({
   diasSemAssinatura: z.number("Dias sem assinatura inválido").int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(90, "Máximo de 90 dias"),
   horasPagoSemLiberacao: z.number("Horas pago sem liberação inválido").int("Use horas inteiras").min(1, "Mínimo de 1 hora").max(720, "Máximo de 720 horas"),
   diasLiberadoSemInicio: z.number("Dias liberado sem início inválido").int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(90, "Máximo de 90 dias"),
+  /** Horizonte rolante da cobrança recorrente (D24b): meses de cobranças à frente garantidos pela varredura `cobrancas_recorrentes`. */
+  horizonteCobrancasMeses: z.number("Horizonte de cobranças inválido").int("Use meses inteiros").min(1, "Mínimo de 1 mês").max(24, "Máximo de 24 meses").default(3),
 });
 export type FinanceiroAlertasConfig = z.infer<typeof financeiroAlertasSchema>;
 
@@ -336,6 +338,34 @@ export const REGUA_DEFAULT_MARCOS: ReguaMarco[] = [
   },
 ];
 
+const categoryKey = z
+  .string()
+  .trim()
+  .min(2, "Categoria muito curta")
+  .max(40, "Categoria muito longa")
+  .regex(/^[a-z0-9][a-z0-9_]*$/, "Categoria: letras minúsculas, números e sublinhado (ex.: aluguel, servicos)");
+const costCenter = z.string().trim().min(2, "Centro de custo muito curto").max(60, "Centro de custo muito longo");
+
+/** Categorias fixas do circuito (comissão, bônus, outros, estorno) + as gerais propostas para Contas a Pagar. */
+export const PAYABLE_DEFAULT_CATEGORIES = ["comissao_comercial", "bonus", "outros", "fornecedor", "imposto", "folha", "aluguel", "servicos", "software"] as const;
+
+/**
+ * Contas a Pagar geral (D28): categorias (chaves) e centros de custo aceitos nos títulos manuais. As categorias
+ * fixas do circuito (comissão, bônus, outros, estorno) continuam válidas mesmo se removidas da lista.
+ */
+export const contasAPagarSchema = z.object({
+  categorias: z
+    .array(categoryKey)
+    .min(1, "Informe ao menos uma categoria")
+    .max(40, "No máximo 40 categorias")
+    .transform((v) => Array.from(new Set(v))),
+  centrosDeCusto: z
+    .array(costCenter)
+    .max(60, "No máximo 60 centros de custo")
+    .transform((v) => Array.from(new Set(v))),
+});
+export type ContasAPagarConfig = z.infer<typeof contasAPagarSchema>;
+
 /** Aprovação do go-live (lido por src/server/implementation/service.ts → getGoLiveSettings). */
 export const goLiveSchema = z.object({
   exigeAprovacaoGestor: z.boolean("Informe se o go-live exige aprovação de gestor"),
@@ -393,6 +423,7 @@ export const SETTING_SCHEMAS = {
   financeiro_baixa: financeiroBaixaSchema,
   cobranca_canais: cobrancaCanaisSchema,
   regua_cobranca: reguaCobrancaSchema,
+  contas_a_pagar: contasAPagarSchema,
 } as const;
 
 export interface SettingValues {
@@ -413,6 +444,7 @@ export interface SettingValues {
   financeiro_baixa: FinanceiroBaixaConfig;
   cobranca_canais: CobrancaCanaisConfig;
   regua_cobranca: ReguaCobrancaConfig;
+  contas_a_pagar: ContasAPagarConfig;
 }
 
 /** Valores usados quando o documento ainda não existe no banco (iguais ao seed). */
@@ -429,11 +461,12 @@ export const SETTING_DEFAULTS: SettingValues = {
   gamificacao: { pontos: { ...DEFAULT_GAMIFICATION.pontos }, multiplicadores: { ...DEFAULT_GAMIFICATION.multiplicadores }, niveis: DEFAULT_GAMIFICATION.niveis.map((n) => ({ ...n })) },
   premios_vendas: { ...DEFAULT_SALES_PRIZES },
   "gamificacao.sequencia": { ...DEFAULT_STREAK },
-  financeiro_alertas: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3 },
+  financeiro_alertas: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3, horizonteCobrancasMeses: 3 },
   comissoes_pagamento: { diaPagamento: 10 },
   financeiro_baixa: { toleranciaValor: 1, pagamentoParcialAutomatico: "pendencia" },
   cobranca_canais: { principal: "whatsapp", complementar: "email", enviarEmailJuntoAoWhatsapp: false, remetenteEmail: undefined },
   regua_cobranca: { ativa: false, diasUteis: false, marcos: REGUA_DEFAULT_MARCOS.map((m) => ({ ...m })), pausarQuando: { pendencia: true, negociacao: true } },
+  contas_a_pagar: { categorias: [...PAYABLE_DEFAULT_CATEGORIES], centrosDeCusto: ["Administrativo", "Comercial", "Operações", "Tecnologia"] },
 };
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
@@ -449,11 +482,12 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   gamificacao: "Pontos por evento, multiplicadores de equivalência entre funções e níveis da gamificação.",
   premios_vendas: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.",
   "gamificacao.sequencia": "Regra da sequência em dias da gamificação (critério e janela máxima em dias úteis).",
-  financeiro_alertas: "Alertas de contratos parados: aguardando assinatura, pago sem liberação e liberado sem início da implantação.",
+  financeiro_alertas: "Alertas de contratos parados (aguardando assinatura, pago sem liberação, liberado sem início) e horizonte da cobrança recorrente.",
   comissoes_pagamento: "Pagamento de comissões: dia do vencimento dos títulos no mês seguinte à competência da elegibilidade.",
   financeiro_baixa: "Baixa automática (provedor/conciliação): tolerância de valor e o que fazer com pagamento parcial.",
   cobranca_canais: "Canais de cobrança: WhatsApp principal, e-mail complementar e envio conjunto.",
   regua_cobranca: "Régua de cobrança: marcos antes/depois do vencimento, canal e texto de cada um (desligada até ser ativada).",
+  contas_a_pagar: "Contas a Pagar: categorias e centros de custo aceitos nos títulos.",
 };
 
 export const upsertSettingSchema = z.object({

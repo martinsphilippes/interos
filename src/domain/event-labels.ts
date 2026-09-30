@@ -142,6 +142,14 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "billing.updated": "Cobrança atualizada (boleto/PIX)",
   "payment.reversed": "Pagamento estornado",
   "billing.reminder_due": "Lembrete de cobrança (régua)",
+  "contract.amendment_created": "Aditivo criado",
+  "contract.amendment_sent": "Aditivo enviado para assinatura",
+  "contract.amendment_signed": "Aditivo assinado",
+  "contract.amendment_applied": "Aditivo aplicado",
+  "contract.amendment_cancelled": "Aditivo cancelado",
+  "contract.renewed": "Contrato renovado",
+  "supplier.created": "Fornecedor cadastrado",
+  "supplier.updated": "Fornecedor alterado",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -189,6 +197,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   commission: "Performance",
   commission_rule: "Financeiro",
   payable: "Financeiro",
+  supplier: "Financeiro",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",

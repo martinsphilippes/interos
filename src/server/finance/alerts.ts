@@ -30,7 +30,7 @@ const HOUR_MS = 3_600_000;
 export async function getFinanceAlertSettings(): Promise<FinanceiroAlertasConfig> {
   const value = await getSetting<FinanceiroAlertasConfig>("financeiro_alertas", SETTING_DEFAULTS.financeiro_alertas);
   const pick = (key: keyof FinanceiroAlertasConfig) => (Number(value[key]) > 0 ? Number(value[key]) : SETTING_DEFAULTS.financeiro_alertas[key]);
-  return { diasSemAssinatura: pick("diasSemAssinatura"), horasPagoSemLiberacao: pick("horasPagoSemLiberacao"), diasLiberadoSemInicio: pick("diasLiberadoSemInicio") };
+  return { diasSemAssinatura: pick("diasSemAssinatura"), horasPagoSemLiberacao: pick("horasPagoSemLiberacao"), diasLiberadoSemInicio: pick("diasLiberadoSemInicio"), horizonteCobrancasMeses: pick("horizonteCobrancasMeses") };
 }
 
 // ---------------------------------------------------------------------------

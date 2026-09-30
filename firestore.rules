@@ -42,6 +42,14 @@ service cloud.firestore {
     match /payment_events/{docId} {
       allow read, write: if false;
     }
+    // Aditivos de contrato (antes/depois das cláusulas, assinaturas): só pelo servidor.
+    match /contract_amendments/{docId} {
+      allow read, write: if false;
+    }
+    // Fornecedores (dados bancários e PIX de credores): só pelo servidor.
+    match /suppliers/{docId} {
+      allow read, write: if false;
+    }
 
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {

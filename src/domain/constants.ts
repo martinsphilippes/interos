@@ -513,6 +513,15 @@ export const EVENT_TYPES = [
   "billing.updated",
   "payment.reversed",
   "billing.reminder_due",
+  // contratos: aditivos, renovação automática e contas a pagar geral (etapa 5)
+  "contract.amendment_created",
+  "contract.amendment_sent",
+  "contract.amendment_signed",
+  "contract.amendment_applied",
+  "contract.amendment_cancelled",
+  "contract.renewed",
+  "supplier.created",
+  "supplier.updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

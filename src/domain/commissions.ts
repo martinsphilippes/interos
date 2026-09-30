@@ -75,9 +75,30 @@ export const PAYABLE_STATUSES: PayableStatus[] = ["previsto", "aprovado", "a_pag
 export const PAYABLE_STATUS_LABELS: Record<PayableStatus, string> = { previsto: "Previsto", aprovado: "Aprovado", a_pagar: "A pagar", pago: "Pago", cancelado: "Cancelado" };
 export const PAYABLE_STATUS_VARIANT: Record<PayableStatus, Variant> = { previsto: "muted", aprovado: "info", a_pagar: "warning", pago: "success", cancelado: "muted" };
 
+/** Categorias fixas do circuito (sempre válidas). As demais vêm do setting `contas_a_pagar`. */
 export const PAYABLE_CATEGORIES: PayableCategory[] = ["comissao_comercial", "bonus", "outros", "estorno_comissao"];
-export const PAYABLE_CATEGORY_LABELS: Record<PayableCategory, string> = { comissao_comercial: "Comissão comercial", bonus: "Bônus", outros: "Outros", estorno_comissao: "Estorno de comissão" };
-export const PAYABLE_ORIGIN_LABELS: Record<PayableOrigin, string> = { comissao_automatica: "Comissão (automática)", bonus: "Bônus", manual: "Lançamento manual", estorno: "Estorno" };
+/** Rótulos das categorias conhecidas (fixas + gerais propostas). Categoria desconhecida: `payableCategoryLabel`. */
+export const PAYABLE_CATEGORY_LABELS: Record<string, string> = {
+  comissao_comercial: "Comissão comercial",
+  bonus: "Bônus",
+  outros: "Outros",
+  estorno_comissao: "Estorno de comissão",
+  fornecedor: "Fornecedor",
+  imposto: "Imposto",
+  folha: "Folha de pagamento",
+  aluguel: "Aluguel",
+  servicos: "Serviços",
+  software: "Software e assinaturas",
+};
+/** Rótulo de qualquer categoria (as do setting sem rótulo fixo viram "Primeira maiúscula" com espaços). */
+export function payableCategoryLabel(category: string | undefined): string {
+  if (!category) return "—";
+  const known = PAYABLE_CATEGORY_LABELS[category];
+  if (known) return known;
+  const text = category.replace(/_/g, " ").trim();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+export const PAYABLE_ORIGIN_LABELS: Record<PayableOrigin, string> = { comissao_automatica: "Comissão (automática)", bonus: "Bônus", manual: "Lançamento manual", estorno: "Estorno", recorrencia: "Recorrência (série)" };
 
 /** "s1" → "Adesão 1/3" etc. (rótulo da parcela da chave). */
 export function commissionSlotLabel(slot: string | undefined, revenueType: CommissionRevenueType, installments?: number): string {

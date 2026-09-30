@@ -66,11 +66,11 @@ export function SettingsFinanceGate({ value, stored }: { value: GateFinanceiroCo
 /** Alertas do circuito de contratos (varredura diária "contratos_alertas"). */
 export function SettingsFinanceAlerts({ value, stored }: { value: FinanceiroAlertasConfig; stored: boolean }) {
   const { pending, error, save } = useSaveSetting("financeiro_alertas");
-  const [form, setForm] = React.useState({ diasSemAssinatura: String(value.diasSemAssinatura), horasPagoSemLiberacao: String(value.horasPagoSemLiberacao), diasLiberadoSemInicio: String(value.diasLiberadoSemInicio) });
+  const [form, setForm] = React.useState({ diasSemAssinatura: String(value.diasSemAssinatura), horasPagoSemLiberacao: String(value.horasPagoSemLiberacao), diasLiberadoSemInicio: String(value.diasLiberadoSemInicio), horizonteCobrancasMeses: String(value.horizonteCobrancasMeses ?? 3) });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    save({ diasSemAssinatura: Number(form.diasSemAssinatura), horasPagoSemLiberacao: Number(form.horasPagoSemLiberacao), diasLiberadoSemInicio: Number(form.diasLiberadoSemInicio) }, "Alertas de contratos salvos");
+    save({ diasSemAssinatura: Number(form.diasSemAssinatura), horasPagoSemLiberacao: Number(form.horasPagoSemLiberacao), diasLiberadoSemInicio: Number(form.diasLiberadoSemInicio), horizonteCobrancasMeses: Number(form.horizonteCobrancasMeses) }, "Alertas de contratos salvos");
   };
 
   return (
@@ -91,6 +91,9 @@ export function SettingsFinanceAlerts({ value, stored }: { value: FinanceiroAler
         </FormField>
         <FormField label="Liberado sem início da implantação (dias)" htmlFor="fa-liberado" required hint="Aviso ao responsável e ao gestor de implantação">
           <Input id="fa-liberado" type="number" inputMode="numeric" min={1} max={90} value={form.diasLiberadoSemInicio} onChange={(e) => setForm((f) => ({ ...f, diasLiberadoSemInicio: e.target.value }))} />
+        </FormField>
+        <FormField label="Horizonte da cobrança recorrente (meses)" htmlFor="fa-horizonte" required hint="Contratos com renovação automática ou prazo indeterminado sempre têm mensalidades geradas para os próximos N meses (varredura diária)">
+          <Input id="fa-horizonte" type="number" inputMode="numeric" min={1} max={24} value={form.horizonteCobrancasMeses} onChange={(e) => setForm((f) => ({ ...f, horizonteCobrancasMeses: e.target.value }))} />
         </FormField>
       </div>
     </SettingsSection>

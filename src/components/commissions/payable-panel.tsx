@@ -6,7 +6,7 @@ import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, History
 import type { PayableDetail } from "@/server/commissions/queries";
 import { approvePayableAction, cancelPayableAction, createManualPayableAction, payPayableAction, schedulePayableAction, updatePayableAction } from "@/server/commissions/actions";
 import { PAYOUT_METHOD_LABELS, PAYOUT_METHODS } from "@/server/commissions/schemas";
-import { PAYABLE_CATEGORY_LABELS, PAYABLE_ORIGIN_LABELS } from "@/domain/commissions";
+import { PAYABLE_ORIGIN_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { dateKey, formatCompetence, formatCurrency, formatDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,7 +55,7 @@ export function PayablePanel({ p, can }: { p: PayableDetail; can: PayableCan }) 
             labelWidth="8rem"
             items={[
               { label: "Credor", value: p.creditorName },
-              { label: "Categoria", value: PAYABLE_CATEGORY_LABELS[p.category] },
+              { label: "Categoria", value: payableCategoryLabel(p.category) },
               { label: "Origem", value: PAYABLE_ORIGIN_LABELS[p.origin] },
               { label: "Competência", value: formatCompetence(p.competence) },
               { label: "Vencimento", value: formatDate(p.dueDate) },
@@ -329,8 +329,8 @@ export function ManualPayableButton({ users }: { users: { value: string; label: 
             )}
             <FormField label="Categoria" htmlFor={`${id}-cat`} required>
               <Select id={`${id}-cat`} value={f.category} onChange={(e) => set("category", e.target.value as "bonus" | "outros")}>
-                <option value="bonus">{PAYABLE_CATEGORY_LABELS.bonus}</option>
-                <option value="outros">{PAYABLE_CATEGORY_LABELS.outros}</option>
+                <option value="bonus">{payableCategoryLabel("bonus")}</option>
+                <option value="outros">{payableCategoryLabel("outros")}</option>
               </Select>
             </FormField>
             <FormField label="Valor (R$)" htmlFor={`${id}-valor`} required>

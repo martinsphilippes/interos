@@ -16,7 +16,7 @@ import { SETTING_DEFAULTS, type ComissoesPagamentoConfig } from "@/server/admin/
 import { auditChanges, describeChanges } from "@/server/audit";
 import { dayInMonth } from "@/server/finance/billing";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
-import { COMMISSION_REVENUE_LABELS, PAYABLE_CATEGORY_LABELS, PAYABLE_STATUS_LABELS } from "@/domain/commissions";
+import { COMMISSION_REVENUE_LABELS, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { COLLECTIONS, type Client, type Commission, type Payable, type PayableHistoryEntry, type PayableStatus, type User, type UserRef } from "@/domain/types";
 import { assignPayableCode, cleanPatch, deleteField, historyEntry, SYSTEM_ACTOR, transitionCommission } from "./store";
 
@@ -328,6 +328,6 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
     createdBy: actor.id,
   });
   const withCode = { ...payable, code: await assignPayableCode(payable.id, now) };
-  await emitPayable("payable.created", actor, withCode, `Título ${withCode.code} lançado: ${formatCurrency(withCode.amount)} para ${creditorName}`, { origin: "manual", category: input.category, ...auditChanges<Payable>(null, withCode, ["creditorName", "category", "description", "amount", "competence", "dueDate"]) }, `${PAYABLE_CATEGORY_LABELS[input.category]} · vence ${formatDate(withCode.dueDate)}`);
+  await emitPayable("payable.created", actor, withCode, `Título ${withCode.code} lançado: ${formatCurrency(withCode.amount)} para ${creditorName}`, { origin: "manual", category: input.category, ...auditChanges<Payable>(null, withCode, ["creditorName", "category", "description", "amount", "competence", "dueDate"]) }, `${payableCategoryLabel(input.category)} · vence ${formatDate(withCode.dueDate)}`);
   return withCode;
 }
