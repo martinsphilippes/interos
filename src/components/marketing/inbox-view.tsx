@@ -20,6 +20,8 @@ import { assumeInboxItemAction, replyInboxAction } from "@/server/marketing/acti
 import { ScorePill, TemperatureBadge } from "./lead-badges";
 import type { InboxData, InboxMessage } from "./marketing-model";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { useCanSeeFn } from "@/components/auth/access-provider";
+import { useMarketingAccess } from "./marketing-access";
 
 type ReplyTarget = { communicationId?: string; leadId?: string; name: string; channel: "whatsapp" | "email"; quote?: string };
 
@@ -36,6 +38,8 @@ export function InboxView({ data, currentUserId, channels }: { data: InboxData; 
   const [reply, setReply] = React.useState<ReplyTarget | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [, startTransition] = React.useTransition();
+  const { assume: canAssume, reply: canReply } = useMarketingAccess().inbox;
+  const canSee = useCanSeeFn();
 
   const run = (id: string, action: () => Promise<ActionResult<unknown>>, message: string) => {
     setBusyId(id);
@@ -86,8 +90,9 @@ export function InboxView({ data, currentUserId, channels }: { data: InboxData; 
                 message={m}
                 currentUserId={currentUserId}
                 busy={busyId === m.id}
-                onAssume={() => run(m.id, () => assumeInboxItemAction({ kind: "message", id: m.id }), "Conversa assumida")}
-                onReply={() => setReply({ communicationId: m.id, leadId: m.leadId, name: m.leadName ?? m.clientName ?? "contato", channel: m.channel === "email" ? "email" : "whatsapp", quote: m.body })}
+                canSee={canSee}
+                onAssume={canAssume ? () => run(m.id, () => assumeInboxItemAction({ kind: "message", id: m.id }), "Conversa assumida") : undefined}
+                onReply={canReply ? () => setReply({ communicationId: m.id, leadId: m.leadId, name: m.leadName ?? m.clientName ?? "contato", channel: m.channel === "email" ? "email" : "whatsapp", quote: m.body }) : undefined}
               />
             ))}
           </ul>
@@ -107,9 +112,13 @@ export function InboxView({ data, currentUserId, channels }: { data: InboxData; 
                 <div className="flex items-start gap-3">
                   <ScorePill score={lead.score} temperature={lead.temperature} />
                   <div className="min-w-0 flex-1">
-                    <Link href={`/marketing/leads?lead=${lead.id}`} className="block truncate font-medium hover:underline">
-                      {lead.name}
-                    </Link>
+                    {canSee(`/marketing/leads?lead=${lead.id}`) ? (
+                      <Link href={`/marketing/leads?lead=${lead.id}`} className="block truncate font-medium hover:underline">
+                        {lead.name}
+                      </Link>
+                    ) : (
+                      <span className="block truncate font-medium">{lead.name}</span>
+                    )}
                     <p className="truncate text-xs text-muted">
                       {[lead.company, lead.originName, lead.phone ? formatPhone(lead.phone) : lead.email].filter(Boolean).join(" · ")}
                     </p>
@@ -118,35 +127,57 @@ export function InboxView({ data, currentUserId, channels }: { data: InboxData; 
                     </p>
                   </div>
                 </div>
-                <div className="mt-2 flex gap-2">
-                  <Button size="sm" className="h-11 flex-1 md:h-8" loading={busyId === lead.id} onClick={() => run(lead.id, () => assumeInboxItemAction({ kind: "lead", id: lead.id }), "Lead assumido")}>
-                    <Hand /> Assumir
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-11 flex-1 md:h-8"
-                    disabled={!lead.phone && !lead.email}
-                    onClick={() => setReply({ leadId: lead.id, name: lead.name, channel: lead.phone ? "whatsapp" : "email" })}
-                  >
-                    <Reply /> Responder
-                  </Button>
-                </div>
+                {canAssume || canReply ? (
+                  <div className="mt-2 flex gap-2">
+                    {canAssume ? (
+                      <Button size="sm" className="h-11 flex-1 md:h-8" loading={busyId === lead.id} onClick={() => run(lead.id, () => assumeInboxItemAction({ kind: "lead", id: lead.id }), "Lead assumido")}>
+                        <Hand /> Assumir
+                      </Button>
+                    ) : null}
+                    {canReply ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-11 flex-1 md:h-8"
+                        disabled={!lead.phone && !lead.email}
+                        onClick={() => setReply({ leadId: lead.id, name: lead.name, channel: lead.phone ? "whatsapp" : "email" })}
+                      >
+                        <Reply /> Responder
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <ReplyDialog target={reply} channels={channels} onClose={() => setReply(null)} />
+      {canReply ? <ReplyDialog target={reply} channels={channels} onClose={() => setReply(null)} /> : null}
     </div>
   );
 }
 
-function MessageItem({ message: m, currentUserId, busy, onAssume, onReply }: { message: InboxMessage; currentUserId: string; busy: boolean; onAssume: () => void; onReply: () => void }) {
+/** `onAssume`/`onReply` ausentes = sem a chave correspondente (o botão não aparece). */
+function MessageItem({
+  message: m,
+  currentUserId,
+  busy,
+  canSee,
+  onAssume,
+  onReply,
+}: {
+  message: InboxMessage;
+  currentUserId: string;
+  busy: boolean;
+  canSee: (href: string) => boolean;
+  onAssume?: () => void;
+  onReply?: () => void;
+}) {
   const Icon = m.channel === "email" ? Mail : MessageCircle;
   const who = m.leadName ?? m.clientName ?? m.from ?? "Contato não identificado";
-  const href = m.leadId ? `/marketing/leads?lead=${m.leadId}` : m.clientId ? `/clientes/${m.clientId}?aba=timeline` : null;
+  const target = m.leadId ? `/marketing/leads?lead=${m.leadId}` : m.clientId ? `/clientes/${m.clientId}?aba=timeline` : null;
+  const href = target && canSee(target) ? target : null;
   return (
     <li className="rounded-lg border border-border bg-surface p-3 shadow-card">
       <div className="flex items-start gap-3">
@@ -180,14 +211,16 @@ function MessageItem({ message: m, currentUserId, busy, onAssume, onReply }: { m
               <span className="flex items-center gap-1.5 text-xs text-muted">
                 <Avatar name={m.assigneeName} size="xs" /> {m.assigneeId === currentUserId ? "Com você" : `Com ${m.assigneeName}`}
               </span>
-            ) : (
+            ) : onAssume ? (
               <Button size="sm" variant="outline" className="h-11 md:h-8" loading={busy} onClick={onAssume}>
                 <Hand /> Assumir
               </Button>
-            )}
-            <Button size="sm" className="h-11 md:h-8" onClick={onReply}>
-              <Reply /> Responder
-            </Button>
+            ) : null}
+            {onReply ? (
+              <Button size="sm" className="h-11 md:h-8" onClick={onReply}>
+                <Reply /> Responder
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>

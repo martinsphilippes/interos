@@ -22,6 +22,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { formatDateTime, formatPhone } from "@/lib/format";
 import { assignProspectsAction, convertProspectAction, recordProspectAttempt, scheduleProspectAction, setProspectListStatus } from "@/server/marketing/actions";
+import { useCanSeeFn } from "@/components/auth/access-provider";
+import { useMarketingAccess } from "./marketing-access";
 import type { Prospect } from "@/domain/types";
 import { ProspectStatusBadge } from "./lead-badges";
 import { ImportProspectsDialog } from "./prospect-lists-view";
@@ -43,6 +45,9 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
   const [dialog, setDialog] = React.useState<RowDialog>(null);
   const [importOpen, setImportOpen] = React.useState(autoImport);
   const [pending, startTransition] = React.useTransition();
+  const caps = useMarketingAccess().prospect;
+  const canSee = useCanSeeFn();
+  const hasRowActions = caps.register || caps.convert;
 
   const term = q.trim().toLowerCase();
   const visible = prospects.filter((p) => (!status || p.status === status) && (!term || [p.name, p.company, p.city, p.phone, p.email].filter(Boolean).join(" ").toLowerCase().includes(term)));
@@ -78,7 +83,9 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
       }
     });
 
+  // Itens do menu conforme as chaves (registrar / converter); sem nenhuma, o menu não aparece.
   const actionsMenu = (p: ProspectRowItem) => {
+    if (!hasRowActions) return null;
     const done = p.status === "convertido";
     return (
       <DropdownMenu>
@@ -88,16 +95,22 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem disabled={done} onSelect={() => setDialog({ kind: "attempt", prospect: p })}>
-            <PhoneCall /> Registrar tentativa
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled={done || p.status === "descartado"} onSelect={() => setDialog({ kind: "schedule", prospect: p })}>
-            <CalendarClock /> Agendar próxima ação
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem disabled={done} onSelect={() => setDialog({ kind: "convert", prospect: p })}>
-            <ArrowRightLeft /> Converter em lead ou oportunidade
-          </DropdownMenuItem>
+          {caps.register ? (
+            <>
+              <DropdownMenuItem disabled={done} onSelect={() => setDialog({ kind: "attempt", prospect: p })}>
+                <PhoneCall /> Registrar tentativa
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={done || p.status === "descartado"} onSelect={() => setDialog({ kind: "schedule", prospect: p })}>
+                <CalendarClock /> Agendar próxima ação
+              </DropdownMenuItem>
+            </>
+          ) : null}
+          {caps.register && caps.convert ? <DropdownMenuSeparator /> : null}
+          {caps.convert ? (
+            <DropdownMenuItem disabled={done} onSelect={() => setDialog({ kind: "convert", prospect: p })}>
+              <ArrowRightLeft /> Converter em lead ou oportunidade
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
     );
@@ -117,20 +130,22 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
           </Select>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select size="sm" aria-label="Status da lista" value={list.status} onChange={(e) => changeStatus(e.target.value)} disabled={pending} className="w-40">
+          <Select size="sm" aria-label="Status da lista" value={list.status} onChange={(e) => changeStatus(e.target.value)} disabled={pending || !caps.edit} className="w-40">
             {Object.entries(PROSPECT_LIST_STATUS_LABELS).map(([value, label]) => (
               <option key={value} value={value}>
                 Lista {label.toLowerCase()}
               </option>
             ))}
           </Select>
-          <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-            <Upload /> Importar contatos
-          </Button>
+          {caps.import ? (
+            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload /> Importar contatos
+            </Button>
+          ) : null}
         </div>
       </div>
 
-      {selected.size > 0 ? (
+      {caps.assign && selected.size > 0 ? (
         <div className="sticky top-2 z-10 flex flex-col gap-2 rounded-lg border border-brand/40 bg-brand-soft p-3 shadow-card sm:flex-row sm:items-center">
           <span className="text-sm font-medium">{selected.size} selecionado(s)</span>
           <Select size="sm" aria-label="Atribuir a" value={bulkOwner} onChange={(e) => setBulkOwner(e.target.value)} className="sm:w-56">
@@ -166,11 +181,13 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
           <EmptyState
             icon={<Users />}
             title="Lista sem contatos"
-            description="Importe um CSV com nome, empresa, telefone, e-mail e cidade."
+            description={caps.import ? "Importe um CSV com nome, empresa, telefone, e-mail e cidade." : "Nenhum contato visível para você nesta lista."}
             action={
-              <Button onClick={() => setImportOpen(true)}>
-                <Upload /> Importar contatos
-              </Button>
+              caps.import ? (
+                <Button onClick={() => setImportOpen(true)}>
+                  <Upload /> Importar contatos
+                </Button>
+              ) : undefined
             }
           />
         </Card>
@@ -184,9 +201,11 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
             <Table className="min-w-[1000px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox checked={allSelected ? true : selected.size > 0 ? "indeterminate" : false} onCheckedChange={(c) => setSelected(c === true ? new Set(visible.map((p) => p.id)) : new Set())} aria-label="Selecionar todos" />
-                  </TableHead>
+                  {caps.assign ? (
+                    <TableHead className="w-10">
+                      <Checkbox checked={allSelected ? true : selected.size > 0 ? "indeterminate" : false} onCheckedChange={(c) => setSelected(c === true ? new Set(visible.map((p) => p.id)) : new Set())} aria-label="Selecionar todos" />
+                    </TableHead>
+                  ) : null}
                   <TableHead>Contato</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Tentativas</TableHead>
@@ -200,9 +219,11 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
               <TableBody>
                 {visible.map((p) => (
                   <TableRow key={p.id} data-state={selected.has(p.id) ? "selected" : undefined}>
-                    <TableCell>
-                      <Checkbox checked={selected.has(p.id)} onCheckedChange={(c) => toggle(p.id, c === true)} aria-label={`Selecionar ${p.name}`} />
-                    </TableCell>
+                    {caps.assign ? (
+                      <TableCell>
+                        <Checkbox checked={selected.has(p.id)} onCheckedChange={(c) => toggle(p.id, c === true)} aria-label={`Selecionar ${p.name}`} />
+                      </TableCell>
+                    ) : null}
                     <TableCell>
                       <span className="block font-medium">{p.name}</span>
                       <span className="text-xs text-muted">{[p.company !== p.name ? p.company : null, p.phone ? formatPhone(p.phone) : p.email, p.city].filter(Boolean).join(" · ")}</span>
@@ -215,12 +236,12 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
                     <TableCell className="text-sm">{p.nextActionAt ? <span className={p.overdue ? "font-medium text-danger-fg" : undefined}>{formatDateTime(p.nextActionAt)}</span> : <span className="text-muted-light">—</span>}</TableCell>
                     <TableCell className="max-w-[220px] text-sm">
                       <span className="line-clamp-2">{p.result ?? <span className="text-muted-light">—</span>}</span>
-                      {p.leadId ? (
+                      {p.leadId && canSee(`/marketing/leads?lead=${p.leadId}`) ? (
                         <Link href={`/marketing/leads?lead=${p.leadId}`} className="text-xs font-medium text-brand hover:underline">
                           ver lead
                         </Link>
                       ) : null}
-                      {p.opportunityId ? (
+                      {p.opportunityId && canSee(`/vendas/oportunidades?oportunidade=${p.opportunityId}`) ? (
                         <Link href={`/vendas/oportunidades?oportunidade=${p.opportunityId}`} className="text-xs font-medium text-brand hover:underline">
                           ver oportunidade
                         </Link>
@@ -236,7 +257,7 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
           <ul className="flex flex-col gap-2 md:hidden">
             {visible.map((p) => (
               <li key={p.id} className="flex gap-3 rounded-lg border border-border bg-surface p-3 shadow-card">
-                <Checkbox checked={selected.has(p.id)} onCheckedChange={(c) => toggle(p.id, c === true)} aria-label={`Selecionar ${p.name}`} className="mt-1" />
+                {caps.assign ? <Checkbox checked={selected.has(p.id)} onCheckedChange={(c) => toggle(p.id, c === true)} aria-label={`Selecionar ${p.name}`} className="mt-1" /> : null}
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{p.name}</p>
                   <p className="truncate text-xs text-muted">{[p.company !== p.name ? p.company : null, p.phone ? formatPhone(p.phone) : p.email].filter(Boolean).join(" · ")}</p>
@@ -252,11 +273,11 @@ export function ProspectListDetailView({ detail, options, autoImport }: { detail
         </>
       )}
 
-      {dialog?.kind === "attempt" ? <AttemptDialog prospect={dialog.prospect} onClose={() => setDialog(null)} /> : null}
-      {dialog?.kind === "schedule" ? <ScheduleDialog prospect={dialog.prospect} onClose={() => setDialog(null)} /> : null}
-      {dialog?.kind === "convert" ? <ConvertDialog prospect={dialog.prospect} options={options} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "attempt" && caps.register ? <AttemptDialog prospect={dialog.prospect} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "schedule" && caps.register ? <ScheduleDialog prospect={dialog.prospect} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "convert" && caps.convert ? <ConvertDialog prospect={dialog.prospect} options={options} onClose={() => setDialog(null)} /> : null}
       <ImportProspectsDialog
-        list={importOpen ? list : null}
+        list={importOpen && caps.import ? list : null}
         onClose={() => {
           setImportOpen(false);
           if (autoImport) router.replace(`/marketing/prospeccao/${list.id}`, { scroll: false });

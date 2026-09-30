@@ -40,13 +40,21 @@ import {
 } from "@/components/marketing/marketing-model";
 import { computeLeadScore, evaluateMqlGate, normalize } from "./scoring";
 import { getScoringRules, matchLeadDuplicates, phoneKey } from "./service";
+import { FULL_SCOPE, campaignInScope, clientOwners, inboxItemInScope, isFullScope, leadInScope, prospectInScope, prospectListInScope, type LeadAccess, type ScopeCut } from "./access";
+import { maskDuplicates } from "./duplicates";
 
 export { computeLeadScore } from "./scoring";
 
 /**
  * Leituras do módulo de Marketing e Prospecção. Coleções filtradas por organização (igualdade) e
  * agregadas em memória. Todo número exibido nas telas sai daqui.
+ *
+ * Escopo (A7/A29): as leituras de tela recebem o recorte já resolvido pela página (./access.ts). Sem recorte =
+ * empresa (o padrão do catálogo para todos os papéis). A marcação "possível duplicidade" continua calculada sobre a
+ * empresa inteira (deduplicação), mas só os leads dentro do escopo são devolvidos.
  */
+
+const ALL_LEADS: LeadAccess = { scope: FULL_SCOPE, pool: true };
 
 const DAY_MS = 86_400_000;
 const OPEN_STATUSES = new Set<LeadStatus>(["novo", "em_contato"]);
@@ -161,9 +169,9 @@ function matchesFilters(l: LeadListItem, f: LeadFilters): boolean {
   return true;
 }
 
-export async function listLeads(filters: LeadFilters = {}): Promise<LeadListResult> {
+export async function listLeads(filters: LeadFilters = {}, access: LeadAccess = ALL_LEADS): Promise<LeadListResult> {
   const all = await loadEnrichedLeads();
-  const items = all.filter((l) => matchesFilters(l, filters));
+  const items = all.filter((l) => leadInScope(access, l) && matchesFilters(l, filters));
   if (filters.sort === "data") items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   else items.sort((a, b) => b.score - a.score || (a.createdAt < b.createdAt ? 1 : -1));
   const countsByStatus = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0])) as Record<LeadStatus, number>;
@@ -171,9 +179,10 @@ export async function listLeads(filters: LeadFilters = {}): Promise<LeadListResu
   return { items, total: items.length, countsByStatus };
 }
 
-export async function getLead(id: string): Promise<LeadDetail | null> {
+/** Ficha do lead; fora do escopo = inexistente (null). */
+export async function getLead(id: string, access: LeadAccess = ALL_LEADS): Promise<LeadDetail | null> {
   const lead = await getById<Lead>(COLLECTIONS.leads, id);
-  if (!lead) return null;
+  if (!lead || !leadInScope(access, lead)) return null;
   const [all, rules, events, communications, products] = await Promise.all([
     loadEnrichedLeads(),
     getScoringRules(),
@@ -185,8 +194,13 @@ export async function getLead(id: string): Promise<LeadDetail | null> {
   if (!item) return null;
 
   const score = computeLeadScore({ ...lead, productCategories: Array.from(products.values()).map((p) => p.category) }, rules);
-  const duplicates = matchLeadDuplicates({ phone: lead.phone, email: lead.email, company: lead.company, excludeId: lead.id }, all).map((d) => ({ id: d.id, name: d.name, company: d.company, status: d.status, reasons: d.reasons }));
-  const original = lead.duplicateOfId ? all.find((l) => l.id === lead.duplicateOfId) : undefined;
+  // Parecidos fora do escopo saem da ficha (não há o que abrir nem como marcá-los como original).
+  const byId = new Map(all.map((l) => [l.id, l]));
+  const duplicates = maskDuplicates(matchLeadDuplicates({ phone: lead.phone, email: lead.email, company: lead.company, excludeId: lead.id }, all), byId, access)
+    .filter((d) => !d.restricted)
+    .map((d) => ({ id: d.id, name: d.name, company: d.company, status: d.status, reasons: d.reasons }));
+  const originalLead = lead.duplicateOfId ? byId.get(lead.duplicateOfId) : undefined;
+  const original = originalLead && leadInScope(access, originalLead) ? originalLead : undefined;
   const [client, opportunity] = await Promise.all([
     lead.clientId ? getById<Client>(COLLECTIONS.clients, lead.clientId) : Promise.resolve(null),
     lead.opportunityId ? getById<Opportunity>(COLLECTIONS.opportunities, lead.opportunityId) : Promise.resolve(null),
@@ -236,9 +250,12 @@ function weekStartKey(key: string): string {
   return new Date(d.getTime() - weekday * DAY_MS).toISOString().slice(0, 10);
 }
 
-export async function getMarketingOverview(period: PeriodKey): Promise<MarketingOverview> {
+/** Agregados da Visão Geral no escopo da tela (leads pelo dono; investimento das campanhas pelo dono). */
+export async function getMarketingOverview(period: PeriodKey, access: LeadAccess = ALL_LEADS): Promise<MarketingOverview> {
   const range = periodRange(period);
-  const [leads, campaigns] = await Promise.all([loadEnrichedLeads(), list<Campaign>(COLLECTIONS.campaigns)]);
+  const [allLeads, allCampaigns] = await Promise.all([loadEnrichedLeads(), list<Campaign>(COLLECTIONS.campaigns)]);
+  const leads = allLeads.filter((l) => leadInScope(access, l));
+  const campaigns = allCampaigns.filter((c) => campaignInScope(access.scope, c));
   const today = dateKey(new Date());
 
   const captured = leads.filter((l) => inPeriod(l.createdAt, range));
@@ -314,8 +331,10 @@ export async function getMarketingOverview(period: PeriodKey): Promise<Marketing
 // Campanhas
 // ---------------------------------------------------------------------------
 
-export async function listCampaigns(): Promise<CampaignRow[]> {
-  const [campaigns, leads, users] = await Promise.all([list<Campaign>(COLLECTIONS.campaigns), list<Lead>(COLLECTIONS.leads), userMap()]);
+/** Campanhas no escopo (dono). Leads e MQLs de cada campanha são o resultado da campanha (contagem da empresa). */
+export async function listCampaigns(scope: ScopeCut = FULL_SCOPE): Promise<CampaignRow[]> {
+  const [allCampaigns, leads, users] = await Promise.all([list<Campaign>(COLLECTIONS.campaigns), list<Lead>(COLLECTIONS.leads), userMap()]);
+  const campaigns = allCampaigns.filter((c) => campaignInScope(scope, c));
   const stats = new Map<string, { leads: number; mqls: number }>();
   for (const l of leads) {
     if (!l.campaignId) continue;
@@ -367,11 +386,14 @@ function responsibleNames(list: ProspectList, prospects: Prospect[], users: Map<
   return ids.map((id) => users.get(id)?.name).filter((n): n is string => Boolean(n));
 }
 
-export async function listProspectLists(): Promise<ProspectListRow[]> {
-  const [lists, prospects, users, campaigns] = await Promise.all([list<ProspectList>(COLLECTIONS.prospectLists), list<Prospect>(COLLECTIONS.prospects), userMap(), list<Campaign>(COLLECTIONS.campaigns)]);
+/** Listas no escopo; os totais de cada lista contam só os contatos visíveis ao usuário. */
+export async function listProspectLists(scope: ScopeCut = FULL_SCOPE): Promise<ProspectListRow[]> {
+  const [allLists, prospects, users, campaigns] = await Promise.all([list<ProspectList>(COLLECTIONS.prospectLists), list<Prospect>(COLLECTIONS.prospects), userMap(), list<Campaign>(COLLECTIONS.campaigns)]);
   const campaignNames = new Map(campaigns.map((c) => [c.id, c.name]));
-  const byList = new Map<string, Prospect[]>();
-  for (const p of prospects) byList.set(p.listId, [...(byList.get(p.listId) ?? []), p]);
+  const allByList = new Map<string, Prospect[]>();
+  for (const p of prospects) allByList.set(p.listId, [...(allByList.get(p.listId) ?? []), p]);
+  const lists = allLists.filter((l) => prospectListInScope(scope, l, allByList.get(l.id) ?? []));
+  const byList = new Map(lists.map((l) => [l.id, (allByList.get(l.id) ?? []).filter((p) => prospectInScope(scope, p, l))]));
   const order: Record<ProspectList["status"], number> = { ativa: 0, pausada: 1, encerrada: 2 };
   return lists
     .map((l) => ({
@@ -384,14 +406,17 @@ export async function listProspectLists(): Promise<ProspectListRow[]> {
     .sort((a, b) => order[a.status] - order[b.status] || (a.createdAt < b.createdAt ? 1 : -1));
 }
 
-export async function getProspectListDetail(listId: string): Promise<ProspectListDetail | null> {
+/** Detalhe da lista; fora do escopo = inexistente (null); só os contatos visíveis entram nos números. */
+export async function getProspectListDetail(listId: string, scope: ScopeCut = FULL_SCOPE): Promise<ProspectListDetail | null> {
   const plist = await getById<ProspectList>(COLLECTIONS.prospectLists, listId);
   if (!plist) return null;
-  const [prospects, users, campaign] = await Promise.all([
+  const [allProspects, users, campaign] = await Promise.all([
     list<Prospect>(COLLECTIONS.prospects, { where: [["listId", "==", listId]] }),
     userMap(),
     plist.campaignId ? getById<Campaign>(COLLECTIONS.campaigns, plist.campaignId) : Promise.resolve(null),
   ]);
+  if (!prospectListInScope(scope, plist, allProspects)) return null;
+  const prospects = isFullScope(scope) ? allProspects : allProspects.filter((p) => prospectInScope(scope, p, plist));
   const now = new Date().toISOString();
   const statusOrder: Record<Prospect["status"], number> = { respondeu: 0, contatado: 1, tentativa: 2, novo: 3, convertido: 4, descartado: 5 };
   const items: ProspectRowItem[] = prospects
@@ -441,7 +466,8 @@ export async function getProspectListDetail(listId: string): Promise<ProspectLis
 const INBOX_DAYS = 30;
 const NEW_LEAD_HOURS = 72;
 
-export async function getInbox(): Promise<InboxData> {
+/** Caixa de entrada no escopo da tela (atendente, dono do lead ou do cliente; sem dono = fila de quem assume). */
+export async function getInbox(access: LeadAccess = ALL_LEADS): Promise<InboxData> {
   const [incoming, outgoing, leads] = await Promise.all([
     list<Communication>(COLLECTIONS.communications, { where: [["direction", "==", "entrada"]] }),
     list<Communication>(COLLECTIONS.communications, { where: [["direction", "==", "saida"]] }),
@@ -462,7 +488,13 @@ export async function getInbox(): Promise<InboxData> {
     }
   }
 
-  const messages: InboxMessage[] = recent.map((c) => {
+  const visibleMessages = recent.filter((c) => {
+    const lead = c.entityType === "lead" && c.entityId ? leadById.get(c.entityId) : undefined;
+    const client = c.clientId ? clients.get(c.clientId) : undefined;
+    return inboxItemInScope(access, [c.userId, lead?.ownerId, ...clientOwners(client)]);
+  });
+
+  const messages: InboxMessage[] = visibleMessages.map((c) => {
     const lead = c.entityType === "lead" && c.entityId ? leadById.get(c.entityId) : undefined;
     const client = c.clientId ? clients.get(c.clientId) : undefined;
     const answeredAt = [c.clientId ? lastOutgoing.get(`c:${c.clientId}`) : undefined, lead ? lastOutgoing.get(`l:${lead.id}`) : undefined].filter(Boolean).sort().pop();
@@ -483,6 +515,6 @@ export async function getInbox(): Promise<InboxData> {
   });
 
   const newSince = new Date(Date.now() - NEW_LEAD_HOURS * 3_600_000).toISOString();
-  const newLeads = leads.filter((l) => !l.ownerId && OPEN_STATUSES.has(l.status) && l.createdAt >= newSince).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const newLeads = leads.filter((l) => !l.ownerId && leadInScope(access, l) && OPEN_STATUSES.has(l.status) && l.createdAt >= newSince).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   return { messages, newLeads };
 }
