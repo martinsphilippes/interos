@@ -17,7 +17,8 @@
 ## Dependências já instaladas (não rode `npm install`; se faltar algo, registre no relatório)
 firebase-admin, firebase, zod, date-fns, lucide-react, recharts, @dnd-kit/{core,sortable,utilities}, clsx,
 tailwind-merge, class-variance-authority, @radix-ui/react-{dialog,dropdown-menu,tabs,popover,select,tooltip,checkbox,
-switch,avatar,scroll-area,separator,label,progress,slot}, cmdk, sonner, server-only. Dev: tsx, dotenv, playwright.
+switch,avatar,scroll-area,separator,label,progress,slot}, cmdk, sonner, server-only. Dev: tsx, dotenv, playwright,
+@firebase/rules-unit-testing (`npm run test:rules`), vitest (`npm test`).
 
 `overrides` no package.json: `jwks-rsa` (usado por `firebase-admin/auth`) fica com `jose` 5, que tem build CommonJS.
 O `jose` 6 é só ESM e o runtime de funções da Vercel não carrega ESM via `require()` (`ERR_REQUIRE_ESM`), o que
@@ -33,7 +34,10 @@ src/lib/utils.ts           cn()
 src/lib/format.ts          formatCurrency, formatDate, formatRelative, initials
 src/server/db.ts           acesso ao Firestore: col, getById, list, create, update, remove, batch
 src/server/firebase-admin.ts
-src/server/auth/session.ts requireUser, getCurrentUser, permissões
+src/server/auth/session.ts requireUser, getCurrentUser, requireScreen/requirePermission (fachada de autorização)
+src/server/auth/permissions.ts resolução das permissões efetivas, can, canSeeHref (sem dependências de servidor)
+src/server/auth/scope.ts   escopo de dados por tela (resolveDataScope)
+src/domain/permissions/    catálogo de acessos (módulo → tela → seção → ação → escopo) e DSL de regras
 src/server/events/         motor de eventos: emitEvent, registerHandler, handlers/
 src/server/notifications.ts
 src/server/<modulo>/queries.ts   leituras (server-only)
@@ -252,6 +256,51 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   (`initFrom`). Usada por VEN, CT, PR, COM e PAG; formatos antigos preservados, sem renumerar documentos.
   `verify.ts` confere que nenhum contador fica abaixo do maior número existente.
 
+## Autorização (catálogo, precedência, escopo, helpers)
+Resumo da etapa 6A (a versão completa, com invariantes e a tela de perfis, vem ao fim da etapa). Um só mecanismo:
+`session.ts` continua o único ponto de identidade; não há segundo sistema de permissões.
+
+- **Catálogo** (`src/domain/permissions/`, puro, um arquivo por módulo): MÓDULO `<m>.acessar` → TELA `<m>.<tela>.ver`
+  → SEÇÃO `<m>.<tela>.<secao>.ver` → AÇÃO `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 65 telas,
+  128 seções, 235 ações (439 chaves, união literal `PermissionKey`). Cada nó tem uma **regra padrão** na DSL
+  (`"all"`, `any`, `all`, `role`, `department`, `manager`, `director`, `managerOf`, `can`) que reproduz o
+  comportamento anterior (teste T0); `evaluateRule` é o único avaliador e `describeRule` gera o texto da interface.
+  Extensões: `moduleGate: "ativo"` (tela que só exige o módulo ativo, ex.: Relatórios), `modules` (tela aberta por
+  qualquer de vários módulos, ex.: Comissões), `requireScreenAny` (página compartilhada), `redirectTo`, `nav`
+  (menu/celular/atalho "+", com `nav.rule`/`quickAction.rule`), `guards`/`checkedIn`/`viewGuards` (o que cada chave
+  protege), `SETTING_PERMISSION` (chave de edição de cada configuração). `MODULE_ACCESS` segue exportado como
+  fachada histórica.
+- **Precedência** (`resolvePermissions` em `src/server/auth/permissions.ts`): (1) módulo inativo na empresa
+  (`organizations/{org}.activeModules`, ausente = todos; `inicio` e `admin` sempre ativos) nega tudo do módulo, admin
+  incluído; (2) hierarquia por E: ação ∧ seção ∧ tela ∧ módulo; (3) valor próprio de cada nó = exceção do usuário
+  (`permission_profiles/user_<uid>`) ?? ajuste do perfil (`permission_profiles/role_<papel>`) ?? regra padrão;
+  (4) escopo por tela = exceção ?? perfil ?? padrão do papel, sempre dentro de `scope.allowed`; (5) sem atalho para
+  admin — ele tem tudo porque as regras o incluem. Cada chave registra a origem (`padrao`, `perfil`, `excecao`,
+  `modulo-inativo`, `hierarquia`).
+- **Leitura**: `getCurrentUser` (cache por requisição) lê o usuário e, num `getAll`, perfil do papel + exceção +
+  organização; anexa `user.permissions`. Falha nessa leitura → log + matriz padrão + todos os módulos ativos: nunca
+  desloga (A4.6). Permissões de OUTRO usuário: `resolvePermissionsForUser(idOuUsuario)` (memo por requisição);
+  CurrentUser de outro usuário: `currentUserFor(user)`.
+- **Escopo** (`src/server/auth/scope.ts`): `resolveDataScope(user, tela)` → `{ kind, userIds?, departmentKeys?,
+  initialKind, poolUnassigned }` com a semântica de "equipe"/"departamento" de cada tela (`scope.variants`);
+  `scopeAllows`, `filterByScope`, `canSeeRecord`. "unidades" vale "empresa" (não oferecido). Os módulos ainda usam os
+  seus `resolveScope`; os testes provam que o conjunto de usuários é o mesmo.
+- **Helpers** (importe de `@/server/auth/session`): `can(user, chave)`, `canAny`, `canSeeHref(user, href)`;
+  páginas: `requireScreen(tela | seção, { redirectTo? })` / `requireScreenAny([...])` (padrão
+  `/meu-dia?erro=sem-permissao`); actions: `requirePermission(chave)` → `PermissionError`, tratada por
+  `failAction(error, fallback)` (relança redirect/notFound com `unstable_rethrow`; devolve o `ActionResult`);
+  APIs: `requireApiPermission(chave)` → usuário ou `Response` 401/403 JSON. Menu e atalhos: `visibleNavigation` e
+  `visibleQuickActions` (`src/server/auth/navigation.ts`). Predicados antigos (`canAccessModule`, `canOperateFinance`,
+  `canOperateImplementation/Support`, `canEditArticles`, `canApprovePayables`… `canAccessReport`, `canApproveGoLive`,
+  `canApproveStage`) mantêm nome e assinatura e delegam para `can`. `requireRole` continua até a migração.
+- **Adicionar tela ou ação**: declare no arquivo do módulo em `src/domain/permissions/` (chave estável, rótulo de
+  negócio, regra padrão, `routes` da página ou `guards` da action; `nav` se tiver item de menu); proteja a página com
+  `requireScreen("<m>.<tela>")` e a action com `requirePermission("<chave>")` dentro do `try` + `failAction`; rode
+  `npm test` (integridade do catálogo, cobertura das páginas e equivalência).
+- **Testes**: `npm test` (vitest, puros — catálogo, DSL, precedência, T0 contra cópia congelada dos predicados antigos
+  em `tests/permissions/legacy.ts`, escopo contra os resolvedores atuais com banco em memória) e `npm run test:rules`
+  (regras do Firestore no emulador).
+
 ## Auditoria via eventos
 - Não há coleção de auditoria: cada mudança relevante emite evento com `actorId`, `occurredAt` e
   `payload.changes {campo: {from, to}}` + `payload.reason` (`auditChanges` em `src/server/audit.ts`). Cobre itens e
@@ -261,6 +310,6 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   `src/components/timeline/event-icon.tsx`).
 
 ## Qualidade
-- `npm run lint && npm run typecheck && npm run build` devem passar antes de considerar uma entrega pronta.
+- `npm run lint && npm run typecheck && npm test && npm run build` devem passar antes de considerar uma entrega pronta.
 - Emuladores locais: `FIRESTORE_EMULATOR_HOST` e `FIREBASE_AUTH_EMULATOR_HOST` já estão em `.env.local`.
   Seed: `npm run seed`. Dev: `npm run dev` (porta 3000). Usuário demo: `hercules@intercert.com.br` / `interos123`.
