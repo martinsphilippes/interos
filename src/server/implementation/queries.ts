@@ -10,6 +10,7 @@ import { dateKey } from "@/lib/format";
 import {
   COLLECTIONS,
   IMPLEMENTATION_PHASES,
+  type Billing,
   type Client,
   type Contact,
   type Contract,
@@ -20,6 +21,7 @@ import {
   type ImplementationTask,
   type ImplementationTemplate,
   type Product,
+  type SaleSnapshot,
   type SlaInstance,
   type SlaView,
   type SupportTicket,
@@ -30,7 +32,8 @@ import {
   type WorkflowStep,
 } from "@/domain/types";
 import type { RoleKey } from "@/domain/constants";
-import { getGoLiveSettings } from "./service";
+import { buildSaleSnapshot, getGoLiveSettings } from "./service";
+import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 import {
   ACTIVE_PROJECT_STATUSES,
   evaluateGoLiveGate,
@@ -325,6 +328,8 @@ export interface ProjectDetail {
   workflowStep: Pick<WorkflowStep, "id" | "status" | "stageName"> | null;
   /** Contato principal do cliente (sugestão para "quem aceitou"). */
   primaryContactName?: string;
+  /** Dados da venda (D9): fotografia gravada na criação do projeto; projetos antigos montam na leitura. */
+  sale: { snapshot: SaleSnapshot; summary: ContractSummaryData; sellerName?: string } | null;
 }
 
 export async function getProject(id: string): Promise<ProjectDetail | null> {
@@ -349,6 +354,21 @@ export async function getProject(id: string): Promise<ProjectDetail | null> {
 
   tasks.sort((a, b) => IMPLEMENTATION_PHASES.indexOf(a.phase) - IMPLEMENTATION_PHASES.indexOf(b.phase) || (a.dueAt ?? "").localeCompare(b.dueAt ?? "") || a.title.localeCompare(b.title, "pt-BR"));
   trainings.sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt));
+  // Dados da venda: fotografia do projeto (ou montada do contrato para projetos anteriores ao handoff).
+  let sale: ProjectDetail["sale"] = null;
+  if (contract) {
+    const snapshot = project.saleSnapshot ?? (await buildSaleSnapshot(contract));
+    const [billings, seller] = await Promise.all([
+      list<Billing>(COLLECTIONS.billing, { where: [["contractId", "==", contract.id]] }),
+      snapshot.sellerId ? getById<User>(COLLECTIONS.users, snapshot.sellerId) : Promise.resolve(null),
+    ]);
+    const summary = buildContractSummary(
+      { ...contract, implementationRequired: contract.implementationRequired ?? snapshot.implementationRequired, implementationNotes: contract.implementationNotes ?? snapshot.implementationNotes, commercialNotes: contract.commercialNotes ?? snapshot.commercialNotes, paymentMethod: contract.paymentMethod ?? snapshot.paymentMethod, saleNumber: contract.saleNumber ?? snapshot.saleNumber },
+      { billings, sellerName: seller?.name, contact: snapshot.contactName ? { name: snapshot.contactName, phone: snapshot.contactPhone, email: snapshot.contactEmail } : null },
+    );
+    sale = { snapshot, summary, sellerName: seller?.name };
+  }
+
   // Histórico: eventos do cliente desde a criação do projeto (inclui workflow, financeiro e suporte do período).
   const since = project.createdAt < (project.startDate ?? project.createdAt) ? project.createdAt : (project.startDate ?? project.createdAt);
   const events = timeline.filter((e) => e.occurredAt >= since || e.entityId === project.id).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
@@ -369,6 +389,7 @@ export async function getProject(id: string): Promise<ProjectDetail | null> {
     postGoLiveTickets,
     workflowStep: step ? { id: step.id, status: step.status, stageName: step.stageName } : null,
     primaryContactName: (contacts.find((c) => c.isPrimary) ?? contacts[0])?.name,
+    sale,
   };
 }
 

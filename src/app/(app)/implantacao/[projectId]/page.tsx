@@ -17,6 +17,7 @@ import { ProjectHeader } from "@/components/implementation/project-header";
 import { ProjectTabs } from "@/components/implementation/project-tabs";
 import { AgentSuggestions } from "@/components/automations/agent-suggestions";
 import { TrainingsTab } from "@/components/implementation/trainings-tab";
+import { SaleDataCard } from "@/components/implementation/sale-data-card";
 
 type Params = Promise<{ projectId: string }>;
 
@@ -64,6 +65,7 @@ export default async function ProjectPage({ params }: { params: Params }) {
         requiredTotal={required.length}
         editable={editable}
       />
+      {detail.sale ? <SaleDataCard sale={detail.sale} showDocumentLink={canAccessModule(user, "financeiro")} /> : null}
       {!readOnly ? <AgentSuggestions kind="implantacao" subjectId={project.id} title="Sugestões do assistente de implantação" limit={3} className="mb-4" /> : null}
       <ProjectTabs
         defaultTab={defaultTab}
