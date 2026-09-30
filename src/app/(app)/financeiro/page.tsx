@@ -34,7 +34,8 @@ export default async function FinanceOverviewPage() {
   };
   const hidden = !caps.values;
   const options = { scope: await resolveDataScope(user, "financeiro.dashboard"), hideValues: hidden };
-  const [overview, queue] = await Promise.all([getFinanceOverview(options), show.queue ? listContracts({ status: "abertos" }, options) : Promise.resolve(null)]);
+  // A fila lista contratos: valores sob "Valores do contrato" também (como na tela Contratos).
+  const [overview, queue] = await Promise.all([getFinanceOverview(options), show.queue ? listContracts({ status: "abertos" }, { ...options, hideValues: !caps.contractValues }) : Promise.resolve(null)]);
   const { counts } = overview;
   const openContracts = queue ? queue.rows.length : counts.contrato + counts.assinatura + counts.pagamento + counts.pendencia;
 
