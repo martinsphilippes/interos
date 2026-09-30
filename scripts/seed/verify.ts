@@ -153,8 +153,20 @@ async function main(): Promise<void> {
     if (a.status === "aplicado" && c && !(c.previousVersions ?? []).some((v) => v.amendmentId === a.id)) problems.push(`(n) aditivo aplicado ${a.id} sem snapshot em previousVersions`);
   }
   for (const c of contracts) {
-    const applied = amendments.filter((a) => a.contractId === c.id && a.status === "aplicado").length;
-    if (applied > 0 && c.version < applied + 1) problems.push(`(n) ${c.id} version=${c.version} < aditivos aplicados + 1 (${applied + 1})`);
+    const applied = amendments.filter((a) => a.contractId === c.id && a.status === "aplicado");
+    if (applied.length > 0 && c.version < applied.length + 1) problems.push(`(n) ${c.id} version=${c.version} < aditivos aplicados + 1 (${applied.length + 1})`);
+    // Item incluído por aditivo carrega a origem (`since`) e nenhuma comissão de recorrência dele fica antes da 1ª mensalidade que o inclui.
+    for (const a of applied) {
+      for (const item of c.items) {
+        if (a.before.items.some((b) => b.productId === item.productId) || !a.after.items.some((b) => b.productId === item.productId)) continue;
+        if (!item.since) {
+          problems.push(`(n) ${c.id}: item ${item.productId} incluído pelo aditivo ${a.number} sem origem (since)`);
+          continue;
+        }
+        const early = commissions.filter((x) => x.contractId === c.id && x.productId === item.productId && x.revenueType === "recorrencia" && (x.installment ?? 0) < item.since!.installment && x.status !== "cancelada");
+        if (early.length > 0) problems.push(`(n) ${c.id}: ${early.length} comissão(ões) de ${item.productId} antes da ${item.since.installment}ª mensalidade (item de aditivo)`);
+      }
+    }
   }
   // (o) cobranças de um contrato sem `installment` duplicado por tipo (canceladas não contam).
   const seenInstallments = new Set<string>();

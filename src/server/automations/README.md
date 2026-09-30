@@ -26,7 +26,10 @@
 `kpi_snapshots`, `processos_esperas`, `cobrancas_vencidas`, `contratos_alertas`, `comissoes`,
 `conciliacao_bancaria` — só age com provedor de cobrança conectado, senão "ignorada" —, `regua_cobranca` — marcos
 da régua de cobrança, idempotente por cobrança e marco, desligada por padrão; ambas rodam também de forma
-preguiçosa ao abrir Cobranças/Contas a Receber); `scheduler.ts#runSweeps({ only, force })` roda as que venceram (controle em
+preguiçosa ao abrir Cobranças/Contas a Receber —, `cobrancas_recorrentes` — horizonte rolante das mensalidades de
+contratos com renovação automática/sem prazo, ids determinísticos —, `contas_recorrentes` e `contas_a_pagar_vencidas`
+— séries de títulos a pagar e aviso único de vencidos, também preguiçosas ao abrir Contas a Pagar; `renovacoes`
+passou a incluir a renovação automática de contratos com `autoRenew`); `scheduler.ts#runSweeps({ only, force })` roda as que venceram (controle em
 `settings/sweeps.value.automacoes.<chave>`) e as regras agendadas que varrem registros
 (`trigger.entity`, uma vez por registro até ele mudar). Uma regra agendada com `trigger.sweep` define a
 frequência daquela varredura.

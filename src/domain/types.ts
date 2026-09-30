@@ -483,6 +483,18 @@ export interface Visit extends BaseEntity {
 
 export type ProposalStatus = "rascunho" | "enviada" | "visualizada" | "negociacao" | "aceita" | "recusada" | "vencida";
 
+/**
+ * Origem de um item incluído por aditivo (D25): a 1ª mensalidade que já o inclui e, quando houver, a cobrança avulsa
+ * de adesão/hardware (nº da parcela) gerada pelo aditivo. O motor de comissões só planeja parcelas a partir daí —
+ * mensalidades pagas antes do item não geram comissão sobre ele. Ausente = item no contrato desde a origem.
+ */
+export interface ItemSince {
+  amendmentId: string;
+  installment: number;
+  setupInstallment?: number;
+  hardwareInstallment?: number;
+}
+
 export interface ProposalItem {
   productId: string;
   productName: string;
@@ -491,6 +503,7 @@ export interface ProposalItem {
   monthlyValue: number;
   hardwareValue: number;
   discountPct: number;
+  since?: ItemSince;
 }
 
 export interface Proposal extends BaseEntity {

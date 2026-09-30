@@ -187,12 +187,65 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   Financeiro com texto e link prontos; evento `billing.reminder_due`. Prévia honesta em Configurações › Cobrança.
   Meu Dia deriva "vencem nos próximos N dias" do menor marco antes do vencimento quando a régua está ativa.
 
+## Aditivos, renovação, cobrança recorrente e 3ª mensalidade (etapa 5, `src/server/finance/*`)
+- **Aditivo (D25)** = coleção `contract_amendments` (`cta_<contractId>_<n>`, número `<CT>-A<nn>`), UM em andamento
+  por contrato, só depois da assinatura (antes dela itens/condições mudam direto no contrato, com `versionPatchIfSent`
+  guardando o snapshot em `previousVersions[]` kind "revisao"). Fluxo `rascunho → aguardando_assinatura → assinado →
+  aplicado` (ou `cancelado`); `requiresSignature=false` = ajuste interno aplicado direto. O servidor calcula
+  `before`/`after` (`ContractSnapshot`, `src/domain/contract-snapshot.ts`) e `changes` (de → para via `auditChanges`);
+  `sendAmendmentForSignature` fixa `documentHash` e copia os signatários do contrato; assinatura manual com evidência
+  (mesmo diálogo do contrato). `applyAmendment` é transacional (versão conferida): contrato ← `after`, `version+1`,
+  entrada `previousVersions` kind "aditivo", `amendmentIds`; depois `contract.updated` (changes), `client_products`
+  sincronizados (item novo → ativo; removido → cancelado com `cancelReason`; MRR do cliente), cobranças futuras
+  refeitas (`rebuildFutureBillings`: mensalidades EM ABERTO com competência ≥ vigência canceladas e recriadas com a
+  MESMA numeração/competência/vencimento; adesão/hardware a mais → cobrança avulsa; id `bill_<c>_<tipo><n>[_r<k>]`),
+  comissões reconciliadas (só previstas/em carência mudam) e aviso ao gestor de Implantação para itens novos —
+  **nenhum projeto novo**. Item incluído por aditivo carrega `ProposalItem.since` { amendmentId, installment,
+  setupInstallment?, hardwareInstallment? }: o motor só planeja parcelas a partir daí (`planSlots`), nunca sobre
+  mensalidades pagas antes do item existir. Documento: `?versao=N` (snapshot histórico, faixa "somente leitura"),
+  `?aditivo=<id>` (termo com condições anteriores × novas, assinaturas e hash); seção "Aditivos aplicados" no
+  contrato consolidado. Eventos `contract.amendment_created|sent|signed|applied|cancelled`. `createManualContract`
+  não é mais o caminho para alterar contrato vigente.
+- **Cobrança recorrente (D24b)**: `extendBillingPlan`/`generateNextBillings(contractId, actor, { months?, horizonMonths? })`
+  idempotentes por id determinístico (`createBillingWithDeterministicId`); contrato de prazo fixo completa
+  `termInstallments`; contrato com `autoRenew` ou sem prazo tem horizonte rolante (setting
+  `financeiro_alertas.horizonteCobrancasMeses`, padrão 3) pela varredura diária `cobrancas_recorrentes`. Botão
+  "Gerar próximas cobranças (N)" no card de cobranças (`pendingRecurringInstallments`). "Vencido" é estado DERIVADO
+  (`isContractExpired`: liberado com `endDate` < hoje): fora do MRR/contratos ativos (overview, workspace,
+  recorrência, resumo do cliente, KPI `contractEndOfMrr`) e badge nas listas/página — nada gravado no banco.
+- **Renovação (D26)**: fechamento da venda e contrato ganham `autoRenew`, `renewalTermMonths`, `readjustment`
+  { nenhum | percentual(percent) | indice(ipca|igpm|inpc) } e `noticeDays` (opcionais). Renovar = aditivo kind
+  "renovacao": `endDate` = max(endDate, hoje) + meses, `termMonths` PRESERVADO, percentual aplicado à mensalidade
+  (itens reajustados), mensalidades do novo prazo geradas (`generateNextBillings`, descontando as que o horizonte já
+  criou além do fim anterior). Índice oficial NÃO é buscado: renova sem reajuste, `readjustment.pending=true` e
+  tarefa ao CS "Informar índice de reajuste". Pelo CS: `completeRenewal(renewalId, termMonths, notes, actor,
+  { readjustment?, requiresSignature? })` (source `renovacao_cs`; com assinatura fica `em_negociacao` até aplicar no
+  Financeiro). Automática: `autoRenewContracts` (`src/server/finance/renewals.ts`, dentro da varredura
+  `renovacoes`): liberado + `autoRenew` + fim em até `noticeDays` (padrão 30) → aditivo `renovacao_automatica`
+  aplicado 1x (a vigência estendida sai da janela; aditivo aberto bloqueia). `ensureRenewals` não abre renovação
+  de CS para contratos com `autoRenew`. Evento `contract.renewed` (+ `renewal.completed` com `amendmentId`).
+  Previstas de recorrência limitadas ao fim da vigência (`recurringHorizon`).
+- **3ª mensalidade (D27)**: `Commission.gateBillingId`/`expectedAt` gravados pelo motor (gatilho `mensalidade_n` e
+  parcelas aguardando recebimento) — "Previsão (vencimento da 3ª mensalidade)" em Minhas comissões e no painel.
+
 ## Contas a pagar (`payables`)
 - Um título por comissão elegível (`pag_<commissionId>`, `createIfAbsent`; `_2`, `_3`… depois de cancelado),
   código PAG-AAAA-NNNNN, vencimento no `diaPagamento` (setting `comissoes_pagamento`) do mês seguinte à
   elegibilidade. Fluxo `previsto → aprovado → a_pagar → pago` (pagar marca a comissão `paga` na mesma transação);
   cancelar antes de pago devolve a comissão a Elegível; estorno de comissão paga gera título negativo
   (`estorno_comissao`). Títulos manuais permitidos. Aprovar/pagar/estornar: gestor financeiro, admin, diretoria.
+- **Contas a Pagar geral (D28, mesma coleção e mesma tela)**: `suppliers` (cadastro simples: nome único, documento,
+  contato, PIX/banco, categoria, ativo; eventos `supplier.created|updated` com changes) em
+  `/financeiro/contas-a-pagar/fornecedores`; `Payable` ganhou `supplierId`, `costCenter`, `installment/installments`
+  (parcelamento: N títulos `pag_<base>_p<n>` com centavos exatos e vencimentos mensais), `seriesId`/`recurrence`
+  { frequency mensal|anual, dayOfMonth, until? } (série: título-modelo com `seriesId` = próprio id; varredura
+  `contas_recorrentes` cria a próxima ocorrência `pag_rec_<série>_<AAAA-MM>` 30 dias antes, origem `recorrencia`,
+  idempotente e respeitando `until`), `attachmentIds` (documentos `entityType: "payable"`) e `overdueNotifiedAt`
+  (varredura `contas_a_pagar_vencidas`: aviso ÚNICO ao gestor do Financeiro e a quem aprovou/programou). Categorias
+  (`PayableCategory` aberto a chaves novas) e centros de custo vêm do setting `contas_a_pagar` (fixas do circuito
+  sempre válidas; rótulos em `payableCategoryLabel`). Filtros por categoria, credor, centro, origem, competência,
+  vencimento e série; relatório `contas_a_pagar` (competência, status derivado "vencido", CSV/XLSX/PDF) e card
+  "Fluxo de caixa simplificado" (cobranças abertas/vencidas × títulos abertos por mês de vencimento, só dados reais).
 
 ## Numeração transacional (`nextNumber` em `src/server/db.ts`)
 - Coleção `counters` (`counter_<prefixo>_<ano>`), `runTransaction`, inicializada a partir do maior número já gravado

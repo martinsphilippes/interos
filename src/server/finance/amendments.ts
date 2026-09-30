@@ -14,7 +14,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { firestore } from "@/server/firebase-admin";
-import { col, createIfAbsent, getById, list, nowIso, stripUndefined, update } from "@/server/db";
+import { col, createIfAbsent, getById, getManyByIds, list, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { notify } from "@/server/notifications";
 import { getDepartmentManager } from "@/server/workflow/service";
@@ -32,7 +32,7 @@ import {
   describeSnapshotValue,
   SNAPSHOT_FIELDS,
 } from "@/domain/contract-snapshot";
-import { COLLECTIONS, type Billing, type Client, type Contract, type ContractAmendment, type ContractReadjustment, type ContractSignerEntry, type ContractSnapshot, type Document, type Product, type ProposalItem, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type Billing, type Client, type Contract, type ContractAmendment, type ContractReadjustment, type ContractSignerEntry, type ContractSnapshot, type Document, type ItemSince, type Product, type ProposalItem, type UserRef } from "@/domain/types";
 import { billingDocId, dayInMonth, dueIso, lastRecurringBilling, recurringStep, round2, todayKey } from "./billing";
 import type { AmendmentInput, AmendmentSignatureInput } from "./schemas";
 import { addContractDocument, cancelChargeAtProvider, createBillingWithDeterministicId, generateNextBillings, loadContract, providerChargeFields, syncClientProductsFromContract } from "./service";
@@ -75,8 +75,12 @@ export function readjustItems(items: ProposalItem[], percent: number): ProposalI
   return items.map((i) => ({ ...i, monthlyValue: round2(i.monthlyValue * factor) }));
 }
 
-function normalizeItems(items: NonNullable<AmendmentInput["items"]>): ProposalItem[] {
-  return items.map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: round2(i.setupValue), monthlyValue: round2(i.monthlyValue), hardwareValue: round2(i.hardwareValue), discountPct: i.discountPct }));
+/** Itens normalizados; a origem por aditivo (`since`) dos itens já existentes é preservada (o motor de comissões depende dela). */
+function normalizeItems(items: NonNullable<AmendmentInput["items"]>, previous: ProposalItem[]): ProposalItem[] {
+  return items.map((i) => {
+    const prior = previous.find((p) => p.productId === i.productId && p.since);
+    return { productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: round2(i.setupValue), monthlyValue: round2(i.monthlyValue), hardwareValue: round2(i.hardwareValue), discountPct: i.discountPct, ...(prior?.since ? { since: prior.since } : {}) };
+  });
 }
 
 /**
@@ -89,7 +93,7 @@ export function buildAmendmentAfter(contract: Contract, input: Omit<AmendmentInp
   let readjustment: ContractReadjustment | undefined;
   let renewalMonths: number | undefined;
   if (input.items) {
-    after.items = normalizeItems(input.items);
+    after.items = normalizeItems(input.items, before.items);
     const totals = proposalTotals(after.items);
     after.setupTotal = totals.setupTotal;
     after.monthlyTotal = totals.monthlyTotal;
@@ -404,6 +408,23 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
   }
   if (billings.cancelled.length > 0 || billings.created.length > 0) await update<ContractAmendment>(COLLECTIONS.contractAmendments, a.id, { billingsRebuilt: billings });
 
+  // 3b. Itens incluídos pelo aditivo ganham a origem (`since`): 1ª mensalidade em aberto a partir da vigência (ou a
+  // próxima a gerar) e a cobrança avulsa de adesão/hardware. O motor de comissões não comissiona mensalidades pagas
+  // antes do item existir.
+  const added = next.items.filter((i) => !i.since && !before.items.some((b) => b.productId === i.productId));
+  if (added.length > 0) {
+    const all = await list<Billing>(COLLECTIONS.billing, { where: [["contractId", "==", next.id]] });
+    const createdIds = new Set(billings.created);
+    const fromComp = a.effectiveFrom.slice(0, 7);
+    const openFrom = all.filter((b) => b.type === "mensalidade" && b.status === "aberta" && b.competence >= fromComp).map((b) => b.installment ?? 1);
+    const installment = openFrom.length > 0 ? Math.min(...openFrom) : lastRecurringBilling(all).installment + 1;
+    const setupInstallment = all.find((b) => b.type === "setup" && createdIds.has(b.id))?.installment;
+    const hardwareInstallment = all.find((b) => b.type === "hardware" && createdIds.has(b.id))?.installment;
+    const since = stripUndefined({ amendmentId: a.id, installment, setupInstallment, hardwareInstallment }) as ItemSince;
+    const items = next.items.map((i) => (added.includes(i) ? { ...i, since } : i));
+    await update<Contract>(COLLECTIONS.contracts, next.id, { items });
+  }
+
   // 4. Comissões: só previstas/em carência mudam (pagas e elegíveis com título ficam intactas — regra do motor).
   if (next.sellerId || next.opportunityId) {
     try {
@@ -417,7 +438,7 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
   // 5. Item novo em contrato liberado que exige implantação: só aviso ao gestor (nenhum projeto automático).
   const addedProductIds = next.items.map((i) => i.productId).filter((id) => !before.items.some((i) => i.productId === id));
   if (addedProductIds.length > 0 && next.status === "liberado" && next.implementationRequired !== false) {
-    const [manager, client, products] = await Promise.all([getDepartmentManager("implantacao"), getById<Client>(COLLECTIONS.clients, next.clientId), list<Product>(COLLECTIONS.products, { where: [["id", "in", addedProductIds]] })]);
+    const [manager, client, products] = await Promise.all([getDepartmentManager("implantacao"), getById<Client>(COLLECTIONS.clients, next.clientId), getManyByIds<Product>(COLLECTIONS.products, addedProductIds).then((m) => Array.from(m.values()))]);
     const names = addedProductIds.map((id) => products.find((p) => p.id === id)?.name ?? next.items.find((i) => i.productId === id)?.productName ?? id);
     await update<ContractAmendment>(COLLECTIONS.contractAmendments, a.id, { implementationNoticeProductIds: addedProductIds });
     if (manager) {

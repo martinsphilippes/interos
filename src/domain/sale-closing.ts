@@ -3,7 +3,7 @@
  * Sem Firestore e sem React: importado pelos serviços (Vendas, Financeiro, Implantação), pelos componentes
  * (WonDialog, Resumo do contratado) e pelo seed, para que o número exibido seja o mesmo gravado.
  */
-import type { Contract, OpportunityClosing, ProposalItem, SalePaymentMethod } from "./types";
+import type { Contract, ItemSince, OpportunityClosing, ProposalItem, SalePaymentMethod } from "./types";
 
 export const SALE_PAYMENT_METHOD_LABELS: Record<SalePaymentMethod, string> = {
   boleto: "Boleto",
@@ -88,6 +88,8 @@ export interface EffectiveContractItem {
   grossMonthlyValue: number;
   grossHardwareValue: number;
   discountPct: number;
+  /** Item incluído por aditivo: parcelas a partir das quais ele é cobrado (motor de comissões). */
+  since?: ItemSince;
 }
 
 /** Aplica o desconto de um item de contrato/proposta (mesma regra de netItem em components/sales/model). */
@@ -105,6 +107,7 @@ export function netContractItem(item: ProposalItem): EffectiveContractItem {
     grossMonthlyValue: Number(item.monthlyValue) || 0,
     grossHardwareValue: Number(item.hardwareValue) || 0,
     discountPct: pct,
+    ...(item.since ? { since: item.since } : {}),
   };
 }
 

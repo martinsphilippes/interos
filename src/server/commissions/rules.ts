@@ -243,8 +243,18 @@ export function recurringHorizon(contract: Pick<Contract, "recurrence" | "termMo
 
 export function planSlots(rule: CommissionRuleSnapshot, item: EffectiveContractItem, contract: Contract, totals: { setupTotal: number; monthlyTotal: number; hardwareTotal: number }, billings: Billing[]): SlotSpec[] {
   const firstComp = firstCompetence(contract, billings);
+  // Item incluído por aditivo (D25): adesão/hardware só pela cobrança avulsa gerada pelo aditivo; recorrência a partir
+  // da 1ª mensalidade que já o inclui (mensalidades pagas antes do item não geram comissão sobre ele).
+  const since = item.since;
   if (rule.revenueType === "setup") {
     if (item.setupValue <= 0 || totals.setupTotal <= 0) return [];
+    if (since) {
+      const n = since.setupInstallment;
+      if (!n) return [];
+      const b = slotBilling({ billingType: "setup", billingInstallment: n }, billings);
+      const share = b && b.amount > 0 ? Math.min(1, item.setupValue / b.amount) : 1;
+      return [{ slot: `s${n}`, revenueType: "setup", billingType: "setup", billingInstallment: n, expectedBase: item.setupValue, fullBase: item.setupValue, share, estimatedCompetence: b?.competence ?? firstComp, installment: n, of: 1 }];
+    }
     const share = item.setupValue / totals.setupTotal;
     const n = Math.max(1, contract.setupInstallments ?? 1);
     if (rule.baseSource === "recebido" && n > 1) {
@@ -266,6 +276,13 @@ export function planSlots(rule: CommissionRuleSnapshot, item: EffectiveContractI
   }
   if (rule.revenueType === "hardware") {
     if (item.hardwareValue <= 0 || totals.hardwareTotal <= 0) return [];
+    if (since) {
+      const n = since.hardwareInstallment;
+      if (!n) return [];
+      const b = slotBilling({ billingType: "hardware", billingInstallment: n }, billings);
+      const share = b && b.amount > 0 ? Math.min(1, item.hardwareValue / b.amount) : 1;
+      return [{ slot: n === 1 ? "hw" : `hw${n}`, revenueType: "hardware", billingType: "hardware", billingInstallment: n, expectedBase: item.hardwareValue, fullBase: item.hardwareValue, share, estimatedCompetence: b?.competence ?? firstComp }];
+    }
     return [{ slot: "hw", revenueType: "hardware", billingType: "hardware", billingInstallment: 1, expectedBase: item.hardwareValue, fullBase: item.hardwareValue, share: item.hardwareValue / totals.hardwareTotal, estimatedCompetence: firstComp }];
   }
   // Recorrência.
@@ -273,7 +290,8 @@ export function planSlots(rule: CommissionRuleSnapshot, item: EffectiveContractI
   const step = contract.recurrence === "anual" ? 12 : 1;
   const share = item.monthlyValue / totals.monthlyTotal;
   const perCompetence = round2(item.monthlyValue * step);
-  const from = rule.releaseInstallment;
+  // Item de aditivo: as N competências da regra contam a partir da 1ª mensalidade que inclui o item.
+  const from = since ? Math.max(rule.releaseInstallment, since.installment) : rule.releaseInstallment;
   const limit = rule.recurringCompetences === null ? Infinity : from + rule.recurringCompetences - 1;
   // Projeção até o fim da vigência (ou o prazo do contrato); além disso, só mensalidades já PAGAS (renovação
   // aplicada estende a vigência e o recálculo cria as novas previstas).

@@ -115,6 +115,33 @@ Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada 
   (tarefa "Cobrar/negociar — ligação" ao Financeiro). Cada marco roda uma única vez por cobrança; contrato com
   pendência pausa a régua; o processo humano "cobrança inadimplente" continua para o escalonamento.
 
+## Aditivos, renovação e Contas a Pagar geral (etapa 5)
+- **Aditivo no mesmo contrato**: depois da assinatura, toda mudança de itens, condições, reajuste ou renovação entra
+  como aditivo (rascunho → assinatura do cliente, quando exigida → aplicação pelo Financeiro). O contrato original
+  fica preservado como versão anterior (documento por versão e termo aditivo próprio, com antes × depois, assinaturas
+  e código de integridade). Ao aplicar: produtos do cliente sincronizados, mensalidades em aberto refeitas com os
+  novos valores mantendo a numeração, adesão/hardware a mais cobrados à parte, comissões previstas recalculadas
+  (as pagas não mudam; item novo só comissiona a partir da 1ª mensalidade que o inclui) e aviso à Implantação —
+  nunca um projeto de implantação novo. Só um aditivo em andamento por contrato. Quem opera o Financeiro cria e
+  aplica aditivos; a renovação pelo CS continua no CS.
+- **Renovação**: no fechamento da venda o vendedor combina renovação automática (sim/não), prazo da renovação,
+  reajuste (nenhum, percentual ou índice IPCA/IGP-M/INPC) e antecedência do aviso (padrão 30 dias). Renovar
+  (pelo CS ou automaticamente) soma o novo prazo ao fim da vigência, preserva o prazo original e gera as mensalidades
+  do novo período. Reajuste percentual entra na hora; **índice oficial não é consultado automaticamente** — o
+  contrato renova sem reajuste e o CS recebe a tarefa "Informar índice de reajuste". Contrato vencido sem renovação
+  fica marcado "Vencido" e sai do MRR (nada é apagado).
+- **Cobrança recorrente**: contratos de prazo fixo têm todas as mensalidades geradas; contratos com renovação
+  automática (ou sem prazo) têm horizonte rolante (padrão 3 meses, configurável) — a varredura diária gera as
+  próximas sem duplicar. O gestor pode gerar as próximas na página do contrato.
+- **Previsão da comissão**: comissão liberada com a 3ª mensalidade mostra a previsão (vencimento da mensalidade que
+  a libera) em Minhas comissões.
+- **Contas a Pagar geral** (mesma tela das comissões): fornecedores cadastrados (não confundir com clientes),
+  categorias e centros de custo configuráveis (Configurações › Contas a pagar), título parcelado (N títulos),
+  série recorrente (próxima ocorrência nasce 30 dias antes do vencimento; "repetir até" encerra), anexos (NF, boleto
+  do fornecedor), aviso único de título vencido ao gestor financeiro, relatório "Contas a pagar" exportável e fluxo
+  de caixa simplificado (a receber × a pagar por mês de vencimento, só com o que está no sistema — nada projetado).
+  Comissões continuam nascendo do motor, nunca de lançamento manual.
+
 ## Financeiro: metas e bônus (deck "Centro de Comando Financeiro")
 Papel: portão de qualidade do workflow. Valida e libera (faturamento correto de múltiplos
 produtos, contrato assinado, confirmação de pagamento, validação de escopo) antes da

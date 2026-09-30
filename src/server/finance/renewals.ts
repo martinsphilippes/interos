@@ -7,7 +7,7 @@ import "server-only";
  * "Informar índice de reajuste". Idempotente: a renovação estende `endDate` (sai da janela) e só existe um aditivo em
  * andamento por contrato. Renovação aberta no CS para o mesmo contrato é marcada "renovado".
  */
-import { list, update } from "@/server/db";
+import { getManyByIds, list, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import { COLLECTIONS, type Client, type Contract, type ContractAmendment, type Renewal } from "@/domain/types";
@@ -33,8 +33,7 @@ export async function autoRenewContracts(now: Date = new Date()): Promise<AutoRe
   const contracts = (await list<Contract>(COLLECTIONS.contracts, { where: [["status", "==", "liberado"]] })).filter((c) => c.autoRenew && c.endDate && c.recurrence !== "unico");
   const result: AutoRenewResult = { candidates: contracts.length, renewed: 0, indexPending: 0, skipped: 0, errors: [], renewedContractIds: [] };
   if (contracts.length === 0) return result;
-  const clients = await list<Client>(COLLECTIONS.clients, { where: [["id", "in", Array.from(new Set(contracts.map((c) => c.clientId)))]] });
-  const clientById = new Map(clients.map((c) => [c.id, c]));
+  const clientById = await getManyByIds<Client>(COLLECTIONS.clients, contracts.map((c) => c.clientId));
   for (const c of contracts) {
     const noticeDays = c.noticeDays && c.noticeDays > 0 ? c.noticeDays : DEFAULT_NOTICE_DAYS;
     const limit = dateKey(new Date(now.getTime() + noticeDays * DAY_MS));
