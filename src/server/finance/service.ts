@@ -26,6 +26,7 @@ import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { auditChanges, describeChanges } from "@/server/audit";
 import { DEFAULT_CLOSING, SALE_PAYMENT_METHOD_LABELS, contractEffectiveItems } from "@/domain/sale-closing";
+import { contractSnapshot, describeReadjustment } from "@/domain/contract-snapshot";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import {
   COLLECTIONS,
@@ -37,6 +38,8 @@ import {
   type ClientProduct,
   type Contact,
   type Contract,
+  type ContractReadjustment,
+  type ContractVersionEntry,
   type Document,
   type DomainEvent,
   type Opportunity,
@@ -203,6 +206,11 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
     saleNumber: opp.saleNumber,
     sellerId: opp.ownerId,
     contactId: primary?.id,
+    // Renovação (D26): condições combinadas no fechamento (opcionais).
+    autoRenew: closing?.autoRenew,
+    renewalTermMonths: closing?.renewalTermMonths,
+    readjustment: closing?.readjustment,
+    noticeDays: closing?.noticeDays,
     createdBy: actor.id,
   });
   await update<Opportunity>(COLLECTIONS.opportunities, opp.id, { contractId: contract.id });
@@ -242,34 +250,46 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
   return contract;
 }
 
+export interface SyncClientProductsOptions {
+  /** Aditivo aplicado (D25): produtos ATIVOS também acompanham (valores atualizados; item removido → cancelado com motivo; item novo → criado). */
+  amendment?: { number: string; reason: string; effectiveFrom: string };
+}
+
 /**
  * Produtos do cliente a partir dos itens EFETIVOS do contrato (D4: depois que o contrato existe, os itens dele
  * são a verdade; valores líquidos de desconto). Idempotente: cria os que faltam (em implantação), atualiza valores
  * dos ainda não ativos e remove os não ativos que saíram do contrato. Produtos ativos, suspensos ou cancelados
- * nunca são tocados (a partir daí quem muda é o CS: churn/upsell).
+ * nunca são tocados (a partir daí quem muda é o CS: churn/upsell) — EXCETO por aditivo aplicado (`options.amendment`):
+ * ativos têm os valores atualizados, item removido vira "cancelado" (com motivo) e item novo nasce ativo em contrato
+ * liberado (sem projeto de implantação automático); o MRR do cliente é recalculado.
  */
-export async function syncClientProductsFromContract(contract: Contract, actor: UserRef): Promise<{ products: ClientProduct[]; created: number; updated: number; removed: number }> {
+export async function syncClientProductsFromContract(contract: Contract, actor: UserRef, options: SyncClientProductsOptions = {}): Promise<{ products: ClientProduct[]; created: number; updated: number; removed: number; cancelled: number }> {
   const existing = await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["contractId", "==", contract.id]] });
   const items = contractEffectiveItems(contract);
+  const amendment = options.amendment;
   const pendingStatus = new Set<ClientProduct["status"]>(["em_implantacao"]);
+  const touchable = (p: ClientProduct) => pendingStatus.has(p.status) || (Boolean(amendment) && p.status === "ativo");
   const used = new Set<string>();
   const products: ClientProduct[] = [];
   let created = 0;
   let updated = 0;
   let removed = 0;
+  let cancelled = 0;
   for (const item of items) {
-    const match = existing.find((p) => p.productId === item.productId && !used.has(p.id));
+    const match = existing.find((p) => p.productId === item.productId && !used.has(p.id) && p.status !== "cancelado");
     if (match) {
       used.add(match.id);
       const values = { productName: item.productName, quantity: item.quantity, setupValue: item.setupValue, monthlyValue: item.monthlyValue, hardwareValue: item.hardwareValue };
       const differs = (Object.keys(values) as (keyof typeof values)[]).some((k) => match[k] !== values[k]);
-      if (pendingStatus.has(match.status) && differs) {
+      if (touchable(match) && differs) {
         await update<ClientProduct>(COLLECTIONS.clientProducts, match.id, values);
         products.push({ ...match, ...values });
         updated += 1;
       } else products.push(match);
       continue;
     }
+    // Item novo por aditivo em contrato liberado: já ativo desde a vigência (nenhum projeto é criado automaticamente).
+    const activeNow = Boolean(amendment) && contract.status === "liberado";
     products.push(
       await create<ClientProduct>(COLLECTIONS.clientProducts, {
         clientId: contract.clientId,
@@ -279,24 +299,37 @@ export async function syncClientProductsFromContract(contract: Contract, actor: 
         setupValue: item.setupValue,
         monthlyValue: item.monthlyValue,
         hardwareValue: item.hardwareValue,
-        status: "em_implantacao",
+        status: activeNow ? "ativo" : "em_implantacao",
+        startedAt: activeNow ? dueIso(amendment!.effectiveFrom) : undefined,
         contractId: contract.id,
         createdBy: actor.id,
       }),
     );
     created += 1;
   }
-  for (const stale of existing.filter((p) => !used.has(p.id) && pendingStatus.has(p.status))) {
-    await remove(COLLECTIONS.clientProducts, stale.id);
-    removed += 1;
+  for (const stale of existing.filter((p) => !used.has(p.id) && p.status !== "cancelado")) {
+    if (pendingStatus.has(stale.status)) {
+      await remove(COLLECTIONS.clientProducts, stale.id);
+      removed += 1;
+    } else if (amendment && stale.status === "ativo") {
+      await update<ClientProduct>(COLLECTIONS.clientProducts, stale.id, { status: "cancelado", cancelledAt: dueIso(amendment.effectiveFrom), cancelReason: `Aditivo ${amendment.number}: ${amendment.reason}` });
+      cancelled += 1;
+    }
   }
-  return { products, created, updated, removed };
+  // MRR do cliente = soma dos produtos ativos (mesma regra do CS/churn); só recalculado quando um aditivo mexeu em ativos.
+  if (amendment && (updated > 0 || cancelled > 0 || created > 0)) {
+    const all = await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["clientId", "==", contract.clientId]] });
+    const mrr = round2(all.filter((p) => p.status === "ativo").reduce((s, p) => s + p.monthlyValue, 0));
+    await update<Client>(COLLECTIONS.clients, contract.clientId, { mrr });
+  }
+  return { products, created, updated, removed, cancelled };
 }
 
 /**
- * Contrato manual para um cliente existente (renovação, aditivo, venda registrada fora do CRM). Nasce em
- * "aguardando contrato", com o contato principal como signatário; itens e condições são preenchidos na
- * página do contrato. Para venda ganha no CRM use `ensureContractForOpportunity` (caminho único).
+ * Contrato manual para um cliente existente (venda registrada fora do CRM ou contrato novo de outro objeto). Nasce
+ * em "aguardando contrato", com o contato principal como signatário; itens e condições são preenchidos na página do
+ * contrato. Para venda ganha no CRM use `ensureContractForOpportunity` (caminho único). Para ALTERAR ou RENOVAR um
+ * contrato existente use o aditivo (`src/server/finance/amendments.ts`), nunca um contrato novo.
  */
 export async function createManualContract(input: { clientId: string; recurrence: Contract["recurrence"]; termMonths: number; billingDay: number }, actor: UserRef): Promise<Contract> {
   const client = await loadClient(input.clientId);
@@ -345,6 +378,9 @@ export async function createManualContract(input: { clientId: string; recurrence
 async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: string): Promise<{ patch: Partial<Contract>; clear: string[]; versioned: boolean }> {
   if (!contract.signatureEnvelopeId) return { patch: {}, clear: [], versioned: false };
   const version = contract.version + 1;
+  // Snapshot COMPLETO da versão anterior (itens, totais, condições, signatários, hash): o documento ?versao=N
+  // renderiza como o contrato estava antes da revisão.
+  const entry: ContractVersionEntry = stripUndefined({ version: contract.version, kind: "revisao" as const, at: nowIso(), by: actor.id, reason, envelopeId: contract.signatureEnvelopeId, snapshot: contractSnapshot(contract) });
   await emitEvent({
     type: "contract.version_created",
     actor,
@@ -365,6 +401,7 @@ async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: st
       version,
       status: contract.status === "pendencia" ? "pendencia" : "aguardando_contrato",
       signers: contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const })),
+      previousVersions: [...(contract.previousVersions ?? []), entry],
     },
     clear: ["signatureEnvelopeId", "documentHash", "signedAt"],
     versioned: true,
@@ -424,7 +461,21 @@ const CONDITION_LABELS: Record<string, string> = {
   firstDueDate: "1º vencimento",
   paymentMethod: "Forma de pagamento",
   setupInstallments: "Parcelas da adesão",
+  autoRenew: "Renovação automática",
+  renewalTermMonths: "Prazo da renovação",
+  readjustment: "Reajuste",
+  noticeDays: "Antecedência da renovação",
 };
+
+/** Campos de renovação (D26) informados: só entram no patch quando vieram na entrada (contratos antigos continuam sem eles). */
+function renewalPatch(input: Pick<UpdateConditionsInput, "autoRenew" | "renewalTermMonths" | "readjustment" | "noticeDays">): Partial<Contract> {
+  const patch: Partial<Contract> = {};
+  if (input.autoRenew !== undefined) patch.autoRenew = input.autoRenew;
+  if (input.renewalTermMonths !== undefined) patch.renewalTermMonths = input.renewalTermMonths;
+  if (input.readjustment !== undefined) patch.readjustment = stripUndefined({ type: input.readjustment.type, percent: input.readjustment.type === "percentual" ? input.readjustment.percent : undefined, index: input.readjustment.type === "indice" ? input.readjustment.index : undefined });
+  if (input.noticeDays !== undefined) patch.noticeDays = input.noticeDays;
+  return patch;
+}
 
 export async function updateContractConditions(input: UpdateConditionsInput, actor: UserRef): Promise<{ versioned: boolean }> {
   const contract = await loadContract(input.contractId);
@@ -440,13 +491,14 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
     // Campos do fechamento: só mudam quando informados (contratos antigos continuam sem eles).
     ...(input.paymentMethod ? { paymentMethod: input.paymentMethod } : {}),
     ...(input.setupInstallments ? { setupInstallments: input.setupInstallments } : {}),
+    ...renewalPatch(input),
   };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
   const clear = [...version.clear];
   if (!input.firstDueDate && contract.firstDueDate) clear.push("firstDueDate");
   if (!input.paymentCondition && contract.paymentCondition) clear.push("paymentCondition");
   await clearFields(COLLECTIONS.contracts, contract.id, clear);
-  const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments"]);
+  const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
   if (!version.versioned) {
     await emitEvent({
       type: "client.updated",
@@ -454,7 +506,7 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
       clientId: contract.clientId,
       entity: { type: "contract", id: contract.id },
       title: `Condições do contrato ${contract.number} atualizadas`,
-      description: describeChanges(audit, CONDITION_LABELS, (field, value) => (value === null ? "—" : field === "firstDueDate" ? formatDate(String(value)) : field === "paymentMethod" ? (SALE_PAYMENT_METHOD_LABELS[value as keyof typeof SALE_PAYMENT_METHOD_LABELS] ?? String(value)) : String(value))) || `Vencimento dia ${input.billingDay} · ${input.termMonths} meses · ${input.recurrence}`,
+      description: describeChanges(audit, CONDITION_LABELS, (field, value) => (value === null ? "—" : field === "firstDueDate" ? formatDate(String(value)) : field === "paymentMethod" ? (SALE_PAYMENT_METHOD_LABELS[value as keyof typeof SALE_PAYMENT_METHOD_LABELS] ?? String(value)) : field === "readjustment" ? describeReadjustment(value as ContractReadjustment) : field === "autoRenew" ? (value ? "sim" : "não") : String(value))) || `Vencimento dia ${input.billingDay} · ${input.termMonths} meses · ${input.recurrence}`,
       department: "financeiro",
       payload: { contractId: contract.id, billingDay: input.billingDay, termMonths: input.termMonths, recurrence: input.recurrence, firstDueDate: input.firstDueDate, paymentMethod: input.paymentMethod, setupInstallments: input.setupInstallments, ...audit },
     });
@@ -803,7 +855,7 @@ export async function generateBillings(contractId: string, actor: UserRef): Prom
  * Campos do provedor de cobrança para uma cobrança nova: `createCharge` SOMENTE quando conectado (mesmo padrão de
  * `generateBillings`); sem provedor (ou com falha), "aguardando emissão manual". Nunca simula emissão.
  */
-async function providerChargeFields(draft: Record<string, unknown>, id: string, client: Client, errors: string[]): Promise<Record<string, unknown>> {
+export async function providerChargeFields(draft: Record<string, unknown>, id: string, client: Client, errors: string[]): Promise<Record<string, unknown>> {
   if (!billingProviderConnected()) return { chargeStatus: "aguardando_emissao_manual" };
   try {
     const charge = await getBillingProvider().createCharge({ ...(draft as unknown as Billing), id }, client);
@@ -815,7 +867,7 @@ async function providerChargeFields(draft: Record<string, unknown>, id: string, 
 }
 
 /** Cria a cobrança com id determinístico; se o id já existe (cobrança anterior cancelada com o mesmo número), usa o sufixo _r2, _r3… */
-async function createBillingWithDeterministicId(contractId: string, draft: BillingDraft, extra: Record<string, unknown>): Promise<{ billing: Billing; created: boolean }> {
+export async function createBillingWithDeterministicId(contractId: string, draft: BillingDraft, extra: Record<string, unknown>): Promise<{ billing: Billing; created: boolean }> {
   for (let attempt = 1; attempt <= 20; attempt++) {
     const id = billingDocId(contractId, draft.type, draft.installment ?? 1, attempt);
     const r = await createIfAbsent<Billing>(COLLECTIONS.billing, id, { ...(draft as Omit<Billing, "id" | "organizationId" | "createdAt" | "updatedAt">), ...(extra as Partial<Billing>) });

@@ -105,6 +105,7 @@ export function NewContractButton({ opportunities, clients }: NewContractDialogP
                   </FormField>
                 </div>
                 <p className="text-xs text-muted">O contrato nasce em &quot;aguardando contrato&quot; com o contato principal como signatário. Itens e condições são preenchidos em seguida.</p>
+                <p className="rounded-md bg-surface-muted px-3 py-2 text-xs text-muted">Para alterar, reajustar ou renovar um contrato que já existe, use &quot;Criar aditivo&quot; na página do contrato — não crie um contrato novo.</p>
               </>
             )}
           </DialogBody>

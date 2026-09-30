@@ -9,6 +9,7 @@ import { canAccessModule, requireUser } from "@/server/auth/session";
 import { getById } from "@/server/db";
 import { COLLECTIONS, type ActionResult, type Billing, type CurrentUser, type UserRef } from "@/domain/types";
 import type { BillingContactInfo } from "./service";
+import { applyAmendment, cancelAmendment, createAmendment, registerAmendmentSignature, sendAmendmentForSignature } from "./amendments";
 import {
   addContractDocument,
   addSigner,
@@ -38,7 +39,11 @@ import {
   type BillingChannelResult,
 } from "./service";
 import {
+  amendmentIdSchema,
+  amendmentInputSchema,
+  amendmentSignatureSchema,
   billingContactSchema,
+  cancelAmendmentSchema,
   canOperateFinance,
   billingDataSchema,
   billingIdSchema,
@@ -227,6 +232,72 @@ export async function sendSignatureReminderAction(input: unknown): Promise<Actio
     return { ok: true, data: result };
   } catch (error) {
     return fail(error, "Não foi possível enviar o lembrete");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Aditivos (D25) — quem opera o Financeiro
+// ---------------------------------------------------------------------------
+
+export async function createAmendmentAction(input: unknown): Promise<ActionResult<{ amendmentId: string; number: string; requiresSignature: boolean }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const data = amendmentInputSchema.parse(input);
+    const a = await createAmendment(data, actorOf(user));
+    revalidateFinance(a.clientId, a.contractId);
+    return { ok: true, data: { amendmentId: a.id, number: a.number, requiresSignature: a.requiresSignature } };
+  } catch (error) {
+    return fail(error, "Não foi possível criar o aditivo");
+  }
+}
+
+export async function sendAmendmentForSignatureAction(input: unknown): Promise<ActionResult<{ number: string }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const { amendmentId } = amendmentIdSchema.parse(input);
+    const a = await sendAmendmentForSignature(amendmentId, actorOf(user));
+    revalidateFinance(a.clientId, a.contractId);
+    return { ok: true, data: { number: a.number } };
+  } catch (error) {
+    return fail(error, "Não foi possível gerar o termo aditivo para assinatura");
+  }
+}
+
+export async function registerAmendmentSignatureAction(input: unknown): Promise<ActionResult<{ allSigned: boolean }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const data = amendmentSignatureSchema.parse(input);
+    const r = await registerAmendmentSignature(data, actorOf(user));
+    revalidateFinance(r.amendment.clientId, r.amendment.contractId);
+    return { ok: true, data: { allSigned: r.allSigned } };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar a assinatura do aditivo");
+  }
+}
+
+export async function applyAmendmentAction(input: unknown): Promise<ActionResult<{ version: number; billingsRebuilt: number; billingsCreated: number }>> {
+  try {
+    const user = await requireFinanceOperator();
+    const { amendmentId } = amendmentIdSchema.parse(input);
+    const r = await applyAmendment(amendmentId, actorOf(user));
+    revalidateFinance(r.contract.clientId, r.contract.id);
+    revalidatePath("/clientes", "layout");
+    revalidatePath("/cs", "layout");
+    return { ok: true, data: { version: r.contract.version, billingsRebuilt: r.billings.cancelled.length, billingsCreated: r.billings.created.length } };
+  } catch (error) {
+    return fail(error, "Não foi possível aplicar o aditivo");
+  }
+}
+
+export async function cancelAmendmentAction(input: unknown): Promise<ActionResult> {
+  try {
+    const user = await requireFinanceOperator();
+    const data = cancelAmendmentSchema.parse(input);
+    const a = await cancelAmendment(data.amendmentId, data.reason, actorOf(user));
+    revalidateFinance(a.clientId, a.contractId);
+    return { ok: true, data: undefined };
+  } catch (error) {
+    return fail(error, "Não foi possível cancelar o aditivo");
   }
 }
 

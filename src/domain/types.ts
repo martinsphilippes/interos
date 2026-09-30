@@ -243,6 +243,8 @@ export interface ClientProduct extends BaseEntity {
   contractId?: string;
   startedAt?: string;
   cancelledAt?: string;
+  /** Motivo do cancelamento pelo aditivo (item removido do contrato). */
+  cancelReason?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -682,6 +684,8 @@ export interface ContractAmendment extends BaseEntity {
   renewalId?: string;
   /** Reajuste aplicado na renovação (percentual) ou pendente (índice a informar). */
   readjustment?: ContractReadjustment;
+  /** Renovação: meses acrescentados à vigência (mensalidades a gerar na aplicação). */
+  renewalMonths?: number;
   /** Cobranças refeitas na aplicação (canceladas → recriadas com a mesma numeração). */
   billingsRebuilt?: { cancelled: string[]; created: string[] };
   /** Itens novos que exigem implantação: só aviso ao gestor (nenhum projeto automático). */

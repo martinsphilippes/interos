@@ -18,6 +18,7 @@ import { Timeline } from "@/components/timeline/timeline";
 import { CONTRACT_STATUS_LABELS, CONTRACT_STATUS_VARIANT } from "@/components/clients/labels";
 import { BillingDataCard } from "@/components/finance/billing-data-card";
 import { CancelContractCard } from "@/components/finance/cancel-contract-button";
+import { ContractAmendmentsCard } from "@/components/finance/contract-amendments-card";
 import { ContractBillingCard } from "@/components/finance/contract-billing-card";
 import { ContractConditionsCard } from "@/components/finance/contract-conditions-card";
 import { buildFlow, ContractFlow } from "@/components/finance/contract-flow";
@@ -77,7 +78,16 @@ export default async function ContractPage({ params }: { params: Params }) {
             <Link href={`/clientes/${client.id}?aba=financeiro`} className="font-medium text-foreground hover:text-brand">
               {client.tradeName}
             </Link>{" "}
-            · versão {contract.version} · criado {formatRelative(contract.createdAt)}
+            · versão {contract.version}
+            {(contract.previousVersions?.length ?? 0) > 0 ? (
+              <>
+                {" "}
+                (<Link href={`/financeiro/contratos/${contract.id}/documento?versao=${contract.previousVersions![contract.previousVersions!.length - 1].version}`} className="hover:text-brand">
+                  {contract.previousVersions!.length} anterior(es)
+                </Link>)
+              </>
+            ) : null}{" "}
+            · criado {formatRelative(contract.createdAt)}
           </>
         }
         breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contratos", href: "/financeiro/contratos" }, { label: contract.number }]}
@@ -152,8 +162,9 @@ export default async function ContractPage({ params }: { params: Params }) {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex min-w-0 flex-col gap-4">
           <ContractSummaryCard summary={detail.summary} />
-          <ContractItemsCard contractId={contract.id} items={contract.items} products={detail.products} canEdit={canOperate && detail.editable} sent={sent} version={contract.version} />
-          <ContractConditionsCard contract={contract} canEdit={canOperate && detail.editable} sent={sent} />
+          <ContractItemsCard contractId={contract.id} items={contract.items} products={detail.products} canEdit={canOperate && detail.editable} sent={sent} version={contract.version} amendable={signedByAll && !closed} />
+          <ContractConditionsCard contract={contract} canEdit={canOperate && detail.editable} sent={sent} amendable={signedByAll && !closed} />
+          {signedByAll || detail.amendments.length > 0 ? <ContractAmendmentsCard contract={contract} amendments={detail.amendments} products={detail.products} canOperate={canOperate && contract.status !== "cancelado"} /> : null}
           <ContractBillingCard
             contractId={contract.id}
             clientName={client.tradeName}

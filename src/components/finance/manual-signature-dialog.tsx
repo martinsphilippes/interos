@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { FileCheck2 } from "lucide-react";
-import { registerManualSignatureAction } from "@/server/finance/actions";
+import { registerAmendmentSignatureAction, registerManualSignatureAction } from "@/server/finance/actions";
 import { dateKey } from "@/lib/format";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -16,6 +16,8 @@ export interface ManualSignatureButtonProps {
   contractId: string;
   contractNumber: string;
   signer: { name: string; email: string; role: string };
+  /** Alvo "aditivo" (D25): registra a assinatura no termo aditivo em vez do contrato. */
+  amendment?: { id: string; number: string };
   label?: string;
   variant?: ButtonProps["variant"];
   size?: ButtonProps["size"];
@@ -26,17 +28,21 @@ export interface ManualSignatureButtonProps {
  * "Registrar assinatura manual": a assinatura aconteceu fora do sistema (papel, e-mail de aceite, outro
  * provedor). Exige evidência — link do documento assinado ou descrição — e a data.
  */
-export function ManualSignatureButton({ contractId, contractNumber, signer, label, variant = "outline", size = "sm", className }: ManualSignatureButtonProps) {
+export function ManualSignatureButton({ contractId, contractNumber, signer, amendment, label, variant = "outline", size = "sm", className }: ManualSignatureButtonProps) {
   const id = React.useId();
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState(() => ({ signedAt: dateKey(new Date()), evidenceUrl: "", description: "" }));
   const { pending, run } = useFinanceAction();
   const hasEvidence = form.evidenceUrl.trim().length > 0 || form.description.trim().length >= 10;
 
+  const target = amendment ? `aditivo ${amendment.number}` : `contrato ${contractNumber}`;
   const submit = async () => {
     const ok = await run(
-      () => registerManualSignatureAction({ contractId, email: signer.email, signedAt: form.signedAt, evidenceUrl: form.evidenceUrl.trim(), description: form.description.trim() }),
-      (d) => (d.allSigned ? `Contrato ${contractNumber} assinado por todos` : `Assinatura de ${signer.name} registrada`),
+      () =>
+        amendment
+          ? registerAmendmentSignatureAction({ amendmentId: amendment.id, email: signer.email, signedAt: form.signedAt, evidenceUrl: form.evidenceUrl.trim(), description: form.description.trim() })
+          : registerManualSignatureAction({ contractId, email: signer.email, signedAt: form.signedAt, evidenceUrl: form.evidenceUrl.trim(), description: form.description.trim() }),
+      (d) => (d.allSigned ? `${amendment ? `Aditivo ${amendment.number}` : `Contrato ${contractNumber}`} assinado por todos` : `Assinatura de ${signer.name} registrada`),
     );
     if (ok) {
       setOpen(false);
@@ -54,7 +60,7 @@ export function ManualSignatureButton({ contractId, contractNumber, signer, labe
           <DialogHeader>
             <DialogTitle>Registrar assinatura manual</DialogTitle>
             <DialogDescription>
-              {signer.name} ({signer.role}) · {signer.email} · contrato {contractNumber}. Use quando a assinatura foi feita fora do INTEROS: informe a evidência.
+              {signer.name} ({signer.role}) · {signer.email} · {target}. Use quando a assinatura foi feita fora do INTEROS: informe a evidência.
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="grid gap-4">

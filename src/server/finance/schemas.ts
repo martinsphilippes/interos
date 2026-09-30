@@ -121,8 +121,26 @@ export const updateItemsSchema = z.object({
   items: z.array(contractItemSchema).min(1, "O contrato precisa de pelo menos um item").max(50, "No máximo 50 itens"),
 });
 
-export const updateConditionsSchema = z.object({
-  contractId: id("Contrato"),
+/** Reajuste da renovação (D26): nenhum, percentual informado ou índice (informado pelo CS a cada renovação). */
+export const readjustmentSchema = z
+  .object({
+    type: z.enum(["nenhum", "percentual", "indice"], { message: "Tipo de reajuste inválido" }),
+    percent: z.number("Percentual de reajuste inválido").min(0, "Percentual não pode ser negativo").max(100, "Percentual máximo é 100%").optional(),
+    index: z.enum(["ipca", "igpm", "inpc"], { message: "Índice inválido" }).optional(),
+  })
+  .refine((v) => v.type !== "percentual" || (v.percent !== undefined && v.percent > 0), { message: "Informe o percentual do reajuste", path: ["percent"] })
+  .refine((v) => v.type !== "indice" || Boolean(v.index), { message: "Escolha o índice do reajuste", path: ["index"] });
+
+/** Condições de renovação (D26), todas opcionais: contratos antigos seguem o fluxo humano do CS. */
+export const renewalFieldsSchema = z.object({
+  autoRenew: z.boolean().optional(),
+  renewalTermMonths: z.number("Prazo da renovação inválido").int("Prazo deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses").optional(),
+  readjustment: readjustmentSchema.optional(),
+  noticeDays: z.number("Antecedência inválida").int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(180, "Máximo de 180 dias").optional(),
+});
+export type RenewalFieldsInput = z.input<typeof renewalFieldsSchema>;
+
+export const conditionsFieldsSchema = z.object({
   billingDay: z.number("Dia de vencimento inválido").int("Dia de vencimento deve ser inteiro").min(1, "Dia de vencimento mínimo é 1").max(28, "Dia de vencimento máximo é 28"),
   firstDueDate: dateKey("Primeira data de vencimento").optional(),
   recurrence: z.enum(["mensal", "anual", "unico"], { message: "Recorrência inválida" }),
@@ -132,7 +150,54 @@ export const updateConditionsSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS, { message: "Forma de pagamento inválida" }).optional(),
   setupInstallments: z.number("Parcelas da adesão inválidas").int("Parcelas devem ser inteiras").min(1, "Mínimo 1 parcela").max(12, "Máximo 12 parcelas").optional(),
 });
+
+export const updateConditionsSchema = conditionsFieldsSchema.extend({ contractId: id("Contrato") }).extend(renewalFieldsSchema.shape);
 export type UpdateConditionsInput = z.input<typeof updateConditionsSchema>;
+
+// ---------------------------------------------------------------------------
+// Aditivos (D25)
+// ---------------------------------------------------------------------------
+
+export const AMENDMENT_KINDS = ["itens", "condicoes", "renovacao", "reajuste", "misto"] as const;
+
+/**
+ * Criação de aditivo: itens novos e/ou condições novas (o servidor calcula antes/depois e as mudanças). Renovação
+ * (`renewal`) é usada pelo CS e pela varredura; a página do contrato usa itens/condições.
+ */
+export const amendmentInputSchema = z
+  .object({
+    contractId: id("Contrato"),
+    effectiveFrom: dateKey("Vigência do aditivo"),
+    reason: z.string().trim().min(5, "Descreva o motivo do aditivo (mín. 5 caracteres)").max(500, "Motivo muito longo"),
+    requiresSignature: z.boolean().optional(),
+    items: z.array(contractItemSchema).min(1, "O contrato precisa de pelo menos um item").max(50, "No máximo 50 itens").optional(),
+    conditions: conditionsFieldsSchema.extend(renewalFieldsSchema.shape).partial().optional(),
+    renewal: z
+      .object({
+        months: z.number("Prazo da renovação inválido").int("Prazo deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses"),
+        readjustment: readjustmentSchema.optional(),
+      })
+      .optional(),
+  })
+  .refine((v) => Boolean(v.items || v.conditions || v.renewal), { message: "Informe o que muda: itens, condições ou renovação", path: ["items"] });
+export type AmendmentInput = z.input<typeof amendmentInputSchema>;
+
+export const amendmentIdSchema = z.object({ amendmentId: id("Aditivo") });
+export const cancelAmendmentSchema = z.object({ amendmentId: id("Aditivo"), reason: z.string().trim().min(5, "Descreva o motivo (mín. 5 caracteres)").max(500, "Motivo muito longo") });
+/** Assinatura manual do aditivo: mesma evidência exigida no contrato. */
+export const amendmentSignatureSchema = z
+  .object({
+    amendmentId: id("Aditivo"),
+    email: z.email("E-mail do signatário inválido"),
+    signedAt: dateKey("Data da assinatura"),
+    evidenceUrl: z.union([z.literal(""), url]).optional(),
+    description: z.string().trim().max(500, "Descrição muito longa").optional(),
+  })
+  .refine((v) => Boolean(v.evidenceUrl?.trim()) || (v.description?.trim().length ?? 0) >= 10, {
+    message: "Informe a evidência: link do documento assinado ou uma descrição (mín. 10 caracteres)",
+    path: ["description"],
+  });
+export type AmendmentSignatureInput = z.input<typeof amendmentSignatureSchema>;
 
 export const signerSchema = z.object({
   contractId: id("Contrato"),
