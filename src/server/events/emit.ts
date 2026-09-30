@@ -29,11 +29,28 @@ export interface EmitEventInput {
 
 export type EventHandler = (event: DomainEvent) => Promise<void>;
 
-const handlers = new Map<EventType | "*", EventHandler[]>();
+type HandlerRegistry = Map<EventType | "*", EventHandler[]>;
+
+/**
+ * Registro dos handlers guardado em `globalThis`: em desenvolvimento o HMR reavalia este módulo quando uma
+ * dependência (ex.: src/domain/types.ts) muda, e um `Map` local nasceria vazio enquanto os módulos de handler
+ * não reavaliados manteriam o flag "já registrado" — os eventos passariam a rodar sem parte dos handlers.
+ * Em produção (processo único por instância) o comportamento é o mesmo de um Map local.
+ */
+const registry = globalThis as unknown as { __interosEventHandlers?: HandlerRegistry };
+const handlers: HandlerRegistry = registry.__interosEventHandlers ?? (registry.__interosEventHandlers = new Map());
+
+/** Chave de identidade do handler: nome da função (ou o código-fonte, para funções anônimas) — o HMR substitui a versão anterior em vez de duplicar. */
+function handlerKey(handler: EventHandler): string {
+  return handler.name || handler.toString();
+}
 
 export function registerHandler(type: EventType | "*", handler: EventHandler): void {
   const current = handlers.get(type) ?? [];
-  current.push(handler);
+  const key = handlerKey(handler);
+  const index = current.findIndex((h) => handlerKey(h) === key);
+  if (index >= 0) current[index] = handler;
+  else current.push(handler);
   handlers.set(type, current);
 }
 
