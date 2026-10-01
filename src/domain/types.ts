@@ -105,6 +105,13 @@ export const COLLECTIONS = {
    * nunca é gravado. Somente servidor (regra `if false`).
    */
   portalLinks: "portal_links",
+  /**
+   * Cadastros financeiros (etapa CP/CR 1): contas financeiras (onde o dinheiro entra e sai), centros de custo e
+   * categorias de receita/despesa com subcategoria. Somente servidor (regra `if false`).
+   */
+  financialAccounts: "financial_accounts",
+  costCenters: "cost_centers",
+  financeCategories: "finance_categories",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -1623,6 +1630,66 @@ export interface Payable extends BaseEntity {
   attachmentIds?: string[];
   /** Vencido: aviso ao Financeiro já enviado (1× por título). */
   overdueNotifiedAt?: string;
+  /**
+   * Cadastros financeiros (etapa CP/CR 1) — opcionais e ainda NÃO gravados pelo formulário (chegam na etapa 4).
+   * `categoryId`: categoria OU subcategoria de `finance_categories`; `costCenterId`: centro próprio do título (vazio =
+   * herda da categoria, ver `resolveEffectiveCostCenter`). Os campos antigos `category`/`costCenter` continuam valendo.
+   */
+  categoryId?: string;
+  costCenterId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Cadastros financeiros (etapa CP/CR 1): contas financeiras, centros de custo e categorias
+// ---------------------------------------------------------------------------
+
+export type FinancialAccountType = "corrente" | "poupanca" | "cartao" | "dinheiro" | "investimento" | "outro";
+export type FinanceCategoryType = "receita" | "despesa";
+
+/** Campos de arquivamento (cadastros não são excluídos: arquivar/reativar, com motivo e auditoria). */
+export interface ArchiveInfo {
+  archived: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
+  updatedBy?: string;
+}
+
+/** Conta financeira: onde o dinheiro entra e sai. Saldo = saldo inicial + lançamentos (lançamentos: etapa 2). */
+export interface FinancialAccount extends BaseEntity, ArchiveInfo {
+  name: string;
+  type: FinancialAccountType;
+  /** Saldo na data de início do uso no INTEROS (reais, com centavos; pode ser negativo, ex.: cartão). */
+  initialBalance: number;
+  currency: "BRL";
+  /** Dados bancários só informativos (texto livre). */
+  bankName?: string;
+  agency?: string;
+  accountNumber?: string;
+  notes?: string;
+}
+
+/** Centro de custo (negócio, cliente, unidade ou projeto). */
+export interface CostCenter extends BaseEntity, ArchiveInfo {
+  name: string;
+  description?: string;
+  /** Nome do centro no setting `contas_a_pagar.centrosDeCusto` (importação manual): mapeia `Payable.costCenter`. */
+  legacyKey?: string;
+}
+
+/**
+ * Categoria financeira (mesma entidade para os dois níveis): `parentId` null = categoria (nível 1, `costCenterId`
+ * OBRIGATÓRIO); `parentId` = id da mãe = subcategoria (nível 2, SEM centro próprio: herda tipo e centro da mãe).
+ */
+export interface FinanceCategory extends BaseEntity, ArchiveInfo {
+  name: string;
+  type: FinanceCategoryType;
+  parentId: string | null;
+  costCenterId?: string;
+  /** Chave da categoria no setting `contas_a_pagar.categorias` (importação manual): mapeia `Payable.category`. */
+  legacyKey?: string;
+  /** Mesclada em outra categoria (origem arquivada pela mesclagem). */
+  mergedIntoId?: string;
 }
 
 export interface GamificationPoints extends BaseEntity {

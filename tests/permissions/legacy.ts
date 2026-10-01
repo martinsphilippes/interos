@@ -91,6 +91,9 @@ export function legacyScreenAccess(user: LegacyUser, screen: string): boolean {
       return M("financeiro") && legacyCanViewPayables(user);
     case "financeiro.valores":
       return true; // capacidade nova, padrão = todos que veem hoje
+    case "financeiro.cadastros":
+      // Tela NOVA (etapa CP/CR 1, sem página anterior): padrão = o mesmo público de Contas a Pagar.
+      return M("financeiro") && legacyCanViewPayables(user);
     case "financeiro.configuracoes":
       return legacyRequireRole(user, "admin");
     case "gestao.dashboard":

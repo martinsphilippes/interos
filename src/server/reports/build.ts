@@ -739,6 +739,14 @@ function auditHref(e: DomainEvent): string | undefined {
       return `/vendas/oportunidades?oportunidade=${id}`;
     case "project":
       return `/implantacao/${id}`;
+    case "financial_account":
+      return `/financeiro/cadastros?aba=contas&item=${id}`;
+    case "cost_center":
+      return `/financeiro/cadastros?aba=centros&item=${id}`;
+    case "finance_category":
+      return `/financeiro/cadastros?aba=categorias&item=${id}`;
+    case "finance_registry":
+      return "/financeiro/cadastros?aba=categorias";
     default:
       return e.clientId ? `/clientes/${e.clientId}?aba=timeline` : undefined;
   }

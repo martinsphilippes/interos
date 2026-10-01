@@ -443,6 +443,10 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   project: "Projeto de implantação",
   ticket: "Chamado",
   portal_link: "Link do portal do cliente",
+  financial_account: "Conta financeira",
+  cost_center: "Centro de custo",
+  finance_category: "Categoria financeira",
+  finance_registry: "Cadastros financeiros",
 };
 
 export const REPORT_GROUP_LABELS: Record<ReportDefinition["group"], string> = { departamental: "Relatórios departamentais", operacional: "Relatórios operacionais" };

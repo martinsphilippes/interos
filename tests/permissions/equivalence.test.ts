@@ -215,6 +215,13 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     expect(differences(["financeiro.contratos.portal.ver", "financeiro.contratos.portal.gerar", "financeiro.contratos.portal.revogar"], legacy)).toEqual([]);
   });
 
+  it("Cadastros financeiros (novo, etapa CP/CR 1: 12 ações) ≡ módulo Financeiro ∧ canOperatePayables (quem opera Contas a Pagar e Fornecedores)", () => {
+    const keys = actionKeys("financeiro.cadastros");
+    expect(keys.length).toBe(12);
+    const legacy = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") && legacyCanOperatePayables(u);
+    expect(differences(keys, legacy)).toEqual([]);
+  });
+
   it("relatório de Auditoria (novo, D29: ver e exportar) ≡ diretoria/administrador (isDirector)", () => {
     expect(differences(["gestao.relatorios.auditoria.ver", "gestao.relatorios.auditoria.exportar"], (u) => Boolean(u.isDirector))).toEqual([]);
   });

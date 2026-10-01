@@ -8,6 +8,7 @@ import type { ReguaPreview } from "@/server/finance/regua";
 import type { OperationHealthConfig, PerformanceIndexConfig } from "@/server/kpis/health-schemas";
 import { OperationHealthSettingsForm, type KpiOption } from "@/components/kpis/operation-health-settings";
 import { PerformanceIndexSettingsForm } from "@/components/kpis/performance-index-settings";
+import { ScreenLink } from "@/components/auth/access-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SettingsBusinessHours } from "./settings-business-hours";
@@ -188,6 +189,9 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
       ) : null}
       {sees("contas_a_pagar") ? (
         <TabsContent value="contas-a-pagar">
+          <ScreenLink href="/financeiro/cadastros?aba=categorias" className="mb-3 inline-flex min-h-[44px] items-center gap-1.5 text-sm text-brand-fg hover:underline md:min-h-0" data-testid="link-cadastros-financeiros">
+            Centros de custo e categorias com subcategoria: Financeiro › Cadastros financeiros →
+          </ScreenLink>
           <Guard editable={edits("contas_a_pagar")}>
             <SettingsContasAPagar key={JSON.stringify(values.contas_a_pagar)} value={values.contas_a_pagar!} stored={has("contas_a_pagar")} />
           </Guard>

@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 11 módulos, 65 telas, 130 seções e 238 ações (444 chaves únicas) — etapa 6B: + Relatório de Auditoria (ver e exportar) e Portal do cliente (ver, gerar, revogar)", () => {
+  it("tem 11 módulos, 66 telas, 133 seções e 250 ações (460 chaves únicas) — etapa CP/CR 1: + Cadastros financeiros (tela, 3 abas, 12 ações)", () => {
     expect(MODULES.length).toBe(11);
-    expect(SCREENS.length).toBe(65);
-    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(130);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(238);
-    expect(PERMISSION_KEYS.length).toBe(444);
+    expect(SCREENS.length).toBe(66);
+    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(133);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(250);
+    expect(PERMISSION_KEYS.length).toBe(460);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -201,8 +201,8 @@ describe("catálogo — cobertura de páginas", () => {
       .filter((s) => s && !/^\(.*\)$/.test(s))
       .join("/");
 
-  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (89 páginas — etapa 6B: + /portal/[token], pública isenta)", () => {
-    expect(pages.length).toBe(89);
+  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (90 páginas — etapa CP/CR 1: + /financeiro/cadastros)", () => {
+    expect(pages.length).toBe(90);
     const exempt = new Set<string>(EXEMPTIONS.filter((e) => e.kind === "page").map((e) => e.target));
     const routes = new Set(SCREENS.flatMap((s) => [...s.routes, ...s.sections.flatMap((x) => x.routes ?? [])]));
     const missing = pages.filter((p) => !exempt.has(p) && !routes.has(toRoute(p)));
@@ -230,10 +230,12 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
   it("cada `tab` existe na página da tela e as abas das telas com seções por aba estão todas modeladas", async () => {
     const { SETTINGS_TABS } = await import("@/components/admin/admin-model");
     const { CLIENT_TABS } = await import("@/components/clients/client-tabs");
+    const { REGISTRY_TABS } = await import("@/components/finance-registry/registry-tabs");
     const pageTabs: Record<string, readonly string[]> = {
       "admin.configuracoes": SETTINGS_TABS,
       "financeiro.configuracoes": SETTINGS_TABS,
       "operacao.clientes": CLIENT_TABS.map((t) => t.key),
+      "financeiro.cadastros": REGISTRY_TABS,
     };
     const modeled = new Set<string>();
     for (const screen of SCREENS) {
@@ -247,5 +249,6 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
     // Toda aba das páginas acima tem seção (exceto a aba padrão "visao" do Cliente 360, que é a própria tela).
     for (const tab of SETTINGS_TABS) expect(modeled.has(`configuracoes:${tab}`), `aba ${tab} de /admin/configuracoes sem seção`).toBe(true);
     for (const { key } of CLIENT_TABS) if (key !== "visao") expect(modeled.has(`operacao.clientes:${key}`), `aba ${key} do Cliente 360 sem seção`).toBe(true);
+    for (const tab of REGISTRY_TABS) expect(modeled.has(`financeiro.cadastros:${tab}`), `aba ${tab} de Cadastros financeiros sem seção`).toBe(true);
   });
 });

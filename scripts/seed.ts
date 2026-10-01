@@ -21,7 +21,7 @@ import { seedSupport } from "./seed/journey-support";
 import { seedWorkflowAndTasks } from "./seed/journey-workflow";
 import { seedEventsAndNotifications } from "./seed/journey-events";
 import { seedPerformance } from "./seed/journey-performance";
-import { seedAmendments, seedBoletos, seedCommissionEngine, seedDerived, seedPayablesGeneral, seedPortalLinks } from "./seed/derived";
+import { seedAmendments, seedBoletos, seedCommissionEngine, seedDerived, seedFinanceRegistry, seedPayablesGeneral, seedPortalLinks } from "./seed/derived";
 
 function elapsed(from: number): string {
   return `${((Date.now() - from) / 1000).toFixed(1)}s`;
@@ -90,6 +90,9 @@ async function main(): Promise<void> {
   const cap = await seedPayablesGeneral();
   total += cap.suppliers + cap.parcels + cap.recurring;
   console.log(`  ${"contas a pagar (serviço)".padEnd(26)} ${String(cap.suppliers + cap.parcels + cap.recurring).padStart(5)}  (${cap.suppliers} fornecedores, ${cap.parcels} parcelas, ${cap.recurring} série recorrente)`);
+  const registry = await seedFinanceRegistry();
+  total += registry.accounts + registry.centers + registry.categories + registry.subcategories;
+  console.log(`  ${"cadastros financeiros".padEnd(26)} ${String(registry.accounts + registry.centers + registry.categories + registry.subcategories).padStart(5)}  (${registry.accounts} contas, ${registry.centers} centros, ${registry.categories} categorias, ${registry.subcategories} subcategorias)`);
   const tDerived = Date.now();
   const derived = await seedDerived();
   total += derived.snapshots + derived.bonus;

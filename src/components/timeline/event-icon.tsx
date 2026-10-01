@@ -1,5 +1,11 @@
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
+  Download,
+  Landmark,
+  Merge,
+  Tags,
   Award,
   BadgeCheck,
   BadgePercent,
@@ -140,6 +146,10 @@ const PREFIX_CATEGORY: Record<string, EventCategory> = {
   automation: "automacao",
   supplier: "financeiro",
   portal: "financeiro",
+  financial_account: "financeiro",
+  cost_center: "financeiro",
+  finance_category: "financeiro",
+  finance_registry: "financeiro",
 };
 
 export function eventCategory(type: EventType | string): EventCategory {
@@ -225,6 +235,21 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "portal.link_created": Link2,
   "portal.link_revoked": Link2Off,
   "portal.accessed": ExternalLink,
+  "financial_account.created": Landmark,
+  "financial_account.updated": Landmark,
+  "financial_account.archived": Archive,
+  "financial_account.reactivated": ArchiveRestore,
+  "cost_center.created": Target,
+  "cost_center.updated": Target,
+  "cost_center.archived": Archive,
+  "cost_center.reactivated": ArchiveRestore,
+  "finance_category.created": Tags,
+  "finance_category.updated": Tags,
+  "finance_category.archived": Archive,
+  "finance_category.reactivated": ArchiveRestore,
+  "finance_category.merged": Merge,
+  "finance_category.bulk_updated": Tags,
+  "finance_registry.imported": Download,
 };
 
 export type EventTone = "success" | "warning" | "danger" | "info" | "brand" | "muted";

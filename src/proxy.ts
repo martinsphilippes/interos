@@ -14,6 +14,13 @@ export function proxy(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   if (pathname === "/login" && hasSession) {
+    // Sessão recusada pelo servidor (requireUser → /login?sessao=expirada): apaga o cookie e mostra o login,
+    // em vez de mandar de volta para /meu-dia (laço de redirecionamento).
+    if (request.nextUrl.searchParams.get("sessao") === "expirada") {
+      const response = NextResponse.next();
+      response.cookies.delete(SESSION_COOKIE);
+      return response;
+    }
     return NextResponse.redirect(new URL("/meu-dia", request.url));
   }
   if (!isPublic && !hasSession) {
