@@ -255,6 +255,41 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   vencimento e série; relatório `contas_a_pagar` (competência, status derivado "vencido", CSV/XLSX/PDF) e card
   "Fluxo de caixa simplificado" (cobranças abertas/vencidas × títulos abertos por mês de vencimento, só dados reais).
 
+## Cadastros financeiros (etapa CP/CR 1, `src/server/finance-registry/*`, `/financeiro/cadastros`)
+- **Coleções novas** (regra `if false`, só servidor): `financial_accounts` (conta financeira: nome, tipo
+  corrente|poupanca|cartao|dinheiro|investimento|outro, `initialBalance`, `currency` "BRL", banco/agência/conta só
+  informativos), `cost_centers` (nome, descrição) e `finance_categories` (mesma entidade nos dois níveis: `parentId`
+  null = categoria com `costCenterId` OBRIGATÓRIO; `parentId` = mãe = subcategoria SEM centro próprio, herda tipo e
+  centro). Todas com `archived` (+ `archivedAt/By`, `archiveReason`): nada é excluído, arquiva/reativa com motivo.
+  `legacyKey` guarda a chave antiga do setting `contas_a_pagar` (importação manual); `mergedIntoId` marca a origem de
+  uma mesclagem.
+- **Regras puras** em `src/domain/finance-registry.ts` (testes em `tests/finance/registry.test.ts`): `validateCategory`
+  (categoria sem centro recusada; subcategoria exige mãe ativa de nível 1, herda o tipo, centro próprio recusado; nome
+  único entre as ATIVAS do mesmo nível/tipo; tipo não muda com subcategorias ou uso), `resolveEffectiveCostCenter`
+  (título/lançamento → próprio → categoria → mãe → "Sem centro de custo"; base das etapas 4 e 7), `planArchiveCategory`
+  (subcategorias que vão junto + uso), `planApplyCostCenter`, `planMoveSubcategories` (mesma tipo, sem nome repetido na
+  destino), `planMergeCategories` (subcategorias e registros da origem vão para a destino; origem arquivada),
+  `planLegacyImport` (idempotente, só cria), `accountBalance` (saldo inicial + entradas − saídas; sem lançamentos = saldo
+  inicial) e `registryProblems` (invariantes do `verify.ts`, item (w)).
+- **Títulos**: `Payable.categoryId`/`costCenterId` (opcionais, gravados a partir da etapa 4) são a referência NOVA; a
+  contagem de uso e a mesclagem usam só eles. `Payable.category` (chave) e `costCenter` (nome) continuam como estão; a
+  tela mostra à parte "títulos antigos pela configuração" (`legacyKey`). Lançamentos de caixa (etapa 2) entram em
+  `listCategoryReferences` e `accountBalance`.
+- **Centro de custo em uso** (categorias ativas apontando para ele) não é arquivado: aplique outro centro antes.
+- **Importar da configuração atual** (manual, `financeiro.cadastros.importar`): cria centros de
+  `contas_a_pagar.centrosDeCusto` e categorias de DESPESA de `contas_a_pagar.categorias` + fixas do circuito, com o
+  centro mais usado nos títulos daquela categoria ou um centro padrão escolhido; o que já existe (mesma chave antiga ou
+  mesmo nome) fica como está. Não altera títulos nem o setting.
+- **Eventos** (auditoria "de → para" + motivo, fora da timeline do cliente): `financial_account.*`, `cost_center.*`,
+  `finance_category.*` (created/updated/archived/reactivated; `merged`; `bulk_updated` com `payload.kind`
+  aplicar_centro|mover_subcategorias) e `finance_registry.imported`. Entidades no relatório de Auditoria: "Conta
+  financeira", "Centro de custo", "Categoria financeira", "Cadastros financeiros"; histórico também na própria tela.
+- **Acesso**: tela `financeiro.cadastros` (padrão = público de Contas a Pagar: equipe financeira e gestores; gestor fora
+  do Financeiro só consulta), abas = seções `financeiro.cadastros.{contas,centros,categorias}.ver`, 12 ações com padrão =
+  quem opera Contas a Pagar/Fornecedores (administrador, diretoria, papel ou departamento Financeiro). Sem item de menu:
+  entra pelo cabeçalho de Contas a Pagar e por Configurações › Contas a pagar. Saldo sob "Visualizar valores" (editar
+  conta exige a chave).
+
 ## Numeração transacional (`nextNumber` em `src/server/db.ts`)
 - Coleção `counters` (`counter_<prefixo>_<ano>`), `runTransaction`, inicializada a partir do maior número já gravado
   (`initFrom`). Usada por VEN, CT, PR, COM e PAG; formatos antigos preservados, sem renumerar documentos.
@@ -267,7 +302,7 @@ permissões são uma camada sobre ele; não há segundo sistema de usuários, de
 
 ### Catálogo (`src/domain/permissions/`, puro, um arquivo por módulo)
 - Hierarquia MÓDULO `<m>.acessar` → TELA `<m>.<tela>.ver` → SEÇÃO/ABA `<m>.<tela>.<secao>.ver` → AÇÃO
-  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 65 telas, 130 seções, 238 ações (444 chaves na união
+  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 66 telas, 133 seções, 250 ações (460 chaves na união
   literal `PermissionKey`). Rótulos de negócio em português em cada nó (a interface nunca mostra a chave técnica).
 - Cada nó tem uma **regra padrão** na DSL (`"all"`, `any`, `all`, `role`, `department`, `manager`, `director`,
   `managerOf`, `can`) que reproduz o comportamento anterior à etapa (teste T0 contra a cópia congelada dos predicados
