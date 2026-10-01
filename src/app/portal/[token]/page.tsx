@@ -86,8 +86,8 @@ function BillingCard({ billing: b, clientName, secondCopyWhatsapp }: { billing: 
             {b.typeLabel}
             {b.installment ? ` · parcela ${b.installment}` : ""}
           </p>
-          <p className="text-xs capitalize text-muted">
-            competência {formatCompetence(b.competence)}
+          <p className="text-xs text-muted">
+            competência <span className="capitalize">{formatCompetence(b.competence)}</span>
             {b.contractNumber ? ` · contrato ${b.contractNumber}` : ""}
           </p>
         </div>
