@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useCanSeeFn } from "@/components/auth/access-provider";
 import { RedistributeDialog } from "./redistribute-dialog";
 
 export interface TeamTableProps {
@@ -21,6 +22,8 @@ export interface TeamTableProps {
   teamAverageOpen: number;
   tasksByUser: Record<string, ReassignTask[]>;
   targets: { id: string; name: string; subtitle: string }[];
+  /** Redistribuir tarefas (gestao.dashboard.atribuir), calculado no servidor. */
+  canRedistribute?: boolean;
   /** Coluna destacada quando o dashboard está em um foco de drill-down. */
   focus?: FocusKey;
   /** Período atual (links para o Meu Desempenho do colaborador). */
@@ -71,8 +74,9 @@ function Rank({ points, rank }: { points: number; rank: number | null }) {
   );
 }
 
-function Actions({ m, tasks, targets, onRedistribute, periodKey }: { m: MemberRow; tasks: ReassignTask[]; targets: TeamTableProps["targets"]; onRedistribute: () => void; periodKey?: string }) {
+function Actions({ m, tasks, targets, onRedistribute, periodKey }: { m: MemberRow; tasks: ReassignTask[]; targets: TeamTableProps["targets"]; onRedistribute?: () => void; periodKey?: string }) {
   void targets;
+  const canSee = useCanSeeFn();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -86,14 +90,18 @@ function Actions({ m, tasks, targets, onRedistribute, periodKey }: { m: MemberRo
             <UserRound /> Ver colaborador
           </Link>
         </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href={`/performance?usuario=${m.id}${periodKey ? `&periodo=${encodeURIComponent(periodKey)}` : ""}`}>
-            <Gauge /> Ver desempenho
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={tasks.length === 0} onSelect={() => onRedistribute()}>
-          <ArrowRightLeft /> Redistribuir tarefas
-        </DropdownMenuItem>
+        {canSee("/performance") ? (
+          <DropdownMenuItem asChild>
+            <Link href={`/performance?usuario=${m.id}${periodKey ? `&periodo=${encodeURIComponent(periodKey)}` : ""}`}>
+              <Gauge /> Ver desempenho
+            </Link>
+          </DropdownMenuItem>
+        ) : null}
+        {onRedistribute ? (
+          <DropdownMenuItem disabled={tasks.length === 0} onSelect={() => onRedistribute()}>
+            <ArrowRightLeft /> Redistribuir tarefas
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -103,7 +111,7 @@ function Actions({ m, tasks, targets, onRedistribute, periodKey }: { m: MemberRo
  * "Desempenho individual": tarefas do período (concluídas/total), atrasadas, carga, SLA, qualidade (Índice de
  * desempenho) e resultado das metas de cada colaborador, com drill-down e redistribuição. No celular vira cards.
  */
-export function TeamTable({ members, teamAverageOpen, tasksByUser, targets, focus, periodKey }: TeamTableProps) {
+export function TeamTable({ members, teamAverageOpen, tasksByUser, targets, canRedistribute = false, focus, periodKey }: TeamTableProps) {
   const [redistribute, setRedistribute] = React.useState<MemberRow | null>(null);
   if (members.length === 0) {
     return <EmptyState title="Nenhum colaborador neste escopo" description="Não há colaboradores ativos vinculados a esta equipe ou departamento." />;
@@ -171,7 +179,7 @@ export function TeamTable({ members, teamAverageOpen, tasksByUser, targets, focu
                   </Link>
                 </TableCell>
                 <TableCell className="text-right">
-                  <Actions m={m} tasks={tasksByUser[m.id] ?? []} targets={targets} onRedistribute={() => setRedistribute(m)} periodKey={periodKey} />
+                  <Actions m={m} tasks={tasksByUser[m.id] ?? []} targets={targets} onRedistribute={canRedistribute ? () => setRedistribute(m) : undefined} periodKey={periodKey} />
                 </TableCell>
               </TableRow>
             ))}
@@ -193,7 +201,7 @@ export function TeamTable({ members, teamAverageOpen, tasksByUser, targets, focu
               <Badge variant={RESULT_VARIANT[m.result.tone]} size="sm">
                 {m.result.label}
               </Badge>
-              <Actions m={m} tasks={tasksByUser[m.id] ?? []} targets={targets} onRedistribute={() => setRedistribute(m)} periodKey={periodKey} />
+              <Actions m={m} tasks={tasksByUser[m.id] ?? []} targets={targets} onRedistribute={canRedistribute ? () => setRedistribute(m) : undefined} periodKey={periodKey} />
             </div>
             <div className="mt-3">
               <TasksCell m={m} />

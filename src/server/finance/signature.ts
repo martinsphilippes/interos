@@ -44,14 +44,25 @@ export interface SignatureProvider {
 }
 
 /** Conteúdo que identifica o documento assinado: mudar qualquer campo muda o hash. */
-export function contractDocumentHash(contract: Pick<Contract, "number" | "version" | "clientId" | "items" | "setupTotal" | "monthlyTotal" | "hardwareTotal" | "billingDay" | "firstDueDate" | "recurrence" | "termMonths" | "paymentCondition" | "signers">): string {
+export function contractDocumentHash(
+  contract: Pick<Contract, "number" | "version" | "clientId" | "items" | "setupTotal" | "monthlyTotal" | "hardwareTotal" | "billingDay" | "firstDueDate" | "recurrence" | "termMonths" | "paymentCondition" | "signers" | "paymentMethod" | "setupInstallments">,
+): string {
   const canonical = {
     number: contract.number,
     version: contract.version,
     clientId: contract.clientId,
     items: contract.items.map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: i.setupValue, monthlyValue: i.monthlyValue, hardwareValue: i.hardwareValue, discountPct: i.discountPct })),
     totals: { setup: contract.setupTotal, monthly: contract.monthlyTotal, hardware: contract.hardwareTotal },
-    conditions: { billingDay: contract.billingDay, firstDueDate: contract.firstDueDate ?? null, recurrence: contract.recurrence, termMonths: contract.termMonths, paymentCondition: contract.paymentCondition ?? null },
+    conditions: {
+      billingDay: contract.billingDay,
+      firstDueDate: contract.firstDueDate ?? null,
+      recurrence: contract.recurrence,
+      termMonths: contract.termMonths,
+      paymentCondition: contract.paymentCondition ?? null,
+      // Campos do fechamento entram só quando existem: o hash de contratos antigos não muda.
+      ...(contract.paymentMethod ? { paymentMethod: contract.paymentMethod } : {}),
+      ...(contract.setupInstallments && contract.setupInstallments > 1 ? { setupInstallments: contract.setupInstallments } : {}),
+    },
     signers: contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role })),
   };
   return `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;

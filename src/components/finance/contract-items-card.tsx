@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useFinanceAction } from "./use-finance-action";
+import { useFinanceAccess } from "./finance-access";
+import { money, RESTRICTED_LABEL } from "./values";
 
 export interface ContractItemsCardProps {
   contractId: string;
@@ -24,6 +26,8 @@ export interface ContractItemsCardProps {
   /** Já enviado para assinatura: editar gera nova versão. */
   sent: boolean;
   version: number;
+  /** Contrato assinado/liberado: a alteração é por aditivo (link para a seção). */
+  amendable?: boolean;
 }
 
 /** "1.234,56" (pt-BR) ou "1234.56". */
@@ -34,10 +38,10 @@ const num = (v: string) => {
 };
 
 /** Linha em edição: campos numéricos como texto (permite digitar "12,5" sem perder a vírgula). */
-type EditRow = { productId: string; productName: string; quantity: string; setupValue: string; monthlyValue: string; hardwareValue: string; discountPct: string };
+export type EditRow = { productId: string; productName: string; quantity: string; setupValue: string; monthlyValue: string; hardwareValue: string; discountPct: string };
 const NUMERIC = ["quantity", "setupValue", "monthlyValue", "hardwareValue", "discountPct"] as const;
-const toEdit = (i: ProposalItem): EditRow => ({ productId: i.productId, productName: i.productName, quantity: String(i.quantity), setupValue: String(i.setupValue).replace(".", ","), monthlyValue: String(i.monthlyValue).replace(".", ","), hardwareValue: String(i.hardwareValue).replace(".", ","), discountPct: String(i.discountPct).replace(".", ",") });
-const fromEdit = (r: EditRow): ProposalItem => ({
+export const toEdit = (i: ProposalItem): EditRow => ({ productId: i.productId, productName: i.productName, quantity: String(i.quantity), setupValue: String(i.setupValue).replace(".", ","), monthlyValue: String(i.monthlyValue).replace(".", ","), hardwareValue: String(i.hardwareValue).replace(".", ","), discountPct: String(i.discountPct).replace(".", ",") });
+export const fromEdit = (r: EditRow): ProposalItem => ({
   productId: r.productId,
   productName: r.productName,
   quantity: Math.max(1, Math.round(num(r.quantity))),
@@ -49,25 +53,125 @@ const fromEdit = (r: EditRow): ProposalItem => ({
 
 const FIELD_LABEL: Record<(typeof NUMERIC)[number], string> = { quantity: "Quantidade", setupValue: "Adesão", monthlyValue: "Mensalidade", hardwareValue: "Hardware", discountPct: "Desconto (%)" };
 
-/** Itens do contrato (produtos, quantidades, valores). Editável enquanto não assinado. */
-export function ContractItemsCard({ contractId, items, products, canEdit, sent, version }: ContractItemsCardProps) {
-  const [editing, setEditing] = React.useState(false);
-  const [rows, setRows] = React.useState<EditRow[]>(() => items.map(toEdit));
+export interface ContractItemsEditorProps {
+  rows: EditRow[];
+  onChange: (rows: EditRow[]) => void;
+  products: ProductOption[];
+  /** Itens de referência (só leitura) quando não está editando. */
+  items?: ProposalItem[];
+  editing: boolean;
+}
+
+/**
+ * Tabela de itens do contrato (leitura ou edição) com totais líquidos e "Adicionar produto". Reutilizada pelo card
+ * de itens e pelo diálogo de aditivo (D25): o mesmo editor, sem segundo formulário.
+ */
+export function ContractItemsEditor({ rows, onChange, products, items = [], editing }: ContractItemsEditorProps) {
+  // Sem "Visualizar valores" do contrato (A13) os números chegam zerados: leitura mostra "Restrito" (edição exige valores).
+  const hidden = !useFinanceAccess().contractValues && !editing;
   const [pick, setPick] = React.useState("");
-  const { pending, run } = useFinanceAction();
   const view = editing ? rows.map(fromEdit) : items;
   const totals = proposalTotals(view);
+  const patch = (index: number, change: Partial<EditRow>) => onChange(rows.map((r, i) => (i === index ? { ...r, ...change } : r)));
+  const add = () => {
+    const product = products.find((p) => p.id === pick);
+    if (!product) return;
+    onChange([...rows, toEdit({ productId: product.id, productName: product.name, quantity: 1, setupValue: product.setupPrice, monthlyValue: product.monthlyPrice, hardwareValue: product.hardwarePrice, discountPct: 0 })]);
+    setPick("");
+  };
+  return (
+    <>
+      {view.length === 0 ? (
+        <EmptyState size="sm" icon={<Package />} title="Nenhum item" description="Adicione os produtos vendidos." />
+      ) : (
+        <Table className="min-w-[680px]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Produto</TableHead>
+              <TableHead className="w-20 text-right">Qtd.</TableHead>
+              <TableHead className="text-right">Adesão</TableHead>
+              <TableHead className="text-right">Mensal</TableHead>
+              <TableHead className="text-right">Hardware</TableHead>
+              <TableHead className="w-20 text-right">Desc. %</TableHead>
+              {editing ? <TableHead className="w-12" /> : null}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {view.map((item, i) => {
+              const net = netItem(item);
+              return (
+                <TableRow key={`${item.productId}-${i}`}>
+                  <TableCell className="font-medium">{item.productName}</TableCell>
+                  {editing ? (
+                    <>
+                      <TableCell>
+                        <Input aria-label="Quantidade" inputMode="numeric" className="h-10 text-right md:h-9" value={rows[i].quantity} onChange={(e) => patch(i, { quantity: e.target.value })} />
+                      </TableCell>
+                      {NUMERIC.slice(1).map((field) => (
+                        <TableCell key={field}>
+                          <Input aria-label={FIELD_LABEL[field]} inputMode="decimal" className="h-10 text-right md:h-9" value={rows[i][field]} onChange={(e) => patch(i, { [field]: e.target.value })} />
+                        </TableCell>
+                      ))}
+                      <TableCell>
+                        <Button variant="ghost" size="icon" className="size-10 text-danger md:size-9" aria-label={`Remover ${item.productName}`} onClick={() => onChange(rows.filter((_, k) => k !== i))}>
+                          <Trash2 />
+                        </Button>
+                      </TableCell>
+                    </>
+                  ) : (
+                    <>
+                      <TableCell className="text-right tabular-nums">{item.quantity}</TableCell>
+                      <TableCell className="text-right tabular-nums">{money(net.setupTotal, hidden)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{money(net.monthlyTotal, hidden)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{money(net.hardwareTotal, hidden)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted">{item.discountPct ? `${item.discountPct}%` : "—"}</TableCell>
+                    </>
+                  )}
+                </TableRow>
+              );
+            })}
+          </TableBody>
+          <TableFooter>
+            <TableRow>
+              <TableCell>Total{editing ? " (com desconto)" : ""}</TableCell>
+              <TableCell />
+              <TableCell className="text-right tabular-nums">{money(totals.setupTotal, hidden)}</TableCell>
+              <TableCell className="text-right tabular-nums">{money(totals.monthlyTotal, hidden)}</TableCell>
+              <TableCell className="text-right tabular-nums">{money(totals.hardwareTotal, hidden)}</TableCell>
+              <TableCell className="text-right tabular-nums text-muted">{hidden ? RESTRICTED_LABEL : totals.discountTotal > 0 ? `-${formatCurrency(totals.discountTotal)}` : "—"}</TableCell>
+              {editing ? <TableCell /> : null}
+            </TableRow>
+          </TableFooter>
+        </Table>
+      )}
+      {editing ? (
+        <div className="mt-3 flex gap-2 px-5" data-testid="items-add">
+          <Select aria-label="Produto a adicionar" value={pick} onChange={(e) => setPick(e.target.value)} className="md:max-w-xs [&_select]:h-10 md:[&_select]:h-9">
+            <option value="">Adicionar produto…</option>
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+          <Button variant="outline" onClick={add} disabled={!pick} className="h-10 md:h-9">
+            <Plus /> Adicionar
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** Itens do contrato (produtos, quantidades, valores). Editável enquanto não assinado; depois, por aditivo. */
+export function ContractItemsCard({ contractId, items, products, canEdit, sent, version, amendable }: ContractItemsCardProps) {
+  const [editing, setEditing] = React.useState(false);
+  const [rows, setRows] = React.useState<EditRow[]>(() => items.map(toEdit));
+  const { pending, run } = useFinanceAction();
 
   const start = () => {
     setRows(items.map(toEdit));
     setEditing(true);
-  };
-  const patch = (index: number, change: Partial<EditRow>) => setRows((current) => current.map((r, i) => (i === index ? { ...r, ...change } : r)));
-  const add = () => {
-    const product = products.find((p) => p.id === pick);
-    if (!product) return;
-    setRows((current) => [...current, toEdit({ productId: product.id, productName: product.name, quantity: 1, setupValue: product.setupPrice, monthlyValue: product.monthlyPrice, hardwareValue: product.hardwarePrice, discountPct: 0 })]);
-    setPick("");
   };
   const save = async () => {
     const ok = await run(() => updateContractItemsAction({ contractId, items: rows.map(fromEdit) }), (d) => (d.versioned ? `Itens salvos: contrato v${version + 1} criado (reenvie para assinatura)` : "Itens do contrato salvos"));
@@ -79,7 +183,10 @@ export function ContractItemsCard({ contractId, items, products, canEdit, sent, 
       <CardHeader className="flex-row items-start justify-between gap-3">
         <div>
           <CardTitle>Itens</CardTitle>
-          <CardDescription>Valores por linha (já multiplicados pela quantidade). Desconto aplicado sobre adesão, mensalidade e hardware.</CardDescription>
+          <CardDescription>
+            Valores por linha (já multiplicados pela quantidade). Desconto aplicado sobre adesão, mensalidade e hardware.
+            {amendable && !canEdit ? " Contrato assinado: alterações entram por aditivo (seção Aditivos)." : ""}
+          </CardDescription>
         </div>
         {canEdit && !editing ? (
           <Button variant="outline" size="sm" onClick={start} className="h-10 md:h-8">
@@ -93,92 +200,15 @@ export function ContractItemsCard({ contractId, items, products, canEdit, sent, 
             O contrato já foi enviado para assinatura. Salvar cria a versão {version + 1}, descarta as assinaturas e exige novo envio.
           </p>
         ) : null}
-        {view.length === 0 ? (
-          <EmptyState size="sm" icon={<Package />} title="Nenhum item" description="Adicione os produtos vendidos." />
-        ) : (
-          <Table className="min-w-[680px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Produto</TableHead>
-                <TableHead className="w-20 text-right">Qtd.</TableHead>
-                <TableHead className="text-right">Adesão</TableHead>
-                <TableHead className="text-right">Mensal</TableHead>
-                <TableHead className="text-right">Hardware</TableHead>
-                <TableHead className="w-20 text-right">Desc. %</TableHead>
-                {editing ? <TableHead className="w-12" /> : null}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {view.map((item, i) => {
-                const net = netItem(item);
-                return (
-                  <TableRow key={`${item.productId}-${i}`}>
-                    <TableCell className="font-medium">{item.productName}</TableCell>
-                    {editing ? (
-                      <>
-                        <TableCell>
-                          <Input aria-label="Quantidade" inputMode="numeric" className="h-10 text-right md:h-9" value={rows[i].quantity} onChange={(e) => patch(i, { quantity: e.target.value })} />
-                        </TableCell>
-                        {NUMERIC.slice(1).map((field) => (
-                          <TableCell key={field}>
-                            <Input aria-label={FIELD_LABEL[field]} inputMode="decimal" className="h-10 text-right md:h-9" value={rows[i][field]} onChange={(e) => patch(i, { [field]: e.target.value })} />
-                          </TableCell>
-                        ))}
-                        <TableCell>
-                          <Button variant="ghost" size="icon" className="size-10 text-danger md:size-9" aria-label={`Remover ${item.productName}`} onClick={() => setRows((cur) => cur.filter((_, k) => k !== i))}>
-                            <Trash2 />
-                          </Button>
-                        </TableCell>
-                      </>
-                    ) : (
-                      <>
-                        <TableCell className="text-right tabular-nums">{item.quantity}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatCurrency(net.setupTotal)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatCurrency(net.monthlyTotal)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatCurrency(net.hardwareTotal)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-muted">{item.discountPct ? `${item.discountPct}%` : "—"}</TableCell>
-                      </>
-                    )}
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-            <TableFooter>
-              <TableRow>
-                <TableCell>Total{editing ? " (com desconto)" : ""}</TableCell>
-                <TableCell />
-                <TableCell className="text-right tabular-nums">{formatCurrency(totals.setupTotal)}</TableCell>
-                <TableCell className="text-right tabular-nums">{formatCurrency(totals.monthlyTotal)}</TableCell>
-                <TableCell className="text-right tabular-nums">{formatCurrency(totals.hardwareTotal)}</TableCell>
-                <TableCell className="text-right tabular-nums text-muted">{totals.discountTotal > 0 ? `-${formatCurrency(totals.discountTotal)}` : "—"}</TableCell>
-                {editing ? <TableCell /> : null}
-              </TableRow>
-            </TableFooter>
-          </Table>
-        )}
+        <ContractItemsEditor rows={rows} onChange={setRows} products={products} items={items} editing={editing} />
         {editing ? (
-          <div className="mt-4 flex flex-col gap-3 px-5 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-1 gap-2">
-              <Select aria-label="Produto a adicionar" value={pick} onChange={(e) => setPick(e.target.value)} className="md:max-w-xs [&_select]:h-10 md:[&_select]:h-9">
-                <option value="">Adicionar produto…</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
-              <Button variant="outline" onClick={add} disabled={!pick} className="h-10 md:h-9">
-                <Plus /> Adicionar
-              </Button>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setEditing(false)} disabled={pending} className="h-11 flex-1 md:h-9 md:flex-none">
-                Cancelar
-              </Button>
-              <Button onClick={save} loading={pending} disabled={rows.length === 0} className="h-11 flex-1 md:h-9 md:flex-none">
-                Salvar itens
-              </Button>
-            </div>
+          <div className="mt-4 flex justify-end gap-2 px-5">
+            <Button variant="outline" onClick={() => setEditing(false)} disabled={pending} className="h-11 flex-1 md:h-9 md:flex-none">
+              Cancelar
+            </Button>
+            <Button onClick={save} loading={pending} disabled={rows.length === 0} className="h-11 flex-1 md:h-9 md:flex-none">
+              Salvar itens
+            </Button>
           </div>
         ) : null}
       </CardContent>

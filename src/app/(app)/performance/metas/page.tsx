@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { AlertTriangle, CheckCircle2, Goal, XCircle } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
 import { currentMonthKey, getGoalsBoard, listRecentMonths, monthPeriod, parsePeriod } from "@/server/kpis/queries";
 import { formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -13,9 +13,13 @@ export const metadata: Metadata = { title: "Metas" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Metas mensais por indicador (empresa, departamento, colaborador) com o valor atual calculado pelo motor. */
+/**
+ * Metas mensais por indicador (empresa, departamento, colaborador) com o valor atual calculado pelo motor. Metas
+ * visíveis pelo escopo da tela (performance.metas); criar/editar/remover/copiar pelas chaves de ação, calculadas no
+ * servidor (getGoalsBoard) e revalidadas nas actions.
+ */
 export default async function MetasPage({ searchParams }: { searchParams: SearchParams }) {
-  const [user, query] = await Promise.all([requireUser(), searchParams]);
+  const [user, query] = await Promise.all([requireScreen("performance.metas"), searchParams]);
   const requested = parsePeriod(query);
   // Metas são mensais: outros tipos de período caem no mês corrente.
   const period = requested.kind === "mes" ? requested : monthPeriod(currentMonthKey());

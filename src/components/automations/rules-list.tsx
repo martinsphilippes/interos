@@ -15,7 +15,7 @@ import { formatNumber } from "@/lib/format";
 import { setAutomationRuleActive } from "@/server/automations/actions";
 import type { RuleListItem } from "@/server/automations/queries";
 
-function ActiveSwitch({ rule }: { rule: RuleListItem }) {
+function ActiveSwitch({ rule, canToggle }: { rule: RuleListItem; canToggle: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [active, setActive] = useState(rule.active);
@@ -32,7 +32,7 @@ function ActiveSwitch({ rule }: { rule: RuleListItem }) {
       router.refresh();
     });
   };
-  return <Switch checked={active} disabled={pending} onCheckedChange={toggle} aria-label={active ? "Desativar automação" : "Ativar automação"} />;
+  return <Switch checked={active} disabled={pending || !canToggle} onCheckedChange={toggle} aria-label={active ? "Desativar automação" : "Ativar automação"} />;
 }
 
 function Summary({ items, empty }: { items: string[]; empty: string }) {
@@ -64,7 +64,8 @@ function RunInfo({ rule }: { rule: RuleListItem }) {
 }
 
 /** Lista de regras: cards no celular, tabela a partir de md. Ativar/desativar direto na lista. */
-export function RulesList({ rules }: { rules: RuleListItem[] }) {
+/** `canToggle` (admin.automacoes.ativar) e `canCreate` (admin.automacoes.criar) vêm do servidor; só escondem/desabilitam. */
+export function RulesList({ rules, canToggle = true, canCreate = true }: { rules: RuleListItem[]; canToggle?: boolean; canCreate?: boolean }) {
   if (rules.length === 0) {
     return (
       <EmptyState
@@ -72,9 +73,11 @@ export function RulesList({ rules }: { rules: RuleListItem[] }) {
         title="Nenhuma automação cadastrada"
         description="Crie uma regra com gatilho, condições e ações. O seed traz 5 regras de exemplo (npm run seed)."
         action={
-          <Button asChild>
-            <Link href="/admin/automacoes/nova">Nova automação</Link>
-          </Button>
+          canCreate ? (
+            <Button asChild>
+              <Link href="/admin/automacoes/nova">Nova automação</Link>
+            </Button>
+          ) : undefined
         }
       />
     );
@@ -93,7 +96,7 @@ export function RulesList({ rules }: { rules: RuleListItem[] }) {
                 </span>
               </Link>
               <div className="flex min-h-[44px] items-center">
-                <ActiveSwitch rule={rule} />
+                <ActiveSwitch rule={rule} canToggle={canToggle} />
               </div>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
@@ -150,7 +153,7 @@ export function RulesList({ rules }: { rules: RuleListItem[] }) {
                   <RunInfo rule={rule} />
                 </TableCell>
                 <TableCell className="align-top">
-                  <ActiveSwitch rule={rule} />
+                  <ActiveSwitch rule={rule} canToggle={canToggle} />
                 </TableCell>
                 <TableCell className="align-top">
                   <Link href={`/admin/automacoes/${rule.id}`} aria-label={`Editar ${rule.name}`} className="inline-flex size-9 items-center justify-center rounded-md text-muted hover:bg-surface-hover">

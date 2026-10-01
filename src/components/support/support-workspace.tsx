@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useMinuteClock } from "./sla-live";
 import { TicketContextPanel } from "./ticket-context-panel";
 import type { ChannelStatus } from "./ticket-composer";
+import type { SupportCapabilities } from "./access-model";
 import { TicketQueue } from "./ticket-queue";
 import { WorkspaceTicket, type WorkspaceTab } from "./workspace-ticket";
 import type { QueueTab } from "./workspace-model";
@@ -22,8 +23,8 @@ export interface SupportWorkspaceProps {
   baseQuery: Record<string, string>;
   channels: ChannelStatus;
   currentUserId: string;
-  canOperate: boolean;
-  canWriteArticles: boolean;
+  /** Capacidades calculadas no servidor (catálogo): cada botão/controle aparece só com a sua. */
+  capabilities: SupportCapabilities;
   articleCategories: string[];
   articleModules: string[];
   /** Instante da renderização no servidor (ms), referência dos relógios até o navegador assumir. */
@@ -72,8 +73,7 @@ export function SupportWorkspace(props: SupportWorkspaceProps) {
             detail={detail}
             channels={channels}
             currentUserId={props.currentUserId}
-            canOperate={props.canOperate}
-            canWriteArticles={props.canWriteArticles}
+            capabilities={props.capabilities}
             articleCategories={props.articleCategories}
             articleModules={props.articleModules}
             backHref={backHref}

@@ -8,7 +8,10 @@ import "server-only";
  * lidos das coleções com filtros de igualdade e agregados em memória. O cockpit usa o DataBundle do motor
  * (carga única e cache por período) para os volumes que não são indicadores.
  */
+import { cache } from "react";
 import { getById, list } from "@/server/db";
+import { can } from "@/server/auth/permissions";
+import { resolveDataScope } from "@/server/auth/scope";
 import { computeSlaState } from "@/server/sla";
 import { dateLabel, dayKey, todayKey } from "@/server/tasks/queries";
 import { evaluateInsights, evaluateInsightsForDepartments, type Insight } from "@/server/insights/engine";
@@ -69,10 +72,11 @@ export interface ManagerScope {
   selected: string;
 }
 
-async function loadOrg(): Promise<{ users: User[]; departments: Department[] }> {
+/** Usuários ativos e departamentos, memoizados por requisição (página + checagem de escopo leem uma vez). */
+const loadOrg = cache(async (): Promise<{ users: User[]; departments: Department[] }> => {
   const [users, departments] = await Promise.all([list<User>(COLLECTIONS.users), list<Department>(COLLECTIONS.departments)]);
   return { users: users.filter((u) => u.active !== false), departments };
-}
+});
 
 function byName(a: { name: string }, b: { name: string }): number {
   return a.name.localeCompare(b.name, "pt-BR");
@@ -96,16 +100,38 @@ function isDepartment(value: string | undefined): value is DepartmentKey {
   return Boolean(value) && (DEPARTMENT_KEYS as readonly string[]).includes(value as string);
 }
 
-function scopeFrom(user: CurrentUser, requested: string | undefined, users: User[], departments: Department[]): ManagerScope {
-  const scope = resolveScope(user, requested, users, departments);
-  const options = user.isDirector
-    ? [{ value: "empresa", label: "Empresa inteira" }, ...DEPARTMENT_KEYS.filter((d) => d !== "diretoria").map((d) => ({ value: d as string, label: DEPARTMENT_LABELS[d] }))]
-    : [{ value: "equipe", label: "Minha equipe" }, ...managedDepartments(user, departments).map((d) => ({ value: d as string, label: DEPARTMENT_LABELS[d] }))];
+/** Limite do escopo do Dashboard do Gestor no núcleo: "empresa" | "departamento" | "equipe" (padrão A7). */
+type ManagerScopeKind = "empresa" | "departamento" | "equipe";
+
+async function managerScopeKind(user: CurrentUser): Promise<ManagerScopeKind> {
+  const { kind } = await resolveDataScope(user, "gestao.dashboard");
+  if (kind === "empresa" || kind === "unidades") return "empresa";
+  // "meus" não é oferecido nesta tela (allowed = equipe/departamento/empresa); por segurança vale "equipe".
+  return kind === "departamento" ? "departamento" : "equipe";
+}
+
+/** Colaboradores do departamento próprio e dos que lidera (sem o próprio): limite "departamento". */
+function departmentMembers(user: Pick<User, "id" | "departmentId">, users: User[], departments: Department[]): User[] {
+  const managed = new Set<DepartmentKey>(managedDepartments(user, departments));
+  return users.filter((u) => managed.has(u.departmentId) && u.id !== user.id).sort(byName);
+}
+
+function scopeFrom(user: CurrentUser, requested: string | undefined, users: User[], departments: Department[], limit: ManagerScopeKind): ManagerScope {
+  const scope = resolveScope(user, requested, users, departments, limit);
+  const options =
+    limit === "empresa"
+      ? [{ value: "empresa", label: "Empresa inteira" }, ...DEPARTMENT_KEYS.filter((d) => d !== "diretoria").map((d) => ({ value: d as string, label: DEPARTMENT_LABELS[d] }))]
+      : [{ value: "equipe", label: limit === "departamento" ? "Meus departamentos" : "Minha equipe" }, ...managedDepartments(user, departments).map((d) => ({ value: d as string, label: DEPARTMENT_LABELS[d] }))];
   return { ...scope, options };
 }
 
-function resolveScope(user: CurrentUser, requested: string | undefined, users: User[], departments: Department[]): Omit<ManagerScope, "options"> {
-  if (user.isDirector) {
+/**
+ * Escopo do dashboard pelo limite do núcleo (resolveDataScope de gestao.dashboard). Padrão = comportamento anterior:
+ * admin/diretoria = empresa (ou um departamento escolhido); gestor = equipe (liderados em 2 níveis) com
+ * ?departamento= entre os que lidera. "departamento" (configurável) = colaboradores dos departamentos próprio e liderados.
+ */
+function resolveScope(user: CurrentUser, requested: string | undefined, users: User[], departments: Department[], limit: ManagerScopeKind): Omit<ManagerScope, "options"> {
+  if (limit === "empresa") {
     if (isDepartment(requested) && requested !== "diretoria") {
       return {
         kind: "departamento",
@@ -128,7 +154,7 @@ function resolveScope(user: CurrentUser, requested: string | undefined, users: U
       selected: "empresa",
     };
   }
-  const members = teamOf(user.id, users);
+  const members = limit === "departamento" ? departmentMembers(user, users, departments) : teamOf(user.id, users);
   const managed = managedDepartments(user, departments);
   // Gestor de mais de um departamento pode olhar um deles (só os colaboradores da sua equipe nesse departamento).
   if (isDepartment(requested) && managed.includes(requested)) {
@@ -145,8 +171,8 @@ function resolveScope(user: CurrentUser, requested: string | undefined, users: U
   }
   return {
     kind: "equipe",
-    label: `Equipe de ${user.name.split(" ")[0]}`,
-    description: "Seus liderados diretos e os liderados deles",
+    label: limit === "departamento" ? "Meus departamentos" : `Equipe de ${user.name.split(" ")[0]}`,
+    description: limit === "departamento" ? "Colaboradores do seu departamento e dos que você lidera" : "Seus liderados diretos e os liderados deles",
     members,
     departments: managed,
     canChoose: managed.length > 1,
@@ -155,15 +181,34 @@ function resolveScope(user: CurrentUser, requested: string | undefined, users: U
 }
 
 export async function resolveManagerScope(user: CurrentUser, requested?: string): Promise<ManagerScope> {
-  const { users, departments } = await loadOrg();
-  return scopeFrom(user, requested, users, departments);
+  const [{ users, departments }, limit] = await Promise.all([loadOrg(), managerScopeKind(user)]);
+  return scopeFrom(user, requested, users, departments, limit);
 }
 
-/** O gestor pode ver o colaborador? Diretoria/admin: qualquer usuário ativo; gestor: a própria equipe. */
-export function canManageMember(user: CurrentUser, memberId: string, users: User[]): boolean {
-  if (user.isDirector) return users.some((u) => u.id === memberId);
-  if (!user.isManager) return false;
-  return teamOf(user.id, users).some((u) => u.id === memberId);
+/** Colaboradores que o usuário gerencia no limite informado (sem o próprio). */
+function manageableMembers(user: CurrentUser, users: User[], departments: Department[], limit: ManagerScopeKind): User[] {
+  if (limit === "empresa") return users;
+  return limit === "departamento" ? departmentMembers(user, users, departments) : teamOf(user.id, users);
+}
+
+/**
+ * O usuário pode ver/gerir o colaborador? Exige `gestao.dashboard.colaborador.ver` (padrão: gestores) e o colaborador
+ * dentro do escopo da tela (padrão: diretoria/admin qualquer usuário ativo; gestor a própria equipe).
+ */
+export async function canManageMember(user: CurrentUser, memberId: string, org?: { users: User[]; departments: Department[] }): Promise<boolean> {
+  if (!can(user, "gestao.dashboard.colaborador.ver")) return false;
+  const [{ users, departments }, limit] = await Promise.all([org ? Promise.resolve(org) : loadOrg(), managerScopeKind(user)]);
+  return manageableMembers(user, users, departments, limit).some((u) => u.id === memberId);
+}
+
+/** Resultado da checagem do colaborador para a página de detalhe (A29): inexistente × fora do escopo. */
+export async function memberAccess(user: CurrentUser, memberId: string): Promise<"ok" | "not-found" | "denied"> {
+  const org = await loadOrg();
+  if (!(await canManageMember(user, memberId, org))) {
+    // Só revela a inexistência a quem teria acesso ao colaborador se ele existisse (escopo empresa).
+    return org.users.some((u) => u.id === memberId) || (await managerScopeKind(user)) !== "empresa" ? "denied" : "not-found";
+  }
+  return "ok";
 }
 
 // ---------------------------------------------------------------------------
@@ -435,7 +480,8 @@ export interface ManagerDashboard {
   criticalKpis: KpiResult[];
   scorecards: Scorecard[];
   insights: Insight[];
-  reassign: { targets: { id: string; name: string; subtitle: string }[]; tasksByUser: Record<string, ReassignTask[]> };
+  /** Redistribuição de tarefas: só com `gestao.dashboard.atribuir` (sem a chave, nada é enviado ao cliente). */
+  reassign: { canRedistribute: boolean; targets: { id: string; name: string; subtitle: string }[]; tasksByUser: Record<string, ReassignTask[]> };
   summary: ManagerSummary;
   week: TeamWeek;
   goals: DepartmentGoalRow[];
@@ -525,8 +571,8 @@ function resultFor(status: KpiStatus | null): MemberRow["result"] {
 
 export async function getManagerDashboard(user: CurrentUser, options: { departamento?: string; period: Period }): Promise<ManagerDashboard> {
   const { period } = options;
-  const { users, departments } = await loadOrg();
-  const scope = scopeFrom(user, options.departamento, users, departments);
+  const [{ users, departments }, limit] = await Promise.all([loadOrg(), managerScopeKind(user)]);
+  const scope = scopeFrom(user, options.departamento, users, departments, limit);
   const memberIds = scope.members.map((m) => m.id);
   const memberSet = new Set(memberIds);
 
@@ -608,12 +654,13 @@ export async function getManagerDashboard(user: CurrentUser, options: { departam
   const criticalKpis = scorecards.flatMap((s) => s.items.filter((r) => r.status === "critico"));
   const teamClients = scope.kind === "empresa" ? clients : clients.filter((c) => c.memberIds.length > 0);
 
+  const canRedistribute = can(user, "gestao.dashboard.atribuir");
   const tasksByUser: Record<string, ReassignTask[]> = {};
-  for (const t of data.tasks.filter((x) => isOpenStatus(x.status)).sort((a, b) => ((a.dueAt ?? "9999") < (b.dueAt ?? "9999") ? -1 : 1))) {
+  for (const t of data.tasks.filter((x) => canRedistribute && isOpenStatus(x.status)).sort((a, b) => ((a.dueAt ?? "9999") < (b.dueAt ?? "9999") ? -1 : 1))) {
     if (!t.assigneeId) continue;
     (tasksByUser[t.assigneeId] ??= []).push({ id: t.id, title: t.title, dueLabel: t.dueAt ? dateLabel(t.dueAt, today) : undefined, overdue: isOverdue(t, today), clientName: t.clientName, priority: t.priority });
   }
-  const targets = [...scope.members, ...(memberSet.has(user.id) ? [] : [user])].map((u) => ({ id: u.id, name: u.name, subtitle: u.jobTitle ?? DEPARTMENT_LABELS[u.departmentId] })).sort(byName);
+  const targets = (canRedistribute ? [...scope.members, ...(memberSet.has(user.id) ? [] : [user])] : []).map((u) => ({ id: u.id, name: u.name, subtitle: u.jobTitle ?? DEPARTMENT_LABELS[u.departmentId] })).sort(byName);
 
   const stats: Record<FocusKey, number> = {
     atrasadas: members.reduce((s, m) => s + m.overdueTasks, 0),
@@ -689,7 +736,7 @@ export async function getManagerDashboard(user: CurrentUser, options: { departam
     criticalKpis,
     scorecards,
     insights,
-    reassign: { targets, tasksByUser },
+    reassign: { canRedistribute, targets, tasksByUser },
   };
 }
 
@@ -727,6 +774,8 @@ export interface TeamMemberView {
   bonus: BonusProjection | null;
   events: MemberEvent[];
   reassignTargets: { id: string; name: string; subtitle: string }[];
+  /** Pode redistribuir as tarefas do colaborador (`gestao.dashboard.atribuir`). */
+  canRedistribute: boolean;
 }
 
 function num(value: unknown): number | null {
@@ -770,8 +819,8 @@ function eventHref(e: DomainEvent): string | undefined {
 }
 
 export async function getTeamMemberView(user: CurrentUser, memberId: string, period: Period): Promise<TeamMemberView | null> {
-  const { users, departments } = await loadOrg();
-  if (!canManageMember(user, memberId, users)) return null;
+  const [{ users, departments }, limit] = await Promise.all([loadOrg(), managerScopeKind(user)]);
+  if (!(await canManageMember(user, memberId, { users, departments }))) return null;
   const member = users.find((u) => u.id === memberId);
   if (!member) return null;
 
@@ -816,8 +865,9 @@ export async function getTeamMemberView(user: CurrentUser, memberId: string, per
     .map((e) => ({ id: e.id, title: e.title, description: e.description, occurredAt: e.occurredAt, occurredLabel: dateLabel(e.occurredAt, today), href: eventHref(e) }));
 
   const manager = member.managerId ? users.find((u) => u.id === member.managerId) : undefined;
-  const scope = scopeFrom(user, user.isDirector ? member.departmentId : undefined, users, departments);
-  const reassignTargets = [...scope.members, user]
+  const scope = scopeFrom(user, limit === "empresa" ? member.departmentId : undefined, users, departments, limit);
+  const canRedistribute = can(user, "gestao.dashboard.atribuir");
+  const reassignTargets = (canRedistribute ? [...scope.members, user] : [])
     .filter((u, i, arr) => u.id !== memberId && arr.findIndex((x) => x.id === u.id) === i)
     .map((u) => ({ id: u.id, name: u.name, subtitle: u.jobTitle ?? DEPARTMENT_LABELS[u.departmentId] }))
     .sort(byName);
@@ -842,10 +892,11 @@ export async function getTeamMemberView(user: CurrentUser, memberId: string, per
     bonus,
     events: recent,
     reassignTargets,
+    canRedistribute,
   };
 }
 
-/** Nome do colaborador para metadados da página (sem checagem de escopo). */
+/** Nome do colaborador para metadados da página (sem checagem de escopo: o chamador checa antes — A30). */
 export async function getMemberName(memberId: string): Promise<string | null> {
   const u = await getById<User>(COLLECTIONS.users, memberId);
   return u?.name ?? null;

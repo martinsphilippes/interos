@@ -21,6 +21,7 @@ import type {
   TaskStatus,
   WorkflowStepStatus,
 } from "./constants";
+import type { EffectivePermissions, ModuleKey, PermissionKey, ScopeKind, ScreenKey } from "./permissions";
 
 export const COLLECTIONS = {
   organizations: "organizations",
@@ -84,6 +85,21 @@ export const COLLECTIONS = {
   processDefinitions: "process_definitions",
   /** Execuções das definições de processo (uma por gatilho disparado). */
   processRuns: "process_runs",
+  /** Contadores transacionais de numeração (VEN, CT, PR…): um documento por prefixo e ano. Ver `nextNumber` em db.ts. */
+  counters: "counters",
+  /** Contas a pagar (títulos): comissões elegíveis, bônus e lançamentos manuais do Financeiro. */
+  payables: "payables",
+  /** Eventos de pagamento recebidos do provedor de cobrança (id `<provedor>_<eventId>`): deduplicação da baixa automática. */
+  paymentEvents: "payment_events",
+  /** Aditivos do MESMO contrato (id `cta_<contractId>_<n>`): itens, condições, renovação e reajuste com antes/depois. */
+  contractAmendments: "contract_amendments",
+  /** Fornecedores (credores de Contas a Pagar) — NÃO é cadastro de clientes. */
+  suppliers: "suppliers",
+  /**
+   * Ajustes de acesso (A6): `role_<papel>` = ajustes do perfil; `user_<uid>` = exceções individuais. Somente
+   * servidor (regra `if false`); ausência de documento = regra padrão do catálogo.
+   */
+  permissionProfiles: "permission_profiles",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -133,6 +149,33 @@ export interface Organization extends BaseEntity {
   slug: string;
   timezone: string;
   logoUrl?: string;
+  /**
+   * Módulos ativos na empresa (A8). Ausente = todos. `inicio` e `admin` nunca são desativados. Módulo inativo nega
+   * todo o módulo a todos (admin incluído), sem apagar dados.
+   */
+  activeModules?: ModuleKey[];
+  /**
+   * Módulos DESATIVADOS na empresa; ausente/vazio = todos ativos. Tem prioridade sobre `activeModules` (com ele, um
+   * módulo novo do catálogo nasce ligado). `saveActiveModules` grava os dois campos.
+   */
+  inactiveModules?: ModuleKey[];
+}
+
+/**
+ * Ajustes de acesso (A6), coleção `permission_profiles`. `grants` permite (true) ou nega (false) uma chave do
+ * catálogo; chave ausente = valor do nível mais geral (perfil → regra padrão). `scopes` fixa o escopo de dados de
+ * uma tela, sempre dentro dos escopos permitidos da tela.
+ */
+export interface PermissionProfile extends BaseEntity {
+  /** "role" = perfil (papel), id `role_<papel>`; "user" = exceções de um usuário, id `user_<uid>`. */
+  kind: "role" | "user";
+  role?: RoleKey;
+  userId?: string;
+  grants: Partial<Record<PermissionKey, boolean>>;
+  scopes: Partial<Record<ScreenKey, ScopeKind>>;
+  /** Motivo (obrigatório nas exceções individuais). */
+  reason?: string;
+  updatedBy?: UserRef;
 }
 
 export interface User extends BaseEntity {
@@ -205,6 +248,8 @@ export interface Client extends BaseEntity {
   /** Instância de workflow atual (jornada principal). */
   workflowInstanceId?: string;
   currentStage?: JourneyStage;
+  /** Opt-out de comunicação por canal (respeitado por `sendOrRecord`: nada é enviado e o registro fica "não enviada"). */
+  communicationOptOut?: { whatsapp?: boolean; email?: boolean };
 }
 
 export interface Contact extends BaseEntity {
@@ -231,6 +276,8 @@ export interface ClientProduct extends BaseEntity {
   contractId?: string;
   startedAt?: string;
   cancelledAt?: string;
+  /** Motivo do cancelamento pelo aditivo (item removido do contrato). */
+  cancelReason?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +453,50 @@ export interface Opportunity extends BaseEntity {
   lossNotes?: string;
   proposalId?: string;
   contractId?: string;
+  /** Número da venda "VEN-AAAA-NNNN", gravado quando a oportunidade é ganha (contador transacional). */
+  saleNumber?: string;
+  /** Condições estruturadas do fechamento (vendas antigas não têm; o contrato usa os padrões). */
+  closing?: OpportunityClosing;
+}
+
+export const SALE_PAYMENT_METHODS = ["boleto", "pix", "cartao", "transferencia", "dinheiro"] as const;
+export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
+
+/** Condições comerciais combinadas no fechamento da venda (bloco "Condições do fechamento" do WonDialog). */
+export interface OpportunityClosing {
+  paymentMethod: SalePaymentMethod;
+  /** Dia de vencimento da mensalidade (1–28). */
+  billingDay: number;
+  /** 1º vencimento combinado (ISO); sem valor, o Financeiro usa o próximo dia de vencimento. */
+  firstDueDate?: string;
+  termMonths: number;
+  recurrence: "mensal" | "anual" | "unico";
+  /** Em quantas cobranças a adesão é dividida (1 = à vista). */
+  setupInstallments: number;
+  /** Contato responsável do cliente (vira o signatário principal do contrato). */
+  contactId?: string;
+  contactName?: string;
+  implementationRequired: boolean;
+  implementationNotes?: string;
+  commercialNotes?: string;
+  /** Proposta aceita usada como base dos itens (quando houver). */
+  proposalId?: string;
+  closedAt: string;
+  closedBy: string;
+  // Renovação (D26) — opcionais: vendas antigas não têm.
+  autoRenew?: boolean;
+  renewalTermMonths?: number;
+  readjustment?: ContractReadjustment;
+  noticeDays?: number;
+}
+
+/** Reajuste combinado para a renovação: nenhum, percentual informado ou índice (informado pelo CS a cada renovação). */
+export interface ContractReadjustment {
+  type: "nenhum" | "percentual" | "indice";
+  percent?: number;
+  index?: "ipca" | "igpm" | "inpc";
+  /** Renovação automática com índice: o índice NÃO é buscado — renova sem reajuste e fica pendente para o CS informar. */
+  pending?: boolean;
 }
 
 export interface Visit extends BaseEntity {
@@ -425,6 +516,18 @@ export interface Visit extends BaseEntity {
 
 export type ProposalStatus = "rascunho" | "enviada" | "visualizada" | "negociacao" | "aceita" | "recusada" | "vencida";
 
+/**
+ * Origem de um item incluído por aditivo (D25): a 1ª mensalidade que já o inclui e, quando houver, a cobrança avulsa
+ * de adesão/hardware (nº da parcela) gerada pelo aditivo. O motor de comissões só planeja parcelas a partir daí —
+ * mensalidades pagas antes do item não geram comissão sobre ele. Ausente = item no contrato desde a origem.
+ */
+export interface ItemSince {
+  amendmentId: string;
+  installment: number;
+  setupInstallment?: number;
+  hardwareInstallment?: number;
+}
+
 export interface ProposalItem {
   productId: string;
   productName: string;
@@ -433,6 +536,7 @@ export interface ProposalItem {
   monthlyValue: number;
   hardwareValue: number;
   discountPct: number;
+  since?: ItemSince;
 }
 
 export interface Proposal extends BaseEntity {
@@ -516,6 +620,153 @@ export interface Contract extends BaseEntity {
   pendingReason?: string;
   ownerId?: string;
   documentIds: string[];
+  // Campos do circuito Venda → Contrato (opcionais: contratos antigos não têm).
+  /** Forma de pagamento combinada na venda (usada nas cobranças geradas). */
+  paymentMethod?: SalePaymentMethod;
+  /** Adesão dividida em N cobranças (1 = à vista). */
+  setupInstallments?: number;
+  /** false quando a venda não contratou implantação (o projeto é criado com aviso). */
+  implementationRequired?: boolean;
+  commercialNotes?: string;
+  implementationNotes?: string;
+  /** Número da venda (VEN-AAAA-NNNN) que originou o contrato. */
+  saleNumber?: string;
+  /** Vendedor da venda (dono da oportunidade). */
+  sellerId?: string;
+  /** Contato responsável do cliente (signatário principal). */
+  contactId?: string;
+  cancelledAt?: string;
+  cancelReason?: string;
+  cancelledBy?: string;
+  // Renovação (D26) — opcionais: contratos antigos não têm (renovação pelo fluxo humano do CS).
+  /** Renova automaticamente ao fim da vigência (varredura `renovacoes`). */
+  autoRenew?: boolean;
+  /** Prazo de cada renovação em meses (padrão: o prazo do contrato). */
+  renewalTermMonths?: number;
+  readjustment?: ContractReadjustment;
+  /** Dias antes do fim da vigência em que a renovação automática é aplicada (padrão 30). */
+  noticeDays?: number;
+  // Aditivos e versões (D25) — opcionais.
+  /** Aditivos APLICADOS a este contrato, na ordem (`contract_amendments`). */
+  amendmentIds?: string[];
+  /** Versões anteriores: snapshot completo de cada revisão pré-assinatura e de cada aditivo aplicado. */
+  previousVersions?: ContractVersionEntry[];
+}
+
+/**
+ * Snapshot das cláusulas que o documento/hash cobre: itens, totais e condições (+ signatários e vigência).
+ * Guardado em `previousVersions` (versão anterior) e em `ContractAmendment.before/after`.
+ */
+export interface ContractSnapshot {
+  version: number;
+  items: ProposalItem[];
+  setupTotal: number;
+  monthlyTotal: number;
+  hardwareTotal: number;
+  billingDay: number;
+  recurrence: Contract["recurrence"];
+  termMonths: number;
+  firstDueDate?: string;
+  startDate?: string;
+  endDate?: string;
+  paymentMethod?: SalePaymentMethod;
+  setupInstallments?: number;
+  paymentCondition?: string;
+  documentHash?: string;
+  signers?: { name: string; email: string; role: string }[];
+  autoRenew?: boolean;
+  renewalTermMonths?: number;
+  readjustment?: ContractReadjustment;
+  noticeDays?: number;
+}
+
+/** Entrada de `Contract.previousVersions`: como o contrato estava antes da revisão/aditivo. */
+export interface ContractVersionEntry {
+  version: number;
+  kind: "revisao" | "aditivo";
+  at: string;
+  by: string;
+  reason?: string;
+  amendmentId?: string;
+  /** Documento gerado para assinatura naquela versão (quando havia). */
+  envelopeId?: string;
+  snapshot: ContractSnapshot;
+}
+
+export type ContractAmendmentKind = "itens" | "condicoes" | "renovacao" | "reajuste" | "misto";
+export type ContractAmendmentStatus = "rascunho" | "aguardando_assinatura" | "assinado" | "aplicado" | "cancelado";
+
+/**
+ * Aditivo do MESMO contrato (D25): id `cta_<contractId>_<n>`, número `<contrato>-A<nn>`. Fluxo
+ * rascunho → aguardando_assinatura → assinado → aplicado (ou cancelado). `before/after` são snapshots completos;
+ * `changes` = de → para (auditChanges). A assinatura do aditivo tem hash próprio e NÃO altera o hash do contrato.
+ */
+export interface ContractAmendment extends BaseEntity {
+  number: string;
+  contractId: string;
+  clientId: string;
+  kind: ContractAmendmentKind;
+  status: ContractAmendmentStatus;
+  /** Vigência do aditivo (AAAA-MM-DD): cobranças abertas com competência ≥ esta data são refeitas. */
+  effectiveFrom: string;
+  reason: string;
+  requiresSignature: boolean;
+  before: ContractSnapshot;
+  after: ContractSnapshot;
+  changes: Record<string, { from: unknown; to: unknown }>;
+  signers?: ContractSignerEntry[];
+  documentHash?: string;
+  sentAt?: string;
+  signedAt?: string;
+  appliedAt?: string;
+  appliedBy?: string;
+  /** Versão do contrato depois da aplicação. */
+  appliedVersion?: number;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+  /** Origem: página do contrato, renovação pelo CS ou renovação automática (varredura). */
+  source?: "financeiro" | "renovacao_cs" | "renovacao_automatica";
+  renewalId?: string;
+  /** Reajuste aplicado na renovação (percentual) ou pendente (índice a informar). */
+  readjustment?: ContractReadjustment;
+  /** Renovação: meses acrescentados à vigência (mensalidades a gerar na aplicação). */
+  renewalMonths?: number;
+  /** Cobranças refeitas na aplicação (canceladas → recriadas com a mesma numeração). */
+  billingsRebuilt?: { cancelled: string[]; created: string[] };
+  /** Itens novos que exigem implantação: só aviso ao gestor (nenhum projeto automático). */
+  implementationNoticeProductIds?: string[];
+}
+
+/** Situação da cobrança no provedor (ou no controle manual do boleto). */
+export type BillingChargeStatus = "aguardando_emissao_manual" | "pendente" | "pago" | "vencido" | "cancelado" | "desconhecido";
+
+/** Origem da baixa: registro manual do Financeiro, webhook do provedor ou conciliação (varredura). */
+export type PaymentSource = "manual" | "provedor" | "conciliacao";
+
+/** Dados do boleto (emitido no banco/ERP e registrado à mão, ou devolvido pelo provedor). */
+export interface BillingBoleto {
+  linhaDigitavel?: string;
+  nossoNumero?: string;
+  codigoBarras?: string;
+  pdfUrl?: string;
+  /** Documento em `documents` (categoria "Boleto") quando há PDF. */
+  documentId?: string;
+  emitidoEm?: string;
+  banco?: string;
+}
+
+/** Pagamento estornado (a cobrança voltou a aberta/vencida). */
+export interface BillingReversedPayment {
+  paidAt: string;
+  paidAmount: number;
+  method?: string;
+  source?: PaymentSource;
+  externalPaymentId?: string;
+  receiptDocumentId?: string;
+  reversedAt: string;
+  reversedBy: string;
+  reason: string;
 }
 
 export interface Billing extends BaseEntity {
@@ -531,6 +782,42 @@ export interface Billing extends BaseEntity {
   status: "aberta" | "paga" | "vencida" | "cancelada";
   method?: string;
   receiptDocumentId?: string;
+  // Boleto, provedor e baixa (etapa 4) — opcionais: cobranças antigas não têm.
+  /** "manual" (boleto registrado à mão) ou nome do provedor de cobrança. */
+  provider?: string;
+  /** Id da cobrança no provedor. */
+  externalId?: string;
+  chargeStatus?: BillingChargeStatus;
+  /** Link de pagamento (boleto/PIX) devolvido pelo provedor. */
+  paymentUrl?: string;
+  boleto?: BillingBoleto;
+  pix?: { copiaECola?: string; qrCodeUrl?: string };
+  /** Origem da baixa registrada. */
+  paymentSource?: PaymentSource;
+  /** Id do pagamento no provedor (deduplicação da baixa automática). */
+  externalPaymentId?: string;
+  /** Pagamento parcial recebido automaticamente que NÃO baixou a cobrança (pendência registrada). */
+  partialPaidAmount?: number;
+  partialPaidAt?: string;
+  reversedPayments?: BillingReversedPayment[];
+}
+
+/**
+ * Evento de pagamento recebido de fora (webhook do provedor ou conciliação). Id determinístico
+ * `<provedor>_<eventId>`, criado com createIfAbsent ANTES da baixa: o reenvio do mesmo evento é "já processado".
+ */
+export interface PaymentEvent extends BaseEntity {
+  provider: string;
+  eventId: string;
+  source: PaymentSource;
+  billingId?: string;
+  externalId?: string;
+  externalPaymentId?: string;
+  paidAmount?: number;
+  paidAt?: string;
+  receivedAt: string;
+  result?: "processado" | "ja_processado" | "parcial" | "ignorado" | "erro";
+  message?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -599,6 +886,33 @@ export interface ImplementationProject extends BaseEntity {
   validation?: { validatedBy: string; validatedAt: string; notes?: string };
   /** Bloqueio interno ativo (atraso contado em internalDelayDays ao desbloquear). */
   blocked?: { reason: string; since: string; byId: string };
+  /** Dados da venda congelados na criação do projeto (handoff Vendas → Implantação). Projetos antigos não têm. */
+  saleSnapshot?: SaleSnapshot;
+}
+
+/** Resumo da venda entregue à Implantação (fotografia no momento da liberação do contrato). */
+export interface SaleSnapshot {
+  opportunityId?: string;
+  saleNumber?: string;
+  contractNumber?: string;
+  sellerId?: string;
+  contactId?: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  paymentMethod?: SalePaymentMethod;
+  commercialNotes?: string;
+  implementationNotes?: string;
+  /** false: a venda não contratou implantação (projeto criado apenas para não quebrar a jornada). */
+  implementationRequired?: boolean;
+  items: { productId: string; productName: string; quantity: number; setupValue: number; monthlyValue: number; hardwareValue: number }[];
+  termMonths?: number;
+  billingDay?: number;
+  monthlyTotal: number;
+  setupTotal: number;
+  hardwareTotal: number;
+  setupInstallments?: number;
+  capturedAt: string;
 }
 
 export interface ImplementationTask extends BaseEntity {
@@ -1024,15 +1338,96 @@ export interface BonusBlock extends BaseEntity {
   status: "aberto" | "confirmado" | "revogado";
 }
 
+export type CommissionRevenueType = "setup" | "recorrencia" | "hardware";
+/** Abrangência da regra (precedência: contrato > vendedor > produto > padrão). Regras antigas (sem campo) = "padrao". */
+export type CommissionRuleScope = "padrao" | "vendedor" | "contrato";
+/** Quando a comissão fica elegível. Regras antigas derivam do `releaseCondition` (ver src/server/commissions/rules.ts). */
+export type CommissionTrigger = "venda" | "contrato_assinado" | "primeiro_pagamento" | "pagamento" | "permanencia" | "pagamento_e_permanencia" | "mensalidade_n";
+/** Base de cálculo: valor contratado (itens líquidos do contrato) ou valor efetivamente recebido na cobrança. */
+export type CommissionBaseSource = "contratado" | "recebido";
+
 export interface CommissionRule extends BaseEntity {
   name: string;
   productId?: string;
-  revenueType: "setup" | "recorrencia" | "hardware";
+  revenueType: CommissionRevenueType;
   mode: "percentual" | "valor";
   value: number;
   releaseCondition: "venda" | "contrato_assinado" | "pagamento" | "parcela";
+  /**
+   * N-ésima mensalidade paga. Recorrência: 1ª mensalidade que gera comissão (padrão 1; regras antigas "parcela": a N-ésima).
+   * Gatilho "mensalidade_n": a comissão (de qualquer tipo) só é adquirida quando a N-ésima mensalidade é paga.
+   */
   releaseInstallment?: number;
   active: boolean;
+  // Motor v2 (D10) — todos opcionais: regras antigas continuam valendo como "padrão".
+  scope?: CommissionRuleScope;
+  /** Vendedor (scope "vendedor"). */
+  userId?: string;
+  /** Contrato da exceção (scope "contrato"). */
+  contractId?: string;
+  clientId?: string;
+  /** Categoria de produto (alternativa ao productId). */
+  productCategory?: ProductCategory;
+  trigger?: CommissionTrigger;
+  /** Carência em dias a partir do início do contrato (startDate, ou releasedAt). */
+  minTenureDays?: number;
+  /** Recorrência: quantas competências geram comissão a partir de `releaseInstallment` (null/ausente = enquanto ativo). */
+  recurringCompetences?: number | null;
+  baseSource?: CommissionBaseSource;
+  /** Vigência (AAAA-MM-DD) comparada com a data da venda. */
+  validFrom?: string;
+  validTo?: string;
+  /** true (padrão): substitui as regras de nível inferior para o tipo de receita; false: soma-se a elas. */
+  overridesDefault?: boolean;
+  /** Motivo (obrigatório em exceção por contrato). */
+  reason?: string;
+  approvedBy?: string;
+  updatedBy?: string;
+}
+
+/**
+ * Situação da comissão: prevista (projeção) → em_carencia / aguardando_recebimento → liberada ("Elegível") →
+ * titulo_gerado → paga. cancelada (não adquirida), estornada (revertida manualmente) e bloqueada (retida pelo Financeiro).
+ */
+export type CommissionStatus = "prevista" | "em_carencia" | "aguardando_recebimento" | "liberada" | "titulo_gerado" | "paga" | "cancelada" | "bloqueada" | "estornada";
+
+/** Passo da memória de cálculo (padrão do BonusBreakdown). */
+export interface CommissionCalcStep {
+  label: string;
+  value: string;
+  date?: string;
+}
+
+/** Regra efetiva congelada no documento da comissão. */
+export interface CommissionRuleSnapshot {
+  id: string;
+  name: string;
+  scope: CommissionRuleScope | "produto";
+  revenueType: CommissionRevenueType;
+  mode: "percentual" | "valor";
+  value: number;
+  trigger: CommissionTrigger;
+  baseSource: CommissionBaseSource;
+  minTenureDays: number;
+  recurringCompetences: number | null;
+  releaseInstallment: number;
+  overridesDefault: boolean;
+  userId?: string;
+  contractId?: string;
+  productId?: string;
+  productCategory?: string;
+  reason?: string;
+  /** Origem da regra: documento em commission_rules ou padrão do cadastro do produto. */
+  source: "regra" | "produto";
+}
+
+export interface CommissionHistoryEntry {
+  at: string;
+  by: string;
+  byName?: string;
+  from?: CommissionStatus;
+  to: CommissionStatus;
+  note?: string;
 }
 
 export interface Commission extends BaseEntity {
@@ -1041,14 +1436,139 @@ export interface Commission extends BaseEntity {
   contractId?: string;
   opportunityId?: string;
   productId?: string;
-  revenueType: "setup" | "recorrencia" | "hardware";
+  revenueType: CommissionRevenueType;
   baseAmount: number;
   amount: number;
   competence: string;
-  status: "prevista" | "liberada" | "paga" | "cancelada";
+  status: CommissionStatus;
   releaseAt?: string;
   paidAt?: string;
   ruleId?: string;
+  // Motor v2 (D11) — opcionais: comissões antigas não têm.
+  /** COM-AAAA-NNNNN (numeração transacional). */
+  code?: string;
+  /** Chave de idempotência: contractId|revenueType|productId|parcela|ruleId (o id é com_<hash>). */
+  sourceKey?: string;
+  /** Parcela da chave: "s1".."sN" (adesão), "hw" (hardware), "m<N>" (N-ésima mensalidade). */
+  slot?: string;
+  saleNumber?: string;
+  productName?: string;
+  ruleSnapshot?: CommissionRuleSnapshot;
+  calc?: { steps: CommissionCalcStep[]; formula: string };
+  /** Cobrança que originou/libera a comissão. */
+  billingId?: string;
+  installment?: number;
+  /** Gatilho "N-ésima mensalidade paga" (D27): cobrança da N-ésima mensalidade e o vencimento dela (previsão). */
+  gateBillingId?: string;
+  expectedAt?: string;
+  /** Data em que ficou (ou fica, na carência) elegível. */
+  eligibleAt?: string;
+  payableId?: string;
+  /** Títulos anteriores cancelados (a comissão voltou a Elegível). */
+  previousPayableIds?: string[];
+  cancelledAt?: string;
+  cancelReason?: string;
+  blockedReason?: string;
+  reversedAt?: string;
+  reverseReason?: string;
+  reversedBy?: string;
+  /** Título negativo que registra o estorno de uma comissão já paga. */
+  reversalPayableId?: string;
+  history?: CommissionHistoryEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Contas a pagar (D13)
+// ---------------------------------------------------------------------------
+
+export type PayableStatus = "previsto" | "aprovado" | "a_pagar" | "pago" | "cancelado";
+/** Categorias fixas do circuito + qualquer categoria do setting `contas_a_pagar` (valores antigos preservados). */
+export type PayableCategory = "comissao_comercial" | "bonus" | "outros" | "estorno_comissao" | (string & {});
+export type PayableOrigin = "comissao_automatica" | "bonus" | "manual" | "estorno" | "recorrencia";
+
+/** Recorrência de um título manual: a varredura `contas_recorrentes` cria a próxima ocorrência 30 dias antes do vencimento. */
+export interface PayableRecurrence {
+  frequency: "mensal" | "anual";
+  dayOfMonth: number;
+  /** AAAA-MM-DD: nada é gerado depois desta data. */
+  until?: string;
+}
+
+/** Fornecedor (credor de Contas a Pagar). Não é cliente. */
+export interface Supplier extends BaseEntity {
+  name: string;
+  document?: string;
+  email?: string;
+  phone?: string;
+  pixKey?: string;
+  bank?: { banco?: string; agencia?: string; conta?: string };
+  category?: string;
+  notes?: string;
+  active: boolean;
+  updatedBy?: string;
+}
+
+export interface PayableHistoryEntry {
+  at: string;
+  by: string;
+  byName?: string;
+  action: string;
+  from?: PayableStatus;
+  to?: PayableStatus;
+  reason?: string;
+  changes?: Record<string, { from: unknown; to: unknown }>;
+}
+
+export interface Payable extends BaseEntity {
+  /** PAG-AAAA-NNNNN (numeração transacional). */
+  code?: string;
+  creditorType: "colaborador" | "fornecedor";
+  creditorId?: string;
+  creditorName: string;
+  category: PayableCategory;
+  description: string;
+  /** Negativo no estorno de comissão já paga (valor a recuperar). */
+  amount: number;
+  competence: string;
+  dueDate: string;
+  status: PayableStatus;
+  origin: PayableOrigin;
+  sourceIds: {
+    commissionIds: string[];
+    contractId?: string;
+    opportunityId?: string;
+    saleNumber?: string;
+    billingId?: string;
+    clientId?: string;
+    /** Título original quando este registra um estorno. */
+    reversalOf?: string;
+  };
+  approvedBy?: string;
+  approvedAt?: string;
+  scheduledBy?: string;
+  scheduledAt?: string;
+  paidAt?: string;
+  paidBy?: string;
+  paymentMethod?: string;
+  receiptUrl?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+  notes?: string;
+  history: PayableHistoryEntry[];
+  // Contas a Pagar geral (D28) — opcionais: títulos antigos não têm.
+  supplierId?: string;
+  costCenter?: string;
+  /** Parcela n de N (títulos parcelados: `pag_<base>_p<n>`). */
+  installment?: number;
+  installments?: number;
+  /** Série recorrente (`seriesId`) e regra; ocorrências: `pag_rec_<seriesId>_<AAAA-MM>`. */
+  seriesId?: string;
+  recurrence?: PayableRecurrence;
+  /** Anexos em `documents` (entityType "payable"). */
+  attachmentIds?: string[];
+  /** Vencido: aviso ao Financeiro já enviado (1× por título). */
+  overdueNotifiedAt?: string;
 }
 
 export interface GamificationPoints extends BaseEntity {
@@ -1238,12 +1758,16 @@ export interface Communication extends BaseEntity {
    * "manual": contato feito fora do sistema (canal não conectado) e registrado à mão.
    * "simulada": legado de registros antigos; não é mais gravado.
    */
-  status: "enviada" | "entregue" | "lida" | "falha" | "simulada" | "recebida" | "manual";
+  status: "enviada" | "entregue" | "lida" | "falha" | "simulada" | "recebida" | "manual" | "nao_enviada";
   durationSeconds?: number;
   recordingUrl?: string;
   externalId?: string;
   /** "manual" = sem provedor (registro manual); "resend" = e-mail transacional; "mock" = legado. */
   provider: "mock" | "meta" | "twilio" | "outro" | "manual" | "resend";
+  /** Última atualização de status vinda do provedor (webhook: entregue/lida/falha). */
+  statusUpdatedAt?: string;
+  /** Motivo de "falha"/"nao_enviada" (erro do provedor, opt-out, canal não conectado). */
+  error?: string;
 }
 
 export interface Settings extends BaseEntity {
@@ -1252,9 +1776,18 @@ export interface Settings extends BaseEntity {
   description?: string;
 }
 
+/** Contador de numeração (coleção `counters`): último número emitido para prefixo + ano. */
+export interface Counter extends BaseEntity {
+  prefix: string;
+  year?: string;
+  value: number;
+}
+
 /** Usuário autenticado com dados de sessão. */
 export interface CurrentUser extends User {
   isAdmin: boolean;
   isManager: boolean;
   isDirector: boolean;
+  /** Permissões efetivas (catálogo + perfil + exceções + módulos ativos), resolvidas em getCurrentUser. */
+  permissions: EffectivePermissions;
 }

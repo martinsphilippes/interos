@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Layers, Package, PackageCheck, Repeat } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
 import { listProductsForAdmin } from "@/server/admin/queries";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -12,7 +12,8 @@ import { ProductsWorkspace } from "@/components/admin/products-workspace";
 export const metadata: Metadata = { title: "Produtos" };
 
 export default async function ProdutosPage() {
-  await requireRole("admin");
+  const user = await requireScreen("admin.produtos");
+  const permissions = { create: can(user, "admin.produtos.criar"), edit: can(user, "admin.produtos.editar"), toggle: can(user, "admin.produtos.ativar") };
   const { products, templates } = await listProductsForAdmin();
 
   const active = products.filter((p) => p.active);
@@ -33,7 +34,7 @@ export default async function ProdutosPage() {
       </div>
 
       <Suspense fallback={null}>
-        <ProductsWorkspace products={products} templates={templates} />
+        <ProductsWorkspace products={products} templates={templates} permissions={permissions} />
       </Suspense>
     </PageContainer>
   );

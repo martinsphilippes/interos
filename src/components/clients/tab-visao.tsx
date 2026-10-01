@@ -42,9 +42,12 @@ import type { Tone } from "@/components/ui/tone";
 import { eventIconComponent, eventTone } from "@/components/timeline/event-icon";
 import { cn } from "@/lib/utils";
 import { ContactsCard } from "./contacts-card";
-import { CLIENT_PRODUCT_STATUS_LABELS, TICKET_STATUS_LABELS, TICKET_STATUS_VARIANT } from "./labels";
-import { buildPendencies, buildUpcoming, productRenewalDate, type Pendency, type UpcomingItem } from "./overview-model";
+import { ALL_CLIENT_CAPABILITIES, ALL_CLIENT_SECTIONS, type ClientCapabilities, type ClientSectionAccess } from "./access-model";
+import { BILLING_TYPE_LABELS, CLIENT_PRODUCT_STATUS_LABELS, TICKET_STATUS_LABELS, TICKET_STATUS_VARIANT } from "./labels";
+import { buildPendencies, buildUpcoming, contractSummaryOf, currentContract, productRenewalDate, type Pendency, type UpcomingItem } from "./overview-model";
 import { productVisual } from "@/components/ui/product-visual";
+import { ContractSummaryCard } from "@/components/finance/contract-summary-card";
+import { money } from "@/components/finance/values";
 
 const OPEN_TASK = new Set<TaskStatus>(["aberta", "em_andamento", "aguardando"]);
 const TASK_STATUS_VARIANT: Record<TaskStatus, NonNullable<BadgeProps["variant"]>> = { aberta: "warning", em_andamento: "info", aguardando: "purple", concluida: "success", cancelada: "muted" };
@@ -58,7 +61,9 @@ const VISIT_STATUS: Record<string, { label: string; variant: NonNullable<BadgePr
   remarcada: { label: "Remarcada", variant: "warning" },
 };
 
-function SectionCard({ title, icon, action, children, className, contentClassName }: { title: string; icon: React.ReactNode; action?: React.ReactNode; children: React.ReactNode; className?: string; contentClassName?: string }) {
+/** `hidden`: seção da ficha negada ao usuário (os dados nem foram carregados) — o cartão não aparece. */
+function SectionCard({ title, icon, action, children, className, contentClassName, hidden }: { title: string; icon: React.ReactNode; action?: React.ReactNode; children: React.ReactNode; className?: string; contentClassName?: string; hidden?: boolean }) {
+  if (hidden) return null;
   return (
     <Card className={cn("flex min-w-0 flex-col", className)}>
       <CardHeader className="flex-row items-center justify-between gap-2 pb-3">
@@ -111,10 +116,14 @@ export interface TabVisaoProps {
   data: Client360;
   originName?: string;
   ticketOptions: NewTicketOptions | null;
+  /** Seções visíveis (calculadas no servidor): cartão de seção negada não aparece. */
+  sections?: ClientSectionAccess;
+  /** Ações permitidas (calculadas no servidor): só escondem controles. */
+  can?: ClientCapabilities;
 }
 
 /** Aba Visão geral (padrão da ficha): resumo de cada área com atalho para a aba de detalhe. */
-export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
+export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIENT_SECTIONS, can = ALL_CLIENT_CAPABILITIES }: TabVisaoProps) {
   const { client, contacts, products, catalog, users, tasks, tickets, timeline, visits, slaByEntity } = data;
   const base = `/clientes/${client.id}`;
   const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
@@ -126,6 +135,9 @@ export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
   const lastTickets = tickets.slice(0, 5);
   const pendencies = buildPendencies(data);
   const upcoming = buildUpcoming(data).slice(0, 5);
+  const contract = currentContract(data);
+  const summary = contract ? contractSummaryOf(data, contract) : null;
+  const lastPayment = data.financial.lastPayment;
   const now = new Date().toISOString();
   const scheduledVisits = visits.filter((v) => v.status === "agendada" && v.scheduledAt >= now).sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
   const pastVisits = visits.filter((v) => !scheduledVisits.includes(v)).slice(0, 4);
@@ -157,7 +169,7 @@ export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
           />
         </SectionCard>
 
-        <SectionCard title="Produtos contratados" icon={<Package />} contentClassName="flex flex-col gap-3">
+        <SectionCard hidden={!sections.produtos} title="Produtos contratados" icon={<Package />} contentClassName="flex flex-col gap-3">
           {shownProducts.length === 0 ? (
             <Empty>Nenhum produto contratado ainda.</Empty>
           ) : (
@@ -186,7 +198,7 @@ export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
           <CardLink href={`${base}?aba=produtos`} className="mt-auto" />
         </SectionCard>
 
-        <SectionCard title="Linha do tempo" icon={<History />} action={<CardLink href={`${base}?aba=timeline`} />} className="lg:col-span-2 xl:col-span-1" contentClassName="flex flex-col gap-2">
+        <SectionCard hidden={!sections.timeline} title="Linha do tempo" icon={<History />} action={<CardLink href={`${base}?aba=timeline`} />} className="lg:col-span-2 xl:col-span-1" contentClassName="flex flex-col gap-2">
           <TimelineList
             emptyText="Nenhum evento registrado ainda."
             items={recentEvents.map((e) => {
@@ -212,8 +224,43 @@ export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
         </SectionCard>
       </div>
 
-      <div className="grid gap-4 2xl:grid-cols-2">
-        <SectionCard title="Tarefas em aberto" icon={<ClipboardList />} action={<ActionLink href={`/tarefas?novo=1&cliente=${client.id}`}>Adicionar tarefa</ActionLink>} contentClassName="px-0 pb-2">
+      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_minmax(0,1.1fr)]">
+        <SectionCard hidden={!sections.financeiro} title="Contrato vigente" icon={<FileSignature />} action={contract ? <CardLink href={`${base}?aba=financeiro`} /> : undefined} contentClassName="flex flex-col gap-3" className="lg:col-span-2 2xl:col-span-1">
+          {contract && summary ? (
+            <div data-testid="contrato-vigente">
+              <ContractSummaryCard
+                summary={summary}
+                variant="compact"
+                rows="essential"
+                title={`Resumo do contratado · ${contract.number}`}
+                showDocumentLink={false}
+                footer={
+                  <Link href={`/financeiro/contratos/${contract.id}`} className="text-sm font-medium text-brand-fg hover:underline">
+                    Abrir contrato
+                  </Link>
+                }
+              />
+              <div className="mt-3 border-t border-border pt-3">
+                <p className="text-xs text-muted">Último pagamento</p>
+                <p className="text-sm">
+                  {lastPayment ? (
+                    <>
+                      {formatDate(lastPayment.paidAt)} · <span className="font-medium tabular-nums">{money(lastPayment.amount, data.financial.valuesHidden)}</span>
+                      {lastPayment.method ? ` · ${lastPayment.method}` : ""} · {BILLING_TYPE_LABELS[lastPayment.type]}
+                      {lastPayment.installment ? ` ${lastPayment.installment}` : ""}
+                    </>
+                  ) : (
+                    <span className="text-muted">Nenhum pagamento identificado ainda.</span>
+                  )}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <Empty>Nenhum contrato vigente. O contrato nasce da venda ganha e passa pelo Financeiro.</Empty>
+          )}
+        </SectionCard>
+
+        <SectionCard hidden={!sections.tarefas} title="Tarefas em aberto" icon={<ClipboardList />} action={can.createTask ? <ActionLink href={`/tarefas?novo=1&cliente=${client.id}`}>Adicionar tarefa</ActionLink> : undefined} contentClassName="px-0 pb-2">
           {openTasks.length === 0 ? (
             <div className="px-5 pb-3">
               <Empty>Nenhuma tarefa em aberto para este cliente.</Empty>
@@ -269,6 +316,7 @@ export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
         </SectionCard>
 
         <SectionCard
+          hidden={!sections.suporte}
           title="Últimos atendimentos"
           icon={<Headset />}
           action={
@@ -362,7 +410,7 @@ export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
           )}
         </SectionCard>
 
-        <SectionCard title="Próximos vencimentos" icon={<CalendarClock />} action={<CardLink href={`${base}?aba=financeiro`} />}>
+        <SectionCard hidden={!sections.financeiro && !sections.cs} title="Próximos vencimentos" icon={<CalendarClock />} action={<CardLink href={`${base}?aba=financeiro`} />}>
           {upcoming.length === 0 ? (
             <Empty>Nada a vencer.</Empty>
           ) : (
@@ -383,7 +431,7 @@ export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
           )}
         </SectionCard>
 
-        <SectionCard title="Visitas" icon={<MapPin />} action={<CardLink href={`${base}?aba=comercial`} />}>
+        <SectionCard hidden={!sections.comercial} title="Visitas" icon={<MapPin />} action={<CardLink href={`${base}?aba=comercial`} />}>
           {shownVisits.length === 0 ? (
             <Empty>Nenhuma visita registrada.</Empty>
           ) : (
@@ -422,9 +470,11 @@ export function TabVisao({ data, originName, ticketOptions }: TabVisaoProps) {
           ) : null}
         </SectionCard>
 
-        <div id="contatos" className="min-w-0">
-          <ContactsCard clientId={client.id} contacts={contacts} />
-        </div>
+        {sections.contatos ? (
+          <div id="contatos" className="min-w-0">
+            <ContactsCard clientId={client.id} contacts={contacts} canEdit={can.contactsEdit} canRemove={can.contactsRemove} />
+          </div>
+        ) : null}
       </div>
     </div>
   );

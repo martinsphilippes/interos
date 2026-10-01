@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { CalendarRange, Pencil, ShieldCheck, Target, Users } from "lucide-react";
 import { updateProspectListAction } from "@/server/marketing/actions";
+import { useMarketingAccess } from "./marketing-access";
 import { formatDateKey, formatPercent } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,8 @@ import type { ProspectListRow } from "./marketing-model";
 /** Planejamento da lista (período, objetivo, opt-out) com progresso, interessados, reuniões, conversões e responsáveis. */
 export function ProspectPlanningCard({ list }: { list: ProspectListRow }) {
   const [open, setOpen] = React.useState(false);
+  // Sem marketing.prospeccao.editar o planejamento é só leitura.
+  const canEdit = useMarketingAccess().prospect.edit;
   const t = list.computed;
   const progress = t.contacts > 0 ? (t.worked / t.contacts) * 100 : 0;
   const period = list.startDate || list.endDate ? `${list.startDate ? formatDateKey(list.startDate) : "—"} a ${list.endDate ? formatDateKey(list.endDate) : "—"}` : undefined;
@@ -29,9 +32,11 @@ export function ProspectPlanningCard({ list }: { list: ProspectListRow }) {
     <Card className="mb-5">
       <CardHeader className="flex-row items-center justify-between pb-2">
         <CardTitle>Planejamento e progresso</CardTitle>
-        <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-          <Pencil /> Editar planejamento
-        </Button>
+        {canEdit ? (
+          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+            <Pencil /> Editar planejamento
+          </Button>
+        ) : null}
       </CardHeader>
       <CardContent className="grid gap-5 pt-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <DataList
@@ -74,7 +79,7 @@ export function ProspectPlanningCard({ list }: { list: ProspectListRow }) {
           <p className="text-xs text-muted">Reuniões: interessados com próxima ação agendada ou contatos convertidos em oportunidade. Convertidos seguem para o fluxo comercial (lead ou oportunidade em Vendas).</p>
         </div>
       </CardContent>
-      <PlanningDialog key={`${list.id}-${list.updatedAt}-${open}`} list={list} open={open} onOpenChange={setOpen} />
+      {canEdit ? <PlanningDialog key={`${list.id}-${list.updatedAt}-${open}`} list={list} open={open} onOpenChange={setOpen} /> : null}
     </Card>
   );
 }

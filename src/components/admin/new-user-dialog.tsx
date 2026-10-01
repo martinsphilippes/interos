@@ -20,10 +20,15 @@ import { useAdminUrl } from "./use-admin-url";
 export interface NewUserDialogProps {
   users: UserRow[];
   departments: Department[];
+  /**
+   * Papéis que o perfil pode atribuir (calculado no servidor): sem admin.usuarios.alterar-papel só o padrão
+   * (Colaborador); o papel Administrador exige gerir acessos. Ausente = todos. As actions revalidam.
+   */
+  assignableRoles?: RoleKey[];
 }
 
 /** Botão "Novo usuário" + diálogo (?novo=1). Ao criar, abre o drawer do usuário recém-criado. */
-export function NewUserDialog({ users, departments }: NewUserDialogProps) {
+export function NewUserDialog({ users, departments, assignableRoles }: NewUserDialogProps) {
   const { searchParams, setLocal, navigate } = useAdminUrl();
   const open = searchParams.get("novo") === "1";
   return (
@@ -33,7 +38,7 @@ export function NewUserDialog({ users, departments }: NewUserDialogProps) {
       </Button>
       <Dialog open={open} onOpenChange={(next) => !next && setLocal({ novo: null })}>
         <DialogContent size="lg">
-          {open ? <NewUserForm users={users} departments={departments} onClose={() => setLocal({ novo: null })} onCreated={(id) => navigate({ novo: null, usuario: id }, { replace: true })} /> : null}
+          {open ? <NewUserForm users={users} departments={departments} assignableRoles={assignableRoles} onClose={() => setLocal({ novo: null })} onCreated={(id) => navigate({ novo: null, usuario: id }, { replace: true })} /> : null}
         </DialogContent>
       </Dialog>
     </>
@@ -50,7 +55,7 @@ interface FormState {
   jobTitle: string;
 }
 
-function NewUserForm({ users, departments, onClose, onCreated }: NewUserDialogProps & { onClose: () => void; onCreated: (id: string) => void }) {
+function NewUserForm({ users, departments, assignableRoles, onClose, onCreated }: NewUserDialogProps & { onClose: () => void; onCreated: (id: string) => void }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
@@ -128,9 +133,9 @@ function NewUserForm({ users, departments, onClose, onCreated }: NewUserDialogPr
               }
             />
           </FormField>
-          <FormField label="Papel" htmlFor="nu-role" required>
-            <Select id="nu-role" value={form.role} onChange={(e) => set("role", e.target.value as RoleKey)}>
-              {ROLE_KEYS.map((r) => (
+          <FormField label="Papel" htmlFor="nu-role" required hint={assignableRoles && assignableRoles.length <= 1 ? "Seu perfil não pode escolher outro papel." : undefined}>
+            <Select id="nu-role" value={form.role} onChange={(e) => set("role", e.target.value as RoleKey)} disabled={Boolean(assignableRoles && assignableRoles.length <= 1)}>
+              {ROLE_KEYS.filter((r) => !assignableRoles || assignableRoles.includes(r)).map((r) => (
                 <option key={r} value={r}>
                   {ROLE_LABELS[r]}
                 </option>

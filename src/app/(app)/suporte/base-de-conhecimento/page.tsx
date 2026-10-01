@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 import { BookOpen, Eye, Layers, Plus, ThumbsUp } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
 import { getTicket, listArticles } from "@/server/support/queries";
-import { canEditArticles } from "@/server/support/schemas";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
@@ -20,16 +18,17 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
 /**
- * Base de conhecimento organizada por produto, módulo, categoria, problema e palavras-chave (rascunhos visíveis só
- * para quem edita). ?chamado=<id> abre o editor com o rascunho gerado a partir do chamado.
+ * Base de conhecimento organizada por produto, módulo, categoria, problema e palavras-chave (rascunhos só com a seção
+ * suporte.base-de-conhecimento.rascunhos.ver). ?chamado=<id> abre o editor com o rascunho gerado a partir do chamado
+ * (exige criar artigo e o chamado dentro do escopo de Chamados).
  */
 export default async function KnowledgeBasePage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "suporte")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("suporte.base-de-conhecimento");
   const sp = await searchParams;
-  const editor = canEditArticles(user);
+  const canCreate = can(user, "suporte.base-de-conhecimento.criar");
+  const showDrafts = can(user, "suporte.base-de-conhecimento.rascunhos.ver");
   const sourceTicketId = first(sp.chamado);
-  const [{ articles, products, categories, modules }, source] = await Promise.all([listArticles({ includeDrafts: editor }), editor && sourceTicketId ? getTicket(sourceTicketId, user) : Promise.resolve(null)]);
+  const [{ articles, products, categories, modules }, source] = await Promise.all([listArticles({ includeDrafts: showDrafts }), canCreate && sourceTicketId ? getTicket(sourceTicketId, user) : Promise.resolve(null)]);
 
   const published = articles.filter((a) => a.published);
   const votes = published.reduce((s, a) => s + a.helpful + a.notHelpful, 0);
@@ -44,7 +43,7 @@ export default async function KnowledgeBasePage({ searchParams }: { searchParams
         description="Soluções documentadas por produto, módulo e problema: consulte antes de responder e registre o que resolveu."
         breadcrumbs={[{ label: "Suporte", href: "/suporte" }, { label: "Base de Conhecimento" }]}
         actions={
-          editor ? (
+          canCreate ? (
             source ? (
               <ArticleEditor
                 products={products}

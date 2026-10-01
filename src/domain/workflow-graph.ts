@@ -321,11 +321,19 @@ export function nextEdges(edges: ProcessEdge[], nodeId: string, outcome?: Proces
 /** Tipo de entidade que cada evento gatilho costuma carregar (simulação e descrição do gatilho). */
 export const TRIGGER_ENTITY_TYPES: Partial<Record<EventType, string>> = {
   "payment.overdue": "billing",
-  "payment.pending": "billing",
-  "payment.approved": "contract",
+  // payment.pending é emitido na pendência do contrato; payment.approved no pagamento de uma cobrança.
+  "payment.pending": "contract",
+  "payment.approved": "billing",
+  "payment.reversed": "billing",
   "billing.created": "billing",
+  "billing.updated": "billing",
+  "billing.reminder_due": "billing",
   "contract.created": "contract",
   "contract.signed": "contract",
+  "contract.cancelled": "contract",
+  "contract.updated": "contract",
+  "contract.renewed": "contract",
+  "contract.amendment_applied": "contract",
   "financial.released": "contract",
   "customer.activated": "cs_account",
   "customer.risk.detected": "cs_account",
@@ -340,6 +348,11 @@ export const TRIGGER_ENTITY_TYPES: Partial<Record<EventType, string>> = {
   "lead.qualified": "lead",
   "client.created": "client",
   "renewal.due": "renewal",
+  "commission.released": "commission",
+  "commission.paid": "commission",
+  "commission.reversed": "commission",
+  "payable.created": "payable",
+  "payable.paid": "payable",
 };
 
 // ---------------------------------------------------------------------------

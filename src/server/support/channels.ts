@@ -14,8 +14,7 @@ import "server-only";
  * Respostas de e-mail do cliente entram por um webhook de inbound parse que chama `receiveMessage`
  * (a implementar junto com o provedor).
  */
-import { MANUAL, recordCommunication } from "@/server/integrations/communications";
-import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
+import { MANUAL, recordCommunication, sendOrRecord } from "@/server/integrations/communications";
 import { isConnected } from "@/server/integrations/status";
 import type { Communication, UserRef } from "@/domain/types";
 
@@ -69,33 +68,36 @@ const adapter: SupportChannelAdapter = {
   provider: "outro",
 
   async sendMessage(message) {
-    let sent: { provider: "meta" | "resend"; ok: boolean; externalId?: string } | null = null;
-    if (message.to && message.channel === "whatsapp" && isConnected("whatsapp")) {
-      const r = await sendWhatsappText(message.to, message.body);
-      sent = { provider: "meta", ok: r.ok, externalId: r.ok ? r.externalId : undefined };
-    } else if (message.to && message.channel === "email" && isConnected("email")) {
-      const r = await sendEmail({ to: message.to, subject: "Intercert — Suporte", text: message.body });
-      sent = { provider: "resend", ok: r.ok, externalId: r.ok ? r.externalId : undefined };
+    // Portal é interno (a resposta fica no chamado); WhatsApp/e-mail passam pelo helper único
+    // (src/server/integrations/communications.ts): envio real se conectado, senão registro manual.
+    if (message.channel === "portal") {
+      return recordCommunication({
+        clientId: message.clientId,
+        contactId: message.contactId,
+        channel: COMM_CHANNEL.portal,
+        direction: "saida",
+        userId: message.sender.id,
+        entityType: message.entity?.type,
+        entityId: message.entity?.id,
+        body: message.body,
+        templateKey: message.templateKey,
+        status: "enviada",
+        provider: "outro",
+        createdBy: message.sender.id,
+      });
     }
-    // Portal é interno (a resposta fica no chamado); canais externos sem integração viram registro manual.
-    const outcome = sent
-      ? { status: sent.ok ? ("enviada" as const) : ("falha" as const), provider: sent.provider, externalId: sent.externalId }
-      : message.channel === "portal"
-        ? { status: "enviada" as const, provider: "outro" as const }
-        : MANUAL;
-    return recordCommunication({
+    const sent = await sendOrRecord({
+      channel: message.channel,
+      to: message.to,
+      subject: "Intercert — Suporte",
+      text: message.body,
       clientId: message.clientId,
       contactId: message.contactId,
-      channel: COMM_CHANNEL[message.channel],
-      direction: "saida",
-      userId: message.sender.id,
-      entityType: message.entity?.type,
-      entityId: message.entity?.id,
-      body: message.body,
+      entity: message.entity,
       templateKey: message.templateKey,
-      ...outcome,
-      createdBy: message.sender.id,
+      actor: message.sender,
     });
+    return sent.communication;
   },
 
   async registerCall(call) {

@@ -4,6 +4,7 @@ import type { Billing, Contract } from "@/domain/types";
 /**
  * Esquemas (zod) e constantes puras do módulo Financeiro. Sem dependências de servidor: é importado
  * pelas Server Actions e pelos Client Components (mensagens em português exibidas na interface).
+ * Predicados de autorização ficam em ./access.ts (server-only), fora do bundle do cliente.
  */
 
 // ---------------------------------------------------------------------------
@@ -39,11 +40,6 @@ export interface ReleaseGate {
   ok: boolean;
   checks: ReleaseCheck[];
   settings: FinanceGateSettings;
-}
-
-/** Quem opera o Financeiro (altera contratos e cobranças): equipe financeira, gestores, diretoria e admin. */
-export function canOperateFinance(user: { isAdmin: boolean; isManager: boolean; role: string; departmentId: string }): boolean {
-  return user.isAdmin || user.isManager || user.role === "financeiro" || user.departmentId === "financeiro";
 }
 
 // ---------------------------------------------------------------------------
@@ -121,15 +117,83 @@ export const updateItemsSchema = z.object({
   items: z.array(contractItemSchema).min(1, "O contrato precisa de pelo menos um item").max(50, "No máximo 50 itens"),
 });
 
-export const updateConditionsSchema = z.object({
-  contractId: id("Contrato"),
+/** Reajuste da renovação (D26): nenhum, percentual informado ou índice (informado pelo CS a cada renovação). */
+export const readjustmentSchema = z
+  .object({
+    type: z.enum(["nenhum", "percentual", "indice"], { message: "Tipo de reajuste inválido" }),
+    percent: z.number("Percentual de reajuste inválido").min(0, "Percentual não pode ser negativo").max(100, "Percentual máximo é 100%").optional(),
+    index: z.enum(["ipca", "igpm", "inpc"], { message: "Índice inválido" }).optional(),
+  })
+  .refine((v) => v.type !== "percentual" || (v.percent !== undefined && v.percent > 0), { message: "Informe o percentual do reajuste", path: ["percent"] })
+  .refine((v) => v.type !== "indice" || Boolean(v.index), { message: "Escolha o índice do reajuste", path: ["index"] });
+
+/** Condições de renovação (D26), todas opcionais: contratos antigos seguem o fluxo humano do CS. */
+export const renewalFieldsSchema = z.object({
+  autoRenew: z.boolean().optional(),
+  renewalTermMonths: z.number("Prazo da renovação inválido").int("Prazo deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses").optional(),
+  readjustment: readjustmentSchema.optional(),
+  noticeDays: z.number("Antecedência inválida").int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(180, "Máximo de 180 dias").optional(),
+});
+export type RenewalFieldsInput = z.input<typeof renewalFieldsSchema>;
+
+export const conditionsFieldsSchema = z.object({
   billingDay: z.number("Dia de vencimento inválido").int("Dia de vencimento deve ser inteiro").min(1, "Dia de vencimento mínimo é 1").max(28, "Dia de vencimento máximo é 28"),
   firstDueDate: dateKey("Primeira data de vencimento").optional(),
   recurrence: z.enum(["mensal", "anual", "unico"], { message: "Recorrência inválida" }),
   termMonths: z.number("Prazo inválido").int("Prazo deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses"),
   paymentCondition: z.string().trim().max(300, "Condição de pagamento muito longa").optional(),
+  /** Campos do fechamento estruturado (opcionais: contratos antigos não têm). */
+  paymentMethod: z.enum(PAYMENT_METHODS, { message: "Forma de pagamento inválida" }).optional(),
+  setupInstallments: z.number("Parcelas da adesão inválidas").int("Parcelas devem ser inteiras").min(1, "Mínimo 1 parcela").max(12, "Máximo 12 parcelas").optional(),
 });
+
+export const updateConditionsSchema = conditionsFieldsSchema.extend({ contractId: id("Contrato") }).extend(renewalFieldsSchema.shape);
 export type UpdateConditionsInput = z.input<typeof updateConditionsSchema>;
+
+// ---------------------------------------------------------------------------
+// Aditivos (D25)
+// ---------------------------------------------------------------------------
+
+export const AMENDMENT_KINDS = ["itens", "condicoes", "renovacao", "reajuste", "misto"] as const;
+
+/**
+ * Criação de aditivo: itens novos e/ou condições novas (o servidor calcula antes/depois e as mudanças). Renovação
+ * (`renewal`) é usada pelo CS e pela varredura; a página do contrato usa itens/condições.
+ */
+export const amendmentInputSchema = z
+  .object({
+    contractId: id("Contrato"),
+    effectiveFrom: dateKey("Vigência do aditivo"),
+    reason: z.string().trim().min(5, "Descreva o motivo do aditivo (mín. 5 caracteres)").max(500, "Motivo muito longo"),
+    requiresSignature: z.boolean().optional(),
+    items: z.array(contractItemSchema).min(1, "O contrato precisa de pelo menos um item").max(50, "No máximo 50 itens").optional(),
+    conditions: conditionsFieldsSchema.extend(renewalFieldsSchema.shape).partial().optional(),
+    renewal: z
+      .object({
+        months: z.number("Prazo da renovação inválido").int("Prazo deve ser inteiro").min(1, "Prazo mínimo é 1 mês").max(120, "Prazo máximo é 120 meses"),
+        readjustment: readjustmentSchema.optional(),
+      })
+      .optional(),
+  })
+  .refine((v) => Boolean(v.items || v.conditions || v.renewal), { message: "Informe o que muda: itens, condições ou renovação", path: ["items"] });
+export type AmendmentInput = z.input<typeof amendmentInputSchema>;
+
+export const amendmentIdSchema = z.object({ amendmentId: id("Aditivo") });
+export const cancelAmendmentSchema = z.object({ amendmentId: id("Aditivo"), reason: z.string().trim().min(5, "Descreva o motivo (mín. 5 caracteres)").max(500, "Motivo muito longo") });
+/** Assinatura manual do aditivo: mesma evidência exigida no contrato. */
+export const amendmentSignatureSchema = z
+  .object({
+    amendmentId: id("Aditivo"),
+    email: z.email("E-mail do signatário inválido"),
+    signedAt: dateKey("Data da assinatura"),
+    evidenceUrl: z.union([z.literal(""), url]).optional(),
+    description: z.string().trim().max(500, "Descrição muito longa").optional(),
+  })
+  .refine((v) => Boolean(v.evidenceUrl?.trim()) || (v.description?.trim().length ?? 0) >= 10, {
+    message: "Informe a evidência: link do documento assinado ou uma descrição (mín. 10 caracteres)",
+    path: ["description"],
+  });
+export type AmendmentSignatureInput = z.input<typeof amendmentSignatureSchema>;
 
 export const signerSchema = z.object({
   contractId: id("Contrato"),
@@ -189,7 +253,62 @@ export const registerPaymentSchema = z.object({
   method: z.enum(PAYMENT_METHODS, { message: "Selecione a forma de pagamento" }),
   receiptUrl: z.union([z.literal(""), url]).optional(),
 });
-export type RegisterPaymentInput = z.input<typeof registerPaymentSchema>;
+/**
+ * Entrada da baixa. `source`/`externalPaymentId`/`providerEventId`/`provider` NÃO vêm da tela (a action força
+ * "manual"): são usados pelo webhook do provedor e pela conciliação (deduplicação em `payment_events`).
+ */
+export type RegisterPaymentInput = z.input<typeof registerPaymentSchema> & {
+  source?: "manual" | "provedor" | "conciliacao";
+  externalPaymentId?: string;
+  providerEventId?: string;
+  provider?: string;
+};
+
+/** Boleto emitido no banco/ERP e registrado à mão: pelo menos linha digitável, nosso número, PDF ou PIX. */
+export const registerBoletoSchema = z
+  .object({
+    billingId: id("Cobrança"),
+    linhaDigitavel: z.string().trim().max(80, "Linha digitável muito longa").optional(),
+    nossoNumero: z.string().trim().max(40, "Nosso número muito longo").optional(),
+    codigoBarras: z.string().trim().max(60, "Código de barras muito longo").optional(),
+    pdfUrl: z.union([z.literal(""), url]).optional(),
+    banco: z.string().trim().max(60, "Banco muito longo").optional(),
+    emitidoEm: dateKey("Data de emissão").optional(),
+    pixCopiaECola: z.string().trim().max(500, "PIX copia e cola muito longo").optional(),
+    pixQrCodeUrl: z.union([z.literal(""), url]).optional(),
+    paymentUrl: z.union([z.literal(""), url]).optional(),
+  })
+  .refine((v) => Boolean(v.linhaDigitavel?.trim() || v.nossoNumero?.trim() || v.pdfUrl?.trim() || v.pixCopiaECola?.trim() || v.paymentUrl?.trim()), {
+    message: "Informe pelo menos a linha digitável, o nosso número, o PDF do boleto, o PIX ou o link de pagamento",
+    path: ["linhaDigitavel"],
+  });
+export type RegisterBoletoInput = z.input<typeof registerBoletoSchema>;
+
+export const BILLING_MESSAGE_CHANNELS = ["whatsapp", "email", "ambos"] as const;
+export type BillingMessageChannel = (typeof BILLING_MESSAGE_CHANNELS)[number];
+
+/** Mensagem de cobrança (WhatsApp principal, e-mail complementar) com ou sem os dados do boleto (2ª via). */
+export const sendBillingMessageSchema = z.object({
+  billingId: id("Cobrança"),
+  channel: z.enum(BILLING_MESSAGE_CHANNELS, { message: "Canal inválido" }),
+  text: z.string().trim().max(2000, "Texto muito longo").optional(),
+  includeBoleto: z.boolean().optional(),
+});
+export type SendBillingMessageInput = z.input<typeof sendBillingMessageSchema>;
+
+export const reversePaymentSchema = z.object({ billingId: id("Cobrança"), reason: z.string().trim().min(5, "Descreva o motivo do estorno (mín. 5 caracteres)").max(500, "Motivo muito longo") });
+
+/** Filtro "Boleto" das listas de cobranças. */
+export const BOLETO_FILTERS = ["sem_boleto", "emitido", "pago"] as const;
+export type BoletoFilter = (typeof BOLETO_FILTERS)[number];
+export const BOLETO_FILTER_LABELS: Record<BoletoFilter, string> = { sem_boleto: "Sem boleto", emitido: "Boleto emitido", pago: "Boleto pago" };
+
+/** Situação do boleto de uma cobrança para badge/filtro: sem boleto · emitido · pago. */
+export function boletoState(b: Pick<Billing, "status" | "boleto" | "pix" | "paymentUrl" | "externalId">): BoletoFilter {
+  const issued = Boolean(b.boleto?.linhaDigitavel || b.boleto?.nossoNumero || b.boleto?.pdfUrl || b.boleto?.codigoBarras || b.pix?.copiaECola || b.paymentUrl || b.externalId);
+  if (!issued) return "sem_boleto";
+  return b.status === "paga" ? "pago" : "emitido";
+}
 
 export const cancelBillingSchema = z.object({ billingId: id("Cobrança"), reason: z.string().trim().min(3, "Informe o motivo do cancelamento").max(300, "Motivo muito longo") });
 
@@ -203,6 +322,8 @@ export const contractDocumentSchema = z.object({
   url,
   category: z.string().trim().max(60).optional(),
 });
+
+export const cancelContractSchema = z.object({ contractId: id("Contrato"), reason: z.string().trim().min(5, "Descreva o motivo do cancelamento (mín. 5 caracteres)").max(500, "Motivo muito longo") });
 
 export const releaseSchema = z.object({ contractId: id("Contrato"), exceptionReason: z.string().trim().max(500, "Motivo muito longo").optional() });
 

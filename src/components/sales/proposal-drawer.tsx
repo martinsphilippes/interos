@@ -19,8 +19,14 @@ import { ProposalStatusBadge, StageBadge } from "./opportunity-bits";
 import { ProposalEditorDialog } from "./proposal-editor-dialog";
 import { useSalesUrl } from "./use-sales-url";
 import { WonDialog } from "./won-dialog";
+import { useSalesAccess } from "./sales-access";
+import { ScreenLink } from "@/components/auth/access-provider";
 
-/** Drawer da proposta (?proposta=<id>): itens, totais, transições de status, versões e impressão. */
+/**
+ * Drawer da proposta (?proposta=<id>): itens, totais, transições de status, versões e impressão. Botões conforme as
+ * chaves (useSalesAccess): enviar/visualizada/negociação = enviar; aceita/recusada = aprovar; editar rascunho =
+ * editar; nova versão = criar; marcar a oportunidade como ganha = vendas.oportunidades.ganhar.
+ */
 export function ProposalDrawer({ detail }: { detail: ProposalDetail | null }) {
   const { navigate } = useSalesUrl();
   const close = () => navigate({ proposta: null }, { replace: true });
@@ -42,6 +48,7 @@ const TRANSITION_LABEL: Record<ProposalTransition, string> = {
 function Inner({ detail }: { detail: ProposalDetail }) {
   const router = useRouter();
   const { navigate } = useSalesUrl();
+  const caps = useSalesAccess();
   const { proposal, client, opportunity } = detail;
   const status = proposal.effectiveStatus;
   const [pending, startTransition] = React.useTransition();
@@ -86,36 +93,56 @@ function Inner({ detail }: { detail: ProposalDetail }) {
         </DrawerTitle>
         <DrawerDescription asChild>
           <div className="flex flex-col gap-1.5">
-            <Link href={`/clientes/${client.id}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-secondary hover:underline">
+            <ScreenLink
+              href={`/clientes/${client.id}`}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-secondary hover:underline"
+              fallback={
+                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <Building2 className="size-4" /> {client.tradeName}
+                </span>
+              }
+            >
               <Building2 className="size-4" /> {client.tradeName}
-            </Link>
-            <Link href={opportunityHref(opportunity.id)} className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-foreground hover:underline">
+            </ScreenLink>
+            <ScreenLink
+              href={opportunityHref(opportunity.id)}
+              className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-foreground hover:underline"
+              fallback={
+                <span className="inline-flex items-center gap-1.5 text-sm text-muted">
+                  <Target className="size-4" /> {opportunity.title} <StageBadge stage={opportunity.stage} />
+                </span>
+              }
+            >
               <Target className="size-4" /> {opportunity.title} <StageBadge stage={opportunity.stage} />
-            </Link>
+            </ScreenLink>
           </div>
         </DrawerDescription>
         <div className="mt-3 flex flex-wrap gap-2">
           {status === "rascunho" ? (
             <>
-              <Button size="sm" className={touch} onClick={() => run("enviar")} loading={pending} disabled={!oppOpen}>
-                <Send /> Enviar
-              </Button>
-              <Button size="sm" variant="outline" className={touch} onClick={() => setDialog("editar")} disabled={!oppOpen}>
-                <Pencil /> Editar
-              </Button>
+              {caps.proposals.send ? (
+                <Button size="sm" className={touch} onClick={() => run("enviar")} loading={pending} disabled={!oppOpen}>
+                  <Send /> Enviar
+                </Button>
+              ) : null}
+              {caps.proposals.edit ? (
+                <Button size="sm" variant="outline" className={touch} onClick={() => setDialog("editar")} disabled={!oppOpen}>
+                  <Pencil /> Editar
+                </Button>
+              ) : null}
             </>
           ) : null}
-          {status === "enviada" ? (
+          {status === "enviada" && caps.proposals.send ? (
             <Button size="sm" variant="outline" className={touch} onClick={() => run("visualizada")} loading={pending}>
               <Eye /> Marcar como visualizada
             </Button>
           ) : null}
-          {status === "enviada" || status === "visualizada" ? (
+          {(status === "enviada" || status === "visualizada") && caps.proposals.send ? (
             <Button size="sm" variant="outline" className={touch} onClick={() => run("negociacao")} loading={pending}>
               <Handshake /> Em negociação
             </Button>
           ) : null}
-          {status === "enviada" || status === "visualizada" || status === "negociacao" ? (
+          {(status === "enviada" || status === "visualizada" || status === "negociacao") && caps.proposals.approve ? (
             <>
               <Button size="sm" className={`${touch} bg-success-strong hover:bg-success-hover`} onClick={() => run("aceitar")} loading={pending}>
                 <CheckCircle2 /> Aceita
@@ -125,12 +152,12 @@ function Inner({ detail }: { detail: ProposalDetail }) {
               </Button>
             </>
           ) : null}
-          {status === "aceita" && oppOpen ? (
+          {status === "aceita" && oppOpen && caps.opportunities.win ? (
             <Button size="sm" className={`${touch} bg-success-strong hover:bg-success-hover`} onClick={() => setDialog("ganho")}>
               <Trophy /> Marcar oportunidade como ganha
             </Button>
           ) : null}
-          {status !== "rascunho" && oppOpen ? (
+          {status !== "rascunho" && oppOpen && caps.proposals.create ? (
             <Button size="sm" variant="outline" className={touch} onClick={newVersion} loading={pending}>
               <Copy /> Nova versão
             </Button>
@@ -255,7 +282,7 @@ function Inner({ detail }: { detail: ProposalDetail }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {dialog === "ganho" && oppOpen ? (
+      {dialog === "ganho" && oppOpen && caps.opportunities.win ? (
         <WonDialog
           open
           onOpenChange={(v) => !v && setDialog(null)}

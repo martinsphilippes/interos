@@ -6,6 +6,10 @@ import "server-only";
  */
 import { getById, getManyByIds, list, nowIso } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
+import { can, canSeeHref } from "@/server/auth/permissions";
+import { filterByScope, resolveDataScope } from "@/server/auth/scope";
+import { clientScope, scopeClients } from "@/server/clients/access";
+import { TASKS_SCREEN, canSeeTask } from "./access";
 import { COLLECTIONS, type Client, type Comment, type CurrentUser, type DomainEvent, type SlaInstance, type Task, type User } from "@/domain/types";
 import type { TaskProcessType } from "@/domain/types";
 import {
@@ -117,20 +121,28 @@ export async function enrichTasks(tasks: Task[]): Promise<TaskListItem[]> {
 // Escopo por usuário
 // ---------------------------------------------------------------------------
 
+/** Lê tarefas por um campo com `in` (lotes de 30, limite do Firestore). */
+async function listTasksIn(field: "assigneeId" | "departmentId", values: readonly string[]): Promise<Task[]> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < values.length; i += 30) chunks.push(values.slice(i, i + 30));
+  const parts = await Promise.all(chunks.map((chunk) => (chunk.length === 1 ? list<Task>(COLLECTIONS.tasks, { where: [[field, "==", chunk[0]]] }) : list<Task>(COLLECTIONS.tasks, { where: [[field, "in", chunk]] }))));
+  return parts.flat();
+}
+
 /**
- * "mine": tarefas do usuário. "team": gestor/diretoria/admin veem toda a organização; os demais veem
- * o próprio departamento mais as suas tarefas (caso estejam alocadas fora dele).
+ * "mine": tarefas do usuário. "team": o escopo da tela Tarefas (resolveDataScope) — padrão: gestor/diretoria/admin
+ * veem toda a organização; os demais veem o próprio departamento mais as suas tarefas (caso estejam alocadas fora
+ * dele). Um escopo mais estreito configurado pelo CEO/CTO (meus/equipe) vale aqui. Exportada para a equivalência com
+ * resolveDataScope (tests/permissions).
  */
-async function loadScope(user: CurrentUser, scope: "mine" | "team"): Promise<Task[]> {
+export async function loadScope(user: CurrentUser, scope: "mine" | "team"): Promise<Task[]> {
   if (scope === "mine") return list<Task>(COLLECTIONS.tasks, { where: [["assigneeId", "==", user.id]] });
-  if (user.isManager) return list<Task>(COLLECTIONS.tasks);
-  const [dept, own] = await Promise.all([
-    list<Task>(COLLECTIONS.tasks, { where: [["departmentId", "==", user.departmentId]] }),
-    list<Task>(COLLECTIONS.tasks, { where: [["assigneeId", "==", user.id]] }),
-  ]);
+  const data = await resolveDataScope(user, TASKS_SCREEN);
+  if (!data.userIds && !data.departmentKeys) return list<Task>(COLLECTIONS.tasks);
+  const [byDepartment, byPerson] = await Promise.all([listTasksIn("departmentId", [...(data.departmentKeys ?? [])]), listTasksIn("assigneeId", [...(data.userIds ?? [])])]);
   const map = new Map<string, Task>();
-  for (const t of [...dept, ...own]) map.set(t.id, t);
-  return Array.from(map.values());
+  for (const t of [...byDepartment, ...byPerson]) map.set(t.id, t);
+  return filterByScope(Array.from(map.values()), (t) => ({ owners: [t.assigneeId], departmentId: t.departmentId }), data);
 }
 
 export interface ListTasksOptions extends TaskFilters {
@@ -185,9 +197,15 @@ export async function listTasksForUser(user: CurrentUser, view: TaskView, option
 // Detalhe
 // ---------------------------------------------------------------------------
 
-export async function getTaskDetail(id: string, viewer?: { isAdmin?: boolean }): Promise<TaskDetail | null> {
+/**
+ * Detalhe da tarefa (drawer). Com `viewer`, devolve null quando ele não pode vê-la (seção de detalhe negada ou tarefa
+ * fora do escopo/vínculos — canSeeTask): nada da tarefa sai do servidor.
+ */
+export async function getTaskDetail(id: string, viewer?: CurrentUser): Promise<TaskDetail | null> {
+  if (viewer && !can(viewer, "operacao.tarefas.detalhe.ver")) return null;
   const task = await getById<Task>(COLLECTIONS.tasks, id);
   if (!task) return null;
+  if (viewer && !(await canSeeTask(viewer, task))) return null;
   const today = todayKey();
   const [[item], comments, events, creator, processContext] = await Promise.all([
     enrichTasks([task]),
@@ -202,7 +220,7 @@ export async function getTaskDetail(id: string, viewer?: { isAdmin?: boolean }):
   const eventViews: TaskEventView[] = events
     .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1))
     .map((e) => ({ id: e.id, type: e.type, title: e.title, description: e.description, actorName: e.actorName, occurredAt: e.occurredAt, occurredAtLabel: dateLabel(e.occurredAt, today) }));
-  return { task: item, comments: commentViews, events: eventViews, creatorName: creator?.name, processHref: processHrefFor(task, { canOpenRuns: viewer?.isAdmin }), processContext: processContext ?? undefined };
+  return { task: item, comments: commentViews, events: eventViews, creatorName: creator?.name, processHref: processHrefFor(task, { canOpenRuns: viewer ? canSeeHref(viewer, "/admin/workflows/execucoes/execucao") : false }), processContext: processContext ?? undefined };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +234,10 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 }
 
-export async function listClientsForSelect(): Promise<ClientOption[]> {
-  const clients = await list<Client>(COLLECTIONS.clients);
+/** Clientes para seleção (vincular tarefa); com `viewer`, só os do escopo de Clientes 360º dele. */
+export async function listClientsForSelect(viewer?: CurrentUser): Promise<ClientOption[]> {
+  const all = await list<Client>(COLLECTIONS.clients);
+  const clients = viewer ? scopeClients(all, await clientScope(viewer)) : all;
   return clients.map((c) => ({ id: c.id, tradeName: c.tradeName, status: c.status })).sort((a, b) => a.tradeName.localeCompare(b.tradeName, "pt-BR"));
 }
 

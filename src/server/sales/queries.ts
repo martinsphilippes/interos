@@ -3,11 +3,13 @@ import "server-only";
  * Leituras do módulo de Vendas. Todas filtram por organização via `list()` (igualdade apenas) e
  * agregam/ordenam em memória; nomes de clientes/usuários são resolvidos em lote (sem N+1).
  *
- * Visibilidade: gestores, diretoria e admin veem todas as oportunidades; os demais veem as que
- * são donos ou originaram (ex.: suporte/CS que abriram upsell). A Central tem escopo "meu" ou
- * "equipe" (gestor: ele + liderados diretos; diretoria/admin: todo o time de vendas).
+ * Visibilidade: escopo de dados de cada tela (resolveDataScope, catálogo src/domain/permissions/vendas.ts; predicados
+ * em ./access.ts). Padrão = comportamento anterior: gestores, diretoria e admin veem todas as oportunidades,
+ * propostas e visitas; os demais veem as que são donos ou originaram (ex.: suporte/CS que abriram upsell). A Central
+ * e a Agenda têm a visão "Minha" ou "Equipe" (padrão: gestor = ele + liderados diretos; diretoria/admin = todo o time
+ * de vendas), sempre dentro do escopo efetivo da tela.
  */
-import { getById, getManyByIds, list } from "@/server/db";
+import { getById, getManyByIds, list, stripUndefined } from "@/server/db";
 import { ORG_ID } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { dateKey, formatCompetence } from "@/lib/format";
@@ -37,6 +39,8 @@ import { HEADQUARTERS, formatAddressLine, geocode, googleMapsSearchUrl, route } 
 import { getLastSweep, getOpportunitySettings, getPipelineStages, type OpportunitySettings, type PipelineStage } from "./service";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { OPEN_STAGES } from "./schemas";
+import { SALES_SCREENS, opportunityInScope, opportunityScope, proposalInScope, proposalScope, visitInScope, visitScope, type OpportunityScreen } from "./access";
+import { resolveDataScope } from "@/server/auth/scope";
 
 // ---------------------------------------------------------------------------
 // Tipos de leitura (serializáveis para Client Components)
@@ -124,11 +128,6 @@ function lastCompetences(count: number, from = currentCompetence()): string[] {
   return out;
 }
 
-/** Oportunidades que o usuário pode ver nas listas (pipeline, tabela, drawer). */
-export function canSeeOpportunity(user: Pick<CurrentUser, "id" | "isManager">, opp: Pick<Opportunity, "ownerId" | "originUserId">): boolean {
-  return user.isManager || opp.ownerId === user.id || opp.originUserId === user.id;
-}
-
 export async function listSalesUsers(): Promise<User[]> {
   const users = await list<User>(COLLECTIONS.users, { where: [["departmentId", "==", "vendas"]] });
   return users.filter((u) => u.active !== false).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
@@ -142,15 +141,30 @@ export interface SalesScope {
   userIds: string[];
 }
 
-/** Escopo da Central: "meu" (só o usuário) ou "equipe" (gestor: ele + liderados; diretoria/admin: vendas inteiro). */
-export async function resolveScope(user: CurrentUser, requested: string | undefined): Promise<SalesScope> {
-  if (requested !== "equipe" || !user.isManager) return { kind: "meu", label: "Minhas vendas", userIds: [user.id] };
+/** Telas com a alternância Minha/Equipe. */
+export type TeamScreen = typeof SALES_SCREENS.central | typeof SALES_SCREENS.agenda;
+
+const TEAM_LABELS = { equipe: "Minha equipe", departamento: "Time de vendas", empresa: "Toda a empresa" } as const;
+
+/**
+ * Visão da Central/Agenda: "meu" (só o usuário) ou "equipe" = o escopo efetivo da tela (resolveDataScope). A visão
+ * "equipe" só existe quando o escopo é maior que "meus" (padrão: gestor = ele + liderados diretos; diretoria/admin =
+ * o time de Vendas); "empresa" = todos os usuários ativos.
+ */
+export async function resolveScope(user: CurrentUser, requested: string | undefined, screen: TeamScreen = SALES_SCREENS.central): Promise<SalesScope> {
+  const mine: SalesScope = { kind: "meu", label: "Minhas vendas", userIds: [user.id] };
+  if (requested !== "equipe") return mine;
+  const scope = await resolveDataScope(user, screen);
+  if (scope.kind === "meus") return mine;
+  const label = TEAM_LABELS[scope.kind === "unidades" ? "empresa" : scope.kind];
+  if (scope.userIds) return { kind: "equipe", label, userIds: Array.from(scope.userIds) };
   const all = await list<User>(COLLECTIONS.users);
-  const active = all.filter((u) => u.active !== false);
-  const ids = user.isDirector
-    ? active.filter((u) => u.departmentId === "vendas").map((u) => u.id)
-    : [user.id, ...active.filter((u) => u.managerId === user.id).map((u) => u.id)];
-  return { kind: "equipe", label: user.isDirector ? "Time de vendas" : "Minha equipe", userIds: Array.from(new Set(ids)) };
+  return { kind: "equipe", label, userIds: all.filter((u) => u.active !== false).map((u) => u.id) };
+}
+
+/** A tela oferece a visão "Equipe" ao usuário? (escopo efetivo maior que "meus") */
+export async function hasTeamView(user: CurrentUser, screen: TeamScreen): Promise<boolean> {
+  return (await resolveDataScope(user, screen)).kind !== "meus";
 }
 
 async function buildRows(opps: Opportunity[], settings: OpportunitySettings): Promise<OpportunityRow[]> {
@@ -206,16 +220,17 @@ export interface OpportunityListResult {
   products: ProductOption[];
 }
 
-/** Oportunidades visíveis ao usuário (todas as etapas), com dados de exibição resolvidos. */
-export async function listOpportunities(user: CurrentUser): Promise<OpportunityListResult> {
-  const [opps, settings, stages, sellers, products] = await Promise.all([
+/** Oportunidades visíveis ao usuário no escopo da tela (todas as etapas), com dados de exibição resolvidos. */
+export async function listOpportunities(user: CurrentUser, screen: OpportunityScreen = SALES_SCREENS.opportunities): Promise<OpportunityListResult> {
+  const [opps, settings, stages, sellers, products, scope] = await Promise.all([
     list<Opportunity>(COLLECTIONS.opportunities),
     getOpportunitySettings(),
     getPipelineStages(),
     listSalesUsers(),
     listProductOptions(),
+    opportunityScope(user, screen),
   ]);
-  const visible = opps.filter((o) => canSeeOpportunity(user, o));
+  const visible = opps.filter((o) => opportunityInScope(scope, o));
   const rows = await buildRows(visible, settings);
   rows.sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1));
   // Vendedores que aparecem nas oportunidades (inclui donos fora do departamento de vendas).
@@ -259,9 +274,10 @@ export interface OpportunityDetail {
   stages: PipelineStage[];
 }
 
-export async function getOpportunityDetail(user: CurrentUser, id: string): Promise<OpportunityDetail | null> {
-  const opp = await getById<Opportunity>(COLLECTIONS.opportunities, id);
-  if (!opp || !canSeeOpportunity(user, opp)) return null;
+/** Detalhe no escopo da tela (fora do escopo = null, como inexistente). */
+export async function getOpportunityDetail(user: CurrentUser, id: string, screen: OpportunityScreen = SALES_SCREENS.opportunities): Promise<OpportunityDetail | null> {
+  const [opp, scope] = await Promise.all([getById<Opportunity>(COLLECTIONS.opportunities, id), opportunityScope(user, screen)]);
+  if (!opp || !opportunityInScope(scope, opp)) return null;
   const [settings, client, contacts, proposals, tasks, visits, slas, products, stages] = await Promise.all([
     getOpportunitySettings(),
     getById<Client>(COLLECTIONS.clients, opp.clientId),
@@ -365,20 +381,43 @@ export interface SalesOverview {
   sellerParam?: string;
 }
 
+export interface SalesOverviewOptions {
+  /** Seção "Meta, comissão do mês e simulador" (vendas.central.comissao.ver): sem ela, nada disso é lido. */
+  commission?: boolean;
+}
+
+/** Resumo de comissão vazio (seção de comissão negada: os números nem são calculados nem enviados). */
+function emptyCommission(competence: string): CommissionSummary {
+  const zero = { setup: 0, recorrencia: 0, hardware: 0 };
+  const split = { prevista: 0, liberada: 0, futura: 0 };
+  return {
+    competence,
+    sold: { ...zero },
+    goals: { ...zero },
+    attainment: { setup: null, recorrencia: null, hardware: null },
+    commission: { ...split, total: 0 },
+    byType: { setup: { ...split }, recorrencia: { ...split }, hardware: { ...split } },
+    history: [],
+    items: [],
+  };
+}
+
 /**
  * Painel do vendedor/gestor. Antes de calcular, dispara a varredura central de follow-up
  * (automações: frequência configurável em /admin/automacoes, padrão horária) quando está vencida.
  */
-export async function getSalesOverview(user: CurrentUser, escopo?: string): Promise<SalesOverview> {
+export async function getSalesOverview(user: CurrentUser, escopo?: string, options: SalesOverviewOptions = {}): Promise<SalesOverview> {
   await runDueSweeps(["followup_vendas"]);
+  const withCommission = options.commission !== false;
 
-  const scope = await resolveScope(user, escopo);
+  const scope = await resolveScope(user, escopo, SALES_SCREENS.central);
   const comp = currentCompetence();
   const [all, settings, stages, rules, lastSweep] = await Promise.all([
     list<Opportunity>(COLLECTIONS.opportunities),
     getOpportunitySettings(),
     getPipelineStages(),
-    listActiveCommissionRules(),
+    // Simulador: regras padrão + as do próprio vendedor (no escopo "Minhas vendas").
+    withCommission ? listActiveCommissionRules(scope.kind === "meu" ? user.id : undefined) : Promise.resolve([] as CommissionRule[]),
     getLastSweep(),
   ]);
   const ids = new Set(scope.userIds);
@@ -387,7 +426,7 @@ export async function getSalesOverview(user: CurrentUser, escopo?: string): Prom
   const open = rows.filter((r) => isOpenStage(r.stage));
   const wonMonth = rows.filter((r) => r.stage === "ganho" && r.wonAt && competenceOf(r.wonAt) === comp);
   const createdMonth = rows.filter((r) => competenceOf(r.createdAt) === comp);
-  const commission = await getCommissionSummary(scope.userIds, comp, { opportunities: mine });
+  const commission = withCommission ? await getCommissionSummary(scope.userIds, comp, { opportunities: mine }) : emptyCommission(comp);
 
   // "Contatar agora": urgência = follow-up vencido > MQL novo sem primeiro contato > sem próxima ação > parada > quente com valor alto.
   const annual = (r: OpportunityRow) => r.monthlyTotal * 12 + r.setupTotal + r.hardwareTotal;
@@ -470,7 +509,23 @@ export async function getSalesOverview(user: CurrentUser, escopo?: string): Prom
 }
 
 function ruleView(r: CommissionRule): CommissionRuleView {
-  return { id: r.id, name: r.name, productId: r.productId, revenueType: r.revenueType, mode: r.mode, value: r.value, releaseCondition: r.releaseCondition, releaseInstallment: r.releaseInstallment };
+  return stripUndefined({
+    id: r.id,
+    name: r.name,
+    productId: r.productId,
+    revenueType: r.revenueType,
+    mode: r.mode,
+    value: r.value,
+    releaseCondition: r.releaseCondition,
+    releaseInstallment: r.releaseInstallment,
+    scope: r.scope,
+    userId: r.userId,
+    trigger: r.trigger,
+    baseSource: r.baseSource,
+    minTenureDays: r.minTenureDays,
+    recurringCompetences: r.recurringCompetences,
+    productCategory: r.productCategory,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -488,12 +543,9 @@ export interface ProposalRow extends Proposal {
 }
 
 export async function listProposals(user: CurrentUser): Promise<ProposalRow[]> {
-  const [proposals, opps] = await Promise.all([list<Proposal>(COLLECTIONS.proposals), list<Opportunity>(COLLECTIONS.opportunities)]);
+  const [proposals, opps, scope] = await Promise.all([list<Proposal>(COLLECTIONS.proposals), list<Opportunity>(COLLECTIONS.opportunities), proposalScope(user)]);
   const oppById = new Map(opps.map((o) => [o.id, o]));
-  const visible = proposals.filter((p) => {
-    const opp = oppById.get(p.opportunityId);
-    return user.isManager || p.ownerId === user.id || (opp ? canSeeOpportunity(user, opp) : false);
-  });
+  const visible = proposals.filter((p) => proposalInScope(scope, p, oppById.get(p.opportunityId)));
   const [clients, owners] = await Promise.all([getManyByIds<Client>(COLLECTIONS.clients, visible.map((p) => p.clientId)), getManyByIds<User>(COLLECTIONS.users, visible.map((p) => p.ownerId))]);
   const latestVersion = new Map<string, number>();
   for (const p of visible) latestVersion.set(p.number, Math.max(latestVersion.get(p.number) ?? 0, p.version));
@@ -540,7 +592,7 @@ export async function getProposalDetail(user: CurrentUser, id: string): Promise<
     getById<Organization>(COLLECTIONS.organizations, ORG_ID),
   ]);
   if (!client || !opportunity) return null;
-  if (!user.isManager && proposal.ownerId !== user.id && !canSeeOpportunity(user, opportunity)) return null;
+  if (!proposalInScope(await proposalScope(user), proposal, opportunity)) return null;
   const today = todayKey();
   return {
     proposal: { ...proposal, effectiveStatus: effectiveProposalStatus(proposal, today) },
@@ -559,7 +611,8 @@ export async function getProposalDetail(user: CurrentUser, id: string): Promise<
 
 /** Oportunidades abertas (para "Nova proposta" na página de propostas). */
 export async function listOpenOpportunityOptions(user: CurrentUser): Promise<{ id: string; title: string; clientName: string; products: Opportunity["products"] }[]> {
-  const opps = (await list<Opportunity>(COLLECTIONS.opportunities)).filter((o) => isOpenStage(o.stage) && canSeeOpportunity(user, o));
+  const [all, scope] = await Promise.all([list<Opportunity>(COLLECTIONS.opportunities), opportunityScope(user)]);
+  const opps = all.filter((o) => isOpenStage(o.stage) && opportunityInScope(scope, o));
   const clients = await getManyByIds<Client>(COLLECTIONS.clients, opps.map((o) => o.clientId));
   return opps
     .map((o) => ({ id: o.id, title: o.title, clientName: clients.get(o.clientId)?.tradeName ?? "—", products: o.products }))
@@ -608,8 +661,8 @@ export async function toVisitRows(visits: Visit[]): Promise<VisitRow[]> {
 }
 
 export async function listVisits(user: CurrentUser): Promise<VisitRow[]> {
-  const visits = await list<Visit>(COLLECTIONS.visits);
-  const visible = user.isManager ? visits : visits.filter((v) => v.sellerId === user.id || v.createdBy === user.id);
+  const [visits, scope] = await Promise.all([list<Visit>(COLLECTIONS.visits), visitScope(user)]);
+  const visible = visits.filter((v) => visitInScope(scope, v));
   const rows = await toVisitRows(visible);
   // Pendentes primeiro (mais próximas), depois o histórico (mais recentes).
   const pending = (v: Visit) => v.status === "agendada" || v.status === "remarcada";
@@ -622,7 +675,7 @@ export async function listVisits(user: CurrentUser): Promise<VisitRow[]> {
 export async function getVisitDetail(user: CurrentUser, id: string): Promise<{ visit: VisitRow; activities: TimelineEvent[] } | null> {
   const visit = await getById<Visit>(COLLECTIONS.visits, id);
   if (!visit) return null;
-  if (!user.isManager && visit.sellerId !== user.id && visit.createdBy !== user.id) return null;
+  if (!visitInScope(await visitScope(user), visit)) return null;
   const [[row], events] = await Promise.all([toVisitRows([visit]), list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", visit.id]] })]);
   return {
     visit: row,
@@ -640,7 +693,8 @@ export async function listClientAddresses(): Promise<Record<string, Client["addr
 
 /** Oportunidades abertas por cliente (select de oportunidade no formulário de visita). */
 export async function listOpenOpportunitiesByClient(user: CurrentUser): Promise<Record<string, { id: string; title: string }[]>> {
-  const opps = (await list<Opportunity>(COLLECTIONS.opportunities)).filter((o) => isOpenStage(o.stage) && canSeeOpportunity(user, o));
+  const [all, scope] = await Promise.all([list<Opportunity>(COLLECTIONS.opportunities), opportunityScope(user)]);
+  const opps = all.filter((o) => isOpenStage(o.stage) && opportunityInScope(scope, o));
   const out: Record<string, { id: string; title: string }[]> = {};
   for (const o of opps) (out[o.clientId] ??= []).push({ id: o.id, title: o.title });
   return out;
@@ -706,7 +760,7 @@ export function agendaRange(view: AgendaView, anchor: string): { start: string; 
 }
 
 export async function getAgenda(user: CurrentUser, options: { view: AgendaView; anchor: string; escopo?: string }): Promise<AgendaData> {
-  const scope = await resolveScope(user, options.escopo);
+  const scope = await resolveScope(user, options.escopo, SALES_SCREENS.agenda);
   const ids = new Set(scope.userIds);
   const { start, end, days } = agendaRange(options.view, options.anchor);
   const [visits, tasks, opps, users] = await Promise.all([
@@ -778,3 +832,51 @@ export async function getAgenda(user: CurrentUser, options: { view: AgendaView; 
 // Reexporta tipos usados pelas páginas.
 export type { CommissionSummary, OpportunitySettings, PipelineStage };
 export type { Commission };
+
+// ---------------------------------------------------------------------------
+// Contexto do diálogo "Marcar como ganho" (fechamento estruturado)
+// ---------------------------------------------------------------------------
+
+export interface WonContextContact {
+  id: string;
+  name: string;
+  role?: string;
+  email?: string;
+  phone?: string;
+  isPrimary: boolean;
+}
+
+export interface WonContext {
+  contacts: WonContextContact[];
+  /** Proposta aceita da oportunidade: o contrato usará estes itens (líquidos de desconto). */
+  acceptedProposal: {
+    id: string;
+    number: string;
+    conditions?: string;
+    items: { productId: string; productName: string; quantity: number; setupValue: number; monthlyValue: number; hardwareValue: number; discountPct: number }[];
+  } | null;
+}
+
+/** Contatos do cliente (principal primeiro) e a proposta aceita, para pré-preencher o fechamento. */
+export async function getWonContext(opportunityId: string): Promise<WonContext | null> {
+  const opp = await getById<Opportunity>(COLLECTIONS.opportunities, opportunityId);
+  if (!opp) return null;
+  const [contacts, proposal] = await Promise.all([
+    list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", opp.clientId]] }),
+    opp.proposalId ? getById<Proposal>(COLLECTIONS.proposals, opp.proposalId) : Promise.resolve(null),
+  ]);
+  const accepted = proposal?.status === "aceita" && proposal.items.length > 0 ? proposal : null;
+  return {
+    contacts: contacts
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.name.localeCompare(b.name, "pt-BR"))
+      .map((c) => ({ id: c.id, name: c.name, role: c.role, email: c.email, phone: c.phone ?? c.whatsapp, isPrimary: c.isPrimary })),
+    acceptedProposal: accepted
+      ? {
+          id: accepted.id,
+          number: accepted.number,
+          conditions: accepted.conditions,
+          items: accepted.items.map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: i.setupValue, monthlyValue: i.monthlyValue, hardwareValue: i.hardwareValue, discountPct: i.discountPct })),
+        }
+      : null,
+  };
+}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AlertTriangle, CalendarCheck, CheckCircle2, Loader } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
+import { taskCapabilities } from "@/server/tasks/access";
 import { countTaskSummary, currentMonthKey, getTaskDetail, listAssignableUsers, listClientsForSelect, listTasksForUser, todayKey } from "@/server/tasks/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -28,7 +29,7 @@ function parseMonth(value: string | undefined): string | undefined {
  * os demais filtros são aplicados no cliente sobre esses dados. ?tarefa=<id> abre o drawer.
  */
 export default async function TarefasPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
+  const user = await requireScreen("operacao.tarefas");
   const sp = await searchParams;
   const view = parseTaskView(first(sp.view));
   const month = parseMonth(first(sp.mes)) ?? currentMonthKey();
@@ -38,15 +39,18 @@ export default async function TarefasPage({ searchParams }: { searchParams: Sear
     listTasksForUser(user, view, { month }),
     countTaskSummary(user),
     listAssignableUsers(),
-    listClientsForSelect(),
-    taskId ? getTaskDetail(taskId, user) : Promise.resolve(null),
+    listClientsForSelect(user),
+    // Detalhe só com a seção liberada e a tarefa no escopo/vínculos do usuário (getTaskDetail devolve null).
+    taskId && can(user, "operacao.tarefas.detalhe.ver") ? getTaskDetail(taskId, user) : Promise.resolve(null),
   ]);
 
-  const canDelete = detail ? user.isManager || detail.task.creatorId === user.id : false;
+  // Botões e controles: calculados aqui (servidor); as actions revalidam cada chave e o escopo.
+  const caps = taskCapabilities(user);
+  const canDelete = detail ? (detail.task.creatorId === user.id ? caps.deleteOwn : caps.deleteOwn && caps.deleteAny) : false;
 
   return (
     <PageContainer size={view === "kanban" ? "full" : "default"}>
-      <PageHeader title="Tarefas" description="Tudo o que precisa ser feito, por pessoa, equipe, prazo e status." actions={<NewTaskDialog users={users} clients={clients} currentUser={{ id: user.id, departmentId: user.departmentId }} />}>
+      <PageHeader title="Tarefas" description="Tudo o que precisa ser feito, por pessoa, equipe, prazo e status." actions={caps.create ? <NewTaskDialog users={users} clients={clients} currentUser={{ id: user.id, departmentId: user.departmentId }} /> : undefined}>
         <TaskViewSwitcher view={view} />
       </PageHeader>
 
@@ -57,9 +61,9 @@ export default async function TarefasPage({ searchParams }: { searchParams: Sear
         <StatCard label="Concluídas na semana" value={summary.completedThisWeek} icon={<CheckCircle2 />} tone="success" href="/tarefas?view=concluidas&mine=1" hint="Desde segunda-feira" compact />
       </div>
 
-      <TasksWorkspace view={view} items={items} users={users} clients={clients} currentUserId={user.id} todayKey={todayKey()} month={month} />
+      <TasksWorkspace view={view} items={items} users={users} clients={clients} currentUserId={user.id} todayKey={todayKey()} month={month} can={caps} />
 
-      <TaskDrawer detail={detail} users={users} clients={clients} currentUserId={user.id} canDelete={canDelete} />
+      <TaskDrawer detail={detail} users={users} clients={clients} currentUserId={user.id} canDelete={canDelete} can={caps} />
     </PageContainer>
   );
 }

@@ -8,6 +8,7 @@ import "server-only";
  */
 import { create, getById, getManyByIds, list, nowIso, update, type CreateInput } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { BusinessError } from "@/server/auth/error-classes";
 import { registerHandler } from "@/server/events/emit";
 import { recomputeProspectListTotals, registerMarketingHandlers } from "@/server/events/handlers/marketing";
 import { notify } from "@/server/notifications";
@@ -57,8 +58,8 @@ registerMarketingHandlers(registerHandler);
 
 export type MarketingActor = UserRef;
 
-/** Erro de regra de negócio: a mensagem vai direto para a interface. */
-export class MarketingError extends Error {}
+/** Erro de regra de negócio: a mensagem vai direto para a interface (BusinessError → failAction a exibe). */
+export class MarketingError extends BusinessError {}
 
 const CHANNEL_LABELS: Record<LeadContactChannel, string> = { ligacao: "Ligação", whatsapp: "WhatsApp", email: "E-mail" };
 const COMMUNICATION_CHANNEL: Record<LeadContactChannel, Communication["channel"]> = { ligacao: "voip", whatsapp: "whatsapp", email: "email" };
@@ -123,6 +124,8 @@ export interface LeadDuplicate {
   status: Lead["status"];
   createdAt: string;
   reasons: string[];
+  /** Duplicado fora do escopo do usuário: só motivos e status (sem nome, empresa, telefone e e-mail). */
+  restricted?: true;
 }
 
 /** Compara um lead (ou dados de formulário) com uma lista de leads. Puro. */

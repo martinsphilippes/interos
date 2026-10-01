@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,9 @@ export interface ClientFormValues {
   tags: string;
   notes: string;
   status: "prospect" | "lead";
+  /** Opt-out de comunicação automática por canal (cobrança, régua, respostas pelo sistema). */
+  optOutWhatsapp: boolean;
+  optOutEmail: boolean;
 }
 
 export const EMPTY_CLIENT_FORM: ClientFormValues = {
@@ -67,6 +71,8 @@ export const EMPTY_CLIENT_FORM: ClientFormValues = {
   tags: "",
   notes: "",
   status: "prospect",
+  optOutWhatsapp: false,
+  optOutEmail: false,
 };
 
 export function clientToFormValues(client: Client): ClientFormValues {
@@ -94,6 +100,8 @@ export function clientToFormValues(client: Client): ClientFormValues {
     tags: client.tags?.join(", ") ?? "",
     notes: client.notes ?? "",
     status: client.status === "lead" ? "lead" : "prospect",
+    optOutWhatsapp: Boolean(client.communicationOptOut?.whatsapp),
+    optOutEmail: Boolean(client.communicationOptOut?.email),
   };
 }
 
@@ -117,6 +125,7 @@ function toPayload(v: ClientFormValues) {
       .map((t) => t.trim())
       .filter(Boolean),
     notes: v.notes,
+    communicationOptOut: { whatsapp: v.optOutWhatsapp, email: v.optOutEmail },
   };
 }
 
@@ -266,6 +275,20 @@ export function ClientForm({ mode, clientId, initial, options, onSuccess, onCanc
         <FormField label="Site" htmlFor={fid("website")} error={errors.website}>
           <Input id={fid("website")} type="url" value={values.website} onChange={set("website")} invalid={Boolean(errors.website)} placeholder="https://www.empresa.com.br" />
         </FormField>
+        <Switch
+          label="Não enviar WhatsApp pelo sistema"
+          description="Opt-out: cobranças, régua e respostas automáticas ficam registradas como não enviadas."
+          checked={values.optOutWhatsapp}
+          onCheckedChange={(v) => setValues((prev) => ({ ...prev, optOutWhatsapp: v }))}
+          className="w-full rounded-lg border border-border px-3 py-2"
+        />
+        <Switch
+          label="Não enviar e-mail pelo sistema"
+          description="Opt-out do e-mail complementar (cobrança e régua)."
+          checked={values.optOutEmail}
+          onCheckedChange={(v) => setValues((prev) => ({ ...prev, optOutEmail: v }))}
+          className="w-full rounded-lg border border-border px-3 py-2"
+        />
       </Section>
 
       <Section title="Endereço">

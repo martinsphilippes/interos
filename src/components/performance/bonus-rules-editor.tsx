@@ -140,7 +140,7 @@ function KpiRowsEditor({ title, rows, kpis, onChange }: { title: string; rows: K
   );
 }
 
-function RuleCard({ rule, kpis, onEdit, versions }: { rule: BonusRule; kpis: Kpis; onEdit: () => void; versions: BonusRule[] }) {
+function RuleCard({ rule, kpis, onEdit, versions }: { rule: BonusRule; kpis: Kpis; onEdit?: () => void; versions: BonusRule[] }) {
   const name = (key: string) => kpis.find((k) => k.key === key)?.name ?? key;
   const target = (key: string, value: number) => {
     const k = kpis.find((x) => x.key === key);
@@ -157,9 +157,11 @@ function RuleCard({ rule, kpis, onEdit, versions }: { rule: BonusRule; kpis: Kpi
             Versão {rule.version} · desde {formatDate(rule.createdAt)} · até {rule.maxPctOfSalary}% do salário · individual {rule.individualWeight} / coletivo {rule.collectiveWeight}
           </p>
         </div>
-        <Button variant="outline" size="sm" className="min-h-[44px] md:min-h-0" onClick={onEdit}>
-          <Pencil /> Nova versão
-        </Button>
+        {onEdit ? (
+          <Button variant="outline" size="sm" className="min-h-[44px] md:min-h-0" onClick={onEdit}>
+            <Pencil /> Nova versão
+          </Button>
+        ) : null}
       </header>
       <div className="grid gap-4 px-4 py-3 text-sm md:grid-cols-2">
         {(["individualKpis", "collectiveKpis"] as const).map((field) => (
@@ -205,8 +207,11 @@ function RuleCard({ rule, kpis, onEdit, versions }: { rule: BonusRule; kpis: Kpi
   );
 }
 
-/** Editor das regras de bônus: cada salvamento publica uma nova versão e desativa a anterior (não retroage). */
-export function BonusRulesEditor({ data }: { data: BonusRulesAdminData }) {
+/**
+ * Editor das regras de bônus: cada salvamento publica uma nova versão e desativa a anterior (não retroage).
+ * `readOnly` (sem performance.bonus.regras.editar, calculado no servidor): só visualização, sem botões de edição.
+ */
+export function BonusRulesEditor({ data, readOnly = false }: { data: BonusRulesAdminData; readOnly?: boolean }) {
   const router = useRouter();
   const [form, setForm] = React.useState<FormState | null>(null);
   const [pending, startTransition] = React.useTransition();
@@ -242,20 +247,24 @@ export function BonusRulesEditor({ data }: { data: BonusRulesAdminData }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted">Regras vigentes por departamento. Competências já fechadas guardam a versão usada.</p>
-        <Button className="min-h-[44px] md:min-h-0" onClick={() => open(null)}>
-          <Plus /> Nova regra
-        </Button>
+        <p className="text-sm text-muted">
+          Regras vigentes por departamento. Competências já fechadas guardam a versão usada.{readOnly ? " Seu perfil pode consultar as regras, mas não publicar novas versões." : ""}
+        </p>
+        {readOnly ? null : (
+          <Button className="min-h-[44px] md:min-h-0" onClick={() => open(null)}>
+            <Plus /> Nova regra
+          </Button>
+        )}
       </div>
       {active.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface">
-          <EmptyState title="Nenhuma regra de bônus ativa" description="Crie a regra do departamento com indicadores, pesos, faixas, bloqueadores e extras." action={<Button onClick={() => open(null)}>Nova regra</Button>} />
+          <EmptyState title="Nenhuma regra de bônus ativa" description="Crie a regra do departamento com indicadores, pesos, faixas, bloqueadores e extras." action={readOnly ? null : <Button onClick={() => open(null)}>Nova regra</Button>} />
         </div>
       ) : (
-        active.map((rule) => <RuleCard key={rule.id} rule={rule} kpis={data.kpis} versions={inactive.filter((r) => r.department === rule.department)} onEdit={() => open(rule)} />)
+        active.map((rule) => <RuleCard key={rule.id} rule={rule} kpis={data.kpis} versions={inactive.filter((r) => r.department === rule.department)} onEdit={readOnly ? undefined : () => open(rule)} />)
       )}
 
-      <Drawer open={form !== null} onOpenChange={(v) => !v && !pending && setForm(null)}>
+      <Drawer open={!readOnly && form !== null} onOpenChange={(v) => !v && !pending && setForm(null)}>
         <DrawerContent size="lg">
           {form ? (
             <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">

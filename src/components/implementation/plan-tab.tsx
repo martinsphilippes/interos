@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CheckCircle2, Circle, Link2, Plus, RotateCcw } from "lucide-react";
+import { CheckCircle2, ChevronDown, Circle, Link2, Plus, RotateCcw } from "lucide-react";
 import { IMPLEMENTATION_PHASES, type ImplementationPhase, type ImplementationTask } from "@/domain/types";
 import { TASK_STATUS_LABELS } from "@/domain/constants";
 import { addProjectTask, assignProjectTask, completeProjectTask, reopenProjectTask } from "@/server/implementation/actions";
@@ -26,10 +26,22 @@ export interface PlanTabProps {
   currentPhase: ImplementationPhase;
   users: { id: string; name: string }[];
   ownerId: string;
-  canOperate: boolean;
+  /** Ações do plano permitidas ao usuário (calculadas no servidor pelo catálogo; as actions revalidam). */
+  permissions: PlanPermissions;
   /** Projeto concluído ou cancelado: plano só leitura. */
   readOnly: boolean;
   now: string;
+}
+
+export interface PlanPermissions {
+  /** Adicionar tarefa avulsa. */
+  add: boolean;
+  /** Concluir tarefa. */
+  complete: boolean;
+  /** Reabrir tarefa concluída. */
+  reopen: boolean;
+  /** Atribuir responsável da tarefa. */
+  assign: boolean;
 }
 
 const STATUS_VARIANT: Record<ImplementationTask["status"], "success" | "info" | "warning" | "muted" | "danger"> = {
@@ -43,14 +55,24 @@ const STATUS_VARIANT: Record<ImplementationTask["status"], "success" | "info" | 
 /**
  * Plano do projeto: fases em accordion com as tarefas (responsável, prazo, status, obrigatória,
  * dependências, evidência). Concluir todas as obrigatórias de uma fase avança a fase automaticamente.
+ *
+ * O accordion é controlado pelo React (botão + conteúdo condicional), não um `<details>` nativo: o `<details>`
+ * pode ser aberto/fechado pelo navegador antes da hidratação terminar, e o atributo `open` divergia da prop
+ * (aviso "some attributes of the server rendered HTML didn't match"). Cliques feitos antes da hidratação são
+ * repetidos pelo React ao hidratar.
  */
-export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOperate, readOnly, now }: PlanTabProps) {
+export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, permissions, readOnly, now }: PlanTabProps) {
   const [completing, setCompleting] = React.useState<ImplementationTask | null>(null);
   const [adding, setAdding] = React.useState(false);
   const phases = IMPLEMENTATION_PHASES.filter((ph) => ph === currentPhase || tasks.some((t) => t.phase === ph));
   const currentIdx = IMPLEMENTATION_PHASES.indexOf(currentPhase);
   const titles = new Map(tasks.map((t) => [t.id, t.title]));
-  const editable = canOperate && !readOnly;
+  // Projeto encerrado: nada editável, qualquer que seja a permissão.
+  const allowed: PlanPermissions = readOnly ? { add: false, complete: false, reopen: false, assign: false } : permissions;
+  // Fases abertas: a fase atual começa aberta; o usuário abre/fecha as outras (estado por fase, reinicia se a fase mudar).
+  const [openPhases, setOpenPhases] = React.useState<Record<string, boolean>>({});
+  const isOpen = (ph: ImplementationPhase) => openPhases[ph] ?? ph === currentPhase;
+  const toggle = (ph: ImplementationPhase) => setOpenPhases((cur) => ({ ...cur, [ph]: !isOpen(ph) }));
 
   return (
     <div className="flex flex-col gap-3">
@@ -59,7 +81,7 @@ export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOpe
           {tasks.filter((t) => t.status === "concluida").length}/{tasks.length} tarefas concluídas · {tasks.filter((t) => t.required && t.status !== "concluida" && t.status !== "cancelada").length} obrigatória(s) em aberto. Tarefas da fase Go-live
           são concluídas na aprovação do go-live.
         </p>
-        {editable ? (
+        {allowed.add ? (
           <Button variant="outline" className="h-11 md:h-9" onClick={() => setAdding(true)}>
             <Plus /> Tarefa avulsa
           </Button>
@@ -72,10 +94,18 @@ export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOpe
         const requiredOpen = phaseTasks.filter((t) => t.required && t.status !== "concluida" && t.status !== "cancelada").length;
         const isCurrent = ph === currentPhase;
         const past = IMPLEMENTATION_PHASES.indexOf(ph) < currentIdx;
+        const open = isOpen(ph);
+        const panelId = `plano-fase-${ph}`;
         return (
-          <details key={ph} open={isCurrent} className="rounded-lg border border-border bg-surface">
-            <summary className="flex min-h-[48px] cursor-pointer list-none items-center gap-2 px-4 text-sm [&::-webkit-details-marker]:hidden">
-              {phaseTasks.length > 0 && done === phaseTasks.length ? <CheckCircle2 className="size-4 text-success" aria-hidden /> : <Circle className={cn("size-4", isCurrent ? "text-brand" : "text-muted-light")} aria-hidden />}
+          <section key={ph} data-phase={ph} data-open={open ? "true" : "false"} className="rounded-lg border border-border bg-surface">
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-controls={open ? panelId : undefined}
+              onClick={() => toggle(ph)}
+              className="flex min-h-[48px] w-full cursor-pointer items-center gap-2 px-4 text-left text-sm focus-visible:outline-brand"
+            >
+              {phaseTasks.length > 0 && done === phaseTasks.length ? <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden /> : <Circle className={cn("size-4 shrink-0", isCurrent ? "text-brand" : "text-muted-light")} aria-hidden />}
               <span className={cn("font-medium", past && "text-muted")}>{IMPLEMENTATION_PHASE_LABELS[ph]}</span>
               {isCurrent ? (
                 <Badge variant="brand" size="sm">
@@ -83,20 +113,25 @@ export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOpe
                 </Badge>
               ) : null}
               {requiredOpen > 0 ? <span className="text-xs text-warning-fg">{requiredOpen} obrigatória(s) pendente(s)</span> : null}
-              <span className="ml-auto text-xs tabular-nums text-muted">
+              <span className="ml-auto flex shrink-0 items-center gap-2 text-xs tabular-nums text-muted">
                 {done}/{phaseTasks.length}
+                <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} aria-hidden />
               </span>
-            </summary>
-            {phaseTasks.length === 0 ? (
-              <p className="border-t border-border px-4 py-3 text-sm text-muted">Sem tarefas nesta fase.</p>
-            ) : (
-              <ul className="divide-y divide-border border-t border-border">
-                {phaseTasks.map((t) => (
-                  <TaskRow key={t.id} task={t} users={users} titles={titles} editable={editable} now={now} onComplete={() => setCompleting(t)} />
-                ))}
-              </ul>
-            )}
-          </details>
+            </button>
+            {open ? (
+              <div id={panelId}>
+                {phaseTasks.length === 0 ? (
+                  <p className="border-t border-border px-4 py-3 text-sm text-muted">Sem tarefas nesta fase.</p>
+                ) : (
+                  <ul className="divide-y divide-border border-t border-border">
+                    {phaseTasks.map((t) => (
+                      <TaskRow key={t.id} task={t} users={users} titles={titles} allowed={allowed} now={now} onComplete={() => setCompleting(t)} />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+          </section>
         );
       })}
       {completing ? <CompleteTaskDialog task={completing} onClose={() => setCompleting(null)} /> : null}
@@ -105,7 +140,7 @@ export function PlanTab({ projectId, tasks, currentPhase, users, ownerId, canOpe
   );
 }
 
-function TaskRow({ task, users, titles, editable, now, onComplete }: { task: ImplementationTask; users: { id: string; name: string }[]; titles: Map<string, string>; editable: boolean; now: string; onComplete: () => void }) {
+function TaskRow({ task, users, titles, allowed, now, onComplete }: { task: ImplementationTask; users: { id: string; name: string }[]; titles: Map<string, string>; allowed: PlanPermissions; now: string; onComplete: () => void }) {
   const { pending, run } = useImplementationAction();
   const done = task.status === "concluida";
   const overdue = !done && task.dueAt && task.dueAt < now;
@@ -134,7 +169,7 @@ function TaskRow({ task, users, titles, editable, now, onComplete }: { task: Imp
         </div>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {editable ? (
+        {allowed.assign ? (
           <Select
             aria-label={`Responsável por ${task.title}`}
             value={task.assigneeId ?? ""}
@@ -155,12 +190,12 @@ function TaskRow({ task, users, titles, editable, now, onComplete }: { task: Imp
         ) : (
           <span className="text-xs text-muted">{users.find((u) => u.id === task.assigneeId)?.name ?? "Sem responsável"}</span>
         )}
-        {editable && !done && task.status !== "cancelada" ? (
+        {allowed.complete && !done && task.status !== "cancelada" ? (
           <Button size="sm" className="h-11 md:h-8" onClick={onComplete} disabled={pending}>
             <CheckCircle2 /> Concluir
           </Button>
         ) : null}
-        {editable && done ? (
+        {allowed.reopen && done ? (
           <Button size="sm" variant="ghost" className="h-11 md:h-8" loading={pending} onClick={() => run(() => reopenProjectTask({ taskId: task.id }), "Tarefa reaberta")}>
             <RotateCcw /> Reabrir
           </Button>

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Building2, CircleDollarSign, Goal, LayoutDashboard, Search, ShoppingCart, Users, Wallet, BarChart3 } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
+import { can, canSeeHref, requireScreen } from "@/server/auth/session";
 import { getCockpit } from "@/server/management/queries";
 import { currentMonthKey, listFormulas, parsePeriod, periodOptions, type KpiResult } from "@/server/kpis/queries";
 import { getOperationHealthConfig } from "@/server/kpis/operation-health";
@@ -40,12 +40,15 @@ function deltaOf(r: KpiResult | null, relative = true): { value: string; directi
 /**
  * Cockpit da Diretoria: "onde está o problema da empresa?". Faixa de indicadores da empresa com variação,
  * evolução da receita, Saúde da operação explicável, desempenho por departamento, funil comercial, operação,
- * alertas estratégicos e, abaixo, a cadeia da operação Marketing → Suporte para achar o gargalo.
+ * alertas estratégicos e, abaixo, a cadeia da operação Marketing → Suporte para achar o gargalo. Tela
+ * gestao.cockpit (padrão: diretoria/admin); configurar a Saúde da operação e as sugestões do assistente executivo
+ * pelas suas chaves; links para outras telas só para quem as vê.
  */
 export default async function CockpitPage({ searchParams }: { searchParams: SearchParams }) {
-  const [user, query] = await Promise.all([requireRole("diretoria"), searchParams]);
+  const [user, query] = await Promise.all([requireScreen("gestao.cockpit"), searchParams]);
   const period = parsePeriod(query);
-  const [cockpit, healthConfig] = await Promise.all([getCockpit(period), user.isDirector ? getOperationHealthConfig() : Promise.resolve(null)]);
+  const [cockpit, healthConfig] = await Promise.all([getCockpit(period), can(user, "gestao.cockpit.configurar") ? getOperationHealthConfig() : Promise.resolve(null)]);
+  const visible = (href: string | undefined) => (href && canSeeHref(user, href) ? href : undefined);
   const { strip } = cockpit;
   const goal = strip.globalGoal;
   const goalDelta = goal.attainment !== null && goal.previous !== null ? goal.attainment - goal.previous : null;
@@ -68,16 +71,20 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
             <FilterField label="Período" className="w-full sm:w-56">
               <PeriodSelect options={periodOptions()} value={period.key} className="w-full min-w-0" />
             </FilterField>
-            <Button asChild variant="outline" className="h-11 md:h-9">
-              <Link href="/gestao">
-                <LayoutDashboard /> Gestor
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="h-11 md:h-9">
-              <Link href="/gestao/relatorios?tipo=diretoria">
-                <BarChart3 /> Relatório
-              </Link>
-            </Button>
+            {canSeeHref(user, "/gestao") ? (
+              <Button asChild variant="outline" className="h-11 md:h-9">
+                <Link href="/gestao">
+                  <LayoutDashboard /> Gestor
+                </Link>
+              </Button>
+            ) : null}
+            {canSeeHref(user, "/gestao/relatorios") && can(user, "gestao.relatorios.diretoria.ver") ? (
+              <Button asChild variant="outline" className="h-11 md:h-9">
+                <Link href="/gestao/relatorios?tipo=diretoria">
+                  <BarChart3 /> Relatório
+                </Link>
+              </Button>
+            ) : null}
           </div>
         }
       />
@@ -89,7 +96,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
           icon={<CircleDollarSign />}
           tone="brand"
           delta={deltaOf(strip.mrr)}
-          href={strip.mrr?.href}
+          href={visible(strip.mrr?.href)}
           compact
         />
         <StatCard
@@ -99,10 +106,10 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
           tone="info"
           delta={deltaOf(strip.newSales, false)}
           hint={strip.soldRevenue ? `${formatCurrency(strip.soldRevenue.value)} vendidos` : undefined}
-          href={strip.newSales?.href}
+          href={visible(strip.newSales?.href)}
           compact
         />
-        <StatCard label="Clientes ativos" value={formatNumber(strip.activeClients?.value ?? null)} icon={<Users />} tone="secondary" delta={deltaOf(strip.activeClients, false)} href={strip.activeClients?.href} compact />
+        <StatCard label="Clientes ativos" value={formatNumber(strip.activeClients?.value ?? null)} icon={<Users />} tone="secondary" delta={deltaOf(strip.activeClients, false)} href={visible(strip.activeClients?.href)} compact />
         <StatCard
           label="Receita recebida"
           value={formatKpiValue(strip.received?.value ?? null, "moeda")}
@@ -110,7 +117,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
           tone="purple"
           delta={deltaOf(strip.received)}
           hint="Resultado operacional exige custos, ainda não registrados"
-          href={strip.received?.href}
+          href={visible(strip.received?.href)}
           compact
         />
         <StatCard
@@ -122,7 +129,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
           progress={goal.attainment === null ? undefined : Math.min(100, goal.attainment * 100)}
           delta={goalDelta === null ? undefined : { value: `${formatNumber(Math.round(Math.abs(goalDelta) * 1000) / 10)} p.p.`, direction: goalDelta > 0 ? "up" : goalDelta < 0 ? "down" : "flat", label: `vs. ${cockpit.previous.label.toLowerCase()}` }}
           hint={goal.count === 0 ? "Sem metas da empresa no período" : `${goal.count} meta(s) da empresa`}
-          href={goal.href}
+          href={visible(goal.href)}
           compact
         />
       </KpiStrip>
@@ -131,7 +138,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-3">
             <CardTitle>Evolução da receita</CardTitle>
-            {strip.mrr ? <CardLink href={strip.mrr.href} /> : null}
+            {strip.mrr && visible(strip.mrr.href) ? <CardLink href={strip.mrr.href} /> : null}
           </CardHeader>
           <CardContent className="pt-0">
             <RevenueChart mrr={cockpit.mrrHistory} revenue={cockpit.revenueHistory} />
@@ -143,7 +150,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
         <Card className="lg:col-span-2 2xl:col-span-1">
           <CardHeader className="flex-row items-center justify-between gap-3">
             <CardTitle>Desempenho por departamento</CardTitle>
-            <CardLink href={`/gestao?periodo=${encodeURIComponent(period.key)}`} />
+            {canSeeHref(user, "/gestao") ? <CardLink href={`/gestao?periodo=${encodeURIComponent(period.key)}`} /> : null}
           </CardHeader>
           <CardContent className="pt-0">
             <DepartmentPerformanceTable rows={cockpit.departments} />
@@ -155,7 +162,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-3">
             <CardTitle>Funil comercial</CardTitle>
-            <CardLink href="/vendas/pipeline" />
+            {canSeeHref(user, "/vendas/pipeline") ? <CardLink href="/vendas/pipeline" /> : null}
           </CardHeader>
           <CardContent className="pt-0">
             <SalesFunnel funnel={cockpit.salesFunnel} />
@@ -164,7 +171,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-3">
             <CardTitle>Operação</CardTitle>
-            <CardLink href={`/sla?periodo=${encodeURIComponent(period.key)}`}>Ver SLA</CardLink>
+            {canSeeHref(user, "/sla") ? <CardLink href={`/sla?periodo=${encodeURIComponent(period.key)}`}>Ver SLA</CardLink> : null}
           </CardHeader>
           <CardContent className="pt-0">
             <OperationSummary operation={cockpit.operation} />
@@ -212,7 +219,7 @@ export default async function CockpitPage({ searchParams }: { searchParams: Sear
         </Card>
       </div>
 
-      <AgentSuggestions kind="executivo" subjectId={/^\d{4}-\d{2}$/.test(period.key) ? period.key : currentMonthKey()} title="Sugestões do assistente executivo" className="mb-6" />
+      {can(user, "gestao.cockpit.sugestoes.ver") ? <AgentSuggestions kind="executivo" subjectId={/^\d{4}-\d{2}$/.test(period.key) ? period.key : currentMonthKey()} title="Sugestões do assistente executivo" className="mb-6" /> : null}
     </PageContainer>
   );
 }

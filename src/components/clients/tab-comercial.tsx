@@ -26,7 +26,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /** Aba Comercial: origem, lead, vendedor, oportunidades e propostas. */
-export function TabComercial({ data, options }: { data: Client360; options: ClientFormOptions }) {
+/** `canCreateOpportunity` (calculado no servidor): sem a ação o botão "Nova oportunidade" não aparece. */
+export function TabComercial({ data, options, canCreateOpportunity = true }: { data: Client360; options: ClientFormOptions; canCreateOpportunity?: boolean }) {
   const { client, lead, campaign, opportunities, proposals, users, availableProducts, ownedCategories } = data;
   const now = new Date().toISOString();
   const originName = client.origin ? (options.leadSources.find((s) => s.key === client.origin)?.name ?? client.origin) : "—";
@@ -99,17 +100,19 @@ export function TabComercial({ data, options }: { data: Client360; options: Clie
           count={opportunities.length}
           description={openOpps.length > 0 ? `${openOpps.length} em aberto · ${formatCurrency(pipelineMonthly)}/mês em negociação` : undefined}
           actions={
-            <UpsellDialog
-              clientId={client.id}
-              clientName={client.tradeName}
-              products={availableProducts}
-              ownedCategories={ownedCategories}
-              trigger={
-                <Button size="sm">
-                  <TrendingUp /> Nova oportunidade
-                </Button>
-              }
-            />
+            canCreateOpportunity ? (
+              <UpsellDialog
+                clientId={client.id}
+                clientName={client.tradeName}
+                products={availableProducts}
+                ownedCategories={ownedCategories}
+                trigger={
+                  <Button size="sm">
+                    <TrendingUp /> Nova oportunidade
+                  </Button>
+                }
+              />
+            ) : undefined
           }
         />
         <Card className="overflow-hidden">

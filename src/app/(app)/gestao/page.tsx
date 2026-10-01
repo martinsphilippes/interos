@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 import { AlertTriangle, BarChart3, Bell, Building2, ClipboardCheck, ClipboardX, Radar, ShieldCheck, Target, Timer, TrendingUp, Users, Workflow } from "lucide-react";
 import Link from "next/link";
-import { requireRole } from "@/server/auth/session";
+import { canSeeHref, requireScreen } from "@/server/auth/session";
 import { getManagerDashboard } from "@/server/management/queries";
 import { FOCUS_LABELS, parseFocus, type FocusKey } from "@/server/management/schemas";
 import { parsePeriod, periodOptions } from "@/server/kpis/queries";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardContent, CardDescription, CardHeader, CardLink, CardTitle } from "@/components/ui/card";
+import { CanSee, ScreenLink } from "@/components/auth/access-provider";
 import { FilterField } from "@/components/ui/filter-bar";
 import { KpiStrip } from "@/components/ui/kpi-strip";
 import { PageHeader } from "@/components/ui/page-header";
@@ -51,7 +52,7 @@ const FOCUS_ICONS: Record<FocusKey, React.ReactNode> = { atrasadas: <ClipboardX 
  * (?foco=, /gestao/equipe/[userId]). Tudo vem do motor de KPIs, do SLA global e das coleções operacionais.
  */
 export default async function ManagerDashboardPage({ searchParams }: { searchParams: SearchParams }) {
-  const [user, query] = await Promise.all([requireRole("gestor", "diretoria"), searchParams]);
+  const [user, query] = await Promise.all([requireScreen("gestao.dashboard"), searchParams]);
   const period = parsePeriod(query);
   const focus = parseFocus(query.foco);
   const departamento = one(query.departamento);
@@ -74,24 +75,18 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
           <div className="flex w-full flex-wrap items-end gap-2 md:w-auto">
             {scope.canChoose ? (
               <FilterField label="Departamento" className="w-full sm:w-56">
-                <UrlSelect param="departamento" label="Departamento" value={scope.selected} options={scope.options} resetValue={user.isDirector ? "empresa" : "equipe"} clear={["foco"]} icon={<Building2 />} />
+                <UrlSelect param="departamento" label="Departamento" value={scope.selected} options={scope.options} resetValue={scope.options[0]?.value ?? "equipe"} clear={["foco"]} icon={<Building2 />} />
               </FilterField>
             ) : null}
             <FilterField label="Período" className="w-full sm:w-56">
               <PeriodSelect options={periodOptions()} value={period.key} className="w-full min-w-0" />
             </FilterField>
-            {user.isDirector ? (
-              <Button asChild variant="outline" className="h-11 md:h-9">
-                <Link href="/gestao/cockpit">
-                  <Radar /> Cockpit
-                </Link>
-              </Button>
-            ) : null}
-            <Button asChild variant="outline" className="h-11 md:h-9">
-              <Link href="/gestao/relatorios">
-                <BarChart3 /> Relatórios
-              </Link>
-            </Button>
+            <ScreenLink href="/gestao/cockpit" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
+              <Radar /> Cockpit
+            </ScreenLink>
+            <ScreenLink href="/gestao/relatorios" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
+              <BarChart3 /> Relatórios
+            </ScreenLink>
           </div>
         }
       />
@@ -114,7 +109,7 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
           tone={slaTone}
           valueTone
           hint={summary.sla.rate === null ? "Nenhum SLA avaliado" : `${summary.sla.met}/${summary.sla.evaluated} no prazo · meta ${formatPercent(summary.sla.target)}`}
-          href={slaHrefScope}
+          href={canSeeHref(user, slaHrefScope) ? slaHrefScope : undefined}
           compact
         />
         <StatCard
@@ -177,7 +172,9 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-3">
             <CardTitle>Metas do departamento</CardTitle>
-            <CardLink href={`/performance/metas?periodo=${encodeURIComponent(period.key)}`}>Ver metas</CardLink>
+            <CanSee href="/performance/metas">
+              <CardLink href={`/performance/metas?periodo=${encodeURIComponent(period.key)}`}>Ver metas</CardLink>
+            </CanSee>
           </CardHeader>
           <CardContent className="pt-1">
             <ProgressList
@@ -205,7 +202,7 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
               <CardDescription>Tarefas abertas ÷ média da equipe; acima de 110% fica vermelho.</CardDescription>
             </CardHeader>
             <CardContent className="pt-1">
-              <WorkloadCard members={data.members} teamAverageOpen={data.teamAverageOpen} tasksByUser={data.reassign.tasksByUser} targets={data.reassign.targets} limit={5} />
+              <WorkloadCard members={data.members} teamAverageOpen={data.teamAverageOpen} tasksByUser={data.reassign.tasksByUser} targets={data.reassign.targets} canRedistribute={data.reassign.canRedistribute} limit={5} />
             </CardContent>
           </Card>
           <Card>
@@ -230,7 +227,7 @@ export default async function ManagerDashboardPage({ searchParams }: { searchPar
           <span className="text-sm text-muted">{data.members.length} colaborador(es)</span>
         </CardHeader>
         <CardContent className="px-3 pb-3 pt-0 md:px-0 md:pb-0">
-          <TeamTable members={data.members} teamAverageOpen={data.teamAverageOpen} tasksByUser={data.reassign.tasksByUser} targets={data.reassign.targets} focus={focus} periodKey={period.key} />
+          <TeamTable members={data.members} teamAverageOpen={data.teamAverageOpen} tasksByUser={data.reassign.tasksByUser} targets={data.reassign.targets} canRedistribute={data.reassign.canRedistribute} focus={focus} periodKey={period.key} />
         </CardContent>
       </Card>
 

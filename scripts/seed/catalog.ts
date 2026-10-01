@@ -25,6 +25,7 @@ import type { SeedContext } from "./context";
 import { seedKpiDefinitions } from "./kpis";
 import { PROCESS_SEED_DEFINITIONS } from "../../src/server/process-engine/seed-definitions";
 import { DEFAULT_GAMIFICATION, DEFAULT_SALES_PRIZES } from "../../src/server/performance/schemas";
+import { REGUA_DEFAULT_MARCOS, SETTING_DEFAULTS, SETTING_DESCRIPTIONS } from "../../src/server/admin/schemas";
 
 const createdAt = daysAgo(400);
 
@@ -276,7 +277,15 @@ const SETTINGS: (SeedDoc<Settings> & { id: string })[] = [
   { id: "setting_go_live", key: "go_live", description: "Regras de aprovação do go-live da implantação.", value: { exigeAprovacaoGestor: true } },
   { id: "setting_cs_ativacao", key: "cs_ativacao", description: "Critérios do gate de ativação do cliente pelo Customer Success.", value: { adocaoMinimaPct: 30, exigePlano: true } },
   { id: "setting_gamificacao", key: "gamificacao", description: "Pontos por evento, multiplicadores de equivalência entre funções e níveis da gamificação.", value: { ...DEFAULT_GAMIFICATION } },
+  { id: "setting_comissoes_pagamento", key: "comissoes_pagamento", description: "Pagamento de comissões: dia do vencimento dos títulos no mês seguinte à competência da elegibilidade.", value: { diaPagamento: 10 } },
+  { id: "setting_financeiro_alertas", key: "financeiro_alertas", description: SETTING_DESCRIPTIONS.financeiro_alertas, value: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3, horizonteCobrancasMeses: 3 } },
   { id: "setting_premios_vendas", key: "premios_vendas", description: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.", value: { ...DEFAULT_SALES_PRIZES } },
+  // Etapa 4 (D32): baixa automática, canais de cobrança e régua (DESLIGADA por padrão; marcos −15/−7/+21 são proposta).
+  { id: "setting_financeiro_baixa", key: "financeiro_baixa", description: SETTING_DESCRIPTIONS.financeiro_baixa, value: { ...SETTING_DEFAULTS.financeiro_baixa } },
+  { id: "setting_cobranca_canais", key: "cobranca_canais", description: SETTING_DESCRIPTIONS.cobranca_canais, value: { principal: "whatsapp", complementar: "email", enviarEmailJuntoAoWhatsapp: false } },
+  { id: "setting_regua_cobranca", key: "regua_cobranca", description: SETTING_DESCRIPTIONS.regua_cobranca, value: { ativa: false, diasUteis: false, marcos: REGUA_DEFAULT_MARCOS.map((m) => ({ ...m })), pausarQuando: { pendencia: true, negociacao: true } } },
+  // Etapa 5 (D32): categorias e centros de custo de Contas a Pagar.
+  { id: "setting_contas_a_pagar", key: "contas_a_pagar", description: SETTING_DESCRIPTIONS.contas_a_pagar, value: { categorias: [...SETTING_DEFAULTS.contas_a_pagar.categorias], centrosDeCusto: [...SETTING_DEFAULTS.contas_a_pagar.centrosDeCusto] } },
 ];
 
 // ---------------------------------------------------------------------------
@@ -436,6 +445,27 @@ const COMMISSION_RULES: (SeedDoc<CommissionRule> & { id: string })[] = [
   { id: "comm_rule_recorrencia", name: "Recorrência 100% na 3ª mensalidade", revenueType: "recorrencia", mode: "percentual", value: 100, releaseCondition: "parcela", releaseInstallment: 3, active: true },
   { id: "comm_rule_hardware", name: "Hardware 2,5%", revenueType: "hardware", mode: "percentual", value: 2.5, releaseCondition: "pagamento", active: true },
 ];
+
+/**
+ * Regras por vendedor (motor v2, D19). Composição: cada tipo de receita tem a sua regra; o que não tiver regra do
+ * vendedor cai na padrão.
+ * - Vinícius: 10% da adesão e 5% da recorrência por 12 competências (sobre o recebido) + R$ 100 fixos por unidade de
+ *   hardware, liberados no recebimento.
+ * - Igor: adesão de 20% sobre o contratado, adquirida só quando a 3ª mensalidade é paga (política anticancelamento
+ *   por vendedor), e recorrência de 30% a partir da 3ª mensalidade paga, por 6 competências.
+ */
+function sellerCommissionRules(ctx: SeedContext): (SeedDoc<CommissionRule> & { id: string })[] {
+  const vinicius = ctx.users.vinicius.id;
+  const igor = ctx.users.igor.id;
+  const base = { scope: "vendedor" as const, overridesDefault: true, active: true, minTenureDays: 0, createdBy: ctx.users.karem.id, approvedBy: ctx.users.karem.id };
+  return [
+    { id: "comm_rule_vinicius_setup", name: "Vinícius — adesão 10% no recebimento", userId: vinicius, revenueType: "setup", mode: "percentual", value: 10, releaseCondition: "pagamento", trigger: "pagamento", baseSource: "recebido", recurringCompetences: null, ...base },
+    { id: "comm_rule_vinicius_recorrencia", name: "Vinícius — recorrência 5% por 12 competências", userId: vinicius, revenueType: "recorrencia", mode: "percentual", value: 5, releaseCondition: "parcela", releaseInstallment: 1, trigger: "pagamento", baseSource: "recebido", recurringCompetences: 12, ...base },
+    { id: "comm_rule_vinicius_hardware", name: "Vinícius — hardware R$ 100 por unidade", userId: vinicius, revenueType: "hardware", mode: "valor", value: 100, releaseCondition: "pagamento", trigger: "pagamento", baseSource: "contratado", recurringCompetences: null, ...base },
+    { id: "comm_rule_igor_setup", name: "Igor — adesão 20% adquirida na 3ª mensalidade paga", userId: igor, revenueType: "setup", mode: "percentual", value: 20, releaseCondition: "parcela", releaseInstallment: 3, trigger: "mensalidade_n", baseSource: "contratado", recurringCompetences: null, ...base },
+    { id: "comm_rule_igor_recorrencia", name: "Igor — recorrência 30% a partir da 3ª mensalidade (6 competências)", userId: igor, revenueType: "recorrencia", mode: "percentual", value: 30, releaseCondition: "parcela", releaseInstallment: 3, trigger: "pagamento", baseSource: "recebido", recurringCompetences: 6, ...base },
+  ];
+}
 
 const TIERS = [
   { minAttainment: 1, payoutPct: 100, label: "Meta batida" },
@@ -666,6 +696,7 @@ export async function seedCatalog(ctx: SeedContext): Promise<void> {
   seedKpiDefinitions(ctx, createdAt);
 
   for (const { id, ...r } of COMMISSION_RULES) store.add(COLLECTIONS.commissionRules, id, { ...r, createdAt });
+  for (const { id, ...r } of sellerCommissionRules(ctx)) store.add(COLLECTIONS.commissionRules, id, { ...r, createdAt: daysAgo(200), updatedAt: daysAgo(200) });
   for (const { id, ...r } of BONUS_RULES) store.add(COLLECTIONS.bonusRules, id, { ...r, createdAt });
   for (const { id, ...r } of AUTOMATION_RULES) store.add(COLLECTIONS.automationRules, id, { ...r, createdAt });
   for (const { id, ...a } of ARTICLES) store.add(COLLECTIONS.knowledgeArticles, id, { ...a, createdAt: daysAgo(120) });

@@ -22,18 +22,45 @@ import { cn } from "@/lib/utils";
 import { LeadChannelIcon } from "@/components/ui/lead-channel-icon";
 import { PROSPECT_LIST_STATUS_LABELS } from "./marketing-model";
 import type { CaptureAutomation, ProspectHighlight, SourcePerformance } from "./workspace-model";
+import { CanSee, useCanSee } from "@/components/auth/access-provider";
+import { useMarketingAccess } from "./marketing-access";
 
 // ---------------------------------------------------------------------------
 // Desempenho por canal
 // ---------------------------------------------------------------------------
 
-export function ChannelPerformance({ sources, reportHref }: { sources: SourcePerformance[]; reportHref: string }) {
+const CHANNEL_ROW = "grid grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,1.1fr)_4.5rem] items-center gap-3 border-b border-border/60 py-2 text-sm last:border-0";
+
+function ChannelRow({ source: s, pct }: { source: SourcePerformance; pct: number }) {
+  return (
+    <>
+      <span className="flex min-w-0 items-center gap-2">
+        <LeadChannelIcon channel={s.channel} size="xs" />
+        <span className="truncate" title={s.name}>
+          {s.name}
+        </span>
+      </span>
+      <span className="text-right tabular-nums">{s.leads}</span>
+      <span className="flex items-center gap-2">
+        <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-track">
+          <span className="block h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+        </span>
+        <span className="w-9 text-right text-xs tabular-nums text-muted">{pct}%</span>
+      </span>
+      <span className="text-right text-xs tabular-nums">{s.cpl === null ? <span className="text-muted">Orgânico</span> : formatCurrency(s.cpl)}</span>
+    </>
+  );
+}
+
+/** `reportHref` ausente = o usuário não abre o relatório (o link some). */
+export function ChannelPerformance({ sources, reportHref }: { sources: SourcePerformance[]; reportHref?: string }) {
   const rows = sources.filter((s) => s.leads > 0);
+  const canOpenLeads = useCanSee("/marketing/leads");
   return (
     <Card className="overflow-hidden">
       <CardHeader className="flex-row items-center justify-between pb-2">
         <CardTitle className="text-[17px]">Desempenho por canal</CardTitle>
-        <CardLink href={reportHref}>Ver relatório</CardLink>
+        {reportHref ? <CardLink href={reportHref}>Ver relatório</CardLink> : null}
       </CardHeader>
       {rows.length === 0 ? (
         <CardContent className="pt-0">
@@ -52,25 +79,15 @@ export function ChannelPerformance({ sources, reportHref }: { sources: SourcePer
               const pct = s.qualificationRate === null ? 0 : Math.round(s.qualificationRate * 100);
               return (
                 <li key={s.key}>
-                  <Link
-                    href={s.href}
-                    className="grid grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,1.1fr)_4.5rem] items-center gap-3 border-b border-border/60 py-2 text-sm last:border-0 hover:bg-surface-hover/50"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <LeadChannelIcon channel={s.channel} size="xs" />
-                      <span className="truncate" title={s.name}>
-                        {s.name}
-                      </span>
-                    </span>
-                    <span className="text-right tabular-nums">{s.leads}</span>
-                    <span className="flex items-center gap-2">
-                      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-track">
-                        <span className="block h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
-                      </span>
-                      <span className="w-9 text-right text-xs tabular-nums text-muted">{pct}%</span>
-                    </span>
-                    <span className="text-right text-xs tabular-nums">{s.cpl === null ? <span className="text-muted">Orgânico</span> : formatCurrency(s.cpl)}</span>
-                  </Link>
+                  {canOpenLeads ? (
+                    <Link href={s.href} className={cn(CHANNEL_ROW, "hover:bg-surface-hover/50")}>
+                      <ChannelRow source={s} pct={pct} />
+                    </Link>
+                  ) : (
+                    <div className={CHANNEL_ROW}>
+                      <ChannelRow source={s} pct={pct} />
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -112,7 +129,9 @@ export function CaptureAutomations({ rules, canToggle }: { rules: CaptureAutomat
     <Card>
       <CardHeader className="flex-row items-center justify-between pb-2">
         <CardTitle className="text-[17px]">Automação de captação</CardTitle>
-        <CardLink href="/admin/automacoes">Gerenciar</CardLink>
+        <CanSee href="/admin/automacoes">
+          <CardLink href="/admin/automacoes">Gerenciar</CardLink>
+        </CanSee>
       </CardHeader>
       <CardContent className="pt-0">
         {rules.length === 0 ? (
@@ -138,14 +157,14 @@ export function CaptureAutomations({ rules, canToggle }: { rules: CaptureAutomat
                     disabled={!canToggle || pendingId === r.id}
                     onCheckedChange={(v) => toggle(r, v)}
                     aria-label={`${active ? "Desativar" : "Ativar"} ${r.name}`}
-                    title={canToggle ? undefined : "Somente administradores alteram automações"}
+                    title={canToggle ? undefined : "Seu perfil não ativa nem desativa automações"}
                   />
                 </li>
               );
             })}
           </ul>
         )}
-        {!canToggle && rules.length > 0 ? <p className="mt-2 text-xs text-muted">Somente administradores ativam ou desativam regras.</p> : null}
+        {!canToggle && rules.length > 0 ? <p className="mt-2 text-xs text-muted">Somente quem tem a permissão de ativar automações liga ou desliga regras.</p> : null}
       </CardContent>
     </Card>
   );
@@ -166,11 +185,13 @@ function Metric({ value, label }: { value: number; label: string }) {
 
 export function ProspectHighlightCard({ list, otherActiveLists }: { list: ProspectHighlight | null; otherActiveLists: number }) {
   const [open, setOpen] = React.useState(false);
+  const { createTask: canSchedule } = useMarketingAccess();
+  const canOpenLists = useCanSee("/marketing/prospeccao");
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between pb-2">
         <CardTitle className="text-[17px]">Prospecção ativa</CardTitle>
-        <CardLink href="/marketing/prospeccao">{otherActiveLists > 0 ? `+${otherActiveLists} lista${otherActiveLists === 1 ? "" : "s"}` : "Listas"}</CardLink>
+        {canOpenLists ? <CardLink href="/marketing/prospeccao">{otherActiveLists > 0 ? `+${otherActiveLists} lista${otherActiveLists === 1 ? "" : "s"}` : "Listas"}</CardLink> : null}
       </CardHeader>
       <CardContent className="pt-0">
         {!list ? (
@@ -232,17 +253,23 @@ export function ProspectHighlightCard({ list, otherActiveLists }: { list: Prospe
                 </ul>
               </div>
             ) : null}
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="outline" className="border-brand/50 text-brand-fg" onClick={() => setOpen(true)}>
-                <CalendarPlus /> Agendar disparo
-              </Button>
-              <Button asChild variant="outline">
-                <Link href={`/marketing/prospeccao/${list.id}`}>
-                  <ListChecks /> Abrir lista
-                </Link>
-              </Button>
-            </div>
-            <ScheduleDispatchDialog list={list} open={open} onOpenChange={setOpen} />
+            {canSchedule || canOpenLists ? (
+              <div className={cn("grid gap-2", canSchedule && canOpenLists ? "grid-cols-2" : "grid-cols-1")}>
+                {canSchedule ? (
+                  <Button variant="outline" className="border-brand/50 text-brand-fg" onClick={() => setOpen(true)}>
+                    <CalendarPlus /> Agendar disparo
+                  </Button>
+                ) : null}
+                {canOpenLists ? (
+                  <Button asChild variant="outline">
+                    <Link href={`/marketing/prospeccao/${list.id}`}>
+                      <ListChecks /> Abrir lista
+                    </Link>
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {canSchedule ? <ScheduleDispatchDialog list={list} open={open} onOpenChange={setOpen} /> : null}
           </div>
         )}
       </CardContent>

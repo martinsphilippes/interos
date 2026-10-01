@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Repeat, Smile } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { ACCESS_DENIED_REDIRECT, can, canSeeHref, getCurrentUser, requireScreen } from "@/server/auth/session";
 import { getTicket, getTicketTitle, listArticles } from "@/server/support/queries";
-import { canEditArticles, canOperateSupport, ROOT_CAUSE_LABELS } from "@/server/support/schemas";
+import { ROOT_CAUSE_LABELS } from "@/server/support/schemas";
+import { checkTicketAccess, supportCapabilities } from "@/server/support/access";
 import { getSupportChannelStatus } from "@/server/support/integrations";
 import { formatDateTime } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -19,20 +20,30 @@ import { AgentSuggestions } from "@/components/automations/agent-suggestions";
 
 type Params = Promise<{ id: string }>;
 
+/** Título da aba (A30): sem a tela ou fora do escopo, título genérico — o chamado nem é descrito. */
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { id } = await params;
-  return { title: (await getTicketTitle(id)) ?? "Chamado" };
+  const user = await getCurrentUser();
+  if (!user || !can(user, "suporte.chamados.ver")) return { title: "Chamado" };
+  return { title: (await getTicketTitle(id, user)) ?? "Chamado" };
 }
 
-/** Página completa do chamado: conversa + composer à esquerda, status, cliente e classificação à direita. */
+/**
+ * Página completa do chamado: conversa + composer à esquerda, status, cliente e classificação à direita.
+ * Acesso: tela suporte.chamados + escopo do chamado (fora dele → acesso negado); seções (contexto do cliente,
+ * sugestões do assistente) e botões pelas chaves do catálogo.
+ */
 export default async function TicketPage({ params }: { params: Params }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "suporte")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("suporte.chamados");
   const { id } = await params;
-  const [detail, kb, channels] = await Promise.all([getTicket(id, user), listArticles({ includeDrafts: true }), getSupportChannelStatus()]);
+  const access = await checkTicketAccess(user, id);
+  if (access === "missing") notFound();
+  if (access === "denied") redirect(ACCESS_DENIED_REDIRECT);
+  const caps = supportCapabilities(user);
+  const [detail, kb, channels] = await Promise.all([getTicket(id, user), caps.createArticle ? listArticles({ includeDrafts: true }) : Promise.resolve(null), getSupportChannelStatus()]);
   if (!detail) notFound();
   const { ticket } = detail;
-  const canOperate = canOperateSupport(user);
+  const showSuggestions = can(user, "suporte.chamados.sugestoes.ver");
 
   return (
     <PageContainer>
@@ -46,10 +57,12 @@ export default async function TicketPage({ params }: { params: Params }) {
             <span>Aberto em {formatDateTime(ticket.openedAt)}</span>
             <ChannelIcon channel={ticket.channel} showLabel />
             <QueueBadge queue={ticket.queue} />
-            <Link href={`/suporte?chamado=${ticket.id}`} className="font-medium text-brand-fg hover:underline">
-              Abrir no workspace
-            </Link>
-            {detail.client ? (
+            {can(user, "suporte.central.workspace.ver") ? (
+              <Link href={`/suporte?chamado=${ticket.id}`} className="font-medium text-brand-fg hover:underline">
+                Abrir no workspace
+              </Link>
+            ) : null}
+            {detail.client && canSeeHref(user, `/clientes/${detail.client.id}?aba=suporte`) ? (
               <Link href={`/clientes/${detail.client.id}?aba=suporte`} className="font-medium text-foreground hover:text-brand hover:underline">
                 {detail.client.tradeName}
               </Link>
@@ -103,17 +116,17 @@ export default async function TicketPage({ params }: { params: Params }) {
               </CardContent>
             </Card>
           ) : null}
-          <TicketConversation detail={detail} canOperate={canOperate} channels={channels} />
+          <TicketConversation detail={detail} capabilities={caps} channels={channels} />
         </div>
 
         <aside className="flex flex-col gap-4">
-          <TicketActions detail={detail} currentUserId={user.id} canOperate={canOperate} canWriteArticles={canEditArticles(user)} articleCategories={kb.categories} articleModules={kb.modules} />
+          <TicketActions detail={detail} currentUserId={user.id} capabilities={caps} articleCategories={kb?.categories ?? []} articleModules={kb?.modules ?? []} />
           <OpportunityLink detail={detail} />
-          <TicketClientCard detail={detail} />
-          {ticket.status !== "resolvido" && ticket.status !== "fechado" ? <AgentSuggestions kind="suporte" subjectId={ticket.id} title="Sugestões do assistente" limit={3} /> : null}
-          <TicketClassification key={ticket.updatedAt} detail={detail} canOperate={canOperate} />
+          {detail.clientContext !== false ? <TicketClientCard detail={detail} /> : null}
+          {showSuggestions && ticket.status !== "resolvido" && ticket.status !== "fechado" ? <AgentSuggestions kind="suporte" subjectId={ticket.id} title="Sugestões do assistente" limit={3} /> : null}
+          <TicketClassification key={ticket.updatedAt} detail={detail} canOperate={caps.classify} />
           <SuggestedArticles detail={detail} />
-          <TicketAttachments detail={detail} canOperate={canOperate} />
+          <TicketAttachments detail={detail} canOperate={caps.attach} />
         </aside>
       </div>
     </PageContainer>

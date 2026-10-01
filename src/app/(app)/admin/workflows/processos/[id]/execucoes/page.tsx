@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { GitBranch } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
 import { getRunsPageData } from "@/server/process-engine/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { RunViewer } from "@/components/workflow-builder/run-viewer";
 
 type Params = Promise<{ id: string }>;
@@ -16,7 +16,7 @@ export const metadata: Metadata = { title: "Execuções do processo" };
 
 /** Admin: execuções de um processo (todas as versões) com o caminho percorrido desenhado no grafo. */
 export default async function ProcessRunsPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
-  await requireRole("admin");
+  const user = await requireScreen("admin.workflows.execucoes.ver");
   const { id } = await params;
   const { run } = await searchParams;
   const data = await getRunsPageData(id, typeof run === "string" ? run : undefined);
@@ -28,14 +28,17 @@ export default async function ProcessRunsPage({ params, searchParams }: { params
         description="Execuções em andamento e encerradas, com o caminho percorrido e as respostas pendentes."
         breadcrumbs={[{ label: "Administração" }, { label: "Workflows", href: "/admin/workflows" }, { label: data.definition.name, href: `/admin/workflows/processos/${data.definition.id}` }, { label: "Execuções" }]}
         actions={
-          <Button asChild variant="outline">
-            <Link href={`/admin/workflows/processos/${data.definition.id}`}>
+          can(user, "admin.workflows.processos.ver") ? (
+            <Link href={`/admin/workflows/processos/${data.definition.id}`} className={buttonVariants({ variant: "outline" })}>
               <GitBranch /> Abrir construtor
             </Link>
-          </Button>
+          ) : null
         }
       />
-      <RunViewer data={data} />
+      <RunViewer
+        data={data}
+        access={{ sweep: can(user, "admin.workflows.execucoes.executar-varredura"), start: can(user, "admin.workflows.execucoes.iniciar"), cancel: can(user, "admin.workflows.execucoes.cancelar") }}
+      />
     </PageContainer>
   );
 }

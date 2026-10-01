@@ -16,8 +16,11 @@ import { Progress } from "@/components/ui/progress";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { cn } from "@/lib/utils";
 import { contractDocumentPath, contractEmailHref } from "./contract-links";
+import { ContractSummaryCard } from "./contract-summary-card";
 import { ManualSignatureButton } from "./manual-signature-dialog";
 import { useFinanceAction } from "./use-finance-action";
+import { useFinanceAccess } from "./finance-access";
+import { money, RESTRICTED_HINT } from "./values";
 import { useOrigin } from "@/components/ui/use-origin";
 
 const CHANNEL_LABEL: Record<PanelInteraction["channel"], string> = { whatsapp: "WhatsApp", voip: "Ligação", email: "E-mail", interno: "Interno" };
@@ -37,8 +40,11 @@ function InteractionIcon({ channel }: { channel: PanelInteraction["channel"] }) 
 const duration = (s?: number) => (s ? `${Math.floor(s / 60)}min ${String(s % 60).padStart(2, "0")}s` : null);
 
 /** Painel do contrato selecionado (padrão 02): dados, assinatura, comunicação e histórico de interações. */
-export function ContractSidePanel({ panel, integrations, canOperate }: { panel: ContractPanel; integrations: IntegrationFlags; canOperate: boolean }) {
+export function ContractSidePanel({ panel, integrations }: { panel: ContractPanel; integrations: IntegrationFlags }) {
   const { pending, run } = useFinanceAction();
+  // Capacidades calculadas no servidor (só escondem controles; as actions revalidam permissão e escopo).
+  const access = useFinanceAccess();
+  const hidden = Boolean(panel.valuesHidden);
   const origin = useOrigin();
   const signed = panel.signers.filter((s) => s.status === "assinado").length;
   const total = panel.signers.length;
@@ -70,14 +76,21 @@ export function ContractSidePanel({ panel, integrations, canOperate }: { panel: 
                 {panel.number} · v{panel.version}
               </p>
             </div>
-            <Badge variant={CONTRACT_STATUS_VARIANT[panel.status]}>{CONTRACT_STATUS_LABELS[panel.status]}</Badge>
+            <span className="flex flex-col items-end gap-1">
+              <Badge variant={CONTRACT_STATUS_VARIANT[panel.status]}>{CONTRACT_STATUS_LABELS[panel.status]}</Badge>
+              {panel.expired ? (
+                <Badge variant="danger" size="sm" title={panel.endDate ? `Vigência terminou em ${formatDate(panel.endDate)}` : undefined}>
+                  Vencido
+                </Badge>
+              ) : null}
+            </span>
           </div>
 
           <div className="grid grid-cols-2 gap-3 border-y border-border py-3">
             <div>
               <p className="text-xs text-muted">Valor do contrato</p>
-              <p className="text-xl font-semibold tabular-nums">{formatCurrency(panel.amount)}</p>
-              <p className="text-xs text-muted">{panel.amountKind === "mensal" ? `por mês${panel.setupTotal > 0 ? ` · adesão ${formatCurrency(panel.setupTotal)}` : ""}` : "valor único"}</p>
+              <p className="text-xl font-semibold tabular-nums" title={hidden ? RESTRICTED_HINT : undefined}>{money(panel.amount, hidden)}</p>
+              <p className="text-xs text-muted">{panel.amountKind === "mensal" ? `por mês${!hidden && panel.setupTotal > 0 ? ` · adesão ${formatCurrency(panel.setupTotal)}` : ""}` : "valor único"}</p>
             </div>
             <div className="border-l border-border pl-3">
               <p className="text-xs text-muted">Vencimento</p>
@@ -92,56 +105,60 @@ export function ContractSidePanel({ panel, integrations, canOperate }: { panel: 
             </p>
           ) : null}
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="font-medium">{signatureManual ? "Assinatura" : "Assinatura digital"}</span>
-              <span className="text-xs text-muted">
-                {signed} de {total} assinatura{total === 1 ? "" : "s"} concluída{total === 1 ? "" : "s"}
-              </span>
+          {access.contracts.signatureView ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className="font-medium">{signatureManual ? "Assinatura" : "Assinatura digital"}</span>
+                <span className="text-xs text-muted">
+                  {signed} de {total} assinatura{total === 1 ? "" : "s"} concluída{total === 1 ? "" : "s"}
+                </span>
+              </div>
+              <Progress value={total > 0 ? (signed / total) * 100 : 0} tone={allSigned ? "success" : "warning"} size="sm" />
+              <div
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+                  allSigned ? "border-success/35 bg-success-soft text-success-fg" : panel.documentGenerated ? "border-warning/35 bg-warning-soft text-warning-fg" : "border-border bg-surface-muted text-muted",
+                )}
+              >
+                {allSigned ? <CheckCircle2 className="size-4" /> : <ShieldCheck className="size-4" />}
+                {allSigned ? "Contrato assinado" : panel.documentGenerated ? (signatureManual ? "Aguardando assinatura — envio manual" : "Aguardando assinatura") : "Documento ainda não gerado"}
+              </div>
+              <ul className="flex flex-col gap-2">
+                {total === 0 ? <li className="text-xs text-danger-fg">Nenhum signatário cadastrado.</li> : null}
+                {panel.signers.map((s) => (
+                  <li key={s.email} className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="flex min-w-0 items-center gap-2">
+                        {s.status === "assinado" ? <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden /> : <Circle className="size-4 shrink-0 text-muted-light" aria-hidden />}
+                        <span className="truncate">{s.name}</span>
+                      </span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted">{s.signedAt ? formatDateTime(s.signedAt) : "pendente"}</span>
+                    </div>
+                    {s.status === "assinado" && s.method === "manual" ? <p className="pl-6 text-xs text-muted">Registro manual · {s.evidence}</p> : null}
+                    {access.contracts.sign && !closed && panel.documentGenerated && s.status !== "assinado" ? (
+                      <ManualSignatureButton contractId={panel.id} contractNumber={panel.number} signer={s} label="Registrar assinatura" variant="ghost" className="ml-5 h-10 self-start md:h-8" />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
             </div>
-            <Progress value={total > 0 ? (signed / total) * 100 : 0} tone={allSigned ? "success" : "warning"} size="sm" />
-            <div
-              className={cn(
-                "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm",
-                allSigned ? "border-success/35 bg-success-soft text-success-fg" : panel.documentGenerated ? "border-warning/35 bg-warning-soft text-warning-fg" : "border-border bg-surface-muted text-muted",
-              )}
-            >
-              {allSigned ? <CheckCircle2 className="size-4" /> : <ShieldCheck className="size-4" />}
-              {allSigned ? "Contrato assinado" : panel.documentGenerated ? (signatureManual ? "Aguardando assinatura — envio manual" : "Aguardando assinatura") : "Documento ainda não gerado"}
-            </div>
-            <ul className="flex flex-col gap-2">
-              {total === 0 ? <li className="text-xs text-danger-fg">Nenhum signatário cadastrado.</li> : null}
-              {panel.signers.map((s) => (
-                <li key={s.email} className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between gap-2 text-sm">
-                    <span className="flex min-w-0 items-center gap-2">
-                      {s.status === "assinado" ? <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden /> : <Circle className="size-4 shrink-0 text-muted-light" aria-hidden />}
-                      <span className="truncate">{s.name}</span>
-                    </span>
-                    <span className="shrink-0 text-xs tabular-nums text-muted">{s.signedAt ? formatDateTime(s.signedAt) : "pendente"}</span>
-                  </div>
-                  {s.status === "assinado" && s.method === "manual" ? <p className="pl-6 text-xs text-muted">Registro manual · {s.evidence}</p> : null}
-                  {canOperate && !closed && panel.documentGenerated && s.status !== "assinado" ? (
-                    <ManualSignatureButton contractId={panel.id} contractNumber={panel.number} signer={s} label="Registrar assinatura" variant="ghost" className="ml-5 h-10 self-start md:h-8" />
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </div>
+          ) : null}
 
-          {panel.documentHash ? (
+          {panel.documentHash && access.contracts.documentsView ? (
             <p className="truncate font-mono text-[11px] text-muted-light" title={panel.documentHash}>
               {panel.documentId} · {panel.documentHash}
             </p>
           ) : null}
 
           <div className="grid grid-cols-2 gap-2">
-            <Button asChild variant="outline" className="h-11 md:h-9">
-              <Link href={contractDocumentPath(panel.id)}>
-                <FileText /> Ver contrato
-              </Link>
-            </Button>
-            {canOperate && panel.editable && !panel.documentGenerated ? (
+            {access.contracts.documentsView ? (
+              <Button asChild variant="outline" className="h-11 md:h-9">
+                <Link href={contractDocumentPath(panel.id)}>
+                  <FileText /> Ver contrato
+                </Link>
+              </Button>
+            ) : null}
+            {access.contracts.signatureSend && panel.editable && !panel.documentGenerated ? (
               <Button onClick={generate} loading={pending} disabled={total === 0 || panel.itemsCount === 0} className="h-11 md:h-9" title={panel.itemsCount === 0 ? "Adicione itens no contrato completo" : undefined}>
                 <FileText /> Gerar para assinatura
               </Button>
@@ -159,7 +176,7 @@ export function ContractSidePanel({ panel, integrations, canOperate }: { panel: 
               </Button>
             )}
           </div>
-          {canOperate && panel.editable && panel.itemsCount === 0 ? (
+          {access.contracts.edit && panel.editable && panel.itemsCount === 0 ? (
             <p className="text-xs text-warning-fg">
               Contrato sem itens: preencha no{" "}
               <Link href={`/financeiro/contratos/${panel.id}`} className="underline">
@@ -171,6 +188,12 @@ export function ContractSidePanel({ panel, integrations, canOperate }: { panel: 
           <Link href={`/financeiro/contratos/${panel.id}`} className="inline-flex items-center gap-1 self-end text-sm font-medium text-brand-fg hover:underline">
             Cobranças, itens e liberação <ChevronRight className="size-4" />
           </Link>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-5">
+          <ContractSummaryCard summary={panel.summary} variant="compact" />
         </CardContent>
       </Card>
 

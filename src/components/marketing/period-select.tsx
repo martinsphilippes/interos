@@ -2,7 +2,7 @@
 
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Spinner } from "@/components/ui/spinner";
-import type { PeriodKey } from "./marketing-model";
+import { DEFAULT_OVERVIEW_PERIOD, type PeriodKey } from "./marketing-model";
 import { useMarketingUrl } from "./use-marketing-url";
 
 const SHORT_LABELS: { value: PeriodKey; label: string }[] = [
@@ -12,12 +12,12 @@ const SHORT_LABELS: { value: PeriodKey; label: string }[] = [
   { value: "ano", label: "Ano" },
 ];
 
-/** Seletor de período da Visão Geral (?periodo=mes|30d|90d|ano). */
+/** Seletor de período da Visão Geral (?periodo=mes|30d|90d|ano; o padrão, DEFAULT_OVERVIEW_PERIOD, fica fora da URL). */
 export function PeriodSelect({ value }: { value: PeriodKey }) {
   const { navigate, pending } = useMarketingUrl();
   return (
     <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
-      <SegmentedControl aria-label="Período" options={SHORT_LABELS} value={value} onChange={(next) => navigate({ periodo: next === "mes" ? null : next }, { replace: true })} />
+      <SegmentedControl aria-label="Período" options={SHORT_LABELS} value={value} onChange={(next) => navigate({ periodo: next === DEFAULT_OVERVIEW_PERIOD ? null : next }, { replace: true })} />
       {pending ? <Spinner size="sm" /> : null}
     </div>
   );

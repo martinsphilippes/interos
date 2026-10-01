@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Receipt, Star } from "lucide-react";
+import { CalendarPlus, Receipt, Star } from "lucide-react";
 import type { Billing } from "@/domain/types";
-import { generateBillingsAction } from "@/server/finance/actions";
+import { generateBillingsAction, generateNextBillingsAction } from "@/server/finance/actions";
 import { paymentMethodLabel } from "@/server/finance/schemas";
 import { formatCompetence, formatCurrency, formatDate } from "@/lib/format";
 import { BILLING_STATUS_LABELS, BILLING_STATUS_VARIANT } from "@/components/clients/labels";
@@ -13,8 +13,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { BillingActions, billingLabel } from "./billing-actions";
+import { BillingActions, billingLabel, BoletoBadge } from "./billing-actions";
 import { useFinanceAction } from "./use-finance-action";
+import { hasBillingActions } from "./access-model";
+import { useFinanceAccess } from "./finance-access";
+import { money } from "./values";
 
 export interface ContractBillingCardProps {
   contractId: string;
@@ -22,31 +25,44 @@ export interface ContractBillingCardProps {
   billings: Billing[];
   /** Cobrança que o gate exige paga (destacada). */
   requiredBillingId?: string;
-  canOperate: boolean;
   /** Todos assinaram e ainda não há cobranças: mostra "Gerar cobranças". */
   canGenerate: boolean;
+  /** Valores ocultos (A13): quantias chegam zeradas; mostra "Restrito". */
+  hideValues?: boolean;
   waitingSignature: boolean;
+  /** Mensalidades que "Gerar próximas cobranças" criaria agora (0 = sem botão). */
+  pendingRecurring?: number;
 }
 
 /** Cobranças do contrato: geração (adesão, hardware e mensalidades do prazo) e registro de pagamento. */
-export function ContractBillingCard({ contractId, clientName, billings, requiredBillingId, canOperate, canGenerate, waitingSignature }: ContractBillingCardProps) {
+export function ContractBillingCard({ contractId, clientName, billings, requiredBillingId, canGenerate, waitingSignature, pendingRecurring = 0, hideValues }: ContractBillingCardProps) {
   const { pending, run } = useFinanceAction();
+  // Capacidades do servidor: gerar cobranças e o menu de ações por cobrança (uma chave por ação).
+  const access = useFinanceAccess();
+  const canOperate = hasBillingActions(access);
+  const canGen = access.billings.generate;
   const active = billings.filter((b) => b.status !== "cancelada");
   const paid = active.filter((b) => b.status === "paga").reduce((s, b) => s + (b.paidAmount ?? b.amount), 0);
   const total = active.reduce((s, b) => s + b.amount, 0);
 
   const generate = () => run(() => generateBillingsAction({ contractId }), (d) => `${d.count} cobrança(s) gerada(s)`);
+  const extend = () => run(() => generateNextBillingsAction({ contractId }), (d) => (d.count > 0 ? `${d.count} mensalidade(s) gerada(s)` : "Nenhuma mensalidade nova: o plano já cobre o horizonte"));
 
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-3">
         <div>
           <CardTitle>Cobrança</CardTitle>
-          <CardDescription>{active.length > 0 ? `${active.length} cobrança(s) · ${formatCurrency(paid)} recebido de ${formatCurrency(total)}` : "Cobranças são geradas após a assinatura."}</CardDescription>
+          <CardDescription>{active.length > 0 ? (hideValues ? `${active.length} cobrança(s) · valores: restrito` : `${active.length} cobrança(s) · ${formatCurrency(paid)} recebido de ${formatCurrency(total)}`) : "Cobranças são geradas após a assinatura."}</CardDescription>
         </div>
-        {canOperate && canGenerate ? (
+        {canGen && canGenerate ? (
           <Button onClick={generate} loading={pending} className="h-10 md:h-9">
             <Receipt /> Gerar cobranças
+          </Button>
+        ) : null}
+        {canGen && !canGenerate && pendingRecurring > 0 ? (
+          <Button variant="outline" onClick={extend} loading={pending} className="h-10 md:h-9" title="Mensalidades que faltam para cobrir o prazo ou o horizonte da cobrança recorrente">
+            <CalendarPlus /> Gerar próximas cobranças ({pendingRecurring})
           </Button>
         ) : null}
       </CardHeader>
@@ -66,17 +82,20 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-1.5 text-sm font-medium">
                       {b.id === requiredBillingId ? <Star className="size-3.5 text-brand" aria-label="Exigida para liberar" /> : null}
-                      {billingLabel(b)} · {formatCurrency(b.amount)}
+                      {billingLabel(b)} · {money(b.amount, hideValues)}
                     </p>
                     <p className="text-xs text-muted">
                       Vence {formatDate(b.dueDate)}
                       {b.paidAt ? ` · pago ${formatDate(b.paidAt)} (${paymentMethodLabel(b.method)})` : ""}
                     </p>
-                    <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm" className="mt-1.5">
-                      {BILLING_STATUS_LABELS[b.status]}
-                    </Badge>
+                    <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
+                      <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
+                        {BILLING_STATUS_LABELS[b.status]}
+                      </Badge>
+                      {b.status !== "cancelada" ? <BoletoBadge billing={b} /> : null}
+                    </span>
                   </div>
-                  {canOperate ? <BillingActions billing={{ ...b, clientName }} compact /> : null}
+                  {canOperate ? <BillingActions billing={{ ...b, clientName }} compact hideValues={hideValues} /> : null}
                 </li>
               ))}
             </ul>
@@ -102,19 +121,22 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                         </span>
                         <span className="block text-xs font-normal capitalize text-muted">{formatCompetence(b.competence)}</span>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(b.amount)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">{money(b.amount, hideValues)}</TableCell>
                       <TableCell className={cn("whitespace-nowrap", b.status === "vencida" ? "text-danger-fg" : "text-muted")}>{formatDate(b.dueDate)}</TableCell>
                       <TableCell>
-                        <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
-                          {BILLING_STATUS_LABELS[b.status]}
-                        </Badge>
+                        <span className="inline-flex flex-wrap gap-1.5">
+                          <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
+                            {BILLING_STATUS_LABELS[b.status]}
+                          </Badge>
+                          {b.status !== "cancelada" ? <BoletoBadge billing={b} /> : null}
+                        </span>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted">
-                        {b.paidAt ? `${formatDate(b.paidAt)} · ${paymentMethodLabel(b.method)}${b.paidAmount !== undefined && b.paidAmount !== b.amount ? ` · ${formatCurrency(b.paidAmount)}` : ""}` : "—"}
+                        {b.paidAt ? `${formatDate(b.paidAt)} · ${paymentMethodLabel(b.method)}${!hideValues && b.paidAmount !== undefined && b.paidAmount !== b.amount ? ` · ${formatCurrency(b.paidAmount)}` : ""}` : "—"}
                       </TableCell>
                       {canOperate ? (
                         <TableCell className="text-right">
-                          <BillingActions billing={{ ...b, clientName }} />
+                          <BillingActions billing={{ ...b, clientName }} hideValues={hideValues} />
                         </TableCell>
                       ) : null}
                     </TableRow>

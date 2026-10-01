@@ -10,10 +10,18 @@ import type { TicketFilterState } from "./filters";
  * Painel de qualidade da Central (?view=painel): indicadores de fila, SLA, CSAT e reincidência com drill-down
  * para a lista de chamados, e a fila em tabela com filtros.
  */
-export function SupportPanel({ overview, options, currentUserId, filters }: { overview: SupportOverview; options: SupportOptions; currentUserId: string; filters: TicketFilterState }) {
+export interface SupportPanelLinks {
+  /** /suporte/chamados (drill-down dos indicadores). */
+  tickets: boolean;
+  /** /sla?tipo=chamado (CSAT e SLA da qualidade). */
+  csat: boolean;
+}
+
+/** Links calculados no servidor (canSeeHref); sem a tela de destino o indicador não vira link. */
+export function SupportPanel({ overview, options, currentUserId, filters, links = { tickets: true, csat: true } }: { overview: SupportOverview; options: SupportOptions; currentUserId: string; filters: TicketFilterState; links?: SupportPanelLinks }) {
   const { stats } = overview;
   const mine = overview.scope === "minha" ? "&atendente=meus" : "";
-  const list = (qs: string) => `/suporte/chamados?${qs}`;
+  const list = (qs: string) => (links.tickets ? `/suporte/chamados?${qs}` : undefined);
   return (
     <>
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
@@ -30,7 +38,7 @@ export function SupportPanel({ overview, options, currentUserId, filters }: { ov
           value={stats.csatAverage !== undefined ? stats.csatAverage.toFixed(1).replace(".", ",") : "—"}
           icon={<Smile />}
           tone={csatTone(stats.csatAverage, stats.csatTarget)}
-          href="/sla?tipo=chamado#csat"
+          href={links.csat ? "/sla?tipo=chamado#csat" : undefined}
           hint={stats.csatCount > 0 ? `${stats.csatCount} avaliações · meta ${stats.csatTarget.toFixed(1).replace(".", ",")}` : "sem avaliações no mês"}
         />
         <StatCard
@@ -46,7 +54,7 @@ export function SupportPanel({ overview, options, currentUserId, filters }: { ov
       </div>
 
       <h2 className="mb-3 text-base font-semibold">Fila de atendimento</h2>
-      <TicketsTable rows={overview.rows} mode="fila" team={options.team} products={options.products} currentUserId={currentUserId} canOperate={options.canOperate} initialFilters={filters} />
+      <TicketsTable rows={overview.rows} mode="fila" team={options.team} products={options.products} currentUserId={currentUserId} canAssume={options.capabilities.assume} initialFilters={filters} />
     </>
   );
 }

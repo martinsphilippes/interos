@@ -1,4 +1,4 @@
-import { AlertTriangle, Building2, CalendarCheck, CheckSquare, FileSignature, GitBranch, GraduationCap, Handshake, MapPin, MessageSquareReply, RefreshCw, Rocket, Target, Ticket, Timer, UserPlus, type LucideIcon } from "lucide-react";
+import { AlertTriangle, BadgePercent, Building2, CalendarCheck, CheckSquare, FileSignature, GitBranch, GraduationCap, Handshake, MapPin, MessageSquareReply, Receipt, RefreshCw, Rocket, Target, Ticket, Timer, UserPlus, Wallet, type LucideIcon } from "lucide-react";
 import type { AgendaKind, PriorityKind } from "./model";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,9 @@ export const PRIORITY_KIND_ICONS: Record<PriorityKind, LucideIcon> = {
   sla: Timer,
   retorno: MessageSquareReply,
   contrato: FileSignature,
+  cobranca: Receipt,
+  titulo: Wallet,
+  comissao: BadgePercent,
 };
 
 const AGENDA_KIND_ICONS: Record<AgendaKind, LucideIcon> = {
@@ -36,6 +39,9 @@ const KIND_TONE: Record<PriorityKind, string> = {
   sla: "bg-danger-soft text-danger-fg",
   retorno: "bg-warning-soft text-warning-fg",
   contrato: "bg-accent-purple-soft text-accent-purple-fg",
+  cobranca: "bg-danger-soft text-danger-fg",
+  titulo: "bg-secondary-soft text-secondary-fg",
+  comissao: "bg-brand-soft text-brand-fg",
 };
 
 export function KindIcon({ kind, className }: { kind: PriorityKind; className?: string }) {

@@ -9,7 +9,7 @@ import { TaskCalendar } from "./task-calendar";
 import { TaskFilters } from "./task-filters";
 import { TaskKanban } from "./task-kanban";
 import { TaskList } from "./task-list";
-import { applyTaskFilters, filtersFromParams, type AssignableUser, type ClientOption, type StatusFilter, type TaskListItem, type TaskSort, type TaskView } from "./task-model";
+import { ALL_TASK_CAPABILITIES, applyTaskFilters, filtersFromParams, type AssignableUser, type TaskCapabilities, type ClientOption, type StatusFilter, type TaskListItem, type TaskSort, type TaskView } from "./task-model";
 import { useTaskUrl } from "./use-task-url";
 
 export interface TasksWorkspaceProps {
@@ -21,6 +21,8 @@ export interface TasksWorkspaceProps {
   todayKey: string;
   /** AAAA-MM (só na view de calendário). */
   month: string;
+  /** Permissões calculadas no servidor (só escondem/desabilitam controles). */
+  can?: TaskCapabilities;
 }
 
 const EMPTY_COPY: Record<TaskView, { title: string; description: string }> = {
@@ -33,7 +35,7 @@ const EMPTY_COPY: Record<TaskView, { title: string; description: string }> = {
 };
 
 /** Orquestra filtros (URL) + view atual sobre os dados carregados pelo servidor. */
-export function TasksWorkspace({ view, items, users, clients, currentUserId, todayKey, month }: TasksWorkspaceProps) {
+export function TasksWorkspace({ view, items, users, clients, currentUserId, todayKey, month, can = ALL_TASK_CAPABILITIES }: TasksWorkspaceProps) {
   const router = useRouter();
   const { searchParams, navigate } = useTaskUrl();
   const [pendingIds, setPendingIds] = React.useState<ReadonlySet<string>>(new Set());
@@ -74,7 +76,7 @@ export function TasksWorkspace({ view, items, users, clients, currentUserId, tod
     <div>
       <TaskFilters view={view} filters={filters} users={users} clients={clients} count={filtered.length} total={items.length} defaultStatus={defaultStatus} defaultSort={defaultSort} />
       {view === "kanban" ? (
-        <TaskKanban items={filtered} onOpen={open} />
+        <TaskKanban items={filtered} onOpen={open} canMove={can.edit} />
       ) : view === "calendario" ? (
         <TaskCalendar items={filtered} month={month} todayKey={todayKey} onOpen={open} />
       ) : (
@@ -83,11 +85,13 @@ export function TasksWorkspace({ view, items, users, clients, currentUserId, tod
           onOpen={open}
           onToggleComplete={toggleComplete}
           pendingIds={pendingIds}
+          canComplete={can.complete}
+          canReopen={can.reopen}
           showStatus={view === "equipe" || view === "atrasadas" || (filters.status !== undefined && filters.status !== "abertas")}
           showCompleted={view === "concluidas"}
           emptyTitle={empty.title}
           emptyDescription={empty.description}
-          emptyAction={view === "minha" || view === "equipe" ? <OpenNewTaskButton /> : undefined}
+          emptyAction={(view === "minha" || view === "equipe") && can.create ? <OpenNewTaskButton /> : undefined}
         />
       )}
     </div>

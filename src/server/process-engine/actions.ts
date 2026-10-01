@@ -1,11 +1,13 @@
 "use server";
 /**
  * Server Actions do construtor de processos e das execuções.
- * Padrão: sessão (requireRole/requireUser) → zod → motor/serviço → revalidação. Devolvem ActionResult.
+ * Padrão (A5): requirePermission("<chave do catálogo>") → zod → motor/serviço → revalidação; falhas por failAction.
+ * Definições e execuções são `admin.workflows.*`; responder/concluir etapa é `operacao.tarefas.responder-processo`
+ * (o responsável não-admin responde pelo drawer de /tarefas) + a condição de registro (gestor ou responsável).
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireRole, requireUser } from "@/server/auth/session";
+import { BusinessError, PermissionError, failAction, requirePermission } from "@/server/auth/session";
 import { create, getById, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { COLLECTIONS, type ActionResult, type CurrentUser, type Task } from "@/domain/types";
@@ -29,12 +31,7 @@ type Failure = { ok: false; error: string };
 
 function fail(error: unknown): Failure {
   if (error instanceof z.ZodError) return { ok: false, error: error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(" · ") };
-  if (error instanceof Error && error.message) {
-    console.error("[process-engine]", error);
-    return { ok: false, error: error.message };
-  }
-  console.error("[process-engine]", error);
-  return { ok: false, error: "Não foi possível concluir a operação. Tente novamente." };
+  return failAction(error, "Não foi possível concluir a operação. Tente novamente.", "process-engine");
 }
 
 function actorOf(user: CurrentUser) {
@@ -63,8 +60,8 @@ function revalidateRun(definitionId?: string, clientId?: string): void {
 
 /** Cria um processo novo (v1, rascunho) com Início ligado a Fim. */
 export async function createProcessDefinitionAction(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireRole("admin");
   try {
+    const user = await requirePermission("admin.workflows.processos.criar");
     const data = createDefinitionSchema.parse(input);
     const existing = await listDefinitions();
     const base = slugifyProcessKey(data.name);
@@ -105,11 +102,11 @@ export async function createProcessDefinitionAction(input: unknown): Promise<Act
  * seguinte em rascunho. Execuções em andamento continuam na versão em que começaram.
  */
 export async function saveProcessDefinitionAction(input: unknown): Promise<ActionResult<{ id: string; version: number; created: boolean }>> {
-  const user = await requireRole("admin");
   try {
+    const user = await requirePermission("admin.workflows.processos.editar");
     const data = saveDefinitionSchema.parse(input);
     const source = await getDefinition(data.id);
-    if (!source) throw new Error("Processo não encontrado");
+    if (!source) throw new BusinessError("Processo não encontrado");
     const graph = { name: data.name, description: data.description || undefined, trigger: data.trigger, nodes: data.nodes as ProcessNode[], edges: data.edges };
 
     if (source.status === "rascunho") {
@@ -144,14 +141,14 @@ export async function saveProcessDefinitionAction(input: unknown): Promise<Actio
 
 /** Publica um rascunho (valida o grafo) e arquiva a versão publicada anterior do mesmo processo. */
 export async function publishProcessDefinitionAction(input: unknown): Promise<ActionResult<{ id: string; version: number }>> {
-  const user = await requireRole("admin");
   try {
+    const user = await requirePermission("admin.workflows.processos.publicar");
     const { id } = definitionIdSchema.parse(input);
     const target = await getDefinition(id);
-    if (!target) throw new Error("Processo não encontrado");
-    if (target.status !== "rascunho") throw new Error("Só rascunhos podem ser publicados. Salve para criar uma nova versão.");
+    if (!target) throw new BusinessError("Processo não encontrado");
+    if (target.status !== "rascunho") throw new BusinessError("Só rascunhos podem ser publicados. Salve para criar uma nova versão.");
     const issues = validateProcessGraph(target);
-    if (issues.length > 0) throw new Error(`Corrija antes de publicar: ${issues.map((i) => i.message).join(" · ")}`);
+    if (issues.length > 0) throw new BusinessError(`Corrija antes de publicar: ${issues.map((i) => i.message).join(" · ")}`);
 
     const now = nowIso();
     const siblings = await listDefinitions({ where: [["key", "==", target.key]] });
@@ -175,8 +172,8 @@ export async function publishProcessDefinitionAction(input: unknown): Promise<Ac
 
 /** Teste a seco do grafo atual do canvas (não precisa estar salvo) com um cliente real. Não grava nada. */
 export async function simulateProcessAction(input: unknown): Promise<ActionResult<SimulationResult>> {
-  await requireRole("admin");
   try {
+    await requirePermission("admin.workflows.processos.testar");
     const { graph, clientId, answers } = simulateSchema.parse(input);
     const result = await simulateProcess({ ...graph, nodes: graph.nodes as ProcessNode[] }, clientId, answers);
     return { ok: true, data: result };
@@ -194,7 +191,7 @@ async function canActOnRun(user: CurrentUser, runId: string, nodeId: string): Pr
   const run = await getRun(runId);
   const pending = run?.pending[nodeId];
   if (pending?.assigneeId === user.id) return;
-  throw new Error("Somente o responsável pela etapa ou um gestor pode responder");
+  throw new PermissionError("Somente o responsável pela etapa ou um gestor pode responder", "operacao.tarefas.responder-processo");
 }
 
 /**
@@ -203,12 +200,12 @@ async function canActOnRun(user: CurrentUser, runId: string, nodeId: string): Pr
  * processType "workflow" e processId no formato "<runId>#<nodeId>", pedindo Sim/Não se a etapa exigir.
  */
 export async function completeProcessTask(taskId: string, outcome?: "sim" | "nao"): Promise<ActionResult<{ runStatus?: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.responder-processo");
     const data = completeProcessTaskSchema.parse({ taskId, outcome });
     const task = await getById<Task>(COLLECTIONS.tasks, data.taskId);
-    if (!task) throw new Error("Tarefa não encontrada");
-    if (!user.isManager && task.assigneeId !== user.id) throw new Error("Somente o responsável ou um gestor pode concluir esta tarefa");
+    if (!task) throw new BusinessError("Tarefa não encontrada");
+    if (!user.isManager && task.assigneeId !== user.id) throw new PermissionError("Somente o responsável ou um gestor pode concluir esta tarefa", "operacao.tarefas.responder-processo");
     const run = await completeProcessTaskInternal(task, actorOf(user), data.outcome);
     revalidateRun(run?.definitionId, task.clientId);
     return { ok: true, data: { runStatus: run?.status } };
@@ -219,8 +216,8 @@ export async function completeProcessTask(taskId: string, outcome?: "sim" | "nao
 
 /** Responde Sim/Não de uma etapa pendente (tela de execuções). */
 export async function answerProcessOutcomeAction(input: unknown): Promise<ActionResult<{ runStatus?: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.responder-processo");
     const data = answerOutcomeSchema.parse(input);
     await canActOnRun(user, data.runId, data.nodeId);
     const run = await answerOutcome(data.runId, data.nodeId, data.outcome, actorOf(user));
@@ -233,8 +230,8 @@ export async function answerProcessOutcomeAction(input: unknown): Promise<Action
 
 /** Conclui uma etapa manual ou encerra uma espera antes do prazo (gestores). */
 export async function completeProcessNodeAction(input: unknown): Promise<ActionResult<{ runStatus?: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.responder-processo");
     const data = completeNodeSchema.parse(input);
     await canActOnRun(user, data.runId, data.nodeId);
     const run = await completePendingNode(data.runId, data.nodeId, actorOf(user), data.outcome);
@@ -246,8 +243,8 @@ export async function completeProcessNodeAction(input: unknown): Promise<ActionR
 }
 
 export async function cancelProcessRunAction(input: unknown): Promise<ActionResult> {
-  const user = await requireRole("admin");
   try {
+    const user = await requirePermission("admin.workflows.execucoes.cancelar");
     const data = cancelRunSchema.parse(input);
     const run = await cancelRun(data.runId, actorOf(user), data.reason);
     revalidateRun(run?.definitionId, run?.clientId);
@@ -259,13 +256,13 @@ export async function cancelProcessRunAction(input: unknown): Promise<ActionResu
 
 /** Inicia manualmente a versão publicada de um processo (opcionalmente para um cliente). */
 export async function startManualRunAction(input: unknown): Promise<ActionResult<{ runId: string; definitionId: string }>> {
-  const user = await requireRole("admin");
   try {
+    const user = await requirePermission("admin.workflows.execucoes.iniciar");
     const data = startManualRunSchema.parse(input);
     const def = await getDefinition(data.definitionId);
-    if (!def) throw new Error("Processo não encontrado");
+    if (!def) throw new BusinessError("Processo não encontrado");
     const published = def.status === "publicado" ? def : (await listDefinitions({ where: [["key", "==", def.key]] })).find((d) => d.status === "publicado");
-    if (!published) throw new Error("Publique o processo antes de executá-lo");
+    if (!published) throw new BusinessError("Publique o processo antes de executá-lo");
     const { run } = await startRun(published, { clientId: data.clientId }, actorOf(user));
     revalidateRun(published.id, run.clientId);
     return { ok: true, data: { runId: run.id, definitionId: published.id } };
@@ -276,8 +273,8 @@ export async function startManualRunAction(input: unknown): Promise<ActionResult
 
 /** Libera agora as esperas por horas úteis vencidas (a varredura periódica faz o mesmo). */
 export async function runProcessSweepAction(): Promise<ActionResult<ProcessSweepResult>> {
-  await requireRole("admin");
   try {
+    await requirePermission("admin.workflows.execucoes.executar-varredura");
     const result = await sweepProcessWaits();
     revalidateRun();
     return { ok: true, data: result };

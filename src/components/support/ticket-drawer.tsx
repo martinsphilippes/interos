@@ -11,6 +11,7 @@ import { formatDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerBody, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { toast } from "@/components/ui/toast";
+import { useCanSeeFn } from "@/components/auth/access-provider";
 import { UserChip } from "@/components/ui/user-chip";
 import { cn } from "@/lib/utils";
 import { LiveSlaBadge } from "./sla-live";
@@ -18,7 +19,8 @@ import { ChannelIcon, TicketPriorityBadge, TicketStatusBadge } from "./ticket-ba
 import { RelativeTime } from "@/components/ui/relative-time";
 
 /** Resumo do chamado (?chamado=<id>) com atalho para a página completa. */
-export function TicketDrawer({ detail, currentUserId, canOperate }: { detail: TicketDetail | null; currentUserId: string; canOperate: boolean }) {
+/** `canAssume` vem do servidor (suporte.chamados.assumir). */
+export function TicketDrawer({ detail, currentUserId, canAssume }: { detail: TicketDetail | null; currentUserId: string; canAssume: boolean }) {
   const router = useRouter();
   const close = () => {
     const params = new URLSearchParams(window.location.search);
@@ -28,7 +30,7 @@ export function TicketDrawer({ detail, currentUserId, canOperate }: { detail: Ti
   };
   return (
     <Drawer open={Boolean(detail)} onOpenChange={(open) => !open && close()}>
-      <DrawerContent size="md">{detail ? <Inner key={detail.ticket.id} detail={detail} currentUserId={currentUserId} canOperate={canOperate} /> : null}</DrawerContent>
+      <DrawerContent size="md">{detail ? <Inner key={detail.ticket.id} detail={detail} currentUserId={currentUserId} canAssume={canAssume} /> : null}</DrawerContent>
     </Drawer>
   );
 }
@@ -42,8 +44,9 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-function Inner({ detail, currentUserId, canOperate }: { detail: TicketDetail; currentUserId: string; canOperate: boolean }) {
+function Inner({ detail, currentUserId, canAssume }: { detail: TicketDetail; currentUserId: string; canAssume: boolean }) {
   const router = useRouter();
+  const canSee = useCanSeeFn();
   const [pending, startTransition] = React.useTransition();
   const { ticket, row, client, contact, users } = detail;
   const assignee = ticket.assigneeId ? users[ticket.assigneeId] : undefined;
@@ -76,10 +79,14 @@ function Inner({ detail, currentUserId, canOperate }: { detail: TicketDetail; cu
       <DrawerBody className="flex flex-col gap-4">
         <div className="divide-y divide-border rounded-lg border border-border px-3">
           <Row label="Cliente">
-            {client ? (
+            {client && canSee(`/clientes/${client.id}?aba=suporte`) ? (
               <Link href={`/clientes/${client.id}?aba=suporte`} className="inline-flex items-center gap-1.5 font-medium hover:text-brand hover:underline">
                 <Building2 className="size-4 text-muted" /> {client.tradeName}
               </Link>
+            ) : client ? (
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                <Building2 className="size-4 text-muted" /> {client.tradeName}
+              </span>
             ) : (
               "—"
             )}
@@ -112,9 +119,15 @@ function Inner({ detail, currentUserId, canOperate }: { detail: TicketDetail; cu
           ) : null}
           {detail.opportunity ? (
             <Row label="Oportunidade">
-              <Link href={`/vendas/oportunidades?oportunidade=${detail.opportunity.id}`} className="inline-flex items-center gap-1 hover:underline">
-                <TrendingUp className="size-3.5" /> {detail.opportunity.title}
-              </Link>
+              {canSee("/vendas/oportunidades") ? (
+                <Link href={`/vendas/oportunidades?oportunidade=${detail.opportunity.id}`} className="inline-flex items-center gap-1 hover:underline">
+                  <TrendingUp className="size-3.5" /> {detail.opportunity.title}
+                </Link>
+              ) : (
+                <span className="inline-flex items-center gap-1">
+                  <TrendingUp className="size-3.5" /> {detail.opportunity.title}
+                </span>
+              )}
             </Row>
           ) : null}
         </div>
@@ -149,7 +162,7 @@ function Inner({ detail, currentUserId, canOperate }: { detail: TicketDetail; cu
         </section>
       </DrawerBody>
       <DrawerFooter>
-        {canOperate && row.open && ticket.assigneeId !== currentUserId ? (
+        {canAssume && row.open && ticket.assigneeId !== currentUserId ? (
           <Button variant="outline" className="min-h-[44px] md:min-h-0" loading={pending} onClick={assume}>
             <Hand /> Assumir
           </Button>

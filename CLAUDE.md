@@ -10,5 +10,6 @@ Next.js 16 (App Router) + TypeScript + Tailwind v4 + Firebase, deploy na Vercel.
 - Firebase no cliente somente via `src/lib/firebase/client.ts`. Nunca instancie o SDK direto em componentes.
 - Acesso privilegiado (Admin SDK) fica em código de servidor e usa credenciais sem o prefixo `NEXT_PUBLIC_`.
 - Toda nova coleção do Firestore exige regra explícita em `firestore.rules`. A regra padrão é negar.
-- Antes de abrir PR: `npm run lint && npm run typecheck && npm run build`.
+- Antes de abrir PR: `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build`.
+- Autorização: toda `page.tsx` nova chama `requireScreen`; toda server action nova chama `requirePermission`; toda tela/seção/ação nova entra no catálogo `src/domain/permissions` (ver "Autorização" em `docs/arquitetura.md`).
 - Variáveis de ambiente novas entram em `.env.example` com comentário explicando o uso.

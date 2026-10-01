@@ -1,8 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
+import { BusinessError, PermissionError, failAction, requirePermission } from "@/server/auth/session";
 import { create, getById, list, remove, update, nowIso, type CreateInput } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { formatCurrency, formatPhone } from "@/lib/format";
@@ -34,23 +33,23 @@ import {
   updateClientSchema,
   updateContactSchema,
   upsellSchema,
-  zodMessage,
 } from "./schemas";
 import { createWorkflowInstanceForClient } from "@/server/workflow/service";
+import { canSeeClient, clientScope, scopeClients } from "./access";
 
 /**
  * Server Actions do módulo Clientes 360º.
  *
- * Padrão: requireUser() → validação zod (ZodError vira { ok: false, error }) → mutação via db.ts →
- * emitEvent (alimenta a timeline do cliente) → revalidatePath das rotas afetadas.
+ * Padrão: requirePermission(chave do catálogo operacao.clientes.*) → validação zod → cliente dentro do escopo do
+ * usuário (canSeeClient; fora dele = acesso negado) → mutação via db.ts → emitEvent (alimenta a timeline do cliente)
+ * → revalidatePath das rotas afetadas. Falhas por failAction (ZodError, PermissionError e BusinessError viram
+ * { ok: false, error } com a mensagem para o usuário).
  */
 
 const actor = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
 
 function fail(error: unknown, fallback: string): { ok: false; error: string } {
-  if (error instanceof z.ZodError) return { ok: false, error: zodMessage(error) };
-  console.error(`[clients] ${fallback}`, error);
-  return { ok: false, error: error instanceof Error && error.message ? `${fallback}: ${error.message}` : fallback };
+  return failAction(error, fallback, "clients");
 }
 
 function revalidateClient(id?: string) {
@@ -58,9 +57,11 @@ function revalidateClient(id?: string) {
   if (id) revalidatePath(`/clientes/${id}`);
 }
 
-async function loadClient(id: string): Promise<Client> {
+/** Carrega o cliente e confere o escopo do usuário (Clientes 360º): fora dele = acesso negado. */
+async function loadClient(user: CurrentUser, id: string): Promise<Client> {
   const client = await getById<Client>(COLLECTIONS.clients, id);
-  if (!client) throw new Error("Cliente não encontrado");
+  if (!client) throw new BusinessError("Cliente não encontrado");
+  if (!(await canSeeClient(user, client))) throw new PermissionError();
   return client;
 }
 
@@ -93,10 +94,11 @@ export interface DuplicateMatch {
 /** Procura clientes com o mesmo CNPJ/CPF, telefone, WhatsApp ou e-mail. */
 export async function findDuplicates(input: unknown): Promise<ActionResult<{ matches: DuplicateMatch[] }>> {
   try {
-    await requireUser();
+    // Leitura chamada pelo formulário: exige ver a tela (viewGuard) e só compara com clientes do escopo do usuário.
+    const user = await requirePermission("operacao.clientes.ver");
     const data = findDuplicatesSchema.parse(input);
     if (!data.document && !data.phone && !data.whatsapp && !data.email) return { ok: true, data: { matches: [] } };
-    const clients = await list<Client>(COLLECTIONS.clients);
+    const clients = scopeClients(await list<Client>(COLLECTIONS.clients), await clientScope(user));
     const digits = (v?: string) => (v ?? "").replace(/\D/g, "");
     const phones = [data.phone, data.whatsapp].filter((p): p is string => Boolean(p));
     const matches: DuplicateMatch[] = [];
@@ -123,7 +125,7 @@ export async function findDuplicates(input: unknown): Promise<ActionResult<{ mat
 
 export async function createClient(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.criar");
     const data = createClientSchema.parse(input);
     const client = await create<Client>(COLLECTIONS.clients, {
       legalName: data.legalName,
@@ -190,9 +192,9 @@ const TRACKED_FIELDS: { key: keyof Client; label: string }[] = [
 
 export async function updateClient(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.editar");
     const data = updateClientSchema.parse(input);
-    const current = await loadClient(data.id);
+    const current = await loadClient(user, data.id);
     const patch: Partial<Client> = {
       legalName: data.legalName,
       tradeName: data.tradeName,
@@ -209,10 +211,13 @@ export async function updateClient(input: unknown): Promise<ActionResult<{ id: s
       ownerCsId: data.ownerCsId,
       tags: data.tags,
       notes: data.notes,
+      // Opt-out: só muda quando o formulário envia o bloco (cadastros antigos continuam sem o campo).
+      ...(data.communicationOptOut ? { communicationOptOut: data.communicationOptOut } : {}),
     };
     const changed = TRACKED_FIELDS.filter(({ key }) => (current[key] ?? "") !== (patch[key] ?? "")).map((f) => f.label);
     const addressChanged = JSON.stringify(current.address ?? {}) !== JSON.stringify(data.address ?? {});
     if (addressChanged) changed.push("endereço");
+    if (data.communicationOptOut && JSON.stringify(current.communicationOptOut ?? {}) !== JSON.stringify(data.communicationOptOut)) changed.push("opt-out de comunicação");
     const tagsChanged = JSON.stringify([...(current.tags ?? [])].sort()) !== JSON.stringify([...data.tags].sort());
     if (tagsChanged) changed.push("tags");
 
@@ -238,9 +243,9 @@ export async function updateClient(input: unknown): Promise<ActionResult<{ id: s
 
 export async function changeClientStatus(input: unknown): Promise<ActionResult<{ status: Client["status"] }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.alterar-status");
     const data = changeStatusSchema.parse(input);
-    const client = await loadClient(data.clientId);
+    const client = await loadClient(user, data.clientId);
     if (client.status === data.status) return { ok: false, error: `O cliente já está com status ${CLIENT_STATUS_LABELS[data.status]}` };
     const now = nowIso();
     const patch: Partial<Client> = { status: data.status };
@@ -276,9 +281,9 @@ async function clearPrimaryContact(clientId: string, exceptId?: string) {
 
 export async function addContact(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.contatos.editar");
     const data = contactSchema.parse(input);
-    const client = await loadClient(data.clientId);
+    const client = await loadClient(user, data.clientId);
     if (data.isPrimary) await clearPrimaryContact(client.id);
     const contact = await create<Contact>(COLLECTIONS.contacts, {
       clientId: client.id,
@@ -310,8 +315,9 @@ export async function addContact(input: unknown): Promise<ActionResult<{ id: str
 
 export async function updateContact(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.contatos.editar");
     const data = updateContactSchema.parse(input);
+    await loadClient(user, data.clientId);
     const contact = await getById<Contact>(COLLECTIONS.contacts, data.id);
     if (!contact || contact.clientId !== data.clientId) return { ok: false, error: "Contato não encontrado" };
     if (data.isPrimary) await clearPrimaryContact(data.clientId, data.id);
@@ -342,8 +348,9 @@ export async function updateContact(input: unknown): Promise<ActionResult<{ id: 
 
 export async function removeContact(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.contatos.excluir");
     const data = removeContactSchema.parse(input);
+    await loadClient(user, data.clientId);
     const contact = await getById<Contact>(COLLECTIONS.contacts, data.id);
     if (!contact || contact.clientId !== data.clientId) return { ok: false, error: "Contato não encontrado" };
     await remove(COLLECTIONS.contacts, data.id);
@@ -369,9 +376,9 @@ export async function removeContact(input: unknown): Promise<ActionResult<{ id: 
 
 export async function addNote(input: unknown): Promise<ActionResult<{ eventId: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.registrar");
     const data = noteSchema.parse(input);
-    const client = await loadClient(data.clientId);
+    const client = await loadClient(user, data.clientId);
     const event = await emitEvent({
       type: "note.added",
       actor: actor(user),
@@ -390,9 +397,9 @@ export async function addNote(input: unknown): Promise<ActionResult<{ eventId: s
 
 export async function addDocument(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.documentos.anexar");
     const data = documentSchema.parse(input);
-    const client = await loadClient(data.clientId);
+    const client = await loadClient(user, data.clientId);
     // Versão: incrementa quando já existe documento com o mesmo nome para o cliente.
     const existing = await list<Document>(COLLECTIONS.documents, { where: [["clientId", "==", client.id]] });
     const sameName = existing.filter((d) => d.name.trim().toLowerCase() === data.name.toLowerCase());
@@ -428,9 +435,9 @@ export async function addDocument(input: unknown): Promise<ActionResult<{ id: st
 /** Ligação ou mensagem de WhatsApp registrada manualmente (integração real fica para depois). */
 export async function registerContactEvent(input: unknown): Promise<ActionResult<{ eventId: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.registrar");
     const data = contactEventSchema.parse(input);
-    const client = await loadClient(data.clientId);
+    const client = await loadClient(user, data.clientId);
     const contact = data.contactId ? await getById<Contact>(COLLECTIONS.contacts, data.contactId) : null;
     const who = contact?.name ?? client.tradeName;
     const isCall = data.channel === "ligacao";
@@ -475,9 +482,9 @@ export async function registerContactEvent(input: unknown): Promise<ActionResult
 
 export async function createUpsellOpportunity(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireUser();
+    const user = await requirePermission("operacao.clientes.criar-oportunidade");
     const data = upsellSchema.parse(input);
-    const client = await loadClient(data.clientId);
+    const client = await loadClient(user, data.clientId);
     const product = await getById<Product>(COLLECTIONS.products, data.productId);
     if (!product || product.active === false) return { ok: false, error: "Produto não encontrado no catálogo" };
     const owned = await list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["clientId", "==", client.id]] });

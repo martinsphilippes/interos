@@ -21,6 +21,7 @@ import "server-only";
  */
 import { batchSet, create, getById, getManyByIds, list, nowIso, ORG_ID, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { BusinessError } from "@/server/auth/error-classes";
 import { notify } from "@/server/notifications";
 import { COLLECTIONS, type BonusBlock, type BonusResult, type BonusRule, type Opportunity, type Settings, type User, type UserRef } from "@/domain/types";
 import { DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
@@ -495,7 +496,8 @@ export async function listBonusHistory(userId: string): Promise<(BonusResult & {
 // Bloqueios
 // ---------------------------------------------------------------------------
 
-export class BonusError extends Error {}
+/** Regra de negócio do bônus (mensagem para o usuário; failAction sempre a exibe). */
+export class BonusError extends BusinessError {}
 
 /** Registra um bloqueio (status "aberto") para análise. Valida o bloqueador contra a regra vigente do colaborador. */
 export async function registerBonusBlock(data: Required<Pick<BonusBlockInput, "userId" | "period" | "blockerKey" | "reason">> & Pick<BonusBlockInput, "evidence" | "notes">, actor: UserRef): Promise<BonusBlock> {

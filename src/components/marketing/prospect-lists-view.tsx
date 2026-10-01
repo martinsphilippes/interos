@@ -18,19 +18,27 @@ import { toast } from "@/components/ui/toast";
 import { formatDateKey, formatNumber, formatPercent } from "@/lib/format";
 import { Switch } from "@/components/ui/switch";
 import { createProspectListAction, importProspects } from "@/server/marketing/actions";
+import { useMarketingAccess } from "./marketing-access";
 import type { ImportReport } from "@/server/marketing/service";
 import { CsvInput, ImportReportView } from "./csv-import-panel";
 import { PROSPECT_CSV_FIELDS, csvToRecords } from "./csv";
 import { PROSPECT_LIST_STATUS_LABELS, type MarketingOptions, type ProspectListRow } from "./marketing-model";
 
 /** Listas de prospecção com totais calculados dos contatos. */
+/** Cartões das listas; criar e importar só com as chaves (marketing.prospeccao.criar / .importar). */
 export function ProspectListsView({ lists, options }: { lists: ProspectListRow[]; options: MarketingOptions }) {
   const [importFor, setImportFor] = React.useState<ProspectListRow | null>(null);
+  const caps = useMarketingAccess().prospect;
 
   if (lists.length === 0) {
     return (
       <Card>
-        <EmptyState icon={<Crosshair />} title="Nenhuma lista de prospecção" description="Crie uma lista, importe os contatos e distribua entre os vendedores." action={<NewProspectListDialog options={options} />} />
+        <EmptyState
+          icon={<Crosshair />}
+          title="Nenhuma lista de prospecção"
+          description={caps.create ? "Crie uma lista, importe os contatos e distribua entre os vendedores." : "Nenhuma lista visível para você."}
+          action={caps.create ? <NewProspectListDialog options={options} /> : undefined}
+        />
       </Card>
     );
   }
@@ -90,9 +98,11 @@ export function ProspectListsView({ lists, options }: { lists: ProspectListRow[]
                 ) : null}
               </div>
               <div className="mt-4 flex gap-2">
-                <Button variant="outline" size="sm" className="h-11 flex-1 md:h-8" onClick={() => setImportFor(l)}>
-                  <Upload /> Importar contatos
-                </Button>
+                {caps.import ? (
+                  <Button variant="outline" size="sm" className="h-11 flex-1 md:h-8" onClick={() => setImportFor(l)}>
+                    <Upload /> Importar contatos
+                  </Button>
+                ) : null}
                 <Button asChild size="sm" className="h-11 flex-1 md:h-8">
                   <Link href={`/marketing/prospeccao/${l.id}`}>
                     Abrir <ChevronRight />
@@ -103,7 +113,7 @@ export function ProspectListsView({ lists, options }: { lists: ProspectListRow[]
           );
         })}
       </ul>
-      <ImportProspectsDialog list={importFor} onClose={() => setImportFor(null)} />
+      {caps.import ? <ImportProspectsDialog list={importFor} onClose={() => setImportFor(null)} /> : null}
     </>
   );
 }

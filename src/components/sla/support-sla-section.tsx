@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CheckCircle2, Clock, MessageSquareReply, Settings, Smile, ThumbsDown, ThumbsUp, Timer } from "lucide-react";
+import type { CurrentUser } from "@/domain/types";
 import { getCsatReport, getSlaReport, type CsatBucket, type SlaCompliance } from "@/server/support/queries";
 import { TICKET_PRIORITY_DEFINITIONS, TICKET_PRIORITY_LABELS, type TicketPriority } from "@/server/support/schemas";
 import { formatCompetence, formatDateTime, formatNumber, formatPercent } from "@/lib/format";
@@ -48,8 +49,9 @@ function statusLabel(c: SlaCompliance, target: number): { label: string; variant
  * solução do mês, matriz de SLA por criticidade, por atendente, histórico de 6 meses, chamados em risco e CSAT.
  * `month` = competência AAAA-MM (as últimas 6; fora disso, o mês atual).
  */
-export async function SupportSlaSection({ month, isAdmin }: { month?: string; isAdmin: boolean }) {
-  const [report, csat] = await Promise.all([getSlaReport(month), getCsatReport(month)]);
+export async function SupportSlaSection({ month, canEditRules, viewer }: { month?: string; canEditRules: boolean; viewer?: CurrentUser }) {
+  // Com o usuário, SLA só dos chamados no escopo de Chamados e CSAT só de atendentes no escopo (padrão "empresa").
+  const [report, csat] = await Promise.all([getSlaReport(month, viewer), getCsatReport(month, viewer)]);
   const { overall, targets } = report;
   const overallStatus = statusLabel(overall, targets.slaResolution);
 
@@ -105,7 +107,7 @@ export async function SupportSlaSection({ month, isAdmin }: { month?: string; is
               <CardTitle>Matriz de SLA</CardTitle>
               <CardDescription>Regras suporte.* em vigor (horário comercial seg–sex 8h–18h, exceto quando indicado).</CardDescription>
             </div>
-            {isAdmin ? (
+            {canEditRules ? (
               <Button asChild variant="outline" size="sm">
                 <Link href="/admin/configuracoes">
                   <Settings /> Editar

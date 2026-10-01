@@ -48,7 +48,8 @@ const CATALOG: CatalogEntry[] = [
     requirements: [{ label: "Meta Cloud API", vars: ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"], implemented: true }],
     optional: [
       { name: "WHATSAPP_VERIFY_TOKEN", description: "Token do handshake GET do webhook /api/webhooks/whatsapp." },
-      { name: "WHATSAPP_WEBHOOK_TOKEN", description: "Token exigido no header x-interos-token do POST do webhook." },
+      { name: "WHATSAPP_APP_SECRET", description: "App Secret da Meta: valida a assinatura X-Hub-Signature-256 do POST do webhook (mensagens e statuses reais)." },
+      { name: "WHATSAPP_WEBHOOK_TOKEN", description: "Token alternativo exigido no header x-interos-token do POST do webhook (integradores/testes)." },
     ],
     descriptions: {
       WHATSAPP_ACCESS_TOKEN: "Token permanente do usuário do sistema no Meta Business (whatsapp_business_messaging).",

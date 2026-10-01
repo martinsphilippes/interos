@@ -3,7 +3,9 @@
  * pronta de MeuDiaData e renderiza dentro de um CollapsibleBlock (colapsável no celular).
  */
 import Link from "next/link";
+import { ScreenLink } from "@/components/auth/access-provider";
 import { Check, FileSignature, MessageSquareReply, Ticket } from "lucide-react";
+import type { FinanceDigest, FinanceItem } from "./model";
 import { WORKFLOW_STEP_STATUS_LABELS, type WorkflowStepStatus } from "@/domain/constants";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -35,7 +37,7 @@ function ClientLink({ id, name, className }: { id?: string; name?: string; class
 
 export function AgendaBlock({ items, upcomingVisits = [] }: { items: AgendaItem[]; upcomingVisits?: AgendaItem[] }) {
   return (
-    <CollapsibleBlock title="Agenda de hoje" count={items.length} action={<Link href="/tarefas?view=calendario" className="font-medium text-brand hover:underline">Calendário</Link>}>
+    <CollapsibleBlock title="Agenda de hoje" count={items.length} action={<ScreenLink href="/tarefas?view=calendario" className="font-medium text-brand hover:underline">Calendário</ScreenLink>}>
       {items.length === 0 ? (
         <Empty>Nada agendado para hoje.</Empty>
       ) : (
@@ -91,7 +93,7 @@ export function AgendaBlock({ items, upcomingVisits = [] }: { items: AgendaItem[
 
 export function FollowupsBlock({ items }: { items: FollowupItem[] }) {
   return (
-    <CollapsibleBlock title="Follow-ups" count={items.length} description="Próxima ação nos próximos 3 dias" action={<Link href="/vendas" className="font-medium text-brand hover:underline">Central de Vendas</Link>}>
+    <CollapsibleBlock title="Follow-ups" count={items.length} description="Próxima ação nos próximos 3 dias" action={<ScreenLink href="/vendas" className="font-medium text-brand hover:underline">Central de Vendas</ScreenLink>}>
       {items.length === 0 ? (
         <Empty>Nenhum follow-up nos próximos 3 dias.</Empty>
       ) : (
@@ -122,7 +124,7 @@ export function FollowupsBlock({ items }: { items: FollowupItem[] }) {
 
 export function StepsBlock({ items, team }: { items: StepItem[]; team: boolean }) {
   return (
-    <CollapsibleBlock title={team ? "Etapas de workflow da equipe" : "Minhas etapas de workflow"} count={items.length} action={<Link href="/workflow" className="font-medium text-brand hover:underline">Workflow</Link>}>
+    <CollapsibleBlock title={team ? "Etapas de workflow da equipe" : "Minhas etapas de workflow"} count={items.length} action={<ScreenLink href="/workflow" className="font-medium text-brand hover:underline">Workflow</ScreenLink>}>
       {items.length === 0 ? (
         <Empty>Nenhuma etapa atribuída no momento.</Empty>
       ) : (
@@ -147,9 +149,9 @@ export function StepsBlock({ items, team }: { items: StepItem[]; team: boolean }
           ))}
           {items.length > 12 ? (
             <li className="pt-2 text-center text-sm">
-              <Link href="/workflow" className="font-medium text-brand hover:underline">
+              <ScreenLink href="/workflow" className="font-medium text-brand hover:underline">
                 Ver todas as {items.length} etapas
-              </Link>
+              </ScreenLink>
             </li>
           ) : null}
         </ul>
@@ -164,7 +166,7 @@ const HEALTH_TONE: Record<string, StatusTone> = { risco: "danger", atencao: "war
 
 export function AttentionClientsBlock({ items, total }: { items: AttentionClient[]; total: number }) {
   return (
-    <CollapsibleBlock title="Clientes que precisam de atenção" count={total} action={<Link href="/cs/riscos" className="font-medium text-brand hover:underline">Riscos</Link>}>
+    <CollapsibleBlock title="Clientes que precisam de atenção" count={total} action={<ScreenLink href="/cs/riscos" className="font-medium text-brand hover:underline">Riscos</ScreenLink>}>
       {items.length === 0 ? (
         <Empty>Nenhum cliente da sua carteira em risco ou com checkpoint vencido.</Empty>
       ) : (
@@ -219,7 +221,7 @@ function goalTone(attainment: number | null): ProgressTone {
 
 export function GoalsBlock({ items }: { items: GoalItem[] }) {
   return (
-    <CollapsibleBlock title="Metas do mês" count={items.length} action={<Link href="/performance/metas" className="font-medium text-brand hover:underline">Metas</Link>}>
+    <CollapsibleBlock title="Metas do mês" count={items.length} action={<ScreenLink href="/performance/metas" className="font-medium text-brand hover:underline">Metas</ScreenLink>}>
       {items.length === 0 ? (
         <Empty>Nenhuma meta cadastrada para você neste mês.</Empty>
       ) : (
@@ -260,10 +262,10 @@ export function GoalsBlock({ items }: { items: GoalItem[] }) {
 
 // ---------------------------------------------------------------------------
 
-export function NotificationsBlock({ items, unreadTotal }: { items: NotificationItem[]; unreadTotal: number }) {
+export function NotificationsBlock({ items, unreadTotal, canEdit, canDelete }: { items: NotificationItem[]; unreadTotal: number; canEdit?: boolean; canDelete?: boolean }) {
   return (
-    <CollapsibleBlock title="Notificações recentes" count={unreadTotal} description="Não lidas" action={<Link href="/notificacoes" className="font-medium text-brand hover:underline">Central</Link>}>
-      <NotificationsList items={items} variant="compact" emptyTitle="Nenhuma notificação não lida" />
+    <CollapsibleBlock title="Notificações recentes" count={unreadTotal} description="Não lidas" action={<ScreenLink href="/notificacoes" className="font-medium text-brand hover:underline">Central</ScreenLink>}>
+      <NotificationsList items={items} variant="compact" emptyTitle="Nenhuma notificação não lida" canEdit={canEdit} canDelete={canDelete} />
     </CollapsibleBlock>
   );
 }
@@ -278,7 +280,7 @@ function loadTone(load: number): ProgressTone {
 
 export function TeamBlock({ members }: { members: TeamMember[] }) {
   return (
-    <CollapsibleBlock title="Minha equipe" count={members.length} description="Carga = tarefas abertas em relação à média da equipe" action={<Link href="/tarefas?view=equipe" className="font-medium text-brand hover:underline">Tarefas da equipe</Link>} className="md:col-span-2">
+    <CollapsibleBlock title="Minha equipe" count={members.length} description="Carga = tarefas abertas em relação à média da equipe" action={<ScreenLink href="/tarefas?view=equipe" className="font-medium text-brand hover:underline">Tarefas da equipe</ScreenLink>} className="md:col-span-2">
       {members.length === 0 ? (
         <Empty>Nenhum colaborador vinculado a você.</Empty>
       ) : (
@@ -353,7 +355,7 @@ const AWAITING_KIND_LABEL: Record<AwaitingItem["kind"], string> = { lead: "Lead"
 /** Clientes/leads esperando resposta: mensagem recebida sem retorno ou chamado com a última fala do cliente. */
 export function AwaitingBlock({ items }: { items: AwaitingItem[] }) {
   return (
-    <CollapsibleBlock title="Aguardando seu retorno" count={items.length} description="Mensagens recebidas sem resposta e chamados com retorno do cliente" action={<Link href="/marketing/caixa-de-entrada" className="font-medium text-brand hover:underline">Caixa de entrada</Link>}>
+    <CollapsibleBlock title="Aguardando seu retorno" count={items.length} description="Mensagens recebidas sem resposta e chamados com retorno do cliente" action={<ScreenLink href="/marketing/caixa-de-entrada" className="font-medium text-brand hover:underline">Caixa de entrada</ScreenLink>}>
       {items.length === 0 ? (
         <Empty>Ninguém aguardando retorno. Tudo respondido.</Empty>
       ) : (
@@ -382,11 +384,73 @@ export function AwaitingBlock({ items }: { items: AwaitingItem[] }) {
   );
 }
 
+const FINANCE_TONE: Record<FinanceItem["tone"], string> = { danger: "text-danger-fg", warning: "text-warning-fg", info: "text-info-fg", muted: "text-muted" };
+
+/**
+ * Financeiro do dia (D17): seções por tipo (cobranças vencidas, vencimentos, títulos, comissões) para a equipe
+ * financeira; para o vendedor, os clientes seus com cobrança vencida. Todo item tem link para a tela de ação.
+ */
+export function FinanceBlock({ digest }: { digest?: FinanceDigest }) {
+  if (!digest) return null;
+  return (
+    <CollapsibleBlock title={digest.title} count={digest.count} description={digest.description} action={<ScreenLink href={digest.href} className="font-medium text-brand hover:underline">{digest.hrefLabel}</ScreenLink>} className={digest.sections.length > 1 ? "md:col-span-2" : undefined}>
+      {digest.sections.length === 0 ? (
+        <Empty>Nada pendente no Financeiro hoje.</Empty>
+      ) : (
+        <div className={cn("grid gap-4", digest.sections.length > 1 && "md:grid-cols-2")} data-testid="financeiro-do-dia">
+          {digest.sections.map((s) => (
+            <section key={s.key} aria-label={s.title} data-finance-section={s.key} className="min-w-0">
+              <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                <p className="label-caps">
+                  {s.title} <span className="tabular-nums text-muted-light">({s.count})</span>
+                </p>
+                {s.href ? (
+                  <Link href={s.href} className="shrink-0 text-xs font-medium text-brand hover:underline">
+                    Ver todas · {formatCurrency(s.total, true)}
+                  </Link>
+                ) : (
+                  <span className="shrink-0 text-xs tabular-nums text-muted">{formatCurrency(s.total, true)}</span>
+                )}
+              </div>
+              {s.description ? <p className="mb-2 text-xs text-muted">{s.description}</p> : null}
+              <ul className="flex flex-col divide-y divide-border">
+                {s.items.map((i) => (
+                  <li key={i.id} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+                    <KindIcon kind={i.kind} className="size-7 [&_svg]:size-3.5" />
+                    <div className="min-w-0 flex-1">
+                      <Link href={i.href} className="block truncate text-sm font-medium text-foreground hover:text-brand hover:underline">
+                        {i.title}
+                      </Link>
+                      <p className={cn("truncate text-xs", FINANCE_TONE[i.tone])}>
+                        {i.detail}
+                        {i.assigneeName ? <span className="text-muted"> · {i.assigneeName}</span> : null}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-right text-xs tabular-nums">
+                      {i.amount !== undefined ? <span className="block font-semibold text-foreground">{formatCurrency(i.amount)}</span> : null}
+                      {i.dueLabel ? <span className="text-muted">{i.dueLabel.split(",")[0]}</span> : null}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {s.count > s.items.length && s.href ? (
+                <Link href={s.href} className="mt-2 inline-block text-xs font-medium text-brand hover:underline">
+                  Mais {s.count - s.items.length}
+                </Link>
+              ) : null}
+            </section>
+          ))}
+        </div>
+      )}
+    </CollapsibleBlock>
+  );
+}
+
 /** Contratos parados no Financeiro sob responsabilidade do usuário (ou da equipe). */
 export function ContractsBlock({ items }: { items: PendingContractItem[] }) {
   if (items.length === 0) return null;
   return (
-    <CollapsibleBlock title="Contratos pendentes" count={items.length} description="Aguardando contrato, assinatura, pagamento ou com pendência" action={<Link href="/financeiro/contratos" className="font-medium text-brand hover:underline">Contratos</Link>}>
+    <CollapsibleBlock title="Contratos pendentes" count={items.length} description="Aguardando contrato, assinatura, pagamento ou com pendência" action={<ScreenLink href="/financeiro/contratos" className="font-medium text-brand hover:underline">Contratos</ScreenLink>}>
       <ul className="flex flex-col divide-y divide-border">
         {items.map((c) => (
           <li key={c.id} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">

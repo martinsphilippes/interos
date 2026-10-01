@@ -1,0 +1,77 @@
+
+> interos@0.1.0 seed
+> tsx --conditions=react-server --env-file=.env.local scripts/seed.ts
+
+INTEROS seed — alvo: emulador 127.0.0.1:8080
+Limpeza: 7359 documentos removidos em 61 coleções (1.7s)
+Gerado: organização, departamentos e usuários (0.0s)
+Gerado: catálogo e configurações (0.0s)
+Gerado: clientes, contatos e produtos (0.0s)
+Gerado: leads, oportunidades, contratos e cobranças (0.0s)
+Gerado: implantação e CS (0.0s)
+Gerado: suporte (0.0s)
+Gerado: workflow, tarefas e SLA (0.0s)
+Gerado: eventos, timeline e notificações (0.0s)
+Gerado: KPIs, metas, comissões e bônus (0.0s)
+Auth: 15 usuários recriados (0.2s)
+Gravando no Firestore:
+  organizations                  1
+  users                         15
+  departments                    8
+  clients                       45
+  contacts                      92
+  client_products              100
+  leads                         30
+  lead_sources                  13
+  campaigns                      6
+  prospect_lists                 2
+  prospects                     20
+  opportunities                 22
+  products                      12
+  proposals                      8
+  contracts                     38
+  billing                      211
+  implementation_projects        8
+  implementation_templates       8
+  implementation_tasks         250
+  trainings                      5
+  cs_accounts                   26
+  health_scores                 26
+  success_plans                  3
+  renewals                      10
+  churn_records                  2
+  support_tickets               40
+  ticket_interactions          127
+  csat_responses                18
+  knowledge_articles             6
+  tasks                         90
+  events                       848
+  timeline_events              836
+  notifications                 66
+  sla_rules                     12
+  sla_instances                 93
+  kpis                          59
+  kpi_snapshots                 84
+  goals                        110
+  bonus_rules                    3
+  bonus_blocks                   2
+  commission_rules               9
+  gamification_points          181
+  gamification_campaigns         2
+  achievements                   6
+  workflow_templates             1
+  workflow_instances            43
+  workflow_steps               196
+  automation_rules               9
+  visits                        10
+  communications                15
+  settings                      12
+  process_definitions            3
+  counters                       6
+  commissions (motor)          444
+  payables (motor)              59  (22 pagos, 2 a pagar, 18 aprovados · 13.2s)
+  kpi_snapshots (motor)        684  (646 sem valor)
+  bonus_results (motor)          7  (0.6s)
+
+Resumo: 5042 documentos em 53 coleções — tempo total 16.6s
+SLA ativos: 70 — 16 violados, 6 em risco (31% violados ou em risco)

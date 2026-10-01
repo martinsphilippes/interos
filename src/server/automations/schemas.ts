@@ -68,6 +68,14 @@ export const SWEEP_KEYS = [
   "tarefas_recorrentes",
   "kpi_snapshots",
   "processos_esperas",
+  "cobrancas_vencidas",
+  "contratos_alertas",
+  "comissoes",
+  "conciliacao_bancaria",
+  "regua_cobranca",
+  "cobrancas_recorrentes",
+  "contas_recorrentes",
+  "contas_a_pagar_vencidas",
 ] as const;
 export type SweepKey = (typeof SWEEP_KEYS)[number];
 
@@ -76,12 +84,52 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   followup_vendas: { label: "Follow-up de vendas", description: "Serviço de Vendas: tarefa de follow-up para próxima ação vencida e oportunidade parada.", schedule: "horaria" },
   oportunidades_paradas: { label: "Resumo de oportunidades paradas", description: "Resumo diário ao vendedor e ao gestor comercial de oportunidades paradas ou sem próxima ação.", schedule: "diaria" },
   leads_sem_contato_24h: { label: "Leads sem contato em 24h", description: "Lead novo sem primeiro contato há mais de 24 horas gera tarefa para o responsável (ou gestor de marketing).", schedule: "horaria" },
-  renovacoes: { label: "Renovações", description: "Serviço de CS: cria renovações na janela de 90 dias e emite renovação próxima.", schedule: "diaria" },
+  renovacoes: { label: "Renovações", description: "Serviço de CS: cria renovações na janela de 90 dias e emite renovação próxima. Contratos com renovação automática são renovados por aditivo dentro da antecedência combinada (índice de reajuste nunca é buscado automaticamente: vira tarefa ao CS).", schedule: "diaria" },
   saude_clientes: { label: "Saúde dos clientes", description: "Serviço de CS: recalcula o health score de toda a carteira.", schedule: "diaria" },
   implantacoes_atrasadas: { label: "Implantações atrasadas", description: "Projetos com prazo vencido: avisa o responsável e o gestor de implantação uma vez por dia.", schedule: "diaria" },
   tarefas_recorrentes: { label: "Tarefas recorrentes", description: "Garante a próxima ocorrência das tarefas recorrentes concluídas que ficaram sem sucessora.", schedule: "diaria" },
   processos_esperas: { label: "Esperas dos processos", description: "Construtor de processos: libera as etapas de espera por horas úteis cujo prazo já passou e segue a execução.", schedule: "horaria" },
+  cobrancas_vencidas: { label: "Cobranças vencidas", description: "Financeiro: marca como vencidas todas as cobranças em aberto com vencimento passado e emite cobrança vencida (uma vez por cobrança), sem depender de alguém abrir as telas.", schedule: "diaria" },
+  contratos_alertas: {
+    label: "Contratos parados",
+    description: "Financeiro: contrato aguardando assinatura além do prazo gera follow-up ao vendedor; pago e não liberado gera tarefa ao gestor financeiro; liberado com implantação não iniciada avisa a Implantação (prazos em Configurações › Gate financeiro).",
+    schedule: "diaria",
+  },
+  comissoes: {
+    label: "Comissões",
+    description:
+      "Motor de comissões: reavalia as comissões pendentes de todos os contratos de venda — carência cumprida vira Elegível (com título em Contas a Pagar), cobrança vencida deixa a comissão aguardando recebimento e contrato cancelado cancela o que não foi adquirido. Idempotente.",
+    schedule: "diaria",
+  },
   kpi_snapshots: { label: "Fotografia dos indicadores", description: "Grava os snapshots do motor de KPIs do mês corrente e, nos 3 primeiros dias do mês, o fechamento do mês anterior.", schedule: "diaria" },
+  conciliacao_bancaria: {
+    label: "Conciliação bancária",
+    description:
+      "Financeiro: com o provedor de cobrança conectado, consulta o status das cobranças abertas/vencidas emitidas nele e dá baixa pelo caminho único (origem conciliação, deduplicada). Sem provedor conectado a varredura é ignorada — nunca inventa pagamento.",
+    schedule: "diaria",
+  },
+  regua_cobranca: {
+    label: "Régua de cobrança",
+    description:
+      "Financeiro: executa os marcos da régua (dias antes/depois do vencimento, canal e texto em Configurações › Cobrança) uma única vez por cobrança e marco; canal não conectado vira tarefa ao Financeiro com o texto pronto. Desligada por padrão.",
+    schedule: "diaria",
+  },
+  cobrancas_recorrentes: {
+    label: "Cobrança recorrente",
+    description:
+      "Financeiro: contratos com renovação automática ou prazo indeterminado sempre têm mensalidades geradas para os próximos N meses (horizonte em Configurações › Gate financeiro). Ids determinísticos: nunca duplica.",
+    schedule: "diaria",
+  },
+  contas_recorrentes: {
+    label: "Contas a pagar recorrentes",
+    description: "Financeiro: cria a próxima ocorrência das séries recorrentes de Contas a Pagar 30 dias antes do vencimento (uma por competência, idempotente).",
+    schedule: "diaria",
+  },
+  contas_a_pagar_vencidas: {
+    label: "Contas a pagar vencidas",
+    description: "Financeiro: avisa o Financeiro uma única vez por título vencido (previsto, aprovado ou a pagar com vencimento passado).",
+    schedule: "diaria",
+  },
 };
 
 /** Entidades que uma regra agendada pode varrer (só registros em aberto). */
@@ -332,6 +380,8 @@ const EVENT_DOMAIN_LABELS: Record<string, string> = {
   kpi: "Performance",
   goal: "Performance",
   commission: "Performance",
+  commission_rule: "Financeiro",
+  payable: "Financeiro",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",

@@ -81,6 +81,37 @@ export const resetPasswordSchema = z.object({ id: idSchema, password: passwordSc
 export const userIdSchema = z.object({ id: idSchema });
 
 // ---------------------------------------------------------------------------
+// Perfis, exceções individuais e módulos da empresa (A6/A8)
+// ---------------------------------------------------------------------------
+
+/**
+ * `grants`/`scopes` chegam como `unknown` e são validados por `validateAdjustments` (src/server/auth/access-admin.ts):
+ * só chaves próprias do catálogo, valores booleanos e escopos permitidos pela tela — nada de `__proto__`.
+ */
+export const savePermissionProfileSchema = z.object({
+  role: z.enum(ROLE_KEYS, { message: "Perfil inválido" }),
+  grants: z.unknown(),
+  scopes: z.unknown(),
+  reason: optionalText(500),
+});
+export type SavePermissionProfileInput = { role: (typeof ROLE_KEYS)[number]; grants: Record<string, boolean>; scopes: Record<string, string>; reason?: string };
+
+export const saveUserOverridesSchema = z.object({
+  userId: idSchema,
+  grants: z.unknown(),
+  scopes: z.unknown(),
+  reason: z.string("Informe o motivo").trim().min(5, "Informe o motivo da exceção (mínimo de 5 caracteres)").max(500, "Motivo muito longo (máx. 500)"),
+});
+export type SaveUserOverridesInput = { userId: string; grants: Record<string, boolean>; scopes: Record<string, string>; reason: string };
+
+export const saveActiveModulesSchema = z.object({
+  /** Módulos DESATIVADOS (ausente/vazio = todos ativos; módulo novo nasce ligado). */
+  inactive: z.unknown(),
+  reason: optionalText(500),
+});
+export type SaveActiveModulesInput = { inactive: string[]; reason?: string };
+
+// ---------------------------------------------------------------------------
 // Departamentos
 // ---------------------------------------------------------------------------
 
@@ -144,7 +175,7 @@ export const setProductActiveSchema = z.object({ id: idSchema, active: z.boolean
 // Configurações do sistema (coleção settings, um documento por key)
 // ---------------------------------------------------------------------------
 
-export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia"] as const;
+export const SETTING_KEYS = ["horario_comercial", "feriados", "metas_referencia", "lead_scoring", "health_score", "oportunidade", "gate_financeiro", "go_live", "cs_ativacao", "gamificacao", "premios_vendas", "gamificacao.sequencia", "financeiro_alertas", "comissoes_pagamento", "financeiro_baixa", "cobranca_canais", "regua_cobranca", "contas_a_pagar"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 const fraction = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(1, `${label} deve ser uma fração entre 0 e 1`);
@@ -221,6 +252,151 @@ export const gateFinanceiroSchema = z.object({
 });
 export type GateFinanceiroConfig = z.infer<typeof gateFinanceiroSchema>;
 
+/** Alertas do circuito de contratos (lido por src/server/finance/alerts.ts → getFinanceAlertSettings). */
+export const financeiroAlertasSchema = z.object({
+  diasSemAssinatura: z.number("Dias sem assinatura inválido").int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(90, "Máximo de 90 dias"),
+  horasPagoSemLiberacao: z.number("Horas pago sem liberação inválido").int("Use horas inteiras").min(1, "Mínimo de 1 hora").max(720, "Máximo de 720 horas"),
+  diasLiberadoSemInicio: z.number("Dias liberado sem início inválido").int("Use dias inteiros").min(1, "Mínimo de 1 dia").max(90, "Máximo de 90 dias"),
+  /** Horizonte rolante da cobrança recorrente (D24b): meses de cobranças à frente garantidos pela varredura `cobrancas_recorrentes`. */
+  horizonteCobrancasMeses: z.number("Horizonte de cobranças inválido").int("Use meses inteiros").min(1, "Mínimo de 1 mês").max(24, "Máximo de 24 meses").default(3),
+});
+export type FinanceiroAlertasConfig = z.infer<typeof financeiroAlertasSchema>;
+
+/** Pagamento de comissões (lido por src/server/commissions/payables.ts): dia do vencimento dos títulos no mês seguinte à competência da elegibilidade. */
+export const comissoesPagamentoSchema = z.object({
+  diaPagamento: z.number("Dia de pagamento inválido").int("Use um dia inteiro").min(1, "Dia mínimo é 1").max(28, "Dia máximo é 28"),
+});
+export type ComissoesPagamentoConfig = z.infer<typeof comissoesPagamentoSchema>;
+
+/**
+ * Baixa automática (provedor de cobrança / conciliação), lida por src/server/finance/service.ts → registerPayment.
+ * Vale SÓ para baixas automáticas: a baixa manual aceita o valor informado (o humano decide).
+ */
+export const financeiroBaixaSchema = z.object({
+  /** Diferença (R$) tolerada entre o valor recebido e o da cobrança para dar baixa como paga. */
+  toleranciaValor: z.number("Tolerância inválida").min(0, "Tolerância não pode ser negativa").max(1000, "Tolerância muito alta"),
+  /** Recebido abaixo da tolerância: registrar pendência (padrão) ou baixar mesmo assim com o valor recebido. */
+  pagamentoParcialAutomatico: z.enum(["pendencia", "baixar"], { message: "Opção de pagamento parcial inválida" }),
+});
+export type FinanceiroBaixaConfig = z.infer<typeof financeiroBaixaSchema>;
+
+/** Canais de cobrança (lido por src/server/finance/service.ts → sendBillingMessage): WhatsApp principal, e-mail complementar. */
+export const cobrancaCanaisSchema = z.object({
+  principal: z.enum(["whatsapp", "email"], { message: "Canal principal inválido" }),
+  complementar: z.enum(["email", "whatsapp", "nenhum"], { message: "Canal complementar inválido" }),
+  /** Ao cobrar por WhatsApp, enviar também o e-mail complementar automaticamente. */
+  enviarEmailJuntoAoWhatsapp: z.boolean("Informe se o e-mail acompanha o WhatsApp"),
+  /** Remetente exibido no texto (o remetente técnico é EMAIL_FROM). */
+  remetenteEmail: z
+    .string()
+    .trim()
+    .max(120, "Remetente muito longo")
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+});
+export type CobrancaCanaisConfig = z.infer<typeof cobrancaCanaisSchema>;
+
+export const REGUA_CANAIS = ["whatsapp", "email", "whatsapp_email", "tarefa", "notificacao"] as const;
+export type ReguaCanal = (typeof REGUA_CANAIS)[number];
+export const REGUA_CANAL_LABELS: Record<ReguaCanal, string> = {
+  whatsapp: "WhatsApp",
+  email: "E-mail",
+  whatsapp_email: "WhatsApp + e-mail",
+  tarefa: "Tarefa ao Financeiro",
+  notificacao: "Notificação interna",
+};
+/** Variáveis aceitas nos textos dos marcos da régua. */
+export const REGUA_TEMPLATE_VARS = ["{cliente}", "{contato}", "{valor}", "{vencimento}", "{parcela}", "{linhaDigitavel}", "{linkBoleto}", "{linkPortal}"] as const;
+
+export const reguaMarcoSchema = z.object({
+  id: z
+    .string()
+    .trim()
+    .min(1, "Identificador do marco vazio")
+    .max(40, "Identificador do marco muito longo")
+    .regex(/^[a-z0-9][a-z0-9_-]*$/, "Identificador do marco: letras minúsculas, números, hífen ou sublinhado"),
+  nome: z.string().trim().min(1, "Informe o nome do marco").max(60, "Nome do marco muito longo"),
+  /** Negativo = dias ANTES do vencimento; positivo = dias DEPOIS. 0 = no dia. */
+  offsetDias: z.number("Dias do marco inválido").int("Use dias inteiros").min(-60, "Mínimo 60 dias antes").max(90, "Máximo 90 dias depois"),
+  canal: z.enum(REGUA_CANAIS, { message: "Canal do marco inválido" }),
+  template: z.string().trim().min(5, "Texto do marco muito curto").max(1000, "Texto do marco muito longo"),
+  ativo: z.boolean("Informe se o marco está ativo"),
+});
+export type ReguaMarco = z.infer<typeof reguaMarcoSchema>;
+
+/**
+ * Régua de cobrança (lida por src/server/finance/regua.ts). `ativa: false` = nada automático até ligar.
+ * Os marcos padrão (-15, -7, +21) são uma PROPOSTA: o sinal e os dias são configuráveis na tela.
+ */
+export const reguaCobrancaSchema = z
+  .object({
+    ativa: z.boolean("Informe se a régua está ativa"),
+    /** Contar os dias do marco em dias úteis (fins de semana e feriados não contam). */
+    diasUteis: z.boolean("Informe se os dias são úteis"),
+    marcos: z.array(reguaMarcoSchema).max(20, "No máximo 20 marcos"),
+    pausarQuando: z.object({
+      pendencia: z.boolean("Informe se pausa com pendência"),
+      negociacao: z.boolean("Informe se pausa em negociação"),
+    }),
+  })
+  .refine((v) => new Set(v.marcos.map((m) => m.id)).size === v.marcos.length, { message: "Há marcos com o mesmo identificador", path: ["marcos"] });
+export type ReguaCobrancaConfig = z.infer<typeof reguaCobrancaSchema>;
+
+export const REGUA_DEFAULT_MARCOS: ReguaMarco[] = [
+  {
+    id: "antes_15",
+    nome: "15 dias antes",
+    offsetDias: -15,
+    canal: "whatsapp",
+    template: "Olá, {contato}! Aqui é a Intercert. A {parcela} de {cliente}, no valor de {valor}, vence em {vencimento}. {linhaDigitavel}{linkBoleto}Qualquer dúvida, é só responder esta mensagem.",
+    ativo: true,
+  },
+  {
+    id: "antes_7",
+    nome: "7 dias antes",
+    offsetDias: -7,
+    canal: "whatsapp_email",
+    template: "Olá, {contato}! Lembrete da Intercert: a {parcela} de {cliente} ({valor}) vence em {vencimento}. {linhaDigitavel}{linkBoleto}Se já pagou, desconsidere.",
+    ativo: true,
+  },
+  {
+    id: "depois_21",
+    nome: "21 dias depois",
+    offsetDias: 21,
+    canal: "tarefa",
+    template: "Cobrar/negociar — ligação: {parcela} de {cliente} ({valor}) vencida em {vencimento} há 21 dias. Ligar para {contato}, negociar e registrar o resultado.",
+    ativo: true,
+  },
+];
+
+const categoryKey = z
+  .string()
+  .trim()
+  .min(2, "Categoria muito curta")
+  .max(40, "Categoria muito longa")
+  .regex(/^[a-z0-9][a-z0-9_]*$/, "Categoria: letras minúsculas, números e sublinhado (ex.: aluguel, servicos)");
+const costCenter = z.string().trim().min(2, "Centro de custo muito curto").max(60, "Centro de custo muito longo");
+
+/** Categorias fixas do circuito (comissão, bônus, outros, estorno) + as gerais propostas para Contas a Pagar. */
+export const PAYABLE_DEFAULT_CATEGORIES = ["comissao_comercial", "bonus", "outros", "fornecedor", "imposto", "folha", "aluguel", "servicos", "software"] as const;
+
+/**
+ * Contas a Pagar geral (D28): categorias (chaves) e centros de custo aceitos nos títulos manuais. As categorias
+ * fixas do circuito (comissão, bônus, outros, estorno) continuam válidas mesmo se removidas da lista.
+ */
+export const contasAPagarSchema = z.object({
+  categorias: z
+    .array(categoryKey)
+    .min(1, "Informe ao menos uma categoria")
+    .max(40, "No máximo 40 categorias")
+    .transform((v) => Array.from(new Set(v))),
+  centrosDeCusto: z
+    .array(costCenter)
+    .max(60, "No máximo 60 centros de custo")
+    .transform((v) => Array.from(new Set(v))),
+});
+export type ContasAPagarConfig = z.infer<typeof contasAPagarSchema>;
+
 /** Aprovação do go-live (lido por src/server/implementation/service.ts → getGoLiveSettings). */
 export const goLiveSchema = z.object({
   exigeAprovacaoGestor: z.boolean("Informe se o go-live exige aprovação de gestor"),
@@ -273,6 +449,12 @@ export const SETTING_SCHEMAS = {
   gamificacao: gamificacaoSchema,
   premios_vendas: premiosVendasSchema,
   "gamificacao.sequencia": sequenciaSchema,
+  financeiro_alertas: financeiroAlertasSchema,
+  comissoes_pagamento: comissoesPagamentoSchema,
+  financeiro_baixa: financeiroBaixaSchema,
+  cobranca_canais: cobrancaCanaisSchema,
+  regua_cobranca: reguaCobrancaSchema,
+  contas_a_pagar: contasAPagarSchema,
 } as const;
 
 export interface SettingValues {
@@ -288,6 +470,12 @@ export interface SettingValues {
   gamificacao: GamificacaoConfig;
   premios_vendas: PremiosVendasConfig;
   "gamificacao.sequencia": SequenciaConfig;
+  financeiro_alertas: FinanceiroAlertasConfig;
+  comissoes_pagamento: ComissoesPagamentoConfig;
+  financeiro_baixa: FinanceiroBaixaConfig;
+  cobranca_canais: CobrancaCanaisConfig;
+  regua_cobranca: ReguaCobrancaConfig;
+  contas_a_pagar: ContasAPagarConfig;
 }
 
 /** Valores usados quando o documento ainda não existe no banco (iguais ao seed). */
@@ -304,6 +492,12 @@ export const SETTING_DEFAULTS: SettingValues = {
   gamificacao: { pontos: { ...DEFAULT_GAMIFICATION.pontos }, multiplicadores: { ...DEFAULT_GAMIFICATION.multiplicadores }, niveis: DEFAULT_GAMIFICATION.niveis.map((n) => ({ ...n })) },
   premios_vendas: { ...DEFAULT_SALES_PRIZES },
   "gamificacao.sequencia": { ...DEFAULT_STREAK },
+  financeiro_alertas: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3, horizonteCobrancasMeses: 3 },
+  comissoes_pagamento: { diaPagamento: 10 },
+  financeiro_baixa: { toleranciaValor: 1, pagamentoParcialAutomatico: "pendencia" },
+  cobranca_canais: { principal: "whatsapp", complementar: "email", enviarEmailJuntoAoWhatsapp: false, remetenteEmail: undefined },
+  regua_cobranca: { ativa: false, diasUteis: false, marcos: REGUA_DEFAULT_MARCOS.map((m) => ({ ...m })), pausarQuando: { pendencia: true, negociacao: true } },
+  contas_a_pagar: { categorias: [...PAYABLE_DEFAULT_CATEGORIES], centrosDeCusto: ["Administrativo", "Comercial", "Operações", "Tecnologia"] },
 };
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
@@ -319,6 +513,12 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   gamificacao: "Pontos por evento, multiplicadores de equivalência entre funções e níveis da gamificação.",
   premios_vendas: "Prêmios por meta mensal batida em Vendas (adesão, recorrência, hardware) e valor do salário mínimo de referência.",
   "gamificacao.sequencia": "Regra da sequência em dias da gamificação (critério e janela máxima em dias úteis).",
+  financeiro_alertas: "Alertas de contratos parados (aguardando assinatura, pago sem liberação, liberado sem início) e horizonte da cobrança recorrente.",
+  comissoes_pagamento: "Pagamento de comissões: dia do vencimento dos títulos no mês seguinte à competência da elegibilidade.",
+  financeiro_baixa: "Baixa automática (provedor/conciliação): tolerância de valor e o que fazer com pagamento parcial.",
+  cobranca_canais: "Canais de cobrança: WhatsApp principal, e-mail complementar e envio conjunto.",
+  regua_cobranca: "Régua de cobrança: marcos antes/depois do vencimento, canal e texto de cada um (desligada até ser ativada).",
+  contas_a_pagar: "Contas a Pagar: categorias e centros de custo aceitos nos títulos.",
 };
 
 export const upsertSettingSchema = z.object({

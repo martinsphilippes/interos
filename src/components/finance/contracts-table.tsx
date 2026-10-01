@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronRight, FileSignature } from "lucide-react";
 import type { ContractRow } from "@/server/finance/queries";
 import { formatCurrency, formatDate, formatRelative } from "@/lib/format";
+import { money, RESTRICTED_LABEL } from "./values";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SlaBadge } from "@/components/ui/sla-badge";
@@ -27,8 +28,11 @@ function Sla({ row }: { row: ContractRow }) {
   return <SlaBadge state={row.sla.state} remainingMs={row.sla.remainingMs} />;
 }
 
-/** Fila de contratos: tabela no desktop, cards no celular. Cada linha abre a página do contrato. */
-export function ContractsTable({ rows, emptyDescription }: { rows: ContractRow[]; emptyDescription?: string }) {
+/**
+ * Fila de contratos: tabela no desktop, cards no celular. Cada linha abre a página do contrato. `hideValues` (sem
+ * "Visualizar valores", A13): as colunas de valor mostram "Restrito" (os números chegam zerados do servidor).
+ */
+export function ContractsTable({ rows, emptyDescription, hideValues }: { rows: ContractRow[]; emptyDescription?: string; hideValues?: boolean }) {
   if (rows.length === 0) {
     return <EmptyState icon={<FileSignature />} title="Nenhum contrato encontrado" description={emptyDescription ?? "Ajuste os filtros ou aguarde novas vendas ganhas."} />;
   }
@@ -43,12 +47,13 @@ export function ContractsTable({ rows, emptyDescription }: { rows: ContractRow[]
                   <span className="truncate font-medium">{r.clientName}</span>
                 </div>
                 <p className="text-xs text-muted">
-                  {r.number} v{r.version} · {formatCurrency(r.monthlyTotal)}/mês{r.setupTotal > 0 ? ` · adesão ${formatCurrency(r.setupTotal)}` : ""}
+                  {r.number} v{r.version} · {hideValues ? `valores: ${RESTRICTED_LABEL.toLowerCase()}` : `${formatCurrency(r.monthlyTotal)}/mês${r.setupTotal > 0 ? ` · adesão ${formatCurrency(r.setupTotal)}` : ""}`}
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Badge variant={CONTRACT_STATUS_VARIANT[r.status]} size="sm">
                     {CONTRACT_STATUS_LABELS[r.status]}
                   </Badge>
+                  {r.expired ? <Badge variant="danger" size="sm">Vencido</Badge> : null}
                   <Signatures row={r} />
                   {r.sla ? <Sla row={r} /> : null}
                 </div>
@@ -90,11 +95,16 @@ export function ContractsTable({ rows, emptyDescription }: { rows: ContractRow[]
                   <Badge variant={CONTRACT_STATUS_VARIANT[r.status]} size="sm">
                     {CONTRACT_STATUS_LABELS[r.status]}
                   </Badge>
+                  {r.expired ? (
+                    <Badge variant="danger" size="sm" className="ml-1" title={r.endDate ? `Vigência terminou em ${formatDate(r.endDate)}` : undefined}>
+                      Vencido
+                    </Badge>
+                  ) : null}
                   {r.pendingReason ? <p className="mt-1 max-w-[220px] truncate text-xs text-danger-fg" title={r.pendingReason}>{r.pendingReason}</p> : null}
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(r.setupTotal)}</TableCell>
-                <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(r.monthlyTotal)}</TableCell>
-                <TableCell className="whitespace-nowrap text-right tabular-nums">{formatCurrency(r.hardwareTotal)}</TableCell>
+                <TableCell className="whitespace-nowrap text-right tabular-nums">{money(r.setupTotal, hideValues)}</TableCell>
+                <TableCell className="whitespace-nowrap text-right tabular-nums">{money(r.monthlyTotal, hideValues)}</TableCell>
+                <TableCell className="whitespace-nowrap text-right tabular-nums">{money(r.hardwareTotal, hideValues)}</TableCell>
                 <TableCell className="whitespace-nowrap">
                   <Signatures row={r} />
                 </TableCell>

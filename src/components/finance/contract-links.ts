@@ -3,11 +3,11 @@
  * conectados. Módulo puro: usado por Client Components.
  */
 
+import { mailtoHref } from "@/components/clients/contact-links";
+
 export const contractDocumentPath = (contractId: string) => `/financeiro/contratos/${contractId}/documento`;
 
-function mailto(to: string[], subject: string, body: string): string {
-  return `mailto:${to.map(encodeURIComponent).join(",")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
+const mailto = mailtoHref;
 
 export interface ContractMailInput {
   number: string;

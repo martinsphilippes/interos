@@ -13,6 +13,9 @@ import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import { batchSet, col, create, getById, getManyByIds, list, newId, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { can } from "@/server/auth/permissions";
+import { resolvePermissionsForUser } from "@/server/auth/permission-store";
+import type { EffectivePermissions } from "@/domain/permissions";
 import { registerHandler } from "@/server/events/emit";
 import { registerImplementationHandlers } from "@/server/events/handlers/implementation";
 import { notify } from "@/server/notifications";
@@ -26,6 +29,7 @@ import {
   COLLECTIONS,
   type Client,
   type ClientProduct,
+  type Contact,
   type Contract,
   type CsAccount,
   type Document,
@@ -33,6 +37,8 @@ import {
   type ImplementationPhase,
   type ImplementationProject,
   type ImplementationTask,
+  type Opportunity,
+  type SaleSnapshot,
   type Settings,
   type SlaInstance,
   type Task,
@@ -45,6 +51,7 @@ import {
 import { CLIENT_STATUS_LABELS, type RoleKey } from "@/domain/constants";
 import { IMPLEMENTATION_PHASE_LABELS } from "@/components/clients/labels";
 import { combineTemplates, templatesForProducts } from "./templates";
+import { contractEffectiveItems } from "@/domain/sale-closing";
 import {
   DEFAULT_GO_LIVE_SETTINGS,
   GO_LIVE_SETTING_KEY,
@@ -62,8 +69,23 @@ import {
 // Registro idempotente dos handlers da Implantação (ver src/server/events/handlers/implementation.ts).
 registerImplementationHandlers(registerHandler);
 
-/** Ator das operações, com papel (aprovação de go-live e mudança de fase). */
-export type ImplementationActor = UserRef & { role?: RoleKey; isManager?: boolean };
+/**
+ * Ator das operações, com papel, departamento e permissões efetivas (aprovação de go-live e mudança de fase). As
+ * Server Actions passam os do CurrentUser; sem `permissions`, approveGoLive lê as do usuário no banco.
+ */
+export type ImplementationActor = UserRef & { role?: RoleKey; isManager?: boolean; departmentId?: string; permissions?: EffectivePermissions };
+
+/**
+ * Ator com as permissões efetivas: as recebidas ou, para um usuário existente, as resolvidas no banco (perfil,
+ * exceções, módulos) — nunca a matriz padrão do papel. Ator sem documento (automação) segue como veio.
+ */
+async function withEffectivePermissions(actor: ImplementationActor): Promise<ImplementationActor> {
+  if (actor.permissions) return actor;
+  const user = await getById<User>(COLLECTIONS.users, actor.id);
+  if (!user) return actor;
+  const permissions = (await resolvePermissionsForUser(user)) ?? undefined;
+  return { ...actor, role: actor.role ?? user.role, departmentId: actor.departmentId ?? user.departmentId, permissions };
+}
 
 const SYSTEM_ACTOR: UserRef = { id: "system", name: "INTEROS" };
 const OPEN_TASK = new Set<ImplementationTask["status"]>(["aberta", "em_andamento", "aguardando"]);
@@ -170,9 +192,17 @@ export async function saveGoLiveSettings(value: GoLiveSettings, actor: UserRef):
   else await create<Settings>(COLLECTIONS.settings, { key: GO_LIVE_SETTING_KEY, value: { ...value }, description: "Regras de aprovação do go-live da implantação.", createdBy: actor.id }, `setting_${GO_LIVE_SETTING_KEY}`);
 }
 
-/** Pode aprovar o go-live: gestor/admin/diretoria; o responsável do projeto só quando a configuração permitir. */
-export function canApproveGoLive(project: Pick<ImplementationProject, "ownerId">, actor: Pick<ImplementationActor, "id" | "isManager">, settings: GoLiveSettings): boolean {
-  if (actor.isManager) return true;
+/**
+ * Pode aprovar o go-live (A22, helper único): quem tem `implantacao.go-live.aprovar-qualquer` (padrão: gestores);
+ * o responsável do projeto só quando a configuração permitir. Sem papel no ator, vale isManager (regra padrão).
+ */
+export function canApproveGoLive(
+  project: Pick<ImplementationProject, "ownerId">,
+  actor: Pick<ImplementationActor, "id" | "isManager"> & { role?: RoleKey; departmentId?: string; permissions?: EffectivePermissions },
+  settings: GoLiveSettings,
+): boolean {
+  const anyProject = actor.role ? can({ role: actor.role, departmentId: actor.departmentId, permissions: actor.permissions }, "implantacao.go-live.aprovar-qualquer") : actor.isManager;
+  if (anyProject) return true;
   return !settings.exigeAprovacaoGestor && project.ownerId === actor.id;
 }
 
@@ -202,6 +232,39 @@ export async function pickImplementationOwner(client: Client): Promise<User | nu
 }
 
 /**
+ * Fotografia da venda para a Implantação (D9): itens efetivos (líquidos), vendedor, contato responsável,
+ * forma de pagamento e observações comerciais/de implantação. Contratos antigos caem na oportunidade.
+ */
+export async function buildSaleSnapshot(contract: Contract): Promise<SaleSnapshot> {
+  const opp = contract.opportunityId ? await getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : null;
+  const contactId = contract.contactId ?? opp?.closing?.contactId;
+  const contact = contactId ? await getById<Contact>(COLLECTIONS.contacts, contactId) : null;
+  const items = contractEffectiveItems(contract).map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: i.setupValue, monthlyValue: i.monthlyValue, hardwareValue: i.hardwareValue }));
+  return {
+    opportunityId: contract.opportunityId,
+    saleNumber: contract.saleNumber ?? opp?.saleNumber,
+    contractNumber: contract.number,
+    sellerId: contract.sellerId ?? opp?.ownerId,
+    contactId: contact?.id,
+    contactName: contact?.name ?? opp?.closing?.contactName,
+    contactPhone: contact?.phone ?? contact?.whatsapp,
+    contactEmail: contact?.email,
+    paymentMethod: contract.paymentMethod ?? opp?.closing?.paymentMethod,
+    commercialNotes: contract.commercialNotes ?? opp?.closing?.commercialNotes,
+    implementationNotes: contract.implementationNotes ?? opp?.closing?.implementationNotes,
+    implementationRequired: contract.implementationRequired ?? opp?.closing?.implementationRequired,
+    items,
+    termMonths: contract.termMonths,
+    billingDay: contract.billingDay,
+    monthlyTotal: contract.monthlyTotal,
+    setupTotal: contract.setupTotal,
+    hardwareTotal: contract.hardwareTotal,
+    setupInstallments: contract.setupInstallments,
+    capturedAt: nowIso(),
+  };
+}
+
+/**
  * Cria o projeto de implantação a partir dos produtos do contrato, combinando os templates de cada
  * produto (fases, tarefas e checklist). Idempotente por contrato. Inicia o SLA do projeto, coloca o
  * cliente em implantação e emite implementation.created (o handler cria a tarefa de kickoff e avisa
@@ -221,6 +284,10 @@ export async function createProjectFromContract(contract: Contract, actor: UserR
   const plan = combineTemplates(templates, Array.from(products.values()), { projectId, clientId: client.id, ownerId: owner.id, actorId: actor.id, start: now, holidays });
   const dueDate = addBusinessHours(now, businessDaysToHours(plan.totalDays), holidays).toISOString();
   const productNames = contract.items.map((i) => (i.quantity > 1 ? `${i.productName} (${i.quantity})` : i.productName));
+  const saleSnapshot = await buildSaleSnapshot(contract);
+  // Venda sem implantação contratada: o projeto é criado mesmo assim (a jornada depende dele para seguir ao CS),
+  // marcado e com aviso, para a equipe só validar/encerrar o que for necessário.
+  const notContracted = saleSnapshot.implementationRequired === false;
 
   const project = await create<ImplementationProject>(
     COLLECTIONS.implementationProjects,
@@ -230,7 +297,7 @@ export async function createProjectFromContract(contract: Contract, actor: UserR
       workflowInstanceId: client.workflowInstanceId,
       name: `Implantação ${client.tradeName}`,
       productIds,
-      scope: `Contrato ${contract.number} v${contract.version}. Produtos: ${productNames.join(", ")}.`,
+      scope: `Contrato ${contract.number} v${contract.version}${saleSnapshot.saleNumber ? ` · venda ${saleSnapshot.saleNumber}` : ""}. Produtos: ${productNames.join(", ")}.${notContracted ? " Implantação NÃO contratada na venda." : ""}${saleSnapshot.implementationNotes ? ` Observações da venda: ${saleSnapshot.implementationNotes}` : ""}`,
       ownerId: owner.id,
       teamIds: [owner.id],
       status: "aguardando_inicio",
@@ -240,6 +307,7 @@ export async function createProjectFromContract(contract: Contract, actor: UserR
       externalDelayDays: 0,
       internalDelayDays: 0,
       checklist: plan.checklist,
+      saleSnapshot,
       createdBy: actor.id,
     },
     projectId,
@@ -287,9 +355,20 @@ export async function createProjectFromContract(contract: Contract, actor: UserR
     clientId: client.id,
     entity: projectEntity(project.id),
     title: `Projeto de implantação criado: ${project.name}`,
-    description: `Responsável: ${owner.name} · ${plan.phases.length} fase(s) · ${plan.tasks.length} tarefa(s) · prazo ${formatDate(dueDate)} (${plan.totalDays} dia(s) útil(eis))`,
+    description: `Responsável: ${owner.name} · ${plan.phases.length} fase(s) · ${plan.tasks.length} tarefa(s) · prazo ${formatDate(dueDate)} (${plan.totalDays} dia(s) útil(eis))${notContracted ? " · implantação não contratada na venda" : ""}`,
     department: "implantacao",
-    payload: { projectId: project.id, contractId: contract.id, ownerId: owner.id, productIds, templateIds: templates.map((t) => t.id), taskCount: plan.tasks.length, dueDate, slaInstanceId: sla.id },
+    payload: {
+      projectId: project.id,
+      contractId: contract.id,
+      ownerId: owner.id,
+      productIds,
+      templateIds: templates.map((t) => t.id),
+      taskCount: plan.tasks.length,
+      dueDate,
+      slaInstanceId: sla.id,
+      saleNumber: saleSnapshot.saleNumber,
+      implementationRequired: saleSnapshot.implementationRequired ?? null,
+    },
   });
   await emitEvent({
     type: "sla.started",
@@ -1081,8 +1160,8 @@ async function pickCsOwner(): Promise<User> {
  */
 export async function approveGoLive(projectId: string, actor: ImplementationActor): Promise<GoLiveResult> {
   const project = await loadProject(projectId);
-  const [tasks, trainings, settings, client] = await Promise.all([projectTasks(projectId), projectTrainings(projectId), getGoLiveSettings(), loadClient(project.clientId)]);
-  if (!canApproveGoLive(project, actor, settings)) {
+  const [tasks, trainings, settings, client, approver] = await Promise.all([projectTasks(projectId), projectTrainings(projectId), getGoLiveSettings(), loadClient(project.clientId), withEffectivePermissions(actor)]);
+  if (!canApproveGoLive(project, approver, settings)) {
     throw new Error(settings.exigeAprovacaoGestor ? "Só gestores ou administradores podem aprovar o go-live" : "Só o responsável do projeto ou gestores podem aprovar o go-live");
   }
   const gate = evaluateGoLiveGate(project, tasks, trainings);

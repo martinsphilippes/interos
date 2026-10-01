@@ -3,15 +3,14 @@ import { adminAuth } from "../firebase-admin";
 import { getById, list } from "../db";
 import { COLLECTIONS, type User } from "@/domain/types";
 import { ROLE_KEYS, type DepartmentKey, type RoleKey } from "@/domain/constants";
+import { isDemoMode } from "@/lib/demo-mode";
 
-/**
+/*
  * Acesso rápido da fase de testes: cards com os usuários na tela de login que entram com um clique.
- * Ligado por NEXT_PUBLIC_DEMO_MODE=true (Vercel: Production e Preview). Com a flag desligada, a lista vem vazia
- * e a emissão de token recusa, então desligar a variável e publicar remove o recurso por completo.
+ * Ligado por NEXT_PUBLIC_DEMO_MODE=true (Vercel: Production e Preview) — ver `isDemoMode` em src/lib/demo-mode.ts.
+ * Com a flag desligada, a lista vem vazia e a emissão de token recusa, então desligar a variável e publicar
+ * remove o recurso por completo.
  */
-export function isDemoMode(): boolean {
-  return process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-}
 
 export interface DemoUser {
   id: string;
@@ -36,6 +35,6 @@ export async function listDemoUsers(): Promise<DemoUser[]> {
 export async function createDemoToken(userId: string): Promise<string> {
   if (!isDemoMode()) throw new Error("Acesso rápido desativado neste ambiente.");
   const user = await getById<User>(COLLECTIONS.users, userId);
-  if (!user || user.active === false) throw new Error("Usuário não encontrado ou desativado.");
+  if (!user || user.active !== true) throw new Error("Usuário não encontrado ou desativado.");
   return adminAuth.createCustomToken(user.id);
 }

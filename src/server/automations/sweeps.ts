@@ -258,11 +258,17 @@ async function leadsSemContato24h(now: Date): Promise<SweepOutcome> {
 // Customer Success
 // ---------------------------------------------------------------------------
 
-async function renovacoes(): Promise<SweepOutcome> {
+async function renovacoes(now: Date): Promise<SweepOutcome> {
   const cs = await import("@/server/cs/service");
   const r = await cs.ensureRenewals(AUTOMATION_ACTOR);
   await mergeSweepsSetting({ csRenewalsLastRunAt: r.ranAt, csRenewalsLastResult: r });
-  return { summary: `${r.created} renovação(ões) criada(s) · ${r.dueEmitted} aviso(s) de renovação próxima`, data: { ...r } };
+  // Renovação automática (D26): contratos com autoRenew na janela de aviso renovam por aditivo (Financeiro).
+  const { autoRenewContracts } = await import("@/server/finance/renewals");
+  const auto = await autoRenewContracts(now);
+  return {
+    summary: `${r.created} renovação(ões) criada(s) · ${r.dueEmitted} aviso(s) de renovação próxima · automáticas: ${auto.candidates} candidato(s), ${auto.renewed} renovado(s)${auto.indexPending ? ` (${auto.indexPending} com índice a informar)` : ""}${auto.errors.length ? ` · ${auto.errors.length} erro(s)` : ""}`,
+    data: { ...r, autoRenew: auto },
+  };
 }
 
 async function saudeClientes(): Promise<SweepOutcome> {
@@ -412,6 +418,84 @@ async function processosEsperas(now: Date): Promise<SweepOutcome> {
   return { summary, data: { ...result } };
 }
 
+// ---------------------------------------------------------------------------
+// Financeiro: cobranças vencidas e contratos parados (src/server/finance/alerts.ts)
+// ---------------------------------------------------------------------------
+
+async function cobrancasVencidas(): Promise<SweepOutcome> {
+  const { sweepAllOpenBillings } = await import("@/server/finance/alerts");
+  const r = await sweepAllOpenBillings();
+  return { summary: `${r.open} cobrança(s) em aberto verificada(s) · ${r.flipped} marcada(s) como vencida(s)`, data: { ...r } };
+}
+
+async function contratosAlertas(now: Date): Promise<SweepOutcome> {
+  const { contractAlerts } = await import("@/server/finance/alerts");
+  const r = await contractAlerts(now);
+  return {
+    summary: `${r.awaitingSignature} aguardando assinatura (${r.followupTasks} follow-up) · ${r.paidNotReleased} pago(s) sem liberação (${r.releaseTasks} tarefa(s)) · ${r.releasedNotStarted} liberado(s) sem início (${r.implementationNotices} aviso(s))`,
+    data: { ...r },
+  };
+}
+
+/** Conciliação bancária: só age com provedor conectado (senão "ignorada"). */
+async function conciliacaoBancaria(now: Date): Promise<SweepOutcome> {
+  const { reconcileBankPayments } = await import("@/server/finance/alerts");
+  const r = await reconcileBankPayments(now);
+  if (r.skipped) return { summary: `ignorada: ${r.reason}`, data: { ...r } };
+  return {
+    summary: `${r.checked} cobrança(s) consultada(s) no provedor · ${r.paid} baixada(s) · ${r.alreadyProcessed} já processada(s) · ${r.partial} parcial(is)${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
+    data: { ...r },
+  };
+}
+
+/** Régua de cobrança (src/server/finance/regua.ts): desligada por padrão. */
+async function reguaCobranca(now: Date): Promise<SweepOutcome> {
+  const { runBillingReminders } = await import("@/server/finance/regua");
+  const r = await runBillingReminders(now);
+  if (r.skipped) return { summary: `ignorada: ${r.reason}`, data: { ...r } };
+  return {
+    summary: `${r.billings} cobrança(s) em aberto · ${r.due} marco(s) vencido(s) hoje (ou na folga de 2 dias) · ${r.sent} enviado(s) · ${r.tasks} tarefa(s) · ${r.notifications} notificação(ões) · ${r.skippedExisting} já executado(s) · ${r.notSent} não enviado(s)${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
+    data: { ...r, errors: r.errors.slice(0, 20) },
+  };
+}
+
+/** Cobrança recorrente (D24b): horizonte rolante das mensalidades. */
+async function cobrancasRecorrentes(now: Date): Promise<SweepOutcome> {
+  const { ensureRecurringBillings } = await import("@/server/finance/alerts");
+  const r = await ensureRecurringBillings(now);
+  return {
+    summary: `${r.contracts} contrato(s) com horizonte rolante · ${r.extended} estendido(s) · ${r.created} mensalidade(s) gerada(s) (horizonte ${r.horizonMonths} mês(es))${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
+    data: { ...r },
+  };
+}
+
+/** Contas a pagar recorrentes (D28): próxima ocorrência das séries. */
+async function contasRecorrentes(now: Date): Promise<SweepOutcome> {
+  const { ensureRecurringPayables } = await import("@/server/commissions/payables-recurring");
+  const r = await ensureRecurringPayables(now);
+  return { summary: `${r.series} série(s) ativa(s) · ${r.created} título(s) criado(s) · ${r.skipped} já existente(s)${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`, data: { ...r } };
+}
+
+/** Contas a pagar vencidas (D28): aviso ao Financeiro uma única vez por título. */
+async function contasAPagarVencidas(now: Date): Promise<SweepOutcome> {
+  const { notifyOverduePayables } = await import("@/server/commissions/payables-recurring");
+  const r = await notifyOverduePayables(now);
+  return { summary: `${r.overdue} título(s) vencido(s) · ${r.notified} aviso(s) enviado(s) · ${r.alreadyNotified} já avisado(s)`, data: { ...r } };
+}
+
+// ---------------------------------------------------------------------------
+// Comissões (src/server/commissions/engine.ts)
+// ---------------------------------------------------------------------------
+
+async function comissoes(now: Date): Promise<SweepOutcome> {
+  const { reconcileCommissions } = await import("@/server/commissions/engine");
+  const r = await reconcileCommissions({ now });
+  return {
+    summary: `${r.contracts} contrato(s) reavaliado(s) · ${r.created} comissão(ões) criada(s) · ${r.released} elegível(is) · ${r.inGrace} em carência · ${r.awaiting} aguardando recebimento · ${r.cancelled} cancelada(s) · ${r.payables} título(s) gerado(s)`,
+    data: { ...r, commissionIds: r.commissionIds.slice(0, 50) },
+  };
+}
+
 export const SWEEPS: Record<SweepKey, SweepFn> = {
   sla_alerts: slaAlerts,
   followup_vendas: followupVendas,
@@ -423,6 +507,14 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   tarefas_recorrentes: tarefasRecorrentes,
   kpi_snapshots: kpiSnapshots,
   processos_esperas: processosEsperas,
+  cobrancas_vencidas: cobrancasVencidas,
+  contratos_alertas: contratosAlertas,
+  comissoes,
+  conciliacao_bancaria: conciliacaoBancaria,
+  regua_cobranca: reguaCobranca,
+  cobrancas_recorrentes: cobrancasRecorrentes,
+  contas_recorrentes: contasRecorrentes,
+  contas_a_pagar_vencidas: contasAPagarVencidas,
 };
 
 /** Campos antigos (dos módulos) que também contam como "última execução" da varredura. */

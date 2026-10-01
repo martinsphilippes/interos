@@ -71,6 +71,40 @@ export interface TaskEventView {
   occurredAtLabel: string;
 }
 
+/**
+ * O que o usuário pode fazer na Central de Tarefas, calculado no SERVIDOR (can) e entregue por props. Só esconde
+ * ou desabilita controles: as Server Actions revalidam cada permissão.
+ */
+export interface TaskCapabilities {
+  create: boolean;
+  edit: boolean;
+  complete: boolean;
+  reopen: boolean;
+  cancel: boolean;
+  assign: boolean;
+  comment: boolean;
+  /** Excluir tarefas que o próprio usuário criou. */
+  deleteOwn: boolean;
+  /** Excluir tarefas criadas por outras pessoas. */
+  deleteAny: boolean;
+  /** Concluir/responder etapa de processo pelo drawer. */
+  answerProcess: boolean;
+}
+
+/** Tudo liberado (padrão dos componentes quando a página não informa). */
+export const ALL_TASK_CAPABILITIES: TaskCapabilities = {
+  create: true,
+  edit: true,
+  complete: true,
+  reopen: true,
+  cancel: true,
+  assign: true,
+  comment: true,
+  deleteOwn: true,
+  deleteAny: true,
+  answerProcess: true,
+};
+
 export interface TaskDetail {
   task: TaskListItem;
   comments: TaskCommentView[];

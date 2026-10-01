@@ -157,8 +157,20 @@ export interface DataBundle extends RawData {
 }
 
 const CACHE_TTL_MS = 60_000;
-let rawCache: { at: number; promise: Promise<RawData> } | null = null;
-const bundleCache = new Map<string, { at: number; promise: Promise<DataBundle> }>();
+
+/**
+ * Cache guardado em `globalThis` (como o registro de handlers em events/emit.ts): em desenvolvimento o HMR e os
+ * bundles por rota podem ter mais de uma instância deste módulo; a invalidação feita pelo handler de eventos
+ * (numa instância) precisa valer para a leitura das páginas (em outra), senão os indicadores ficam até 60s defasados
+ * depois de uma venda ganha ou de um chamado resolvido. Em produção (uma instância) é o mesmo que variáveis locais.
+ */
+interface KpiDataCache {
+  raw: { at: number; promise: Promise<RawData> } | null;
+  bundles: Map<string, { at: number; promise: Promise<DataBundle> }>;
+}
+const cacheHolder = globalThis as unknown as { __interosKpiDataCache?: KpiDataCache };
+const kpiCache: KpiDataCache = cacheHolder.__interosKpiDataCache ?? (cacheHolder.__interosKpiDataCache = { raw: null, bundles: new Map() });
+const bundleCache = kpiCache.bundles;
 
 async function loadRaw(): Promise<RawData> {
   const [users, leads, campaigns, opportunities, contracts, billing, projects, tickets, slas, stepSlas, workflowSteps, csat, churn, renewals, csAccounts, clients, tasks, oppSettings] = await Promise.all([
@@ -227,11 +239,12 @@ async function loadRaw(): Promise<RawData> {
 }
 
 function getRaw(): Promise<RawData> {
-  if (rawCache && Date.now() - rawCache.at < CACHE_TTL_MS) return rawCache.promise;
+  const cached = kpiCache.raw;
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.promise;
   const promise = loadRaw();
-  rawCache = { at: Date.now(), promise };
+  kpiCache.raw = { at: Date.now(), promise };
   promise.catch(() => {
-    if (rawCache?.promise === promise) rawCache = null;
+    if (kpiCache.raw?.promise === promise) kpiCache.raw = null;
   });
   return promise;
 }
@@ -239,7 +252,8 @@ function getRaw(): Promise<RawData> {
 /** Dados de um período (carga única compartilhada entre períodos; cache de 60s por chave de período). */
 export function loadDataBundle(period: Period): Promise<DataBundle> {
   const cached = bundleCache.get(period.key);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS && rawCache && Date.now() - rawCache.at < CACHE_TTL_MS) return cached.promise;
+  const raw = kpiCache.raw;
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS && raw && Date.now() - raw.at < CACHE_TTL_MS) return cached.promise;
   const promise = getRaw().then((raw) => ({ ...raw, period, now: new Date().toISOString() }));
   bundleCache.set(period.key, { at: Date.now(), promise });
   promise.catch(() => bundleCache.delete(period.key));
@@ -252,7 +266,7 @@ export function loadDataBundle(period: Period): Promise<DataBundle> {
  */
 export function invalidateDataBundle(periodKey?: string): void {
   void periodKey;
-  rawCache = null;
+  kpiCache.raw = null;
   bundleCache.clear();
 }
 
@@ -353,6 +367,8 @@ function isOpenStage(stage: Opportunity["stage"]): boolean {
 
 /** Data em que o contrato deixou de compor o MRR (mesma regra da Recorrência do Financeiro). */
 function contractEndOfMrr(c: Contract, data: DataBundle): string | undefined {
+  // Estado derivado "vencido" (D24b): contrato liberado cuja vigência terminou sai do MRR na data de término.
+  if (c.status === "liberado") return c.endDate;
   if (c.status !== "cancelado") return undefined;
   const churnDate = data.churn
     .filter((r) => r.clientId === c.clientId && r.date >= (c.releasedAt ?? ""))

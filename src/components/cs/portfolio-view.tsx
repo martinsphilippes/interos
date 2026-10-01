@@ -23,6 +23,7 @@ import { ChipList, HealthIndicator, OwnerCell, relationshipLabel } from "./cs-bi
 import { ScopeSelect } from "./scope-select";
 import { useCsUrl } from "./use-cs";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { ALL_CS_CAPABILITIES, ALL_CS_LINKS, type CsCapabilities, type CsLinks } from "./access-model";
 
 // ---------------------------------------------------------------------------
 // Filtros
@@ -35,7 +36,7 @@ export function PortfolioFilters({ data }: { data: Pick<PortfolioResult, "scope"
   return (
     <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
       <SearchInput size="sm" value={filters.q ?? ""} onChange={(q) => navigate({ q }, { replace: true })} debounceMs={400} placeholder="Buscar cliente…" className="md:w-56" />
-      <ScopeSelect owners={data.owners} value={data.scope.param} />
+      <ScopeSelect owners={data.owners} value={data.scope.param} restricted={data.scope.restricted} />
       <div className="grid grid-cols-3 gap-2 md:flex">
         <Select aria-label="Saúde" size="sm" className="md:w-36" value={filters.health ?? ""} onChange={(e) => navigate({ saude: e.target.value })} options={levelOptions.map((o) => (o.value ? o : { ...o, label: "Saúde: todas" }))} />
         <Select aria-label="Risco da conta" size="sm" className="md:w-36" value={filters.risk ?? ""} onChange={(e) => navigate({ risco: e.target.value })} options={levelOptions.map((o) => (o.value ? o : { ...o, label: "Risco: todos" }))} />
@@ -50,53 +51,76 @@ export function PortfolioFilters({ data }: { data: Pick<PortfolioResult, "scope"
 // Ações da linha
 // ---------------------------------------------------------------------------
 
-function RowActions({ row, compact }: { row: PortfolioRow; compact?: boolean }) {
+/** Ações da linha: só as que o usuário pode executar (capacidades do servidor; as actions revalidam). */
+function RowActions({ row, compact, caps, links }: { row: PortfolioRow; compact?: boolean; caps: CsCapabilities; links: CsLinks }) {
   const iconBtn = "size-11 md:size-8";
+  const contact = { clientId: row.clientId, clientName: row.tradeName, contacts: row.contacts, clientPhone: row.phone, clientWhatsapp: row.whatsapp };
   return (
     <div className={cn("flex items-center gap-1", compact ? "flex-wrap" : "justify-end")}>
-      <CheckpointDialog
-        clientId={row.clientId}
-        clientName={row.tradeName}
-        adoptionPct={row.adoptionPct}
-        trigger={
-          <Button variant="ghost" size="icon" className={iconBtn} aria-label={`Registrar checkpoint de ${row.tradeName}`} title="Registrar checkpoint">
-            <CalendarCheck />
-          </Button>
-        }
-      />
-      <ContactEventDialog
-        clientId={row.clientId}
-        clientName={row.tradeName}
-        channel="whatsapp"
-        contacts={row.contacts}
-        clientPhone={row.phone}
-        clientWhatsapp={row.whatsapp}
-        trigger={
-          <Button variant="ghost" size="icon" className={iconBtn} aria-label={`WhatsApp para ${row.tradeName}`} title="WhatsApp">
-            <MessageCircle />
-          </Button>
-        }
-      />
-      <ContactEventDialog
-        clientId={row.clientId}
-        clientName={row.tradeName}
-        channel="ligacao"
-        contacts={row.contacts}
-        clientPhone={row.phone}
-        clientWhatsapp={row.whatsapp}
-        trigger={
-          <Button variant="ghost" size="icon" className={iconBtn} aria-label={`Ligar para ${row.tradeName}`} title="Ligar">
-            <Phone />
-          </Button>
-        }
-      />
-      <Button asChild variant="ghost" size="icon" className={iconBtn} title="Nova tarefa">
-        <Link href={`/tarefas?novo=1&cliente=${row.clientId}`} aria-label={`Nova tarefa para ${row.tradeName}`}>
-          <CheckSquare />
-        </Link>
-      </Button>
-      {row.activationPending ? <ActivateButton clientId={row.clientId} clientName={row.tradeName} variant="outline" /> : null}
+      {caps.checkpoint ? (
+        <CheckpointDialog
+          clientId={row.clientId}
+          clientName={row.tradeName}
+          adoptionPct={row.adoptionPct}
+          trigger={
+            <Button variant="ghost" size="icon" className={iconBtn} aria-label={`Registrar checkpoint de ${row.tradeName}`} title="Registrar checkpoint">
+              <CalendarCheck />
+            </Button>
+          }
+        />
+      ) : null}
+      {caps.contact ? (
+        <>
+          <ContactEventDialog
+            {...contact}
+            channel="whatsapp"
+            trigger={
+              <Button variant="ghost" size="icon" className={iconBtn} aria-label={`WhatsApp para ${row.tradeName}`} title="WhatsApp">
+                <MessageCircle />
+              </Button>
+            }
+          />
+          <ContactEventDialog
+            {...contact}
+            channel="ligacao"
+            trigger={
+              <Button variant="ghost" size="icon" className={iconBtn} aria-label={`Ligar para ${row.tradeName}`} title="Ligar">
+                <Phone />
+              </Button>
+            }
+          />
+        </>
+      ) : null}
+      {caps.createTask && links.tasks ? (
+        <Button asChild variant="ghost" size="icon" className={iconBtn} title="Nova tarefa">
+          <Link href={`/tarefas?novo=1&cliente=${row.clientId}`} aria-label={`Nova tarefa para ${row.tradeName}`}>
+            <CheckSquare />
+          </Link>
+        </Button>
+      ) : null}
+      {row.activationPending && caps.activate ? <ActivateButton clientId={row.clientId} clientName={row.tradeName} variant="outline" /> : null}
     </div>
+  );
+}
+
+/** Nome do cliente: link para a ficha 360º quando o usuário a vê; senão, só o texto. */
+function ClientName({ row, show, className }: { row: PortfolioRow; show: boolean; className: string }) {
+  if (!show) return <span className="font-medium">{row.tradeName}</span>;
+  return (
+    <Link href={`/clientes/${row.clientId}?aba=cs`} className={className}>
+      {row.tradeName}
+    </Link>
+  );
+}
+
+/** Indicador de saúde: link para o detalhe do score quando o usuário vê a tela Saúde. */
+function HealthLink({ row, show, showLabel, className, title }: { row: PortfolioRow; show: boolean; showLabel?: boolean; className?: string; title?: string }) {
+  const indicator = <HealthIndicator score={row.healthScore} level={row.healthLevel} showLabel={showLabel} />;
+  if (!show) return indicator;
+  return (
+    <Link href={`/cs/saude?cliente=${row.clientId}`} className={className} title={title}>
+      {indicator}
+    </Link>
   );
 }
 
@@ -138,7 +162,7 @@ const adoptionTone = (v: number) => (v >= 70 ? "success" : v >= 40 ? "warning" :
 // Tabela (desktop) e cards (celular)
 // ---------------------------------------------------------------------------
 
-export function PortfolioTable({ rows }: { rows: PortfolioRow[] }) {
+export function PortfolioTable({ rows, capabilities = ALL_CS_CAPABILITIES, links = ALL_CS_LINKS }: { rows: PortfolioRow[]; capabilities?: CsCapabilities; links?: CsLinks }) {
   if (rows.length === 0) {
     return (
       <Card>
@@ -172,9 +196,7 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }) {
             {rows.map((r) => (
               <TableRow key={r.clientId}>
                 <TableCell className="min-w-[200px]">
-                  <Link href={`/clientes/${r.clientId}?aba=cs`} className="font-medium hover:text-brand hover:underline">
-                    {r.tradeName}
-                  </Link>
+                  <ClientName row={r} show={links.client} className="font-medium hover:text-brand hover:underline" />
                   <div className="mt-0.5">
                     <OwnerCell owner={r.owner} />
                   </div>
@@ -185,9 +207,7 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }) {
                 <TableCell className="text-right tabular-nums">{formatCurrency(r.mrr)}</TableCell>
                 <TableCell className="whitespace-nowrap text-muted">{relationshipLabel(r.activatedAt)}</TableCell>
                 <TableCell>
-                  <Link href={`/cs/saude?cliente=${r.clientId}`} className="hover:underline" title="Ver fatores do score">
-                    <HealthIndicator score={r.healthScore} level={r.healthLevel} />
-                  </Link>
+                  <HealthLink row={r} show={links.health} className="hover:underline" title="Ver fatores do score" />
                 </TableCell>
                 <TableCell className="w-32">{r.adoptionPct !== undefined ? <Progress value={r.adoptionPct} size="sm" showValue tone={adoptionTone(r.adoptionPct)} /> : <span className="text-muted-light">—</span>}</TableCell>
                 <TableCell className="text-right tabular-nums">{r.csatAvg !== undefined ? r.csatAvg.toFixed(1) : <span className="text-muted-light">—</span>}</TableCell>
@@ -204,7 +224,7 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }) {
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{r.openOpportunities}</TableCell>
                 <TableCell>
-                  <RowActions row={r} />
+                  <RowActions row={r} caps={capabilities} links={links} />
                 </TableCell>
               </TableRow>
             ))}
@@ -218,16 +238,12 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }) {
             <Card className="flex flex-col gap-3 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <Link href={`/clientes/${r.clientId}?aba=cs`} className="font-medium hover:underline">
-                    {r.tradeName}
-                  </Link>
+                  <ClientName row={r} show={links.client} className="font-medium hover:underline" />
                   <p className="text-xs text-muted">
                     {formatCurrency(r.mrr)}/mês · cliente há {relationshipLabel(r.activatedAt)}
                   </p>
                 </div>
-                <Link href={`/cs/saude?cliente=${r.clientId}`}>
-                  <HealthIndicator score={r.healthScore} level={r.healthLevel} showLabel />
-                </Link>
+                <HealthLink row={r} show={links.health} showLabel />
               </div>
               <ChipList items={r.products.map((p) => p.name)} max={3} />
               <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
@@ -261,7 +277,7 @@ export function PortfolioTable({ rows }: { rows: PortfolioRow[] }) {
                 </div>
               </dl>
               {r.riskReasons.length > 0 ? <ChipList items={r.riskReasons} max={2} variant={r.riskLevel === "risco" ? "danger" : "warning"} /> : null}
-              <RowActions row={r} compact />
+              <RowActions row={r} compact caps={capabilities} links={links} />
             </Card>
           </li>
         ))}

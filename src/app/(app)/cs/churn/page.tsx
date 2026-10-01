@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { CircleDollarSign, Percent, UserMinus, Users } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { canSeeHref, requireScreen } from "@/server/auth/session";
+import { csCapabilities, csLinks } from "@/server/cs/access";
 import { getChurnFormOptions, getChurnMetrics } from "@/server/cs/queries";
 import { CHURN_REASON_LABELS } from "@/server/cs/schemas";
 import { formatCompetence, formatCurrency, formatDate, formatPercent } from "@/lib/format";
@@ -47,12 +47,18 @@ function BarList({ items }: { items: { key: string; label: string; value: number
   );
 }
 
-/** Churn: registro de cancelamentos e painel (taxa mensal × meta, receita perdida, motivos, produtos, origem). */
+/**
+ * Churn: registro de cancelamentos e painel (taxa mensal × meta, receita perdida, motivos, produtos, origem). Tela
+ * cs.churn; o painel respeita o escopo efetivo. Registrar cancelamento exige cs.churn.registrar: sem ela, o
+ * formulário não aparece e as opções dele (clientes e produtos) nem são lidas.
+ */
 export default async function ChurnPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("cs.churn");
+  const canRegister = csCapabilities(user).churn;
+  const links = csLinks(user);
+  const timelineLink = canSeeHref(user, "/clientes/_?aba=timeline");
   const params = await searchParams;
-  const [m, form] = await Promise.all([getChurnMetrics(), getChurnFormOptions()]);
+  const [m, form] = await Promise.all([getChurnMetrics(user), canRegister ? getChurnFormOptions(user) : Promise.resolve(null)]);
   const status = STATUS[m.status];
   const initialClientId = typeof params.registrar === "string" ? params.registrar : undefined;
 
@@ -61,8 +67,8 @@ export default async function ChurnPage({ searchParams }: { searchParams: Search
       <PageHeader
         title="Churn"
         description={`Cancelamentos da base · meta de churn mensal até ${formatPercent(m.target)}`}
-        breadcrumbs={[{ label: "Customer Success", href: "/cs" }, { label: "Riscos", href: "/cs/riscos" }, { label: "Churn" }]}
-        actions={<ChurnDialog key={initialClientId ?? "novo"} clients={form.clients} users={form.users} currentUserId={user.id} initialClientId={initialClientId} />}
+        breadcrumbs={[{ label: "Customer Success", href: links.portfolio ? "/cs" : undefined }, { label: "Riscos", href: links.risks ? "/cs/riscos" : undefined }, { label: "Churn" }]}
+        actions={form ? <ChurnDialog key={initialClientId ?? "novo"} clients={form.clients} users={form.users} currentUserId={user.id} initialClientId={initialClientId} /> : undefined}
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -153,9 +159,13 @@ export default async function ChurnPage({ searchParams }: { searchParams: Search
                   <TableRow key={r.id}>
                     <TableCell className="whitespace-nowrap">{formatDate(r.date)}</TableCell>
                     <TableCell>
-                      <Link href={`/clientes/${r.clientId}?aba=timeline`} className="font-medium hover:underline">
-                        {r.tradeName}
-                      </Link>
+                      {timelineLink ? (
+                        <Link href={`/clientes/${r.clientId}?aba=timeline`} className="font-medium hover:underline">
+                          {r.tradeName}
+                        </Link>
+                      ) : (
+                        <span className="font-medium">{r.tradeName}</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={r.full ? "danger" : "warning"} size="sm">

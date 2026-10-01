@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Construction, Lock, Sun } from "lucide-react";
-import { NAVIGATION, type NavItem, type NavSection } from "@/domain/constants";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import type { NavItem, NavSection } from "@/domain/constants";
+import { NAVIGATION } from "@/domain/navigation";
+import { canSeeHref, requireScreen } from "@/server/auth/session";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -27,16 +28,19 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   return { title: found ? found.item.label : "Página não encontrada" };
 }
 
-/** Catch-all: "Módulo em construção" para rotas de NAVIGATION que ainda não têm página. */
+/**
+ * Catch-all: "Módulo em construção" para rotas de NAVIGATION (derivada do catálogo) que ainda não têm página. O acesso
+ * considera a TELA do href (canSeeHref), não só o módulo (correção A14).
+ */
 export default async function UnderConstructionPage({ params }: { params: Params }) {
   const { slug } = await params;
   const pathname = `/${slug.join("/")}`;
   const found = findNavItem(pathname);
   if (!found) notFound();
 
-  const user = await requireUser();
+  const user = await requireScreen("inicio.em-construcao");
   const { section, item } = found;
-  const allowed = canAccessModule(user, section.key);
+  const allowed = canSeeHref(user, item.href);
 
   return (
     <PageContainer size="narrow">
@@ -69,7 +73,7 @@ export default async function UnderConstructionPage({ params }: { params: Params
             <EmptyState
               icon={<Lock />}
               title="Sem permissão"
-              description="Seu perfil não tem acesso a este módulo. Fale com o administrador se precisar dele."
+              description="Seu perfil não tem acesso a esta tela. Fale com o administrador se precisar dela."
               action={
                 <Button asChild variant="outline">
                   <Link href="/meu-dia">Voltar para Meu Dia</Link>

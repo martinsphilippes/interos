@@ -178,6 +178,14 @@ export interface StepDetail {
   canApprove: boolean;
   /** Usuário atual pode concluir com motivo de exceção (gestor, diretoria ou admin). */
   canException: boolean;
+  /**
+   * Permissões do usuário atual nas ações da etapa (catálogo operacao.workflow.*, calculadas no servidor). Só escondem
+   * controles: as Server Actions revalidam cada chave. Sem editar/concluir, o gate fica somente leitura.
+   */
+  canEdit: boolean;
+  canComplete: boolean;
+  canPause: boolean;
+  canReassign: boolean;
   /** Quem receberá o pedido de aprovação. */
   approverNames: string[];
 }

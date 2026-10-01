@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readjustmentSchema } from "@/server/finance/schemas";
 import type { BadgeProps } from "@/components/ui/badge";
 import type { ChurnRecord, HealthScore, Renewal, SuccessPlan } from "@/domain/types";
 import type { HealthLevel } from "@/domain/constants";
@@ -157,7 +158,12 @@ export const renewSchema = z.object({
   renewalId: id("Renovação"),
   termMonths: z.number("Prazo inválido").int("Prazo em meses inteiros").min(1, "Mínimo de 1 mês").max(60, "Máximo de 60 meses"),
   notes: optionalText(1000),
+  /** Reajuste da renovação (D26): percentual informado aplica na mensalidade; índice fica pendente para o CS informar. */
+  readjustment: readjustmentSchema.optional(),
+  /** Aditivo de renovação exige assinatura do cliente (padrão: não). */
+  requiresSignature: z.boolean().optional(),
 });
+export type RenewInput = z.input<typeof renewSchema>;
 
 export const loseRenewalSchema = z.object({
   renewalId: id("Renovação"),

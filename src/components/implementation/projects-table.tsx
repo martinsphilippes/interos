@@ -87,6 +87,11 @@ export function ProjectsTable({ rows, emptyDescription }: { rows: ProjectRow[]; 
                   </Link>
                   {r.waitingReason || r.blockedReason ? <p className="truncate text-xs text-muted" title={r.waitingReason ?? r.blockedReason}>{r.waitingReason ?? r.blockedReason}</p> : null}
                   {r.activationDays !== undefined ? <p className="text-xs text-muted">Ativado em {r.activationDays.toLocaleString("pt-BR")}d após a liberação</p> : null}
+                  {r.implementationRequired === false ? (
+                    <Badge variant="warning" size="sm" className="relative z-10 mt-1" title="A venda não contratou implantação">
+                      Sem implantação contratada
+                    </Badge>
+                  ) : null}
                 </TableCell>
                 <TableCell className="max-w-[200px]">
                   <ProductChips products={r.products} />
@@ -134,6 +139,11 @@ export function ProjectsTable({ rows, emptyDescription }: { rows: ProjectRow[]; 
                   {IMPLEMENTATION_STATUS_LABELS[r.status]}
                 </Badge>
               </div>
+              {r.implementationRequired === false ? (
+                <Badge variant="warning" size="sm" className="self-start">
+                  Sem implantação contratada
+                </Badge>
+              ) : null}
               <ProductChips products={r.products} />
               <Progress value={r.progress} showValue size="sm" tone={progressTone(r)} />
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">

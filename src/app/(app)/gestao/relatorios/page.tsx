@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { Lock } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
-import { buildReport, canAccessReport, getReportFilterOptions, listReportsForUser } from "@/server/reports/build";
-import { isReportKey, readReportFilters, type ReportFilters, type ReportKey } from "@/server/reports/definitions";
+import { can, canSeeHref, requireScreen } from "@/server/auth/session";
+import { buildReport, canAccessReport, getReportFilterOptions, listReportsForUser, reportAllowedUserIds, reportExportKey } from "@/server/reports/build";
+import { isReportKey, readReportFilters, type ReportKey } from "@/server/reports/definitions";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,10 +19,14 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 /**
  * Central de Relatórios: catálogo (departamentais da planilha + operacionais), filtros, prévia com totais e
- * exportação CSV/XLSX/PDF. Gestores, diretoria e admin veem todos; colaboradores, os do seu departamento.
+ * exportação CSV/XLSX/PDF. Tela gestao.relatorios (aberta a todos enquanto o módulo Gestão estiver ativo); cada
+ * relatório é uma seção (gestao.relatorios.<tipo>.ver — padrão: gestores, diretoria e admin veem todos;
+ * colaboradores, os do seu departamento). O conteúdo e os colaboradores oferecidos no filtro seguem o escopo da tela
+ * (buildReport/allowedUserIds); os botões de exportação só aparecem com gestao.relatorios.exportar e a chave de
+ * exportação do tipo (a API revalida e devolve 401/403).
  */
 export default async function ReportsPage({ searchParams }: { searchParams: SearchParams }) {
-  const [user, query] = await Promise.all([requireUser(), searchParams]);
+  const [user, query] = await Promise.all([requireScreen("gestao.relatorios"), searchParams]);
   const reports = listReportsForUser(user);
   if (reports.length === 0) {
     return (
@@ -34,19 +38,19 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
   }
 
   const requested = one(query.tipo);
-  const fallback: ReportKey = user.isDirector ? "diretoria" : (reports.find((r) => r.department === user.departmentId)?.key ?? reports[0].key);
+  const fallback: ReportKey = user.isDirector && reports.some((r) => r.key === "diretoria") ? "diretoria" : (reports.find((r) => r.department === user.departmentId)?.key ?? reports[0].key);
   const selected: ReportKey = isReportKey(requested) && canAccessReport(user, requested) ? requested : fallback;
-  const [data, options] = await Promise.all([buildReport(selected, readReportFilters(query), user), getReportFilterOptions()]);
+  const [data, options] = await Promise.all([buildReport(selected, readReportFilters(query), user), reportAllowedUserIds(user).then((ids) => getReportFilterOptions(ids))]);
   const def = data.definition;
 
-  const locked: (keyof ReportFilters)[] = [];
-  if (!user.isManager && selected === "tarefas") locked.push("departamento");
-  if (!user.isManager && selected === "comissoes") locked.push("colaborador");
+  // Filtros travados pelo escopo (Tarefas: o próprio departamento; Comissões: as próprias), calculados em buildReport.
+  const locked = data.locked;
+  const canExport = can(user, "gestao.relatorios.exportar") && can(user, reportExportKey(selected));
   const users = def.group === "departamental" && def.department ? options.users.filter((u) => u.departmentId === def.department) : options.users;
 
   return (
     <PageContainer size="full" className="max-w-[1600px]">
-      <PageHeader title="Relatórios" description="Os mesmos números dos dashboards, prontos para exportar." breadcrumbs={[{ label: "Gestão", href: user.isManager ? "/gestao" : undefined }, { label: "Relatórios" }]} />
+      <PageHeader title="Relatórios" description="Os mesmos números dos dashboards, prontos para exportar." breadcrumbs={[{ label: "Gestão", href: canSeeHref(user, "/gestao") ? "/gestao" : undefined }, { label: "Relatórios" }]} />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="min-w-0">
@@ -62,7 +66,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
                   {def.description} {data.filters.map((f) => `${f.label}: ${f.value}`).join(" · ")}
                 </CardDescription>
               </div>
-              <ExportButtons data={data} />
+              {canExport ? <ExportButtons data={data} /> : null}
             </CardHeader>
             <CardContent className="border-t border-border pt-4">
               <ReportFiltersForm

@@ -13,8 +13,11 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { useImplementationAction } from "./use-implementation-action";
 
-/** Checklist do projeto (itens combinados dos templates dos produtos + itens avulsos). */
-export function ChecklistTab({ projectId, items, users, editable }: { projectId: string; items: ChecklistItem[]; users: { id: string; name: string }[]; editable: boolean }) {
+/**
+ * Checklist do projeto (itens combinados dos templates dos produtos + itens avulsos). `canToggle`/`canAdd` vêm do
+ * servidor (ações do catálogo e projeto em andamento); sem elas o checklist é só leitura.
+ */
+export function ChecklistTab({ projectId, items, users, canToggle, canAdd }: { projectId: string; items: ChecklistItem[]; users: { id: string; name: string }[]; canToggle: boolean; canAdd: boolean }) {
   const { pending, run } = useImplementationAction();
   const [label, setLabel] = React.useState("");
   const [required, setRequired] = React.useState(true);
@@ -56,7 +59,7 @@ export function ChecklistTab({ projectId, items, users, editable }: { projectId:
                 }
                 description={item.done && item.doneAt ? `Concluído em ${formatDate(item.doneAt)}${item.doneBy ? ` por ${names.get(item.doneBy) ?? "—"}` : ""}` : undefined}
                 checked={item.done}
-                disabled={!editable || busyId === item.id}
+                disabled={!canToggle || busyId === item.id}
                 onCheckedChange={(v) => toggle(item, v === true)}
                 className="flex-1 py-3 md:py-3"
               />
@@ -64,7 +67,7 @@ export function ChecklistTab({ projectId, items, users, editable }: { projectId:
           ))}
         </ul>
       )}
-      {editable ? (
+      {canAdd ? (
         <form onSubmit={add} className="flex flex-col gap-2 rounded-lg border border-dashed border-border-strong p-3 md:flex-row md:items-center">
           <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Novo item do checklist" aria-label="Novo item do checklist" maxLength={200} required className="h-11 md:h-9" />
           <Switch label="Obrigatório" checked={required} onCheckedChange={setRequired} size="sm" className="shrink-0 md:min-h-0" />

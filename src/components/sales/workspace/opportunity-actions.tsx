@@ -34,6 +34,8 @@ import type { OpenStage } from "@/server/sales/schemas";
 import type { WorkspaceDetail } from "@/server/sales/workspace-queries";
 import { LostDialog } from "../lost-dialog";
 import { isOpenStage, opportunityHref } from "../model";
+import { useCanSeeFn } from "@/components/auth/access-provider";
+import { useSalesAccess } from "../sales-access";
 import { ProposalEditorDialog } from "../proposal-editor-dialog";
 import { useSalesUrl } from "../use-sales-url";
 import { VisitFormDialog } from "../visit-form-dialog";
@@ -73,14 +75,26 @@ export function StageSelect({ detail, className }: { detail: WorkspaceDetail; cl
 
 /**
  * Ações da oportunidade no workspace: Transferir, Agendar (visita ou próxima ação), Marcar como ganho e
- * menu com Perdido, Criar proposta, Reabrir e atalhos. Todas chamam Server Actions já existentes.
+ * menu com Perdido, Criar proposta, Reabrir e atalhos. Todas chamam Server Actions já existentes; cada controle só
+ * aparece com a chave correspondente (useSalesAccess) — as actions revalidam permissão e escopo.
  */
-export function OpportunityActions({ detail, currentUserId, isManager, className }: { detail: WorkspaceDetail; currentUserId: string; isManager: boolean; className?: string }) {
+export function OpportunityActions({ detail, currentUserId, className }: { detail: WorkspaceDetail; currentUserId: string; className?: string }) {
   const router = useRouter();
   const { navigate } = useSalesUrl();
+  const caps = useSalesAccess();
+  const canSee = useCanSeeFn();
   const [dialog, setDialog] = React.useState<DialogKind | null>(null);
   const opp = detail.opportunity;
   const open = isOpenStage(opp.stage);
+  const can = {
+    transfer: open && caps.opportunities.assign && detail.transferTargets.length > 0,
+    visit: open && caps.visits.create,
+    next: open && caps.opportunities.edit,
+    win: open && caps.opportunities.win,
+    proposal: open && caps.proposals.create,
+    lose: open && caps.opportunities.lose,
+    reopen: opp.stage === "perdido" && caps.opportunities.reopen,
+  };
   const close = () => setDialog(null);
   const touch = "min-h-[44px] md:min-h-0";
 
@@ -96,30 +110,36 @@ export function OpportunityActions({ detail, currentUserId, isManager, className
 
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
-      {open && detail.canEdit ? (
-        <>
-          <Button variant="outline" size="sm" className={touch} onClick={() => setDialog("transferir")}>
-            <ArrowLeftRight /> Transferir
-          </Button>
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className={touch}>
-                <CalendarPlus /> Agendar
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+      {can.transfer ? (
+        <Button variant="outline" size="sm" className={touch} onClick={() => setDialog("transferir")}>
+          <ArrowLeftRight /> Transferir
+        </Button>
+      ) : null}
+      {can.visit || can.next ? (
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className={touch}>
+              <CalendarPlus /> Agendar
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {can.visit ? (
               <DropdownMenuItem onSelect={() => setDialog("visita")}>
                 <MapPin /> Agendar visita
               </DropdownMenuItem>
+            ) : null}
+            {can.next ? (
               <DropdownMenuItem onSelect={() => setDialog("proxima")}>
                 <CalendarClock /> Agendar próxima ação
               </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button size="sm" className={touch} onClick={() => setDialog("ganho")}>
-            <Trophy /> Marcar como ganho
-          </Button>
-        </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+      {can.win ? (
+        <Button size="sm" className={touch} onClick={() => setDialog("ganho")}>
+          <Trophy /> Marcar como ganho
+        </Button>
       ) : null}
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
@@ -128,18 +148,22 @@ export function OpportunityActions({ detail, currentUserId, isManager, className
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[220px]">
-          {open && detail.canEdit ? (
+          {can.proposal || can.lose ? (
             <>
-              <DropdownMenuItem onSelect={() => setDialog("proposta")}>
-                <FilePlus2 /> Criar proposta
-              </DropdownMenuItem>
-              <DropdownMenuItem destructive onSelect={() => setDialog("perdido")}>
-                <XCircle /> Marcar como perdido
-              </DropdownMenuItem>
+              {can.proposal ? (
+                <DropdownMenuItem onSelect={() => setDialog("proposta")}>
+                  <FilePlus2 /> Criar proposta
+                </DropdownMenuItem>
+              ) : null}
+              {can.lose ? (
+                <DropdownMenuItem destructive onSelect={() => setDialog("perdido")}>
+                  <XCircle /> Marcar como perdido
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuSeparator />
             </>
           ) : null}
-          {opp.stage === "perdido" && detail.canEdit ? (
+          {can.reopen ? (
             <>
               <DropdownMenuItem onSelect={() => setDialog("reabrir")}>
                 <RotateCcw /> Reabrir oportunidade
@@ -147,28 +171,34 @@ export function OpportunityActions({ detail, currentUserId, isManager, className
               <DropdownMenuSeparator />
             </>
           ) : null}
-          {opp.stage === "ganho" && opp.contractId ? (
+          {opp.stage === "ganho" && opp.contractId && canSee(`/financeiro/contratos?contrato=${opp.contractId}`) ? (
             <DropdownMenuItem asChild>
               <Link href={`/financeiro/contratos?contrato=${opp.contractId}`}>
                 <FileSignature /> Ver contrato
               </Link>
             </DropdownMenuItem>
           ) : null}
-          <DropdownMenuItem asChild>
-            <Link href={`/clientes/${detail.client.id}`}>
-              <Building2 /> Ficha do cliente (360º)
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link href={opportunityHref(opp.id)}>
-              <ExternalLink /> Detalhes completos
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link href="/vendas/pipeline">
-              <Kanban /> Ver no pipeline
-            </Link>
-          </DropdownMenuItem>
+          {canSee(`/clientes/${detail.client.id}`) ? (
+            <DropdownMenuItem asChild>
+              <Link href={`/clientes/${detail.client.id}`}>
+                <Building2 /> Ficha do cliente (360º)
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
+          {caps.opportunities.view ? (
+            <DropdownMenuItem asChild>
+              <Link href={opportunityHref(opp.id)}>
+                <ExternalLink /> Detalhes completos
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
+          {canSee("/vendas/pipeline") ? (
+            <DropdownMenuItem asChild>
+              <Link href="/vendas/pipeline">
+                <Kanban /> Ver no pipeline
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -205,8 +235,8 @@ export function OpportunityActions({ detail, currentUserId, isManager, className
             addresses: { [detail.client.id]: detail.client.address ?? {} },
             opportunitiesByClient: { [detail.client.id]: [{ id: opp.id, title: opp.title }] },
           }}
-          currentUserId={opp.ownerId === currentUserId || !isManager ? currentUserId : opp.ownerId}
-          canChooseSeller={isManager}
+          currentUserId={opp.ownerId === currentUserId || !caps.visits.assign ? currentUserId : opp.ownerId}
+          canChooseSeller={caps.visits.assign}
           defaults={{ clientId: detail.client.id, opportunityId: opp.id }}
           onCreated={() => undefined}
         />

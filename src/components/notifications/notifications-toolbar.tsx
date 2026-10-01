@@ -17,10 +17,12 @@ export interface NotificationsToolbarProps {
   readFilter: ReadFilter;
   kindFilter?: NotificationKind;
   totals: { all: number; unread: number };
+  /** Permissão calculada no servidor (inicio.notificacoes.editar): sem ela o botão não aparece. */
+  canEdit?: boolean;
 }
 
 /** Filtros (todas / não lidas, tipo) na URL e ação "marcar todas como lidas". */
-export function NotificationsToolbar({ readFilter, kindFilter, totals }: NotificationsToolbarProps) {
+export function NotificationsToolbar({ readFilter, kindFilter, totals, canEdit = true }: NotificationsToolbarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -68,9 +70,11 @@ export function NotificationsToolbar({ readFilter, kindFilter, totals }: Notific
           options={[{ value: "", label: "Todos os tipos" }, ...NOTIFICATION_KINDS.map((k) => ({ value: k, label: NOTIFICATION_KIND_LABELS[k] }))]}
         />
       </div>
-      <Button variant="outline" onClick={markAll} loading={pending} disabled={totals.unread === 0} className="min-h-[44px] md:min-h-9">
-        <CheckCheck /> Marcar todas como lidas
-      </Button>
+      {canEdit ? (
+        <Button variant="outline" onClick={markAll} loading={pending} disabled={totals.unread === 0} className="min-h-[44px] md:min-h-9">
+          <CheckCheck /> Marcar todas como lidas
+        </Button>
+      ) : null}
     </div>
   );
 }

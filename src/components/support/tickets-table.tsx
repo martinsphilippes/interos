@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Filter, Hand, Headset, Repeat, SlidersHorizontal } from "lucide-react";
+import { useCanSeeFn } from "@/components/auth/access-provider";
 import type { SupportTicket } from "@/domain/types";
 import type { SupportUser, TicketRow } from "@/server/support/queries";
 import { assumeTicketAction } from "@/server/support/actions";
@@ -104,12 +105,16 @@ export interface TicketsTableProps {
   team: SupportUser[];
   products: { id: string; name: string }[];
   currentUserId: string;
-  canOperate: boolean;
+  /** Mostrar "Assumir" (suporte.chamados.assumir, calculado no servidor). */
+  canAssume: boolean;
   initialFilters: TicketFilterState;
 }
 
-export function TicketsTable({ rows, mode, team, products, currentUserId, canOperate, initialFilters }: TicketsTableProps) {
+export function TicketsTable({ rows, mode, team, products, currentUserId, canAssume, initialFilters }: TicketsTableProps) {
   const router = useRouter();
+  const canSee = useCanSeeFn();
+  // Sem a tela de Chamados (só a Central), o chamado abre no workspace.
+  const ticketHref = (id: string) => (canSee("/suporte/chamados") ? `/suporte/chamados/${id}` : `/suporte?chamado=${id}`);
   const now = useMinuteClock();
   const [filters, setFilters] = React.useState<TicketFilterState>(initialFilters);
   const [page, setPage] = React.useState(1);
@@ -141,7 +146,7 @@ export function TicketsTable({ rows, mode, team, products, currentUserId, canOpe
       const params = new URLSearchParams(window.location.search);
       params.set("chamado", row.id);
       router.push(`${window.location.pathname}?${params.toString()}`, { scroll: false });
-    } else router.push(`/suporte/chamados/${row.id}`);
+    } else router.push(ticketHref(row.id));
   };
 
   const assume = (row: TicketRow) => {
@@ -284,9 +289,13 @@ export function TicketsTable({ rows, mode, team, products, currentUserId, canOpe
                         <p className="truncate text-xs text-muted">{[row.productName, row.category].filter(Boolean).join(" · ") || "—"}</p>
                       </TableCell>
                       <TableCell className="max-w-[200px]">
-                        <Link href={`/clientes/${row.clientId}?aba=suporte`} onClick={(e) => e.stopPropagation()} className="block truncate text-sm hover:text-brand hover:underline">
-                          {row.clientName}
-                        </Link>
+                        {canSee(`/clientes/${row.clientId}?aba=suporte`) ? (
+                          <Link href={`/clientes/${row.clientId}?aba=suporte`} onClick={(e) => e.stopPropagation()} className="block truncate text-sm hover:text-brand hover:underline">
+                            {row.clientName}
+                          </Link>
+                        ) : (
+                          <span className="block truncate text-sm">{row.clientName}</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-center">
                         <ChannelIcon channel={row.channel} />
@@ -305,7 +314,7 @@ export function TicketsTable({ rows, mode, team, products, currentUserId, canOpe
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          {canOperate && row.open && row.assigneeId !== currentUserId ? (
+                          {canAssume && row.open && row.assigneeId !== currentUserId ? (
                             <Button
                               size="sm"
                               variant="outline"
@@ -319,7 +328,7 @@ export function TicketsTable({ rows, mode, team, products, currentUserId, canOpe
                             </Button>
                           ) : null}
                           <Button size="sm" variant="ghost" asChild>
-                            <Link href={`/suporte/chamados/${row.id}`} onClick={(e) => e.stopPropagation()} aria-label={`Abrir chamado ${row.number}`}>
+                            <Link href={ticketHref(row.id)} onClick={(e) => e.stopPropagation()} aria-label={`Abrir chamado ${row.number}`}>
                               Abrir <ArrowRight />
                             </Link>
                           </Button>
@@ -351,7 +360,7 @@ export function TicketsTable({ rows, mode, team, products, currentUserId, canOpe
                     {row.open ? <SlaBadgeAt sla={row.sla} now={now} /> : <SlaBadgeAt sla={row.sla} now={null} />}
                     {row.open ? <ResponseCountdown sla={row.sla} firstResponseAt={row.firstResponseAt} now={now} /> : null}
                     <span className="text-xs text-muted"><RelativeTime value={row.openedAt} /></span>
-                    {canOperate && row.open && row.assigneeId !== currentUserId ? (
+                    {canAssume && row.open && row.assigneeId !== currentUserId ? (
                       <Button size="sm" variant="outline" className="ml-auto min-h-[44px]" loading={pendingId === row.id} onClick={() => assume(row)}>
                         <Hand /> Assumir
                       </Button>

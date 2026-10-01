@@ -2,12 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { BusinessError, canSeeHref, failAction, requirePermission } from "@/server/auth/session";
+import type { PermissionKey } from "@/domain/permissions";
 import { col, create, getById, nowIso, remove, stripUndefined } from "@/server/db";
 import { emitEvent } from "@/server/events";
-import { COLLECTIONS, type ActionResult, type AutomationRule, type CurrentUser } from "@/domain/types";
+import { COLLECTIONS, type ActionResult, type AutomationRule } from "@/domain/types";
 import { AGENT_KINDS, type AgentRun } from "@/server/ai/types";
 import { runAgent } from "@/server/ai/agents";
+import { assertProjectAccess } from "@/server/implementation/access";
+import { assertTicketAccess } from "@/server/support/access";
+import { assertCsClientAccess } from "@/server/cs/access";
 import { invalidateRulesCache, normalizeRule, simulateRule, type SimulationResult } from "./engine";
 import { runSweeps, type SweepReport } from "./scheduler";
 import { getPathSuggestions } from "./queries";
@@ -24,24 +28,21 @@ import {
 } from "./schemas";
 
 /**
- * Server Actions das automações (/admin/automacoes). Escrita só para administradores.
- * Padrão: requireUser → validação zod → mutação → emitEvent → revalidatePath.
- * `getAgentSuggestions` é aberta a qualquer usuário com acesso ao módulo do agente.
+ * Server Actions das automações (/admin/automacoes).
+ * Padrão (A5): requirePermission("admin.automacoes.<ação>") → validação zod → mutação → emitEvent → revalidatePath;
+ * falhas por failAction. `getAgentSuggestions` exige a seção de sugestões da tela dona do assistente
+ * (comercial → Central de Vendas, implantação → Projetos, suporte → Chamados, CS → Carteira, executivo → Cockpit).
  */
-
-class ActionError extends Error {}
-
-async function requireAdmin(): Promise<CurrentUser> {
-  const user = await requireUser();
-  if (!user.isAdmin) throw new ActionError("Apenas administradores podem alterar automações");
-  return user;
-}
 
 function fail(error: unknown, fallback: string): { ok: false; error: string } {
   if (error instanceof z.ZodError) return { ok: false, error: zodMessage(error) };
-  if (error instanceof ActionError) return { ok: false, error: error.message };
-  console.error(`[automacoes] ${fallback}`, error);
-  return { ok: false, error: error instanceof Error && error.message ? `${fallback}: ${error.message}` : fallback };
+  return failAction(error, fallback, "automacoes");
+}
+
+/** Id da regra no formulário (define se salvar é criar ou editar). */
+function ruleIdOf(input: unknown): string | undefined {
+  const id = (input as { id?: unknown } | null)?.id;
+  return typeof id === "string" && id.trim() ? id : undefined;
 }
 
 function revalidate(id?: string) {
@@ -88,13 +89,13 @@ function parseRule(input: unknown) {
 
 export async function saveAutomationRule(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireAdmin();
+    const user = ruleIdOf(input) ? await requirePermission("admin.automacoes.editar") : await requirePermission("admin.automacoes.criar");
     const rule = parseRule(input);
     const actor = { id: user.id, name: user.name };
     let id = rule.id;
     if (id) {
       const existing = await getById<AutomationRule>(COLLECTIONS.automationRules, id);
-      if (!existing) throw new ActionError("Regra não encontrada");
+      if (!existing) throw new BusinessError("Regra não encontrada");
       // update() substitui os campos inteiros (trigger/conditions/actions), sem mesclar chaves antigas.
       await col(COLLECTIONS.automationRules)
         .doc(id)
@@ -130,10 +131,10 @@ export async function saveAutomationRule(input: unknown): Promise<ActionResult<{
 
 export async function setAutomationRuleActive(input: unknown): Promise<ActionResult<{ active: boolean }>> {
   try {
-    const user = await requireAdmin();
+    const user = await requirePermission("admin.automacoes.ativar");
     const { id, active } = toggleRuleSchema.parse(input);
     const rule = await getById<AutomationRule>(COLLECTIONS.automationRules, id);
-    if (!rule) throw new ActionError("Regra não encontrada");
+    if (!rule) throw new BusinessError("Regra não encontrada");
     await col(COLLECTIONS.automationRules).doc(id).update({ active, updatedAt: nowIso() });
     invalidateRulesCache();
     await emitEvent({
@@ -152,10 +153,10 @@ export async function setAutomationRuleActive(input: unknown): Promise<ActionRes
 
 export async function deleteAutomationRule(input: unknown): Promise<ActionResult<undefined>> {
   try {
-    const user = await requireAdmin();
+    const user = await requirePermission("admin.automacoes.excluir");
     const { id } = ruleIdSchema.parse(input);
     const rule = await getById<AutomationRule>(COLLECTIONS.automationRules, id);
-    if (!rule) throw new ActionError("Regra não encontrada");
+    if (!rule) throw new BusinessError("Regra não encontrada");
     await remove(COLLECTIONS.automationRules, id);
     invalidateRulesCache();
     await emitEvent({
@@ -175,7 +176,7 @@ export async function deleteAutomationRule(input: unknown): Promise<ActionResult
 /** "Testar com último evento": simula a regra (como está no formulário) sem nenhum efeito. */
 export async function testAutomationRule(input: unknown): Promise<ActionResult<SimulationResult>> {
   try {
-    await requireAdmin();
+    await requirePermission("admin.automacoes.testar");
     const rule = parseRule(input);
     const record = normalizeRule({
       id: rule.id ?? "rascunho",
@@ -199,7 +200,7 @@ export async function testAutomationRule(input: unknown): Promise<ActionResult<S
 /** Botão "Executar varreduras agora" (força todas, ou só as informadas). */
 export async function runSweepsNow(input: unknown): Promise<ActionResult<SweepReport>> {
   try {
-    await requireAdmin();
+    await requirePermission("admin.automacoes.executar-varredura");
     const { only, force } = runSweepsSchema.parse(input ?? {});
     const report = await runSweeps({ only, force });
     revalidate();
@@ -213,7 +214,7 @@ export async function runSweepsNow(input: unknown): Promise<ActionResult<SweepRe
 
 export async function getPathSuggestionsAction(input: unknown): Promise<ActionResult<string[]>> {
   try {
-    await requireAdmin();
+    await requirePermission("admin.automacoes.ver");
     const { eventType, entity } = z.object({ eventType: z.string().optional(), entity: z.string().optional() }).parse(input ?? {});
     return { ok: true, data: await getPathSuggestions(eventType, entity) };
   } catch (error) {
@@ -221,7 +222,14 @@ export async function getPathSuggestionsAction(input: unknown): Promise<ActionRe
   }
 }
 
-const AGENT_MODULE: Record<(typeof AGENT_KINDS)[number], string> = { comercial: "vendas", implantacao: "implantacao", suporte: "suporte", cs: "cs", executivo: "gestao" };
+/** Seção de sugestões da tela dona de cada assistente (viewGuards `getAgentSuggestions?kind=`). */
+const AGENT_KEY = {
+  comercial: "vendas.central.sugestoes.ver",
+  implantacao: "implantacao.projetos.sugestoes.ver",
+  suporte: "suporte.chamados.sugestoes.ver",
+  cs: "cs.carteira.sugestoes.ver",
+  executivo: "gestao.cockpit.sugestoes.ver",
+} as const satisfies Record<(typeof AGENT_KINDS)[number], PermissionKey>;
 
 /**
  * Sugestões do assistente (regras determinísticas + IA quando configurada).
@@ -230,14 +238,23 @@ const AGENT_MODULE: Record<(typeof AGENT_KINDS)[number], string> = { comercial: 
  */
 export async function getAgentSuggestions(kind: unknown, subjectId: unknown): Promise<ActionResult<AgentRun>> {
   try {
-    const user = await requireUser();
     const k = z.enum(AGENT_KINDS, { error: "Assistente desconhecido" }).parse(kind);
+    const user = await requirePermission(AGENT_KEY[k]);
     const subject = z.string().trim().min(1, "Informe o registro").max(200).parse(subjectId);
-    if (!canAccessModule(user, AGENT_MODULE[k])) throw new ActionError("Seu perfil não tem acesso a este assistente");
-    if (k === "comercial" && subject !== user.id && !user.isManager) throw new ActionError("Você só pode ver as sugestões da sua própria carteira");
+    // Carteira de outro vendedor: só com escopo da Central de Vendas maior que "meus" (≡ gestores, no padrão).
+    if (k === "comercial" && subject !== user.id && (user.permissions.scopes["vendas.central"] ?? "meus") === "meus") {
+      throw new BusinessError("Você só pode ver as sugestões da sua própria carteira");
+    }
+    // Registro fora do escopo da tela dona (A29): o assistente não monta o contexto (T8).
+    if (k === "implantacao") await assertProjectAccess(user, subject);
+    if (k === "suporte") await assertTicketAccess(user, subject);
+    if (k === "cs") await assertCsClientAccess(user, subject, "cs.carteira");
     const run = await runAgent(k, subject, { actor: { id: user.id, name: user.name } });
-    if (!run) throw new ActionError("Registro não encontrado para o assistente");
-    return { ok: true, data: run };
+    if (!run) throw new BusinessError("Registro não encontrado para o assistente");
+    // Link de sugestão para tela que o usuário não abre (ex.: /marketing/prospeccao para quem não tem Marketing)
+    // sai sem o link: a sugestão continua, mas não leva ao aviso de acesso negado.
+    const suggestions = run.suggestions.map((s) => (s.href && !canSeeHref(user, s.href) ? { ...s, href: undefined } : s));
+    return { ok: true, data: { ...run, suggestions } };
   } catch (error) {
     return fail(error, "Não foi possível gerar as sugestões");
   }

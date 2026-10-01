@@ -31,6 +31,13 @@ export interface KpiAdminWorkspaceProps {
   periodLabel: string;
   /** Competências oferecidas para gravar snapshots (mais recente primeiro). */
   snapshotMonths: { value: string; label: string }[];
+  /**
+   * Capacidades calculadas no servidor (só escondem; as actions revalidam): editar/criar = admin.indicadores.editar,
+   * ativar = admin.indicadores.ativar, gravar snapshots = admin.indicadores.registrar-snapshot. Ausentes = liberado.
+   */
+  canEdit?: boolean;
+  canToggle?: boolean;
+  canSnapshot?: boolean;
 }
 
 type DrawerState = { mode: "new"; formula?: KpiFormulaMeta } | { mode: "edit"; row: KpiAdminRow } | null;
@@ -57,7 +64,7 @@ function targetText(row: KpiAdminRow): string {
   return d.target !== undefined ? formatKpiValue(d.target, d.unit, suffix) : "—";
 }
 
-export function KpiAdminWorkspace({ rows, formulas, owners, periodLabel, snapshotMonths }: KpiAdminWorkspaceProps) {
+export function KpiAdminWorkspace({ rows, formulas, owners, periodLabel, snapshotMonths, canEdit = true, canToggle = true, canSnapshot = true }: KpiAdminWorkspaceProps) {
   const router = useRouter();
   const [query, setQuery] = React.useState("");
   const [department, setDepartment] = React.useState("");
@@ -118,12 +125,16 @@ export function KpiAdminWorkspace({ rows, formulas, owners, periodLabel, snapsho
           </Select>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setSnapshotOpen(true)}>
-            <Camera /> Gravar snapshots
-          </Button>
-          <Button className="min-h-[44px] md:min-h-0" onClick={() => setDrawer({ mode: "new" })}>
-            <Plus /> Novo indicador
-          </Button>
+          {canSnapshot ? (
+            <Button variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => setSnapshotOpen(true)}>
+              <Camera /> Gravar snapshots
+            </Button>
+          ) : null}
+          {canEdit ? (
+            <Button className="min-h-[44px] md:min-h-0" onClick={() => setDrawer({ mode: "new" })}>
+              <Plus /> Novo indicador
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -139,7 +150,7 @@ export function KpiAdminWorkspace({ rows, formulas, owners, periodLabel, snapsho
               const d = row.definition;
               return (
                 <li key={d.id} className="rounded-lg border border-border bg-surface p-3 shadow-card">
-                  <button type="button" className="flex w-full flex-col items-start gap-1 text-left" onClick={() => setDrawer({ mode: "edit", row })}>
+                  <button type="button" className="flex w-full flex-col items-start gap-1 text-left" disabled={!canEdit} onClick={() => setDrawer({ mode: "edit", row })}>
                     <span className="flex w-full items-start justify-between gap-2">
                       <span className="text-sm font-semibold text-foreground">{d.name}</span>
                       <KpiStatusBadge status={row.current?.status ?? null} />
@@ -157,7 +168,7 @@ export function KpiAdminWorkspace({ rows, formulas, owners, periodLabel, snapsho
                     ) : (
                       <span />
                     )}
-                    <Switch size="sm" checked={d.active !== false} disabled={pendingId === d.id} onCheckedChange={(v) => onToggle(row, v)} aria-label={d.active !== false ? "Desativar indicador" : "Ativar indicador"} />
+                    <Switch size="sm" checked={d.active !== false} disabled={pendingId === d.id || !canToggle} onCheckedChange={(v) => onToggle(row, v)} aria-label={d.active !== false ? "Desativar indicador" : "Ativar indicador"} />
                   </div>
                 </li>
               );
@@ -186,7 +197,7 @@ export function KpiAdminWorkspace({ rows, formulas, owners, periodLabel, snapsho
                   const d = row.definition;
                   const formula = formulaByKey.get(d.formula);
                   return (
-                    <TableRow key={d.id} clickable onClick={() => setDrawer({ mode: "edit", row })} className={d.active === false ? "opacity-60" : undefined}>
+                    <TableRow key={d.id} clickable={canEdit} onClick={canEdit ? () => setDrawer({ mode: "edit", row }) : undefined} className={d.active === false ? "opacity-60" : undefined}>
                       <TableCell>
                         <p className="font-medium text-foreground">{d.name}</p>
                         <p className="font-mono text-xs text-muted">{d.key}</p>
@@ -219,7 +230,7 @@ export function KpiAdminWorkspace({ rows, formulas, owners, periodLabel, snapsho
                         )}
                       </TableCell>
                       <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                        <Switch size="sm" checked={d.active !== false} disabled={pendingId === d.id} onCheckedChange={(v) => onToggle(row, v)} aria-label={d.active !== false ? "Desativar indicador" : "Ativar indicador"} />
+                        <Switch size="sm" checked={d.active !== false} disabled={pendingId === d.id || !canToggle} onCheckedChange={(v) => onToggle(row, v)} aria-label={d.active !== false ? "Desativar indicador" : "Ativar indicador"} />
                       </TableCell>
                     </TableRow>
                   );
@@ -246,9 +257,11 @@ export function KpiAdminWorkspace({ rows, formulas, owners, periodLabel, snapsho
                     {f.key} · {departmentLabel(f.department)}
                   </span>
                 </span>
-                <Button variant="ghost" size="sm" className="min-h-[44px] shrink-0 md:min-h-0" onClick={() => setDrawer({ mode: "new", formula: f })}>
-                  Cadastrar
-                </Button>
+                {canEdit ? (
+                  <Button variant="ghost" size="sm" className="min-h-[44px] shrink-0 md:min-h-0" onClick={() => setDrawer({ mode: "new", formula: f })}>
+                    Cadastrar
+                  </Button>
+                ) : null}
               </li>
             ))}
           </ul>

@@ -11,6 +11,7 @@ import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useFinanceAction } from "./use-finance-action";
+import { useFinanceAccess } from "./finance-access";
 
 const CATEGORIES = ["Contrato", "Contrato assinado", "Comprovante de pagamento", "Documento fiscal", "Cadastro", "Outro"];
 
@@ -18,11 +19,11 @@ export interface DocumentsCardProps {
   contractId: string;
   documents: Document[];
   users: Record<string, { name: string }>;
-  canOperate: boolean;
 }
 
 /** Documentos do contrato (e comprovantes das cobranças), anexados por link. */
-export function DocumentsCard({ contractId, documents, users, canOperate }: DocumentsCardProps) {
+export function DocumentsCard({ contractId, documents, users }: DocumentsCardProps) {
+  const canAttach = useFinanceAccess().contracts.documentAttach;
   const id = React.useId();
   const [adding, setAdding] = React.useState(false);
   const [form, setForm] = React.useState({ name: "", url: "", category: "Contrato" });
@@ -63,7 +64,7 @@ export function DocumentsCard({ contractId, documents, users, canOperate }: Docu
             ))}
           </ul>
         ) : null}
-        {canOperate ? (
+        {canAttach ? (
           adding ? (
             <div className="grid gap-3 rounded-lg border border-border p-3">
               <FormField label="Nome" htmlFor={`${id}-n`} required>

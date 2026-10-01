@@ -19,13 +19,16 @@ export interface NotificationsListProps {
   emptyTitle?: string;
   emptyDescription?: string;
   className?: string;
+  /** Permissões calculadas no servidor (inicio.notificacoes.editar/excluir): sem elas os botões não aparecem. */
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
 /**
  * Lista de notificações. Clicar marca como lida e navega para o href; o botão "marcar como lida"
  * só marca. Atualiza a tela com router.refresh() após a action.
  */
-export function NotificationsList({ items, variant = "full", emptyTitle = "Nenhuma notificação", emptyDescription, className }: NotificationsListProps) {
+export function NotificationsList({ items, variant = "full", emptyTitle = "Nenhuma notificação", emptyDescription, className, canEdit = true, canDelete = true }: NotificationsListProps) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [busyId, setBusyId] = React.useState<string | null>(null);
@@ -45,7 +48,7 @@ export function NotificationsList({ items, variant = "full", emptyTitle = "Nenhu
   };
 
   const open = (n: NotificationItem) => {
-    if (n.readAt) {
+    if (n.readAt || !canEdit) {
       if (n.href) router.push(n.href);
       return;
     }
@@ -75,12 +78,12 @@ export function NotificationsList({ items, variant = "full", emptyTitle = "Nenhu
           </button>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
-          {unread ? (
+          {unread && canEdit ? (
             <Button variant="ghost" size="icon" className="size-9 text-muted md:size-8" title="Marcar como lida" aria-label="Marcar como lida" loading={busy} onClick={() => run(n.id, () => markRead(n.id))}>
               <Check />
             </Button>
           ) : null}
-          {variant === "full" ? (
+          {variant === "full" && canDelete ? (
             <Button variant="ghost" size="icon" className="size-9 text-muted hover:text-danger md:size-8" title="Excluir" aria-label="Excluir notificação" disabled={busy} onClick={() => run(n.id, () => deleteNotification(n.id), () => toast.success("Notificação excluída"))}>
               <Trash2 />
             </Button>

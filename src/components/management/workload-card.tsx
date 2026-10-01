@@ -16,6 +16,8 @@ export interface WorkloadCardProps {
   teamAverageOpen: number;
   tasksByUser: Record<string, ReassignTask[]>;
   targets: { id: string; name: string; subtitle: string }[];
+  /** Redistribuir tarefas (gestao.dashboard.atribuir), calculado no servidor. Sem ele, o atalho não aparece. */
+  canRedistribute?: boolean;
   limit?: number;
 }
 
@@ -30,7 +32,7 @@ function loadTone(load: number | null): { bar: string; text: string } {
  * "Carga de trabalho": tarefas abertas de cada colaborador em relação à média da equipe (100% = na média;
  * acima de 110% fica vermelho) e o atalho para redistribuir tarefas do mais sobrecarregado.
  */
-export function WorkloadCard({ members, teamAverageOpen, tasksByUser, targets, limit = 6 }: WorkloadCardProps) {
+export function WorkloadCard({ members, teamAverageOpen, tasksByUser, targets, canRedistribute = false, limit = 6 }: WorkloadCardProps) {
   const sorted = [...members].sort((a, b) => (b.load ?? -1) - (a.load ?? -1));
   const [fromId, setFromId] = React.useState<string>(sorted.find((m) => (tasksByUser[m.id] ?? []).length > 0)?.id ?? "");
   const [open, setOpen] = React.useState(false);
@@ -61,27 +63,29 @@ export function WorkloadCard({ members, teamAverageOpen, tasksByUser, targets, l
         })}
       </ul>
       {sorted.length > limit ? <p className="text-xs text-muted">+{sorted.length - limit} colaborador(es) na tabela abaixo</p> : null}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <label className="sr-only" htmlFor="workload-from">
-          Redistribuir tarefas de
-        </label>
-        <select
-          id="workload-from"
-          value={fromId}
-          onChange={(e) => setFromId(e.target.value)}
-          className="h-11 min-w-0 flex-1 rounded-lg border border-border-strong bg-surface-muted px-3 text-sm text-foreground focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 md:h-9"
-        >
-          {sorted.map((m) => (
-            <option key={m.id} value={m.id} disabled={(tasksByUser[m.id] ?? []).length === 0}>
-              {m.name} · {(tasksByUser[m.id] ?? []).length} aberta(s)
-            </option>
-          ))}
-        </select>
-        <Button className="h-11 md:h-9" onClick={() => setOpen(true)} disabled={!from || (tasksByUser[from.id] ?? []).length === 0}>
-          <ArrowRightLeft /> Redistribuir tarefas
-        </Button>
-      </div>
-      {open && from ? <RedistributeDialog open={open} onOpenChange={setOpen} from={{ id: from.id, name: from.name }} tasks={tasksByUser[from.id] ?? []} targets={targets} /> : null}
+      {canRedistribute ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <label className="sr-only" htmlFor="workload-from">
+            Redistribuir tarefas de
+          </label>
+          <select
+            id="workload-from"
+            value={fromId}
+            onChange={(e) => setFromId(e.target.value)}
+            className="h-11 min-w-0 flex-1 rounded-lg border border-border-strong bg-surface-muted px-3 text-sm text-foreground focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 md:h-9"
+          >
+            {sorted.map((m) => (
+              <option key={m.id} value={m.id} disabled={(tasksByUser[m.id] ?? []).length === 0}>
+                {m.name} · {(tasksByUser[m.id] ?? []).length} aberta(s)
+              </option>
+            ))}
+          </select>
+          <Button className="h-11 md:h-9" onClick={() => setOpen(true)} disabled={!from || (tasksByUser[from.id] ?? []).length === 0}>
+            <ArrowRightLeft /> Redistribuir tarefas
+          </Button>
+        </div>
+      ) : null}
+      {canRedistribute && open && from ? <RedistributeDialog open={open} onOpenChange={setOpen} from={{ id: from.id, name: from.name }} tasks={tasksByUser[from.id] ?? []} targets={targets} /> : null}
     </div>
   );
 }

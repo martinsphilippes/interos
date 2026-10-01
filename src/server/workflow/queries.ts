@@ -5,10 +5,11 @@ import "server-only";
  */
 import { getById, getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
+import { can } from "@/server/auth/permissions";
+import { canSeeStep, scopeSteps, workflowScope } from "./access";
 import { dateLabel, listAssignableUsers as listAssignableTaskUsers, listTasksByProcess, todayKey } from "@/server/tasks/queries";
 import { COLLECTIONS, type Client, type Comment, type CurrentUser, type DomainEvent, type SlaInstance, type TimelineEvent, type User, type WorkflowInstance, type WorkflowStage, type WorkflowStep, type WorkflowTemplate } from "@/domain/types";
-import type { RoleKey } from "@/domain/constants";
-import { OPEN_STEP_STATUSES, evaluateStepGate, findStage, getPublishedTemplate, getTemplateForInstance, nextStageOf, resolveApprovers, sortedStages } from "./service";
+import { OPEN_STEP_STATUSES, canApproveStage, canCompleteWithException, evaluateStepGate, findStage, getPublishedTemplate, getTemplateForInstance, nextStageOf, resolveApprovers, sortedStages } from "./service";
 import {
   boardColumnsFrom,
   sortStepCards,
@@ -106,12 +107,17 @@ function summarize(items: StepCardItem[], userId: string): WorkflowSummary {
   return summary;
 }
 
-/** Todas as etapas abertas (uma por jornada ativa), agrupadas por coluna do template publicado. */
+/**
+ * Etapas abertas (uma por jornada ativa) do escopo do usuário na tela Workflow (padrão: empresa), agrupadas por
+ * coluna do template publicado.
+ */
 export async function getWorkflowBoard(user: CurrentUser): Promise<WorkflowBoardData> {
-  const [steps, template] = await Promise.all([
+  const [allSteps, template, scope] = await Promise.all([
     list<WorkflowStep>(COLLECTIONS.workflowSteps, { where: [["status", "in", [...OPEN_STEP_STATUSES]]] }),
     getPublishedTemplate(),
+    workflowScope(user),
   ]);
+  const steps = scopeSteps(allSteps, scope);
   const items = sortStepCards(await enrichSteps(steps));
   const columns = boardColumnsFrom(template?.stages).map((col) => ({ ...col, items: items.filter((i) => i.stageKey === col.key) }));
   // Etapas de chaves fora do template (versões antigas) ganham colunas próprias no fim.
@@ -132,13 +138,12 @@ function toEventView(e: Pick<DomainEvent, "id" | "type" | "title" | "description
   return { id: e.id, type: e.type, title: e.title, description: e.description, actorName: e.actorName, occurredAt: e.occurredAt, occurredAtLabel: dateLabel(e.occurredAt, today) };
 }
 
-function isManager(role: RoleKey): boolean {
-  return role === "admin" || role === "diretoria" || role === "gestor";
-}
-
+/** Detalhe da etapa (drawer). null quando não existe, a seção "Detalhe da etapa" está negada ou fora do escopo. */
 export async function getStepDetail(stepId: string, user: CurrentUser): Promise<StepDetail | null> {
+  if (!can(user, "operacao.workflow.etapa.ver")) return null;
   const step = await getById<WorkflowStep>(COLLECTIONS.workflowSteps, stepId);
   if (!step) return null;
+  if (!(await canSeeStep(user, step))) return null;
   const instance = await getById<WorkflowInstance>(COLLECTIONS.workflowInstances, step.instanceId);
   if (!instance) return null;
   const template = await getTemplateForInstance(instance);
@@ -159,7 +164,9 @@ export async function getStepDetail(stepId: string, user: CurrentUser): Promise<
   ]);
 
   const next = nextStageOf(template, stage.key);
-  const canApprove = isManager(user.role) || (Boolean(stage.gate.approverRole) && user.role === stage.gate.approverRole);
+  // Aprovar exige a chave de borda (operacao.workflow.aprovar) E ser o papel aprovador ou "aprovar qualquer" (A22).
+  const canApprove = can(user, "operacao.workflow.aprovar") && canApproveStage(stage, user.role, user.permissions);
+  const canComplete = can(user, "operacao.workflow.concluir");
 
   return {
     step: { ...step, checklist: step.checklist ?? [], fields: step.fields ?? {}, taskIds: step.taskIds ?? [] },
@@ -177,7 +184,11 @@ export async function getStepDetail(stepId: string, user: CurrentUser): Promise<
     completedAtLabel: step.completedAt ? dateLabel(step.completedAt, today) : undefined,
     dueAtLabel: step.dueAt ? dateLabel(step.dueAt, today) : undefined,
     canApprove,
-    canException: isManager(user.role),
+    canException: canComplete && canCompleteWithException(user.role, user.permissions),
+    canEdit: can(user, "operacao.workflow.editar"),
+    canComplete,
+    canPause: can(user, "operacao.workflow.pausar"),
+    canReassign: can(user, "operacao.workflow.atribuir"),
     approverNames: approvers.map((u) => u.name),
   };
 }

@@ -5,9 +5,9 @@ import "server-only";
  * varreduras diárias (saúde e renovações).
  *
  * Toda mutação relevante emite evento (timeline, notificações, KPIs). Erros de regra são lançados como
- * Error com mensagem em português (as actions devolvem a mensagem ao usuário).
+ * BusinessError com mensagem em português (as actions devolvem a mensagem ao usuário pelo failAction).
  */
-import { addDays, addMonths } from "date-fns";
+import { addDays } from "date-fns";
 import { create, getById, getManyByIds, list, newId, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { registerHandler } from "@/server/events/emit";
@@ -16,6 +16,7 @@ import { notify } from "@/server/notifications";
 import { assignTaskInternal, cancelTaskInternal, completeTaskInternal, createTaskInternal, reopenTaskInternal } from "@/server/tasks/service";
 import { cancelClientJourney, getDepartmentManager, updateStepChecklist } from "@/server/workflow/service";
 import { createOpportunity } from "@/server/sales/service";
+import { BusinessError } from "@/server/auth/error-classes";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { shortId } from "@/lib/utils";
 import {
@@ -66,7 +67,7 @@ const daysFromNowIso = (days: number) => addDays(new Date(), days).toISOString()
 
 async function loadClient(id: string): Promise<Client> {
   const client = await getById<Client>(COLLECTIONS.clients, id);
-  if (!client) throw new Error("Cliente não encontrado");
+  if (!client) throw new BusinessError("Cliente não encontrado");
   return client;
 }
 
@@ -237,10 +238,14 @@ export interface RecalculateAllResult {
   ranAt: string;
 }
 
-/** Recalcula toda a carteira com uma leitura em lote. */
-export async function recalculateAllHealth(actor: UserRef = CS_SYSTEM_ACTOR): Promise<RecalculateAllResult> {
+/**
+ * Recalcula toda a carteira com uma leitura em lote. `include` (opcional) restringe o recálculo aos clientes do
+ * escopo de quem pediu (Server Action com escopo de Saúde restrito); sem ele, a carteira inteira (varredura).
+ */
+export async function recalculateAllHealth(actor: UserRef = CS_SYSTEM_ACTOR, options: { include?: (client: Client, account: CsAccount | null) => boolean } = {}): Promise<RecalculateAllResult> {
   const now = new Date();
-  const [inputs, config] = await Promise.all([loadAllHealthInputs(now), getHealthConfig()]);
+  const [all, config] = await Promise.all([loadAllHealthInputs(now), getHealthConfig()]);
+  const inputs = options.include ? all.filter((input) => options.include!(input.client, input.account ?? null)) : all;
   let changed = 0;
   let risk = 0;
   for (const input of inputs) {
@@ -299,7 +304,7 @@ export interface CheckpointResult {
 
 export async function registerCheckpoint(data: CheckpointData, actor: UserRef): Promise<CheckpointResult> {
   const client = await loadClient(data.clientId);
-  if (client.status === "cancelado") throw new Error("Cliente cancelado não recebe checkpoints");
+  if (client.status === "cancelado") throw new BusinessError("Cliente cancelado não recebe checkpoints");
   const account = await ensureCsAccount(client.id, actor);
   const now = nowIso();
   const next = addDays(new Date(now), data.nextInDays).toISOString();
@@ -423,7 +428,7 @@ async function loadResponsibles(ids: string[]): Promise<Map<string, User>> {
   const users = await getManyByIds<User>(COLLECTIONS.users, ids);
   for (const id of new Set(ids)) {
     const u = users.get(id);
-    if (!u || u.active === false) throw new Error("Responsável não encontrado ou inativo");
+    if (!u || u.active === false) throw new BusinessError("Responsável não encontrado ou inativo");
   }
   return users;
 }
@@ -467,14 +472,14 @@ export async function createSuccessPlan(data: SuccessPlanData, actor: UserRef, o
 
 async function loadPlan(id: string): Promise<SuccessPlan> {
   const plan = await getById<SuccessPlan>(COLLECTIONS.successPlans, id);
-  if (!plan) throw new Error("Plano de sucesso não encontrado");
+  if (!plan) throw new BusinessError("Plano de sucesso não encontrado");
   return plan;
 }
 
 export async function updateSuccessPlan(planId: string, data: SuccessPlanData, actor: UserRef): Promise<SuccessPlan> {
   const plan = await loadPlan(planId);
-  if (plan.status !== "ativo") throw new Error("Plano encerrado não pode ser editado");
-  if (plan.clientId !== data.clientId) throw new Error("O cliente do plano não pode ser alterado");
+  if (plan.status !== "ativo") throw new BusinessError("Plano encerrado não pode ser editado");
+  if (plan.clientId !== data.clientId) throw new BusinessError("O cliente do plano não pode ser alterado");
   const client = await loadClient(plan.clientId);
   const users = await loadResponsibles([data.ownerId, ...data.actions.map((a) => a.responsibleId)]);
   const current = new Map((plan.actions as PlanAction[]).map((a) => [a.id, a]));
@@ -522,10 +527,10 @@ export async function updateSuccessPlan(planId: string, data: SuccessPlanData, a
 /** Marca/desmarca uma ação e conclui/reabre a tarefa ligada. */
 export async function setPlanActionDone(planId: string, actionId: string, done: boolean, actor: UserRef): Promise<void> {
   const plan = await loadPlan(planId);
-  if (plan.status !== "ativo") throw new Error("Plano encerrado não pode ser alterado");
+  if (plan.status !== "ativo") throw new BusinessError("Plano encerrado não pode ser alterado");
   const actions = plan.actions as PlanAction[];
   const action = actions.find((a) => a.id === actionId);
-  if (!action) throw new Error("Ação não encontrada no plano");
+  if (!action) throw new BusinessError("Ação não encontrada no plano");
   if (action.done === done) return;
   const now = nowIso();
   const nextActions = actions.map((a) => (a.id === actionId ? { ...a, done, doneAt: done ? now : undefined } : a));
@@ -571,7 +576,7 @@ export async function syncPlanActionFromTask(event: DomainEvent, done: boolean):
 /** Encerra o plano (concluído ou cancelado) com o resultado; tarefas de ações pendentes são canceladas. */
 export async function closeSuccessPlan(planId: string, status: "concluido" | "cancelado", result: string, actor: UserRef): Promise<void> {
   const plan = await loadPlan(planId);
-  if (plan.status !== "ativo") throw new Error("O plano já está encerrado");
+  if (plan.status !== "ativo") throw new BusinessError("O plano já está encerrado");
   const pending = (plan.actions as PlanAction[]).filter((a) => !a.done && a.taskId);
   const tasks = await getManyByIds<Task>(COLLECTIONS.tasks, pending.map((a) => a.taskId!));
   for (const task of tasks.values()) if (OPEN_TASK.has(task.status)) await cancelTaskInternal(task, actor, `Plano de sucesso ${status === "concluido" ? "concluído" : "cancelado"}`);
@@ -663,7 +668,7 @@ export async function escalateRisk(clientId: string, note: string, actor: UserRe
   const client = await loadClient(clientId);
   const manager = await csManager();
   const targets = Array.from(new Set([manager?.id, actor.managerId].filter((id): id is string => Boolean(id) && id !== actor.id)));
-  if (targets.length === 0) throw new Error("Nenhum gestor encontrado para receber a escalação");
+  if (targets.length === 0) throw new BusinessError("Nenhum gestor encontrado para receber a escalação");
   const event = await emitEvent({
     type: "note.added",
     actor,
@@ -730,9 +735,9 @@ export async function checkActivation(clientId: string): Promise<ActivationCheck
 
 export async function activateCustomer(clientId: string, actor: UserRef): Promise<{ activatedAt: string }> {
   const client = await loadClient(clientId);
-  if (client.status === "cancelado") throw new Error("Cliente cancelado não pode ser ativado");
+  if (client.status === "cancelado") throw new BusinessError("Cliente cancelado não pode ser ativado");
   const check = await checkActivation(clientId);
-  if (!check.ok) throw new Error(`Gate de ativação não atendido: ${check.missing.join("; ")}`);
+  if (!check.ok) throw new BusinessError(`Gate de ativação não atendido: ${check.missing.join("; ")}`);
   const account = (await getCsAccount(clientId))!;
   const now = nowIso();
   const activatedAt = account.activatedAt ?? now;
@@ -796,7 +801,7 @@ async function renewalOwner(client: Client): Promise<string> {
   const account = await getCsAccount(client.id);
   if (account) return account.ownerId;
   const manager = await csManager();
-  if (!manager) throw new Error("Defina o responsável de CS do cliente");
+  if (!manager) throw new BusinessError("Defina o responsável de CS do cliente");
   return manager.id;
 }
 
@@ -857,6 +862,8 @@ export async function ensureRenewals(actor: UserRef = CS_SYSTEM_ACTOR): Promise<
 
   for (const contract of contracts) {
     if (!contract.endDate || contract.endDate > horizon || contract.endDate < staleLimit) continue;
+    // Renovação automática (D26): a varredura do Financeiro renova por aditivo; o CS não abre negociação.
+    if (contract.autoRenew) continue;
     const client = clientById.get(contract.clientId);
     if (!client || client.status === "cancelado") continue;
     const exists = renewals.some((r) => r.contractId === contract.id && (OPEN_RENEWAL.has(r.status) || r.dueDate.slice(0, 10) === contract.endDate!.slice(0, 10)));
@@ -886,11 +893,11 @@ export async function maybeRunRenewalSweep(): Promise<EnsureRenewalsResult | nul
 /** Criação manual para contratos vencendo além da janela automática. */
 export async function createRenewalForContract(contractId: string, actor: UserRef): Promise<Renewal> {
   const contract = await getById<Contract>(COLLECTIONS.contracts, contractId);
-  if (!contract) throw new Error("Contrato não encontrado");
-  if (contract.status !== "liberado") throw new Error("Só contratos liberados (ativos) têm renovação");
-  if (!contract.endDate) throw new Error("O contrato não tem data de término");
+  if (!contract) throw new BusinessError("Contrato não encontrado");
+  if (contract.status !== "liberado") throw new BusinessError("Só contratos liberados (ativos) têm renovação");
+  if (!contract.endDate) throw new BusinessError("O contrato não tem data de término");
   const renewals = await list<Renewal>(COLLECTIONS.renewals, { where: [["contractId", "==", contractId]] });
-  if (renewals.some((r) => OPEN_RENEWAL.has(r.status))) throw new Error("Já existe uma renovação aberta para este contrato");
+  if (renewals.some((r) => OPEN_RENEWAL.has(r.status))) throw new BusinessError("Já existe uma renovação aberta para este contrato");
   const client = await loadClient(contract.clientId);
   const renewal = await createRenewalRecord(contract, client, actor);
   await emitRenewalDue(renewal, contract, client);
@@ -937,7 +944,7 @@ export async function onRenewalDue(event: DomainEvent): Promise<void> {
 
 async function loadRenewal(id: string): Promise<Renewal> {
   const renewal = await getById<Renewal>(COLLECTIONS.renewals, id);
-  if (!renewal) throw new Error("Renovação não encontrada");
+  if (!renewal) throw new BusinessError("Renovação não encontrada");
   return renewal;
 }
 
@@ -951,7 +958,7 @@ async function closeRenewalTasks(renewalId: string, actor: UserRef, outcome: "re
 
 export async function startRenewalNegotiation(renewalId: string, actor: UserRef): Promise<Task> {
   const renewal = await loadRenewal(renewalId);
-  if (renewal.status !== "aguardando") throw new Error("A negociação só pode ser iniciada em renovações aguardando");
+  if (renewal.status !== "aguardando") throw new BusinessError("A negociação só pode ser iniciada em renovações aguardando");
   const [client, contract] = await Promise.all([loadClient(renewal.clientId), getById<Contract>(COLLECTIONS.contracts, renewal.contractId)]);
   await update<Renewal>(COLLECTIONS.renewals, renewal.id, { status: "em_negociacao" });
   return createTaskInternal(
@@ -972,15 +979,40 @@ export async function startRenewalNegotiation(renewalId: string, actor: UserRef)
   );
 }
 
-export async function completeRenewal(renewalId: string, termMonths: number, notes: string | undefined, actor: UserRef): Promise<{ newEndDate: string }> {
+export interface CompleteRenewalOptions {
+  readjustment?: Contract["readjustment"];
+  /** Aditivo de renovação exige assinatura do cliente (padrão false: aplicado na hora). */
+  requiresSignature?: boolean;
+}
+
+/**
+ * Renovação pelo CS (D26): cria e aplica um aditivo "renovacao" no MESMO contrato — endDate = fim atual + meses,
+ * `termMonths` PRESERVADO (o hash do contrato assinado não é reescrito), reajuste percentual aplicado à mensalidade
+ * (índice: fica pendente para o CS informar; nunca é buscado automaticamente) e mensalidades do novo prazo geradas
+ * pelo caminho único (`generateNextBillings`). Com `requiresSignature`, o aditivo fica aguardando assinatura no
+ * Financeiro e a renovação só se conclui na aplicação. `renewal.completed` continua sendo emitido (compatibilidade).
+ */
+export async function completeRenewal(renewalId: string, termMonths: number, notes: string | undefined, actor: UserRef, options: CompleteRenewalOptions = {}): Promise<{ newEndDate: string; amendmentId: string; amendmentNumber: string; applied: boolean }> {
   const renewal = await loadRenewal(renewalId);
-  if (!OPEN_RENEWAL.has(renewal.status)) throw new Error("Renovação já encerrada");
+  if (!OPEN_RENEWAL.has(renewal.status)) throw new BusinessError("Renovação já encerrada");
   const contract = await getById<Contract>(COLLECTIONS.contracts, renewal.contractId);
-  if (!contract) throw new Error("Contrato da renovação não encontrado");
-  const base = contract.endDate ?? renewal.dueDate;
-  const newEndDate = addMonths(new Date(base), termMonths).toISOString();
-  await update<Contract>(COLLECTIONS.contracts, contract.id, { endDate: newEndDate, termMonths });
-  const result = notes ? `Renovado por ${termMonths} meses até ${formatDate(newEndDate)}. ${notes}` : `Renovado por ${termMonths} meses até ${formatDate(newEndDate)}.`;
+  if (!contract) throw new BusinessError("Contrato da renovação não encontrado");
+  if (contract.status === "cancelado") throw new BusinessError("Contrato cancelado não pode ser renovado");
+  const { applyAmendment, createAmendment } = await import("@/server/finance/amendments");
+  const reason = notes?.trim() ? `Renovação negociada pelo CS: ${notes.trim()}` : "Renovação negociada pelo CS";
+  const amendment = await createAmendment(
+    { contractId: contract.id, effectiveFrom: (contract.endDate ?? nowIso()).slice(0, 10), reason, requiresSignature: options.requiresSignature ?? false, renewal: { months: termMonths, readjustment: options.readjustment ?? contract.readjustment } },
+    actor,
+    { source: "renovacao_cs", renewalId: renewal.id },
+  );
+  const newEndDate = amendment.after.endDate!;
+  if (amendment.requiresSignature) {
+    // Renovação com assinatura: o Financeiro colhe as assinaturas do termo aditivo e aplica; a renovação fica em negociação.
+    await update<Renewal>(COLLECTIONS.renewals, renewal.id, { status: "em_negociacao", notes: `Aditivo ${amendment.number} aguardando assinatura do cliente (renovação por ${termMonths} meses até ${formatDate(newEndDate)}).` });
+    return { newEndDate, amendmentId: amendment.id, amendmentNumber: amendment.number, applied: false };
+  }
+  const applied = await applyAmendment(amendment.id, actor);
+  const result = `Renovado por ${termMonths} meses até ${formatDate(newEndDate)} (aditivo ${amendment.number}${amendment.readjustment && amendment.readjustment.type !== "nenhum" ? `, reajuste ${amendment.readjustment.type === "percentual" ? `${amendment.readjustment.percent}%` : `por índice a informar`}` : ""}).${notes ? ` ${notes}` : ""}`;
   await update<Renewal>(COLLECTIONS.renewals, renewal.id, { status: "renovado", result });
   const account = await getCsAccount(renewal.clientId);
   if (account) await update<CsAccount>(COLLECTIONS.csAccounts, account.id, { renewalDate: newEndDate });
@@ -993,14 +1025,24 @@ export async function completeRenewal(renewalId: string, termMonths: number, not
     title: `Contrato ${contract.number} renovado por ${termMonths} meses`,
     description: result,
     department: "cs",
-    payload: { outcome: "renovado", contractId: contract.id, termMonths, newEndDate, previousEndDate: base, monthlyTotal: contract.monthlyTotal },
+    payload: { outcome: "renovado", contractId: contract.id, termMonths, newEndDate, previousEndDate: contract.endDate ?? renewal.dueDate, monthlyTotal: applied.contract.monthlyTotal, amendmentId: amendment.id, amendmentNumber: amendment.number, billingsCreated: applied.billings.created.length },
   });
-  return { newEndDate };
+  await emitEvent({
+    type: "contract.renewed",
+    actor,
+    clientId: renewal.clientId,
+    entity: { type: "contract", id: contract.id },
+    title: `Contrato ${contract.number} renovado até ${formatDate(newEndDate)} (aditivo ${amendment.number})`,
+    description: `${termMonths} meses · ${formatCurrency(applied.contract.monthlyTotal)}/mês · renovação negociada pelo CS${applied.billings.created.length > 0 ? ` · ${applied.billings.created.length} mensalidade(s) gerada(s)` : ""}`,
+    department: "cs",
+    payload: { contractId: contract.id, amendmentId: amendment.id, amendmentNumber: amendment.number, termMonths, newEndDate, previousEndDate: contract.endDate ?? renewal.dueDate, source: "renovacao_cs", renewalId: renewal.id, readjustment: amendment.readjustment ?? null, changes: { endDate: { from: contract.endDate ?? null, to: newEndDate } } },
+  });
+  return { newEndDate, amendmentId: amendment.id, amendmentNumber: amendment.number, applied: true };
 }
 
 export async function loseRenewal(renewalId: string, reason: string, actor: UserRef): Promise<{ clientId: string }> {
   const renewal = await loadRenewal(renewalId);
-  if (!OPEN_RENEWAL.has(renewal.status)) throw new Error("Renovação já encerrada");
+  if (!OPEN_RENEWAL.has(renewal.status)) throw new BusinessError("Renovação já encerrada");
   const contract = await getById<Contract>(COLLECTIONS.contracts, renewal.contractId);
   await update<Renewal>(COLLECTIONS.renewals, renewal.id, { status: "perdido", result: reason });
   await closeRenewalTasks(renewal.id, actor, "perdido");
@@ -1045,9 +1087,9 @@ export interface ChurnResult {
 
 export async function registerChurn(data: ChurnData, actor: UserRef): Promise<ChurnResult> {
   const client = await loadClient(data.clientId);
-  if (client.status === "cancelado") throw new Error("O cliente já está cancelado");
+  if (client.status === "cancelado") throw new BusinessError("O cliente já está cancelado");
   const responsible = await getById<User>(COLLECTIONS.users, data.responsibleId);
-  if (!responsible) throw new Error("Responsável não encontrado");
+  if (!responsible) throw new BusinessError("Responsável não encontrado");
   const [products, contracts, renewals, plans] = await Promise.all([
     list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["clientId", "==", client.id]] }),
     list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", client.id]] }),
@@ -1056,7 +1098,7 @@ export async function registerChurn(data: ChurnData, actor: UserRef): Promise<Ch
   ]);
   const ids = new Set(data.clientProductIds);
   const selected = products.filter((p) => ids.has(p.id) && p.status !== "cancelado");
-  if (selected.length !== ids.size) throw new Error("Produto inválido ou já cancelado");
+  if (selected.length !== ids.size) throw new BusinessError("Produto inválido ou já cancelado");
 
   const cancelledAt = new Date(data.date).toISOString();
   for (const p of selected) await update<ClientProduct>(COLLECTIONS.clientProducts, p.id, { status: "cancelado", cancelledAt });
@@ -1076,7 +1118,10 @@ export async function registerChurn(data: ChurnData, actor: UserRef): Promise<Ch
     const linked = products.some((p) => p.contractId === c.id);
     const cancel = fullChurn || (linked ? !remainingByContract.has(c.id) && selected.some((p) => p.contractId === c.id) : c.items.length > 0 && c.items.every((i) => cancelledProductIds.has(i.productId)));
     if (!cancel) continue;
-    await update<Contract>(COLLECTIONS.contracts, c.id, { status: "cancelado" });
+    // Caminho único do cancelamento de contrato (Financeiro): status, data/motivo/autor, cobranças em aberto
+    // canceladas e evento contract.cancelled. Import dinâmico para evitar ciclo de módulos.
+    const { cancelContract } = await import("@/server/finance/service");
+    await cancelContract({ contractId: c.id, reason: `Cancelamento do cliente (${CHURN_REASON_LABELS[data.reasonCategory]}): ${data.reason}` }, actor, { source: "churn", cancelledAt });
     cancelledContractIds.push(c.id);
   }
   for (const r of renewals.filter((x) => OPEN_RENEWAL.has(x.status) && (fullChurn || cancelledContractIds.includes(x.contractId)))) {
@@ -1148,17 +1193,17 @@ export async function registerChurn(data: ChurnData, actor: UserRef): Promise<Ch
 
 export async function createCsUpsell(input: { clientId: string; productId: string; need?: string }, actor: UserRef): Promise<Opportunity> {
   const client = await loadClient(input.clientId);
-  if (client.status === "cancelado") throw new Error("Cliente cancelado");
+  if (client.status === "cancelado") throw new BusinessError("Cliente cancelado");
   const [product, owned, opportunities, catalog] = await Promise.all([
     getById<Product>(COLLECTIONS.products, input.productId),
     list<ClientProduct>(COLLECTIONS.clientProducts, { where: [["clientId", "==", client.id]] }),
     list<Opportunity>(COLLECTIONS.opportunities, { where: [["clientId", "==", client.id]] }),
     list<Product>(COLLECTIONS.products),
   ]);
-  if (!product || product.active === false) throw new Error("Produto não encontrado no catálogo");
+  if (!product || product.active === false) throw new BusinessError("Produto não encontrado no catálogo");
   const ownedActive = owned.filter((p) => p.status !== "cancelado");
-  if (ownedActive.some((p) => p.productId === product.id)) throw new Error(`O cliente já tem ${product.name} contratado`);
-  if (opportunities.some((o) => OPEN_OPPORTUNITY.has(o.stage) && o.products.some((p) => p.productId === product.id))) throw new Error(`Já existe oportunidade aberta de ${product.name} para este cliente`);
+  if (ownedActive.some((p) => p.productId === product.id)) throw new BusinessError(`O cliente já tem ${product.name} contratado`);
+  if (opportunities.some((o) => OPEN_OPPORTUNITY.has(o.stage) && o.products.some((p) => p.productId === product.id))) throw new BusinessError(`Já existe oportunidade aberta de ${product.name} para este cliente`);
 
   const categoryOf = new Map(catalog.map((p) => [p.id, p.category]));
   const ownedCategories = new Set(ownedActive.map((p) => categoryOf.get(p.productId)));

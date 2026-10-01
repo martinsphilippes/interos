@@ -36,7 +36,8 @@ function StatusBadges({ p }: { p: ProcessSummary }) {
 }
 
 /** Processos com ramificações (construtor visual), agrupados por chave com as versões. */
-export function ProcessList({ processes }: { processes: ProcessSummary[] }) {
+/** `canCreate` (admin.workflows.processos.criar, calculado no servidor) mostra o "Novo processo" do estado vazio. */
+export function ProcessList({ processes, canCreate = true }: { processes: ProcessSummary[]; canCreate?: boolean }) {
   if (processes.length === 0) {
     return (
       <EmptyState
@@ -44,7 +45,7 @@ export function ProcessList({ processes }: { processes: ProcessSummary[] }) {
         icon={<GitBranch />}
         title="Nenhum processo criado"
         description="Desenhe processos com tarefas, aprovações, condições e esperas que rodam sobre as mesmas tarefas, SLAs e notificações do sistema."
-        action={<NewProcessButton />}
+        action={canCreate ? <NewProcessButton /> : undefined}
       />
     );
   }

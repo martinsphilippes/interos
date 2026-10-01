@@ -12,12 +12,14 @@ import {
   type ImplementationProject,
   type ImplementationTask,
   type Renewal,
+  type SaleSnapshot,
   type SuccessPlan,
   type Training,
 } from "../../src/domain/types";
 import type { HealthLevel } from "../../src/domain/constants";
 import { NOW, addDays, businessTime, competence, dayInCompetence, daysAgo, daysFromNow, id, pastOnly, rng, type SeedDoc } from "./lib";
 import { clientById, type SeedContext, type SeededClient } from "./context";
+import { contractEffectiveItems } from "../../src/domain/sale-closing";
 
 // ---------------------------------------------------------------------------
 // Projetos de implantação
@@ -114,7 +116,34 @@ function seedProjects(ctx: SeedContext): void {
     const goLiveAt = done ? j.goLiveAt : undefined;
     const waitingClient = plan.status === "aguardando_cliente" ? { reason: "Cliente ainda não enviou o certificado digital A1 para configuração fiscal.", since: daysAgo(3, 10), responsibleId: ownerId, evidence: "WhatsApp enviado em " + daysAgo(3).slice(0, 10) } : undefined;
 
+    // Fotografia da venda só para projetos de contratos com fechamento estruturado (os demais são históricos).
+    const saleContract = ctx.contracts.find((c) => c.id === id("ctr", plan.client) && c.saleNumber);
+    const saleSnapshot: SaleSnapshot | undefined = saleContract
+      ? {
+          opportunityId: saleContract.opportunityId,
+          saleNumber: saleContract.saleNumber,
+          contractNumber: saleContract.number,
+          sellerId: saleContract.sellerId,
+          contactId: saleContract.contactId,
+          contactName: client.contacts.find((c) => c.id === saleContract.contactId)?.name,
+          contactPhone: client.contacts.find((c) => c.id === saleContract.contactId)?.phone,
+          contactEmail: client.contacts.find((c) => c.id === saleContract.contactId)?.email,
+          paymentMethod: saleContract.paymentMethod,
+          commercialNotes: saleContract.commercialNotes,
+          implementationNotes: saleContract.implementationNotes,
+          implementationRequired: saleContract.implementationRequired,
+          items: contractEffectiveItems(saleContract).map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: i.setupValue, monthlyValue: i.monthlyValue, hardwareValue: i.hardwareValue })),
+          termMonths: saleContract.termMonths,
+          billingDay: saleContract.billingDay,
+          monthlyTotal: saleContract.monthlyTotal,
+          setupTotal: saleContract.setupTotal,
+          hardwareTotal: saleContract.hardwareTotal,
+          setupInstallments: saleContract.setupInstallments,
+          capturedAt: saleContract.releasedAt ?? startDate,
+        }
+      : undefined;
     const project = store.add(COLLECTIONS.implementationProjects, projectId, {
+      saleSnapshot,
       clientId: client.doc.id,
       contractId: id("ctr", plan.client),
       workflowInstanceId: undefined, // preenchido em journey-workflow

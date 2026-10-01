@@ -9,7 +9,8 @@ import { Progress } from "@/components/ui/progress";
 import { MedalIcon } from "./medal-icon";
 
 /** Posição no ranking, pontos do período, nível e medalhas recentes do colaborador. */
-export function GamificationCard({ data, periodLabel, rankingHref }: { data: NonNullable<MyPerformance["gamification"]>; periodLabel: string; rankingHref: string }) {
+/** `rankingHref` ausente = o visitante não vê a tela Ranking (o link não aparece). */
+export function GamificationCard({ data, periodLabel, rankingHref }: { data: NonNullable<MyPerformance["gamification"]>; periodLabel: string; rankingHref?: string }) {
   const DeltaIcon = data.delta === null || data.delta === 0 ? Minus : data.delta > 0 ? ArrowUpRight : ArrowDownRight;
   return (
     <Card>
@@ -18,9 +19,11 @@ export function GamificationCard({ data, periodLabel, rankingHref }: { data: Non
           <CardTitle>Ranking, pontos e medalhas</CardTitle>
           <CardDescription>{periodLabel}</CardDescription>
         </div>
-        <Link href={rankingHref} className="inline-flex min-h-[44px] items-center gap-1 text-sm font-medium text-brand hover:underline md:min-h-0">
-          Ver ranking <ChevronRight className="size-4" aria-hidden />
-        </Link>
+        {rankingHref ? (
+          <Link href={rankingHref} className="inline-flex min-h-[44px] items-center gap-1 text-sm font-medium text-brand hover:underline md:min-h-0">
+            Ver ranking <ChevronRight className="size-4" aria-hidden />
+          </Link>
+        ) : null}
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-0">
         <div className="grid grid-cols-3 gap-3">

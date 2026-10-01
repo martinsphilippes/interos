@@ -14,6 +14,7 @@ import { ClientActions } from "./client-actions";
 import { HEALTH_LABELS } from "./client-badges";
 import { JourneyProgress } from "./journey-progress";
 import { accountManager, buildUpcoming } from "./overview-model";
+import { ALL_CLIENT_SECTIONS, type ClientCapabilities, type ClientSectionAccess } from "./access-model";
 
 export interface ClientHeaderProps {
   data: Client360;
@@ -21,6 +22,8 @@ export interface ClientHeaderProps {
   ticketOptions: NewTicketOptions | null;
   /** Canais conectados de fato (registro de integrações). */
   channels?: { whatsapp: boolean; voip: boolean };
+  /** Ações permitidas (calculadas no servidor). */
+  can?: ClientCapabilities;
 }
 
 const STATUS_VARIANT: Record<ClientStatus, NonNullable<BadgeProps["variant"]>> = {
@@ -48,7 +51,7 @@ function HeaderFact({ icon, label, children, className }: { icon: React.ReactNod
 }
 
 /** Cabeçalho da Ficha 360º (padrão 12): identificação, gestor da conta, desde, cidade, ações e jornada. */
-export function ClientHeader({ data, options, ticketOptions, channels }: ClientHeaderProps) {
+export function ClientHeader({ data, options, ticketOptions, channels, can }: ClientHeaderProps) {
   const { client, contacts, workflow, users, availableProducts, ownedCategories } = data;
   const manager = accountManager(client, users);
   const city = [client.address?.city, client.address?.state].filter(Boolean).join(" — ");
@@ -86,7 +89,7 @@ export function ClientHeader({ data, options, ticketOptions, channels }: ClientH
               </div>
             </div>
           </div>
-          <ClientActions client={client} contacts={contacts} availableProducts={availableProducts} ownedCategories={ownedCategories} options={options} ticketOptions={ticketOptions} channels={channels} />
+          <ClientActions client={client} contacts={contacts} availableProducts={availableProducts} ownedCategories={ownedCategories} options={options} ticketOptions={ticketOptions} channels={channels} can={can} />
         </div>
 
         <div className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3 sm:divide-x sm:divide-border lg:grid-cols-[repeat(3,minmax(0,16rem))] [&>*]:sm:pl-4 [&>*:first-child]:sm:pl-0">
@@ -117,8 +120,12 @@ export function ClientHeader({ data, options, ticketOptions, channels }: ClientH
   );
 }
 
-/** Indicadores do cliente (MRR, em aberto, próximo vencimento, saúde), cada um levando à aba de detalhe. */
-export function ClientKpis({ data }: { data: Client360 }) {
+/**
+ * Indicadores do cliente (MRR, em aberto, próximo vencimento, saúde), cada um levando à aba de detalhe. Os financeiros
+ * só com a seção Financeiro da ficha; os valores só com "Visualizar valores" (financeiro.valores.ver, A13) — sem ela o
+ * número não é renderizado ("Restrito"); a saúde só com a seção CS.
+ */
+export function ClientKpis({ data, sections = ALL_CLIENT_SECTIONS, showValues = true }: { data: Client360; sections?: ClientSectionAccess; showValues?: boolean }) {
   const { client, financial } = data;
   const base = `/clientes/${client.id}`;
   const mrr = financial.mrr || client.mrr || 0;
@@ -129,54 +136,63 @@ export function ClientKpis({ data }: { data: Client360 }) {
   const healthTone = level === "saudavel" ? "success" : level === "atencao" ? "warning" : level === "risco" ? "danger" : "neutral";
 
   // Celular: grade 2x2 com cards compactos; a partir de md, cards completos (padrão 12).
+  const money = (value: number) => (showValues ? formatCurrency(value) : "Restrito");
   const cards = (compact: boolean) => (
     <>
-      <StatCard compact={compact} label="Receita mensal" value={mrr > 0 ? formatCurrency(mrr) : "—"} icon={<DollarSign />} tone="brand" href={`${base}?aba=financeiro`} hint="Ver detalhes" />
-      <StatCard
-        compact={compact}
-        label="Em aberto"
-        value={formatCurrency(openTotal)}
-        icon={<Receipt />}
-        tone={financial.overdueCount > 0 ? "danger" : "info"}
-        valueTone={financial.overdueCount > 0}
-        href={`${base}?aba=financeiro`}
-        hint={financial.overdueCount > 0 ? `${formatCurrency(financial.overdueAmount)} vencido` : `${financial.openCount} cobrança${financial.openCount === 1 ? "" : "s"} a vencer`}
-      />
-      <StatCard
-        compact={compact}
-        label="Próximo vencimento"
-        value={next ? formatDate(next.date) : "—"}
-        icon={<CalendarClock />}
-        tone="purple"
-        href={`${base}?aba=financeiro`}
-        hint={next ? `${next.title}${next.amount ? ` · ${formatCurrency(next.amount)}` : ""}` : "Nada a vencer"}
-      />
-      <StatCard
-        compact={compact}
-        label="Saúde do cliente"
-        value={
-          health !== undefined ? (
-            <span className="inline-flex items-baseline gap-2">
-              {health}
-              {level ? <span className={cn("rounded-md px-1.5 py-0.5 text-xs font-medium", healthTone === "success" ? "bg-success-soft text-success-fg" : healthTone === "warning" ? "bg-warning-soft text-warning-fg" : "bg-danger-soft text-danger-fg")}>{HEALTH_LABELS[level]}</span> : null}
-            </span>
-          ) : (
-            "—"
-          )
-        }
-        icon={<HeartPulse />}
-        tone={healthTone}
-        href={`${base}?aba=cs`}
-        hint={health !== undefined ? "Ver detalhes" : "Calculada após a ativação"}
-      />
+      {sections.financeiro ? (
+        <>
+          <StatCard compact={compact} label="Receita mensal" value={mrr > 0 ? money(mrr) : "—"} icon={<DollarSign />} tone="brand" href={`${base}?aba=financeiro`} hint="Ver detalhes" />
+          <StatCard
+            compact={compact}
+            label="Em aberto"
+            value={money(openTotal)}
+            icon={<Receipt />}
+            tone={financial.overdueCount > 0 ? "danger" : "info"}
+            valueTone={financial.overdueCount > 0}
+            href={`${base}?aba=financeiro`}
+            hint={financial.overdueCount > 0 ? `${money(financial.overdueAmount)} vencido` : `${financial.openCount} cobrança${financial.openCount === 1 ? "" : "s"} a vencer`}
+          />
+          <StatCard
+            compact={compact}
+            label="Próximo vencimento"
+            value={next ? formatDate(next.date) : "—"}
+            icon={<CalendarClock />}
+            tone="purple"
+            href={`${base}?aba=financeiro`}
+            hint={next ? `${next.title}${next.amount ? ` · ${money(next.amount)}` : ""}` : "Nada a vencer"}
+          />
+        </>
+      ) : null}
+      {sections.cs ? (
+        <StatCard
+          compact={compact}
+          label="Saúde do cliente"
+          value={
+            health !== undefined ? (
+              <span className="inline-flex items-baseline gap-2">
+                {health}
+                {level ? <span className={cn("rounded-md px-1.5 py-0.5 text-xs font-medium", healthTone === "success" ? "bg-success-soft text-success-fg" : healthTone === "warning" ? "bg-warning-soft text-warning-fg" : "bg-danger-soft text-danger-fg")}>{HEALTH_LABELS[level]}</span> : null}
+              </span>
+            ) : (
+              "—"
+            )
+          }
+          icon={<HeartPulse />}
+          tone={healthTone}
+          href={`${base}?aba=cs`}
+          hint={health !== undefined ? "Ver detalhes" : "Calculada após a ativação"}
+        />
+      ) : null}
     </>
   );
+  if (!sections.financeiro && !sections.cs) return null;
+  const columns = sections.financeiro && sections.cs ? 4 : sections.financeiro ? 3 : 2;
   return (
     <>
-      <KpiStrip columns={4} mobileColumns={2} className="mt-4 md:hidden">
+      <KpiStrip columns={columns} mobileColumns={2} className="mt-4 md:hidden">
         {cards(true)}
       </KpiStrip>
-      <KpiStrip columns={4} className="mt-4 hidden md:grid">
+      <KpiStrip columns={columns} className="mt-4 hidden md:grid">
         {cards(false)}
       </KpiStrip>
     </>

@@ -8,7 +8,7 @@
 import type { DepartmentKey } from "@/domain/constants";
 import { CLIENT_STATUS_LABELS, TASK_STATUS_LABELS } from "@/domain/constants";
 
-export const REPORT_KEYS = ["marketing", "vendas", "financeiro", "implantacao", "cs", "suporte", "diretoria", "tarefas", "oportunidades", "contratos", "chamados", "clientes", "comissoes"] as const;
+export const REPORT_KEYS = ["marketing", "vendas", "financeiro", "implantacao", "cs", "suporte", "diretoria", "tarefas", "oportunidades", "contratos", "chamados", "clientes", "comissoes", "contas_a_pagar"] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 export type ColumnType = "texto" | "numero" | "moeda" | "percentual" | "dias" | "horas" | "minutos" | "nota" | "data" | "status";
@@ -347,9 +347,14 @@ export const REPORT_DEFINITIONS: Record<ReportKey, ReportDefinition> = {
     filters: ["periodo_mes", "colaborador", "cliente", "produto", "status"],
     statusOptions: [
       { value: "prevista", label: "Prevista" },
-      { value: "liberada", label: "Liberada" },
+      { value: "em_carencia", label: "Em carência" },
+      { value: "aguardando_recebimento", label: "Aguardando recebimento" },
+      { value: "liberada", label: "Elegível" },
+      { value: "titulo_gerado", label: "Título gerado" },
       { value: "paga", label: "Paga" },
+      { value: "bloqueada", label: "Bloqueada" },
       { value: "cancelada", label: "Cancelada" },
+      { value: "estornada", label: "Estornada" },
     ],
     columns: [
       { key: "colaborador", label: "Colaborador", type: "texto", width: 18 },
@@ -360,7 +365,35 @@ export const REPORT_DEFINITIONS: Record<ReportKey, ReportDefinition> = {
       { key: "valor", label: "Comissão", type: "moeda", total: "soma" },
       { key: "competencia", label: "Competência", type: "texto", width: 11 },
       { key: "status", label: "Situação", type: "texto", width: 10 },
-      { key: "liberacao", label: "Liberação", type: "data" },
+      { key: "liberacao", label: "Elegível em", type: "data" },
+    ],
+  },
+  contas_a_pagar: {
+    key: "contas_a_pagar",
+    title: "Contas a pagar",
+    description: "Títulos a pagar por competência: credor, categoria, vencimento, valor, situação e origem (comissão, bônus, manual, série).",
+    group: "operacional",
+    department: "financeiro",
+    filters: ["periodo_mes", "status"],
+    statusOptions: [
+      { value: "previsto", label: "Previsto" },
+      { value: "aprovado", label: "Aprovado" },
+      { value: "a_pagar", label: "A pagar" },
+      { value: "pago", label: "Pago" },
+      { value: "cancelado", label: "Cancelado" },
+      { value: "vencido", label: "Vencido (em aberto)" },
+    ],
+    columns: [
+      { key: "codigo", label: "Código", type: "texto", width: 14 },
+      { key: "credor", label: "Credor", type: "texto", width: 22 },
+      { key: "categoria", label: "Categoria", type: "texto", width: 16 },
+      { key: "centro", label: "Centro de custo", type: "texto", width: 14 },
+      { key: "competencia", label: "Competência", type: "texto", width: 11 },
+      { key: "vencimento", label: "Vencimento", type: "data" },
+      { key: "valor", label: "Valor", type: "moeda", total: "soma" },
+      { key: "status", label: "Situação", type: "texto", width: 10 },
+      { key: "origem", label: "Origem", type: "texto", width: 16 },
+      { key: "pago_em", label: "Pago em", type: "data" },
     ],
   },
 };

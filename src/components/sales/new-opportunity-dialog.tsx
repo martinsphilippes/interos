@@ -19,8 +19,22 @@ import { ProductsEditor, toPayloadLines, type EditableLine } from "./products-ed
 import { useSalesUrl } from "./use-sales-url";
 import { useUrlFlag } from "@/lib/use-url-flag";
 
-/** Botão + diálogo "Nova oportunidade" (entra em Qualificação com próxima ação obrigatória). */
-export function NewOpportunityButton({ options, currentUserId, openOnUrlFlag }: { options: SalesFormOptions; currentUserId: string; /** Abre com ?novo=1 (ações rápidas). */ openOnUrlFlag?: boolean }) {
+export interface NewOpportunityButtonProps {
+  options: SalesFormOptions;
+  currentUserId: string;
+  /** Nome do usuário (opção "você" quando ele não está na lista de vendedores). */
+  currentUserName?: string;
+  /** Pode criar em nome de outro vendedor (vendas.oportunidades.atribuir; padrão: todos com o módulo). */
+  canChooseOwner?: boolean;
+  /** Abre com ?novo=1 (ações rápidas). */
+  openOnUrlFlag?: boolean;
+}
+
+/**
+ * Botão + diálogo "Nova oportunidade" (entra em Qualificação com próxima ação obrigatória). A página só o renderiza
+ * com vendas.oportunidades.criar; sem a chave de atribuição o vendedor fica fixo no próprio usuário.
+ */
+export function NewOpportunityButton({ options, currentUserId, currentUserName, canChooseOwner = true, openOnUrlFlag }: NewOpportunityButtonProps) {
   const router = useRouter();
   const { navigate } = useSalesUrl();
   const id = React.useId();
@@ -28,7 +42,11 @@ export function NewOpportunityButton({ options, currentUserId, openOnUrlFlag }: 
   const [clientId, setClientId] = React.useState<string | undefined>();
   const [title, setTitle] = React.useState("");
   const [kind, setKind] = React.useState<"nova_venda" | "upsell" | "cross_sell" | "renovacao">("nova_venda");
-  const [ownerId, setOwnerId] = React.useState(options.sellers.some((s) => s.id === currentUserId) ? currentUserId : (options.sellers[0]?.id ?? ""));
+  const inSellers = options.sellers.some((s) => s.id === currentUserId);
+  const [ownerId, setOwnerId] = React.useState(inSellers || !canChooseOwner ? currentUserId : (options.sellers[0]?.id ?? ""));
+  const ownerOptions = canChooseOwner
+    ? options.sellers.map((s) => ({ value: s.id, label: s.name }))
+    : [{ value: currentUserId, label: options.sellers.find((s) => s.id === currentUserId)?.name ?? currentUserName ?? "Você" }];
   const [temperature, setTemperature] = React.useState<"quente" | "morno" | "frio">("morno");
   const [lines, setLines] = React.useState<EditableLine[]>([]);
   const [need, setNeed] = React.useState("");
@@ -111,7 +129,7 @@ export function NewOpportunityButton({ options, currentUserId, openOnUrlFlag }: 
                 <Select id={`${id}-k`} value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} options={Object.entries(OPPORTUNITY_KIND_LABELS).map(([value, label]) => ({ value, label }))} />
               </FormField>
               <FormField label="Vendedor" htmlFor={`${id}-o`} required>
-                <Select id={`${id}-o`} value={ownerId} onChange={(e) => setOwnerId(e.target.value)} options={options.sellers.map((s) => ({ value: s.id, label: s.name }))} />
+                <Select id={`${id}-o`} value={ownerId} onChange={(e) => setOwnerId(e.target.value)} disabled={!canChooseOwner} options={ownerOptions} />
               </FormField>
               <FormField label="Temperatura" htmlFor={`${id}-te`}>
                 <Select id={`${id}-te`} value={temperature} onChange={(e) => setTemperature(e.target.value as typeof temperature)} options={[{ value: "quente", label: "Quente" }, { value: "morno", label: "Morno" }, { value: "frio", label: "Frio" }]} />

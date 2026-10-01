@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { ScreenLink } from "@/components/auth/access-provider";
 import { Building2, CalendarDays, FileSignature, GitBranch, Pencil, Users } from "lucide-react";
 import type { ProjectRow, UserLite } from "@/server/implementation/queries";
 import { updateTeam } from "@/server/implementation/actions";
@@ -48,9 +48,17 @@ export function ProjectHeader({ row, scope, client, contract, sla, users, workfl
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <Link href={`/clientes/${client.id}?aba=implantacao`} className="inline-flex items-center gap-1.5 text-lg font-semibold hover:underline">
+              <ScreenLink
+                href={`/clientes/${client.id}?aba=implantacao`}
+                className="inline-flex items-center gap-1.5 text-lg font-semibold hover:underline"
+                fallback={
+                  <span className="inline-flex items-center gap-1.5 text-lg font-semibold">
+                    <Building2 className="size-4 text-muted" aria-hidden /> {client.tradeName}
+                  </span>
+                }
+              >
                 <Building2 className="size-4 text-muted" aria-hidden /> {client.tradeName}
-              </Link>
+              </ScreenLink>
               <Badge variant={IMPLEMENTATION_STATUS_VARIANT[row.status]}>{IMPLEMENTATION_STATUS_LABELS[row.status]}</Badge>
               <Badge variant="outline">{IMPLEMENTATION_PHASE_LABELS[row.currentPhase]}</Badge>
             </div>
@@ -110,17 +118,34 @@ export function ProjectHeader({ row, scope, client, contract, sla, users, workfl
           <div className="flex flex-col gap-1 text-sm">
             <p className="label-caps mb-0.5">Vínculos</p>
             {contract ? (
-              <Link href={`/financeiro/contratos/${contract.id}`} className="inline-flex items-center gap-1.5 hover:underline">
+              <ScreenLink
+                href={`/financeiro/contratos/${contract.id}`}
+                className="inline-flex items-center gap-1.5 hover:underline"
+                fallback={
+                  <span className="inline-flex items-center gap-1.5">
+                    <FileSignature className="size-3.5 text-muted" aria-hidden /> Contrato {contract.number}
+                    {contract.releasedAt ? <span className="text-xs text-muted">· liberado {formatDate(contract.releasedAt)}</span> : null}
+                  </span>
+                }
+              >
                 <FileSignature className="size-3.5 text-muted" aria-hidden /> Contrato {contract.number}
                 {contract.releasedAt ? <span className="text-xs text-muted">· liberado {formatDate(contract.releasedAt)}</span> : null}
-              </Link>
+              </ScreenLink>
             ) : (
               <span className="text-muted">Sem contrato vinculado</span>
             )}
             {workflowStep ? (
-              <Link href={`/workflow?etapa=${workflowStep.id}`} className="inline-flex items-center gap-1.5 hover:underline">
+              <ScreenLink
+                href={`/workflow?etapa=${workflowStep.id}`}
+                className="inline-flex items-center gap-1.5 hover:underline"
+                fallback={
+                  <span className="inline-flex items-center gap-1.5">
+                    <GitBranch className="size-3.5 text-muted" aria-hidden /> Etapa {workflowStep.stageName}: {WORKFLOW_STEP_STATUS_LABELS[workflowStep.status]}
+                  </span>
+                }
+              >
                 <GitBranch className="size-3.5 text-muted" aria-hidden /> Etapa {workflowStep.stageName}: {WORKFLOW_STEP_STATUS_LABELS[workflowStep.status]}
-              </Link>
+              </ScreenLink>
             ) : null}
           </div>
         </div>

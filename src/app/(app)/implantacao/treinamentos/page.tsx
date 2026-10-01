@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
 import { listTrainings } from "@/server/implementation/queries";
-import { canOperateImplementation } from "@/server/implementation/schemas";
+import { implementationCapabilities } from "@/server/implementation/access";
 import { dateKey } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -12,12 +11,11 @@ import { CalendarClock, CheckCircle2, GraduationCap } from "lucide-react";
 
 export const metadata: Metadata = { title: "Treinamentos" };
 
-/** Agenda e registro de treinamentos de todos os projetos de implantação. */
+/** Agenda e registro de treinamentos dos projetos de implantação do escopo (instrutor ou donos do projeto). */
 export default async function TrainingsPage() {
-  const user = await requireUser();
-  if (!canAccessModule(user, "implantacao")) redirect("/meu-dia?erro=sem-permissao");
-  const { rows, projects, users, products } = await listTrainings();
-  const canOperate = canOperateImplementation(user);
+  const user = await requireScreen("implantacao.treinamentos");
+  const { rows, projects, users, products } = await listTrainings(user);
+  const caps = implementationCapabilities(user);
   const now = new Date().toISOString();
   const month = dateKey(now).slice(0, 7);
   const upcoming = rows.filter((r) => r.status === "agendado" && r.scheduledAt >= now);
@@ -44,7 +42,7 @@ export default async function TrainingsPage() {
         products={products}
         users={users.map((u) => ({ id: u.id, name: u.name }))}
         defaultInstructorId={user.id}
-        canOperate={canOperate}
+        permissions={{ schedule: caps.scheduleTraining, complete: caps.completeTraining, cancel: caps.cancelTraining }}
         showProject
         allowNew={projects.length > 0}
       />

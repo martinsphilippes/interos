@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { COLLECTIONS } from "@/domain/types";
+import { ACCESS_DENIED_REDIRECT, requireScreen } from "@/server/auth/session";
+import { recordExists } from "@/server/sales/access";
 import { getProposalDetail } from "@/server/sales/queries";
 import { HEADQUARTERS, formatAddressLine } from "@/server/sales/maps";
 import { formatCurrency, formatDate, formatDocument, formatPhone } from "@/lib/format";
@@ -36,13 +38,18 @@ const PRINT_CSS = `
 }
 `;
 
-/** Proposta imprimível (window.print / salvar como PDF). */
+/**
+ * Proposta imprimível (window.print / salvar como PDF). Tela vendas.propostas; proposta fora do escopo = aviso de
+ * acesso negado, inexistente = 404. O título da aba é fixo (não lê dados antes da checagem, A30).
+ */
 export default async function ProposalPrintPage({ params }: { params: Params }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "vendas")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("vendas.propostas");
   const { id } = await params;
   const detail = await getProposalDetail(user, id);
-  if (!detail) notFound();
+  if (!detail) {
+    if (await recordExists(COLLECTIONS.proposals, id)) redirect(ACCESS_DENIED_REDIRECT);
+    notFound();
+  }
   const { proposal, client, contact, owner, organization } = detail;
   const firstYear = proposal.setupTotal + proposal.monthlyTotal * 12 + proposal.hardwareTotal;
 

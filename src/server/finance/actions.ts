@@ -1,81 +1,84 @@
 "use server";
 /**
- * Server Actions do módulo Financeiro. Padrão: requireUser() → permissão → validação zod → serviço
- * (regras e eventos) → revalidatePath. Todas devolvem ActionResult com mensagem em português.
+ * Server Actions do módulo Financeiro (contratos e cobranças). Padrão: requirePermission(chave do catálogo,
+ * src/domain/permissions/financeiro.ts) → validação zod → escopo do registro (assert*Access: fora da tela/escopo =
+ * PermissionError; inexistente = BusinessError) → serviço (regras e eventos) → revalidatePath. Todas devolvem
+ * ActionResult com mensagem em português; falhas pelo tratamento único (failAction, que relança redirect/notFound).
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, failAction, requirePermission } from "@/server/auth/session";
 import { getById } from "@/server/db";
-import { COLLECTIONS, type ActionResult, type Billing, type CurrentUser, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type ActionResult, type CurrentUser, type UserRef } from "@/domain/types";
 import type { BillingContactInfo } from "./service";
+import { applyAmendment, cancelAmendment, createAmendment, registerAmendmentSignature, sendAmendmentForSignature } from "./amendments";
 import {
   addContractDocument,
   addSigner,
   cancelBilling,
+  cancelContract,
   completeBillingData,
   createManualContract,
   ensureContractForOpportunity,
   getBillingContactInfo,
   generateBillings,
+  generateNextBillings,
   registerBillingCall,
+  registerBoleto,
   registerPayment,
   registerPendency,
   releaseContract,
   removeSigner,
   resolvePendency,
+  reversePayment,
+  sendBillingMessage,
   sendBillingWhatsapp,
   sendForSignature,
   registerManualSignature,
   sendSignatureReminder,
   updateContractConditions,
   updateContractItems,
+  type BillingChannelResult,
 } from "./service";
 import {
+  amendmentIdSchema,
+  amendmentInputSchema,
+  amendmentSignatureSchema,
   billingContactSchema,
-  canOperateFinance,
+  cancelAmendmentSchema,
   billingDataSchema,
   billingIdSchema,
   cancelBillingSchema,
+  cancelContractSchema,
   contractDocumentSchema,
   contractIdSchema,
   manualContractSchema,
   manualSignatureSchema,
   opportunityIdSchema,
   pendencySchema,
+  registerBoletoSchema,
   registerPaymentSchema,
   releaseSchema,
   resolvePendencySchema,
+  reversePaymentSchema,
+  sendBillingMessageSchema,
   signerRefSchema,
   signerSchema,
   updateConditionsSchema,
   updateItemsSchema,
   zodMessage,
 } from "./schemas";
+import { assertAmendmentAccess, assertBillingAccess, assertContractAccess, assertOpportunityContractAccess } from "./access";
 
 type Failure = { ok: false; error: string };
 
+/** Validação: a primeira mensagem do zod (como antes); o resto pelo tratamento único (failAction). */
 function fail(error: unknown, fallback: string): Failure {
   if (error instanceof z.ZodError) return { ok: false, error: zodMessage(error) };
-  if (error instanceof Error && error.message) {
-    // Erros de regra do serviço já vêm em português; erros técnicos ficam no log.
-    if (!/firestore|firebase|ECONN|deadline|permission|undefined|null/i.test(error.message)) return { ok: false, error: error.message };
-  }
-  console.error(`[financeiro] ${fallback}`, error);
-  return { ok: false, error: fallback };
+  return failAction(error, fallback, "financeiro");
 }
 
 const actorOf = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
-
-/** Quem opera o Financeiro: equipe financeira, gestores, diretoria e admin (Vendas só consulta). */
-async function requireFinanceOperator(): Promise<CurrentUser> {
-  const user = await requireUser();
-  if (!canAccessModule(user, "financeiro")) throw new Error("Seu perfil não tem acesso ao módulo Financeiro");
-  if (!canOperateFinance(user)) {
-    throw new Error("Somente a equipe financeira ou gestores podem executar esta ação");
-  }
-  return user;
-}
 
 function revalidateFinance(clientId?: string, contractId?: string) {
   revalidatePath("/financeiro", "layout");
@@ -91,18 +94,15 @@ async function clientOfContract(contractId: string): Promise<string | undefined>
   return c?.clientId;
 }
 
-async function billingRef(billingId: string): Promise<Billing | null> {
-  return getById<Billing>(COLLECTIONS.billing, billingId);
-}
-
 // ---------------------------------------------------------------------------
 // Contrato
 // ---------------------------------------------------------------------------
 
 export async function createContractFromOpportunityAction(input: unknown): Promise<ActionResult<{ contractId: string }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.criar");
     const { opportunityId } = opportunityIdSchema.parse(input);
+    await assertOpportunityContractAccess(user, opportunityId);
     const contract = await ensureContractForOpportunity(opportunityId, actorOf(user));
     if (!contract) return { ok: false, error: "A oportunidade não está marcada como ganha" };
     revalidateFinance(contract.clientId, contract.id);
@@ -114,7 +114,7 @@ export async function createContractFromOpportunityAction(input: unknown): Promi
 
 export async function createManualContractAction(input: unknown): Promise<ActionResult<{ contractId: string }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.criar");
     const data = manualContractSchema.parse(input);
     const contract = await createManualContract(data, actorOf(user));
     revalidateFinance(contract.clientId, contract.id);
@@ -126,8 +126,9 @@ export async function createManualContractAction(input: unknown): Promise<Action
 
 export async function updateContractItemsAction(input: unknown): Promise<ActionResult<{ versioned: boolean }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.editar");
     const data = updateItemsSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     const result = await updateContractItems(data.contractId, data.items, actorOf(user));
     revalidateFinance(result.contract.clientId, data.contractId);
     return { ok: true, data: { versioned: result.versioned } };
@@ -138,8 +139,9 @@ export async function updateContractItemsAction(input: unknown): Promise<ActionR
 
 export async function updateContractConditionsAction(input: unknown): Promise<ActionResult<{ versioned: boolean }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.editar");
     const data = updateConditionsSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     const result = await updateContractConditions(data, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
     return { ok: true, data: result };
@@ -150,8 +152,9 @@ export async function updateContractConditionsAction(input: unknown): Promise<Ac
 
 export async function completeBillingDataAction(input: unknown): Promise<ActionResult<{ filled: string[] }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.editar");
     const data = billingDataSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     const result = await completeBillingData(data, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
     return { ok: true, data: result };
@@ -162,8 +165,9 @@ export async function completeBillingDataAction(input: unknown): Promise<ActionR
 
 export async function addSignerAction(input: unknown): Promise<ActionResult> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.assinatura.editar");
     const data = signerSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     await addSigner(data, actorOf(user));
     revalidateFinance(undefined, data.contractId);
     return { ok: true, data: undefined };
@@ -174,8 +178,9 @@ export async function addSignerAction(input: unknown): Promise<ActionResult> {
 
 export async function removeSignerAction(input: unknown): Promise<ActionResult> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.assinatura.editar");
     const data = signerRefSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     await removeSigner(data, actorOf(user));
     revalidateFinance(undefined, data.contractId);
     return { ok: true, data: undefined };
@@ -186,8 +191,9 @@ export async function removeSignerAction(input: unknown): Promise<ActionResult> 
 
 export async function sendForSignatureAction(input: unknown): Promise<ActionResult<{ envelopeId: string }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.assinatura.enviar");
     const { contractId } = contractIdSchema.parse(input);
+    await assertContractAccess(user, contractId);
     const contract = await sendForSignature(contractId, actorOf(user));
     revalidateFinance(contract.clientId, contractId);
     return { ok: true, data: { envelopeId: contract.signatureEnvelopeId ?? "" } };
@@ -198,8 +204,9 @@ export async function sendForSignatureAction(input: unknown): Promise<ActionResu
 
 export async function registerManualSignatureAction(input: unknown): Promise<ActionResult<{ allSigned: boolean }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.assinatura.assinar");
     const data = manualSignatureSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     const result = await registerManualSignature(data, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
     return { ok: true, data: result };
@@ -210,8 +217,9 @@ export async function registerManualSignatureAction(input: unknown): Promise<Act
 
 export async function sendSignatureReminderAction(input: unknown): Promise<ActionResult<{ delivered: boolean; manual: boolean }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.assinatura.enviar");
     const data = signerRefSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     const result = await sendSignatureReminder(data.contractId, data.email, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
     return { ok: true, data: result };
@@ -221,13 +229,85 @@ export async function sendSignatureReminderAction(input: unknown): Promise<Actio
 }
 
 // ---------------------------------------------------------------------------
+// Aditivos (D25) — quem opera o Financeiro
+// ---------------------------------------------------------------------------
+
+export async function createAmendmentAction(input: unknown): Promise<ActionResult<{ amendmentId: string; number: string; requiresSignature: boolean }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.aditivos.criar");
+    const data = amendmentInputSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
+    const a = await createAmendment(data, actorOf(user));
+    revalidateFinance(a.clientId, a.contractId);
+    return { ok: true, data: { amendmentId: a.id, number: a.number, requiresSignature: a.requiresSignature } };
+  } catch (error) {
+    return fail(error, "Não foi possível criar o aditivo");
+  }
+}
+
+export async function sendAmendmentForSignatureAction(input: unknown): Promise<ActionResult<{ number: string }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.aditivos.enviar");
+    const { amendmentId } = amendmentIdSchema.parse(input);
+    await assertAmendmentAccess(user, amendmentId);
+    const a = await sendAmendmentForSignature(amendmentId, actorOf(user));
+    revalidateFinance(a.clientId, a.contractId);
+    return { ok: true, data: { number: a.number } };
+  } catch (error) {
+    return fail(error, "Não foi possível gerar o termo aditivo para assinatura");
+  }
+}
+
+export async function registerAmendmentSignatureAction(input: unknown): Promise<ActionResult<{ allSigned: boolean }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.aditivos.assinar");
+    const data = amendmentSignatureSchema.parse(input);
+    await assertAmendmentAccess(user, data.amendmentId);
+    const r = await registerAmendmentSignature(data, actorOf(user));
+    revalidateFinance(r.amendment.clientId, r.amendment.contractId);
+    return { ok: true, data: { allSigned: r.allSigned } };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar a assinatura do aditivo");
+  }
+}
+
+export async function applyAmendmentAction(input: unknown): Promise<ActionResult<{ version: number; billingsRebuilt: number; billingsCreated: number }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.aditivos.aplicar");
+    const { amendmentId } = amendmentIdSchema.parse(input);
+    await assertAmendmentAccess(user, amendmentId);
+    const r = await applyAmendment(amendmentId, actorOf(user));
+    revalidateFinance(r.contract.clientId, r.contract.id);
+    revalidatePath("/clientes", "layout");
+    revalidatePath("/cs", "layout");
+    return { ok: true, data: { version: r.contract.version, billingsRebuilt: r.billings.cancelled.length, billingsCreated: r.billings.created.length } };
+  } catch (error) {
+    return fail(error, "Não foi possível aplicar o aditivo");
+  }
+}
+
+export async function cancelAmendmentAction(input: unknown): Promise<ActionResult> {
+  try {
+    const user = await requirePermission("financeiro.contratos.aditivos.cancelar");
+    const data = cancelAmendmentSchema.parse(input);
+    await assertAmendmentAccess(user, data.amendmentId);
+    const a = await cancelAmendment(data.amendmentId, data.reason, actorOf(user));
+    revalidateFinance(a.clientId, a.contractId);
+    return { ok: true, data: undefined };
+  } catch (error) {
+    return fail(error, "Não foi possível cancelar o aditivo");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Cobranças
 // ---------------------------------------------------------------------------
 
 export async function generateBillingsAction(input: unknown): Promise<ActionResult<{ count: number }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.cobrancas.gerar");
     const { contractId } = contractIdSchema.parse(input);
+    await assertContractAccess(user, contractId);
     const created = await generateBillings(contractId, actorOf(user));
     revalidateFinance(created[0]?.clientId, contractId);
     return { ok: true, data: { count: created.length } };
@@ -236,11 +316,27 @@ export async function generateBillingsAction(input: unknown): Promise<ActionResu
   }
 }
 
+/** Próximas mensalidades (D24b): horizonte rolante ou o que falta do prazo; idempotente (ids determinísticos). */
+export async function generateNextBillingsAction(input: unknown): Promise<ActionResult<{ count: number; skipped: number }>> {
+  try {
+    const user = await requirePermission("financeiro.cobrancas.gerar");
+    const { contractId } = contractIdSchema.parse(input);
+    await assertContractAccess(user, contractId);
+    const r = await generateNextBillings(contractId, actorOf(user), { source: "manual", reason: `Gerado por ${user.name} na página do contrato` });
+    revalidateFinance(r.created[0]?.clientId ?? (await clientOfContract(contractId)), contractId);
+    return { ok: true, data: { count: r.created.length, skipped: r.skipped } };
+  } catch (error) {
+    return fail(error, "Não foi possível gerar as próximas cobranças");
+  }
+}
+
 export async function registerPaymentAction(input: unknown): Promise<ActionResult> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.cobrancas.baixar");
     const data = registerPaymentSchema.parse(input);
-    const paid = await registerPayment(data, actorOf(user));
+    await assertBillingAccess(user, data.billingId);
+    // Pela tela a origem é SEMPRE manual: provedor/conciliação só entram pelo webhook e pela varredura.
+    const paid = await registerPayment({ ...data, source: "manual" }, actorOf(user));
     revalidateFinance(paid.clientId, paid.contractId);
     revalidatePath("/vendas", "layout");
     return { ok: true, data: undefined };
@@ -249,13 +345,59 @@ export async function registerPaymentAction(input: unknown): Promise<ActionResul
   }
 }
 
+/** Boleto emitido no banco/ERP registrado na cobrança (linha digitável, nosso número, PDF, PIX). */
+export async function registerBoletoAction(input: unknown): Promise<ActionResult<{ hasPdf: boolean }>> {
+  try {
+    const user = await requirePermission("financeiro.cobrancas.boleto.criar");
+    const data = registerBoletoSchema.parse(input);
+    await assertBillingAccess(user, data.billingId);
+    const billing = await registerBoleto(data, actorOf(user));
+    revalidateFinance(billing.clientId, billing.contractId);
+    return { ok: true, data: { hasPdf: Boolean(billing.boleto?.pdfUrl) } };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar o boleto");
+  }
+}
+
+/** Cobrança por WhatsApp/e-mail/ambos, com ou sem os dados do boleto (envio ou 2ª via). */
+export async function sendBillingMessageAction(input: unknown): Promise<ActionResult<{ results: BillingChannelResult[]; contactName: string }>> {
+  try {
+    const user = await requirePermission("financeiro.cobrancas.cobrar");
+    const data = sendBillingMessageSchema.parse(input) as { billingId: string; channel: "whatsapp" | "email" | "ambos"; text?: string; includeBoleto?: boolean; secondCopy?: boolean };
+    const secondCopy = Boolean((input as { secondCopy?: unknown })?.secondCopy);
+    // Enviar boleto / 2ª via exige também a chave própria (checkedIn do catálogo).
+    if (data.includeBoleto || secondCopy) await requirePermission("financeiro.cobrancas.boleto.enviar");
+    const billing = await assertBillingAccess(user, data.billingId);
+    const result = await sendBillingMessage(data.billingId, { channel: data.channel, text: data.text, includeBoleto: data.includeBoleto, secondCopy }, actorOf(user));
+    revalidateFinance(billing.clientId, billing.contractId);
+    return { ok: true, data: result };
+  } catch (error) {
+    return fail(error, "Não foi possível enviar a cobrança");
+  }
+}
+
+/** Estorno do pagamento de uma cobrança paga (motivo obrigatório): efeitos em comissões/títulos por evento. */
+export async function reversePaymentAction(input: unknown): Promise<ActionResult<{ status: string }>> {
+  try {
+    const user = await requirePermission("financeiro.cobrancas.estornar");
+    const data = reversePaymentSchema.parse(input);
+    await assertBillingAccess(user, data.billingId);
+    const billing = await reversePayment(data, actorOf(user));
+    revalidateFinance(billing.clientId, billing.contractId);
+    revalidatePath("/vendas", "layout");
+    return { ok: true, data: { status: billing.status } };
+  } catch (error) {
+    return fail(error, "Não foi possível estornar o pagamento");
+  }
+}
+
 export async function cancelBillingAction(input: unknown): Promise<ActionResult> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.cobrancas.cancelar");
     const data = cancelBillingSchema.parse(input);
-    const billing = await billingRef(data.billingId);
+    const billing = await assertBillingAccess(user, data.billingId);
     await cancelBilling(data.billingId, data.reason, actorOf(user));
-    revalidateFinance(billing?.clientId, billing?.contractId);
+    revalidateFinance(billing.clientId, billing.contractId);
     return { ok: true, data: undefined };
   } catch (error) {
     return fail(error, "Não foi possível cancelar a cobrança");
@@ -264,8 +406,9 @@ export async function cancelBillingAction(input: unknown): Promise<ActionResult>
 
 export async function getBillingContactAction(input: unknown): Promise<ActionResult<BillingContactInfo>> {
   try {
-    await requireFinanceOperator();
+    const user = await requirePermission("financeiro.cobrancas.cobrar");
     const { billingId } = billingIdSchema.parse(input);
+    await assertBillingAccess(user, billingId);
     return { ok: true, data: await getBillingContactInfo(billingId) };
   } catch (error) {
     return fail(error, "Não foi possível carregar o contato da cobrança");
@@ -274,11 +417,11 @@ export async function getBillingContactAction(input: unknown): Promise<ActionRes
 
 export async function sendBillingWhatsappAction(input: unknown): Promise<ActionResult<{ manual: boolean; delivered: boolean }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.cobrancas.cobrar");
     const data = billingContactSchema.parse(input);
-    const billing = await billingRef(data.billingId);
+    const billing = await assertBillingAccess(user, data.billingId);
     const result = await sendBillingWhatsapp(data.billingId, data.notes, actorOf(user));
-    revalidateFinance(billing?.clientId, billing?.contractId);
+    revalidateFinance(billing.clientId, billing.contractId);
     return { ok: true, data: result };
   } catch (error) {
     return fail(error, "Não foi possível enviar a cobrança por WhatsApp");
@@ -287,11 +430,11 @@ export async function sendBillingWhatsappAction(input: unknown): Promise<ActionR
 
 export async function registerBillingCallAction(input: unknown): Promise<ActionResult> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.cobrancas.cobrar");
     const data = billingContactSchema.parse(input);
-    const billing = await billingRef(data.billingId);
+    const billing = await assertBillingAccess(user, data.billingId);
     await registerBillingCall(data.billingId, data.notes, actorOf(user));
-    revalidateFinance(billing?.clientId, billing?.contractId);
+    revalidateFinance(billing.clientId, billing.contractId);
     return { ok: true, data: undefined };
   } catch (error) {
     return fail(error, "Não foi possível registrar a ligação");
@@ -304,8 +447,9 @@ export async function registerBillingCallAction(input: unknown): Promise<ActionR
 
 export async function registerPendencyAction(input: unknown): Promise<ActionResult> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.pendencias.criar");
     const data = pendencySchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     await registerPendency(data.contractId, data.reason, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
     return { ok: true, data: undefined };
@@ -316,8 +460,9 @@ export async function registerPendencyAction(input: unknown): Promise<ActionResu
 
 export async function resolvePendencyAction(input: unknown): Promise<ActionResult<{ status: string }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.pendencias.concluir");
     const data = resolvePendencySchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     const status = await resolvePendency(data.contractId, data.resolution, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
     return { ok: true, data: { status } };
@@ -328,8 +473,9 @@ export async function resolvePendencyAction(input: unknown): Promise<ActionResul
 
 export async function addContractDocumentAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.documentos.anexar");
     const data = contractDocumentSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
     const id = await addContractDocument(data, actorOf(user));
     revalidateFinance(await clientOfContract(data.contractId), data.contractId);
     return { ok: true, data: { id } };
@@ -340,14 +486,37 @@ export async function addContractDocumentAction(input: unknown): Promise<ActionR
 
 export async function releaseContractAction(input: unknown): Promise<ActionResult<{ projectId: string | null; exception: boolean }>> {
   try {
-    const user = await requireFinanceOperator();
+    const user = await requirePermission("financeiro.contratos.liberar");
     const data = releaseSchema.parse(input);
-    const result = await releaseContract(data.contractId, { id: user.id, name: user.name, role: user.role, isManager: user.isManager }, data.exceptionReason);
+    // Liberar com pendência (motivo preenchido) exige também a exceção ao gate (checkedIn do catálogo); o setting
+    // permiteExcecaoGestor continua valendo no serviço.
+    if (data.exceptionReason?.trim()) await requirePermission("financeiro.contratos.liberar-com-pendencia");
+    await assertContractAccess(user, data.contractId);
+    const actor = { id: user.id, name: user.name, role: user.role, isManager: user.isManager, canReleaseWithPendency: can(user, "financeiro.contratos.liberar-com-pendencia") };
+    const result = await releaseContract(data.contractId, actor, data.exceptionReason);
     revalidateFinance(result.contract.clientId, data.contractId);
     revalidatePath("/clientes", "layout");
     revalidatePath("/implantacao", "layout");
     return { ok: true, data: { projectId: result.projectId, exception: result.exception } };
   } catch (error) {
     return fail(error, "Não foi possível liberar o contrato");
+  }
+}
+
+/**
+ * Cancela o contrato (antes da liberação) com motivo: cobranças em aberto são canceladas e o evento
+ * contract.cancelled vai para a timeline. Equipe financeira, gestores, diretoria e admin.
+ */
+export async function cancelContractAction(input: unknown): Promise<ActionResult<{ cancelledBillings: number }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.cancelar");
+    const data = cancelContractSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
+    const result = await cancelContract(data, actorOf(user), { source: "financeiro" });
+    revalidateFinance(result.contract.clientId, data.contractId);
+    revalidatePath("/vendas", "layout");
+    return { ok: true, data: { cancelledBillings: result.cancelledBillingIds.length } };
+  } catch (error) {
+    return fail(error, "Não foi possível cancelar o contrato");
   }
 }

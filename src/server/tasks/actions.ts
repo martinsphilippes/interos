@@ -1,11 +1,11 @@
 "use server";
 /**
- * Server Actions da Central de Tarefas. Padrão: requireUser() → validação zod → serviço → revalidação.
- * Todas devolvem ActionResult com mensagem em português.
+ * Server Actions da Central de Tarefas. Padrão: requirePermission(chave do catálogo) → validação zod → tarefa dentro
+ * do escopo (canSeeTask) → serviço → revalidação. Falhas por failAction; todas devolvem ActionResult em português.
  */
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
+import { BusinessError, PermissionError, failAction, requirePermission, requireUser } from "@/server/auth/session";
+import { canSeeClientId } from "@/server/clients/access";
 import { getById, getManyByIds, nowIso, remove, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { COLLECTIONS, type ActionResult, type ChecklistItem, type Client, type CurrentUser, type Task, type UserRef } from "@/domain/types";
@@ -33,17 +33,14 @@ import {
   reorderTasksInternal,
   setTaskStatusInternal,
 } from "./service";
+import { canSeeTask } from "./access";
+import { deleteTaskKeys, statusChangeKeys } from "./permission-keys";
 
-type Failure = { ok: false; error: string };
+const FALLBACK = "Não foi possível concluir a operação. Tente novamente.";
+const DELETE_DENIED = "Você não tem permissão para excluir esta tarefa";
 
-function fail(error: unknown): Failure {
-  if (error instanceof z.ZodError) return { ok: false, error: error.issues.map((i) => i.message).join(" · ") };
-  if (error instanceof Error && error.message) {
-    console.error("[tasks]", error);
-    return { ok: false, error: error.message };
-  }
-  console.error("[tasks]", error);
-  return { ok: false, error: "Não foi possível concluir a operação. Tente novamente." };
+function fail(error: unknown): { ok: false; error: string } {
+  return failAction(error, FALLBACK, "tasks");
 }
 
 function actorOf(user: CurrentUser): UserRef {
@@ -60,18 +57,26 @@ function revalidateTaskPaths(...tasks: (Pick<Task, "clientId" | "processType"> |
   }
 }
 
-async function loadTask(id: string): Promise<Task> {
+/** Carrega a tarefa e confere o escopo do usuário (fora dele = acesso negado). */
+async function loadTask(user: CurrentUser, id: string): Promise<Task> {
   const task = await getById<Task>(COLLECTIONS.tasks, id);
-  if (!task) throw new Error("Tarefa não encontrada");
+  if (!task) throw new BusinessError("Tarefa não encontrada");
+  if (!(await canSeeTask(user, task))) throw new PermissionError();
   return task;
+}
+
+/** Vincular a um cliente exige vê-lo (escopo de Clientes 360º). */
+async function assertClientVisible(user: CurrentUser, clientId: string | null | undefined): Promise<void> {
+  if (clientId && !(await canSeeClientId(user, clientId))) throw new PermissionError();
 }
 
 // ---------------------------------------------------------------------------
 
 export async function createTask(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.criar");
     const data = createTaskSchema.parse(input);
+    await assertClientVisible(user, data.clientId);
     const task = await createTaskInternal(
       {
         ...data,
@@ -90,10 +95,12 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 }
 
 export async function updateTask(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.editar");
     const { id, ...patch } = updateTaskSchema.parse(input);
-    const task = await loadTask(id);
+    const task = await loadTask(user, id);
+    // Trocar o responsável pelo formulário exige também a chave de atribuição (catálogo: checkedIn).
+    if (patch.assigneeId !== undefined && (patch.assigneeId || undefined) !== task.assigneeId) await requirePermission("operacao.tarefas.atribuir");
     const actor = actorOf(user);
 
     const set: Partial<Task> = {};
@@ -137,9 +144,10 @@ export async function updateTask(input: unknown): Promise<ActionResult<{ id: str
       changed.push("recorrência");
     }
     if (patch.clientId !== undefined && (patch.clientId || undefined) !== task.clientId) {
+      await assertClientVisible(user, patch.clientId);
       if (patch.clientId) {
         const client = await getById<Client>(COLLECTIONS.clients, patch.clientId);
-        if (!client) throw new Error("Cliente não encontrado");
+        if (!client) throw new BusinessError("Cliente não encontrado");
         set.clientId = client.id;
         set.clientName = client.tradeName;
       } else {
@@ -182,10 +190,12 @@ export async function updateTask(input: unknown): Promise<ActionResult<{ id: str
 }
 
 export async function changeTaskStatus(input: unknown): Promise<ActionResult<{ id: string; nextTaskId?: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requireUser();
     const { id, status } = changeTaskStatusSchema.parse(input);
-    const task = await loadTask(id);
+    const task = await loadTask(user, id);
+    // Despacho pelo argumento: concluir/cancelar/reabrir exigem as chaves próprias (catálogo, guards com ?status=).
+    for (const key of statusChangeKeys(task.status, status)) await requirePermission(key);
     const result = await setTaskStatusInternal(task, status, actorOf(user));
     revalidateTaskPaths(task);
     return { ok: true, data: { id, nextTaskId: result.next?.id } };
@@ -195,10 +205,10 @@ export async function changeTaskStatus(input: unknown): Promise<ActionResult<{ i
 }
 
 export async function completeTask(input: unknown): Promise<ActionResult<{ id: string; nextTaskId?: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.concluir");
     const { id } = taskIdSchema.parse(input);
-    const task = await loadTask(id);
+    const task = await loadTask(user, id);
     const result = await completeTaskInternal(task, actorOf(user));
     revalidateTaskPaths(task);
     return { ok: true, data: { id, nextTaskId: result.next?.id } };
@@ -208,11 +218,11 @@ export async function completeTask(input: unknown): Promise<ActionResult<{ id: s
 }
 
 export async function reopenTask(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.reabrir");
     const { id } = taskIdSchema.parse(input);
-    const task = await loadTask(id);
-    if (task.status !== "concluida" && task.status !== "cancelada") throw new Error("Só é possível reabrir tarefas concluídas ou canceladas");
+    const task = await loadTask(user, id);
+    if (task.status !== "concluida" && task.status !== "cancelada") throw new BusinessError("Só é possível reabrir tarefas concluídas ou canceladas");
     await reopenTaskInternal(task, actorOf(user));
     revalidateTaskPaths(task);
     return { ok: true, data: { id } };
@@ -222,11 +232,11 @@ export async function reopenTask(input: unknown): Promise<ActionResult<{ id: str
 }
 
 export async function cancelTask(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.cancelar");
     const { id, reason } = cancelTaskSchema.parse(input);
-    const task = await loadTask(id);
-    if (task.status === "concluida") throw new Error("Tarefa concluída não pode ser cancelada; reabra antes");
+    const task = await loadTask(user, id);
+    if (task.status === "concluida") throw new BusinessError("Tarefa concluída não pode ser cancelada; reabra antes");
     await cancelTaskInternal(task, actorOf(user), reason);
     revalidateTaskPaths(task);
     return { ok: true, data: { id } };
@@ -235,13 +245,14 @@ export async function cancelTask(input: unknown): Promise<ActionResult<{ id: str
   }
 }
 
-/** Exclusão definitiva: apenas criador, gestor, diretoria ou admin. */
+/** Exclusão definitiva: o criador (operacao.tarefas.excluir) ou quem pode excluir de outras pessoas (padrão: gestores). */
 export async function deleteTask(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.excluir");
     const { id } = taskIdSchema.parse(input);
-    const task = await loadTask(id);
-    if (!user.isManager && task.creatorId !== user.id) throw new Error("Você não tem permissão para excluir esta tarefa");
+    const task = await loadTask(user, id);
+    // Tarefa criada por outra pessoa exige também "excluir tarefas de outras pessoas" (padrão: gestores).
+    for (const key of deleteTaskKeys(task, user.id)) await requirePermission(key, DELETE_DENIED);
     await remove(COLLECTIONS.tasks, id);
     await emitEvent({
       type: "task.updated",
@@ -260,10 +271,10 @@ export async function deleteTask(input: unknown): Promise<ActionResult<{ id: str
 }
 
 export async function assignTask(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.atribuir");
     const { id, assigneeId } = assignTaskSchema.parse(input);
-    const task = await loadTask(id);
+    const task = await loadTask(user, id);
     await assignTaskInternal(task, assigneeId, actorOf(user));
     revalidateTaskPaths(task);
     return { ok: true, data: { id } };
@@ -293,12 +304,12 @@ async function saveChecklist(task: Task, checklist: ChecklistItem[], actor: User
 }
 
 export async function toggleChecklistItem(input: unknown): Promise<ActionResult<{ id: string; done: boolean }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.editar");
     const { id, itemId } = checklistItemSchema.parse(input);
-    const task = await loadTask(id);
+    const task = await loadTask(user, id);
     const item = task.checklist.find((c) => c.id === itemId);
-    if (!item) throw new Error("Item do checklist não encontrado");
+    if (!item) throw new BusinessError("Item do checklist não encontrado");
     const done = !item.done;
     const checklist = task.checklist.map((c) => (c.id === itemId ? { ...c, done, doneAt: done ? nowIso() : undefined, doneBy: done ? user.id : undefined } : c));
     await saveChecklist(task, checklist, actorOf(user), `${done ? "concluído" : "reaberto"} "${item.label}"`);
@@ -310,11 +321,11 @@ export async function toggleChecklistItem(input: unknown): Promise<ActionResult<
 }
 
 export async function addChecklistItem(input: unknown): Promise<ActionResult<{ id: string; itemId: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.editar");
     const { id, label } = addChecklistItemSchema.parse(input);
-    const task = await loadTask(id);
-    if (task.checklist.length >= 50) throw new Error("Limite de 50 itens no checklist");
+    const task = await loadTask(user, id);
+    if (task.checklist.length >= 50) throw new BusinessError("Limite de 50 itens no checklist");
     const item: ChecklistItem = { id: shortId("chk"), label, done: false };
     await saveChecklist(task, [...task.checklist, item], actorOf(user), `item adicionado "${label}"`);
     revalidateTaskPaths(task);
@@ -325,12 +336,12 @@ export async function addChecklistItem(input: unknown): Promise<ActionResult<{ i
 }
 
 export async function removeChecklistItem(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.editar");
     const { id, itemId } = checklistItemSchema.parse(input);
-    const task = await loadTask(id);
+    const task = await loadTask(user, id);
     const item = task.checklist.find((c) => c.id === itemId);
-    if (!item) throw new Error("Item do checklist não encontrado");
+    if (!item) throw new BusinessError("Item do checklist não encontrado");
     await saveChecklist(
       task,
       task.checklist.filter((c) => c.id !== itemId),
@@ -349,10 +360,10 @@ export async function removeChecklistItem(input: unknown): Promise<ActionResult<
 // ---------------------------------------------------------------------------
 
 export async function addComment(input: unknown): Promise<ActionResult<{ id: string }>> {
-  const user = await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.comentar");
     const { taskId, body } = addCommentSchema.parse(input);
-    const task = await loadTask(taskId);
+    const task = await loadTask(user, taskId);
     const comment = await addTaskCommentInternal(task, body, actorOf(user));
     revalidateTaskPaths(task);
     return { ok: true, data: { id: comment.id } };
@@ -363,11 +374,17 @@ export async function addComment(input: unknown): Promise<ActionResult<{ id: str
 
 /** Reordena uma coluna do kanban. As tarefas informadas precisam existir; o status não é alterado aqui. */
 export async function reorderTask(input: unknown): Promise<ActionResult<{ count: number }>> {
-  await requireUser();
   try {
+    const user = await requirePermission("operacao.tarefas.editar");
     const { orderedIds } = reorderTaskSchema.parse(input);
     const existing = await getManyByIds<Task>(COLLECTIONS.tasks, orderedIds);
-    const ids = orderedIds.filter((id) => existing.has(id));
+    const visible = await Promise.all(
+      orderedIds.map(async (id) => {
+        const task = existing.get(id);
+        return Boolean(task && (await canSeeTask(user, task)));
+      }),
+    );
+    const ids = orderedIds.filter((_, i) => visible[i]);
     await reorderTasksInternal(ids);
     revalidatePath("/tarefas");
     return { ok: true, data: { count: ids.length } };

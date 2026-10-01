@@ -1,5 +1,6 @@
 import { AlarmClock, CalendarX2, CircleDollarSign, Gauge, PauseCircle, Percent, Receipt, Target, Trophy } from "lucide-react";
 import type { CurrentUser } from "@/domain/types";
+import { can } from "@/server/auth/session";
 import { getSalesOverview } from "@/server/sales/queries";
 import { formatCompetence, formatCurrency, formatDateTime, formatNumber, formatPercent } from "@/lib/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,16 +19,26 @@ function progressTone(att: number | null): "success" | "warning" | "danger" | "s
   return "danger";
 }
 
+export interface PanelSections {
+  /** Meta, comissão do mês e simulador (vendas.central.comissao.ver). */
+  commission: boolean;
+  /** Sugestões do assistente comercial (vendas.central.sugestoes.ver). */
+  suggestions: boolean;
+}
+
 /**
- * Visão "Painel" da Central de Vendas (?view=painel): metas, comissão, simulador, funil, histórico de
- * ganhos e varredura. Todo número vem do banco; os cards levam à lista de oportunidades já filtrada.
+ * Visão "Painel" da Central de Vendas (?view=painel): metas, comissão, simulador, funil e histórico de
+ * ganhos e varredura. Todo número vem do banco; os cards levam à lista de oportunidades já filtrada (quando o
+ * usuário vê a tela Oportunidades). Seções negadas não são lidas nem renderizadas.
  */
-export async function SalesPanelView({ user, escopo }: { user: CurrentUser; escopo?: string }) {
-  const data = await getSalesOverview(user, escopo);
+export async function SalesPanelView({ user, escopo, sections }: { user: CurrentUser; escopo?: string; sections: PanelSections }) {
+  const data = await getSalesOverview(user, escopo, { commission: sections.commission });
   const { stats, commission } = data;
   const team = data.scope.kind === "equipe";
+  const canDrill = can(user, "vendas.oportunidades.ver");
 
   const drill = (params: Record<string, string>) => {
+    if (!canDrill) return undefined;
     const qs = new URLSearchParams(params);
     if (data.sellerParam) qs.set("vendedor", data.sellerParam);
     return `/vendas/oportunidades?${qs.toString()}`;
@@ -50,7 +61,7 @@ export async function SalesPanelView({ user, escopo }: { user: CurrentUser; esco
       </div>
 
       <div className="mb-6 grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        <Card className={sections.commission ? "lg:col-span-2" : "lg:col-span-3"}>
           <CardHeader>
             <CardTitle>Contatar agora</CardTitle>
             <CardDescription>Follow-up vencido, sem próxima ação, paradas e quentes de valor alto — nesta ordem.</CardDescription>
@@ -60,59 +71,61 @@ export async function SalesPanelView({ user, escopo }: { user: CurrentUser; esco
           </CardContent>
         </Card>
 
-        <div className="flex flex-col gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Gauge className="size-4 text-muted" /> Meta do mês
-              </CardTitle>
-              <CardDescription>Vendido por tipo de receita {team ? "(soma da equipe)" : ""}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4 pt-0">
-              {REVENUE_TYPES.map((t) => {
-                const att = commission.attainment[t];
-                return (
-                  <div key={t}>
-                    <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
-                      <span>{REVENUE_TYPE_LABELS[t]}</span>
-                      <span className="tabular-nums text-muted">
-                        <span className="font-semibold text-foreground">{formatCurrency(commission.sold[t])}</span>
-                        {commission.goals[t] > 0 ? ` / ${formatCurrency(commission.goals[t])}` : " · sem meta"}
-                      </span>
+        {sections.commission ? (
+          <div className="flex flex-col gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Gauge className="size-4 text-muted" /> Meta do mês
+                </CardTitle>
+                <CardDescription>Vendido por tipo de receita {team ? "(soma da equipe)" : ""}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4 pt-0">
+                {REVENUE_TYPES.map((t) => {
+                  const att = commission.attainment[t];
+                  return (
+                    <div key={t}>
+                      <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
+                        <span>{REVENUE_TYPE_LABELS[t]}</span>
+                        <span className="tabular-nums text-muted">
+                          <span className="font-semibold text-foreground">{formatCurrency(commission.sold[t])}</span>
+                          {commission.goals[t] > 0 ? ` / ${formatCurrency(commission.goals[t])}` : " · sem meta"}
+                        </span>
+                      </div>
+                      <Progress value={att === null ? 0 : att * 100} tone={progressTone(att)} showValue={att !== null} aria-label={`Atingimento ${REVENUE_TYPE_LABELS[t]}`} />
                     </div>
-                    <Progress value={att === null ? 0 : att * 100} tone={progressTone(att)} showValue={att !== null} aria-label={`Atingimento ${REVENUE_TYPE_LABELS[t]}`} />
+                  );
+                })}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Comissão do mês</CardTitle>
+                <CardDescription>Calculada nas vendas ganhas em {formatCompetence(data.competence)}</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <dl className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg bg-surface-hover p-2">
+                    <dt className="text-xs text-muted">Prevista</dt>
+                    <dd className="font-semibold tabular-nums">{formatCurrency(commission.commission.prevista)}</dd>
                   </div>
-                );
-              })}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Comissão do mês</CardTitle>
-              <CardDescription>Calculada nas vendas ganhas em {formatCompetence(data.competence)}</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <dl className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-lg bg-surface-hover p-2">
-                  <dt className="text-xs text-muted">Prevista</dt>
-                  <dd className="font-semibold tabular-nums">{formatCurrency(commission.commission.prevista)}</dd>
-                </div>
-                <div className="rounded-lg bg-success-soft p-2">
-                  <dt className="text-xs text-success-fg">Liberada</dt>
-                  <dd className="font-semibold tabular-nums">{formatCurrency(commission.commission.liberada)}</dd>
-                </div>
-                <div className="rounded-lg bg-info-soft p-2">
-                  <dt className="text-xs text-info-fg">Futura</dt>
-                  <dd className="font-semibold tabular-nums">{formatCurrency(commission.commission.futura)}</dd>
-                </div>
-              </dl>
-              <p className="mt-2 text-xs text-muted">Prevista: adesão/hardware aguardando pagamento. Futura: recorrência liberada na parcela definida na regra.</p>
-            </CardContent>
-          </Card>
-        </div>
+                  <div className="rounded-lg bg-success-soft p-2">
+                    <dt className="text-xs text-success-fg">Liberada</dt>
+                    <dd className="font-semibold tabular-nums">{formatCurrency(commission.commission.liberada)}</dd>
+                  </div>
+                  <div className="rounded-lg bg-info-soft p-2">
+                    <dt className="text-xs text-info-fg">Futura</dt>
+                    <dd className="font-semibold tabular-nums">{formatCurrency(commission.commission.futura)}</dd>
+                  </div>
+                </dl>
+                <p className="mt-2 text-xs text-muted">Prevista: adesão/hardware aguardando pagamento. Futura: recorrência liberada na parcela definida na regra.</p>
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
       </div>
 
-      {!team ? <AgentSuggestions kind="comercial" subjectId={user.id} title="Sugestões do assistente comercial" className="mb-6" /> : null}
+      {!team && sections.suggestions ? <AgentSuggestions kind="comercial" subjectId={user.id} title="Sugestões do assistente comercial" className="mb-6" /> : null}
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
         <Card>
@@ -135,15 +148,17 @@ export async function SalesPanelView({ user, escopo }: { user: CurrentUser; esco
         </Card>
       </div>
 
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Simulador de comissão</CardTitle>
-          <CardDescription>Quanto rende um negócio com as regras vigentes.</CardDescription>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <CommissionSimulator rules={data.rules} />
-        </CardContent>
-      </Card>
+      {sections.commission ? (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Simulador de comissão</CardTitle>
+            <CardDescription>Quanto rende um negócio com as regras vigentes.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <CommissionSimulator rules={data.rules} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <p className="text-xs text-muted">
         Varredura de follow-up: {data.lastSweep.ranAt ? `última execução ${formatDateTime(data.lastSweep.ranAt)}` : "ainda não executada"}

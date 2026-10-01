@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
+import { useCanSeeFn } from "@/components/auth/access-provider";
 import { formatCurrency, formatDate, formatNumber, formatPercent } from "@/lib/format";
 import { saveCampaign } from "@/server/marketing/actions";
 import { CampaignStatusBadge } from "./lead-badges";
@@ -41,9 +42,13 @@ function Spend({ c }: { c: CampaignRow }) {
   );
 }
 
-/** Tabela de campanhas (métricas calculadas dos leads) + drawer de criação/edição (?campanha=<id>|nova). */
-export function CampaignsView({ campaigns, editing, users, canEdit }: { campaigns: CampaignRow[]; editing: CampaignRow | "nova" | null; users: UserOption[]; canEdit: boolean }) {
+/**
+ * Tabela de campanhas (métricas calculadas dos leads) + drawer de criação/edição (?campanha=<id>|nova).
+ * `canCreate`/`canEdit` vêm do servidor (marketing.campanhas.criar/.editar); sem elas a tabela é só leitura.
+ */
+export function CampaignsView({ campaigns, editing, users, canEdit, canCreate = false }: { campaigns: CampaignRow[]; editing: CampaignRow | "nova" | null; users: UserOption[]; canEdit: boolean; canCreate?: boolean }) {
   const { navigate } = useMarketingUrl();
+  const canSee = useCanSeeFn();
   const edit = (id: string) => navigate({ campanha: id });
 
   return (
@@ -55,7 +60,7 @@ export function CampaignsView({ campaigns, editing, users, canEdit }: { campaign
             title="Nenhuma campanha cadastrada"
             description="Cadastre campanhas para medir leads, MQLs e custo por lead de cada ação."
             action={
-              canEdit ? (
+              canCreate ? (
                 <Button onClick={() => navigate({ campanha: "nova" })}>
                   <Plus /> Nova campanha
                 </Button>
@@ -99,14 +104,22 @@ export function CampaignsView({ campaigns, editing, users, canEdit }: { campaign
                       <CampaignStatusBadge status={c.status} />
                     </TableCell>
                     <TableCell className="text-right">
-                      <Link href={leadsHref({ campaignId: c.id, sort: "data" })} className="font-medium tabular-nums text-brand hover:underline">
-                        {formatNumber(c.leads)}
-                      </Link>
+                      {canSee(leadsHref({ campaignId: c.id, sort: "data" })) ? (
+                        <Link href={leadsHref({ campaignId: c.id, sort: "data" })} className="font-medium tabular-nums text-brand hover:underline">
+                          {formatNumber(c.leads)}
+                        </Link>
+                      ) : (
+                        <span className="font-medium tabular-nums">{formatNumber(c.leads)}</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Link href={leadsHref({ campaignId: c.id, status: ["qualificado", "convertido"] })} className="tabular-nums hover:underline">
-                        {formatNumber(c.mqls)}
-                      </Link>
+                      {canSee(leadsHref({ campaignId: c.id, status: ["qualificado", "convertido"] })) ? (
+                        <Link href={leadsHref({ campaignId: c.id, status: ["qualificado", "convertido"] })} className="tabular-nums hover:underline">
+                          {formatNumber(c.mqls)}
+                        </Link>
+                      ) : (
+                        <span className="tabular-nums">{formatNumber(c.mqls)}</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{c.cpl === null ? "—" : formatCurrency(c.cpl)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatPercent(c.conversion)}</TableCell>
@@ -156,11 +169,13 @@ export function CampaignsView({ campaigns, editing, users, canEdit }: { campaign
                   </div>
                 </dl>
                 <div className="mt-2 flex gap-2">
-                  <Button asChild variant="outline" size="sm" className="h-11 flex-1 md:h-8">
-                    <Link href={leadsHref({ campaignId: c.id, sort: "data" })}>
-                      <Users /> Ver leads <ChevronRight />
-                    </Link>
-                  </Button>
+                  {canSee(leadsHref({ campaignId: c.id, sort: "data" })) ? (
+                    <Button asChild variant="outline" size="sm" className="h-11 flex-1 md:h-8">
+                      <Link href={leadsHref({ campaignId: c.id, sort: "data" })}>
+                        <Users /> Ver leads <ChevronRight />
+                      </Link>
+                    </Button>
+                  ) : null}
                   {canEdit ? (
                     <Button variant="outline" size="sm" className="h-11 md:h-8" onClick={() => edit(c.id)}>
                       <Pencil /> Editar

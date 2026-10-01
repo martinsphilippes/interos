@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AlarmClock, BellRing, Building2, ChevronRight, CircleCheck, CircleX, Clock, Filter, Layers, Network, Target, Timer, TriangleAlert, UserRound } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, canSeeHref, requireScreen } from "@/server/auth/session";
+import { resolveDataScope } from "@/server/auth/scope";
+import { EmptyState } from "@/components/ui/empty-state";
 import { getSlaOverview } from "@/server/sla-report/queries";
 import { SLA_ENTITY_TYPES, SLA_PRIORITIES, SLA_PRIORITY_LABELS, SLA_TYPE_LABELS, parseSlaFilters, slaHref, type SlaFilters } from "@/server/sla-report/schemas";
 import { parsePeriod, periodOptions } from "@/server/kpis/queries";
@@ -50,11 +52,28 @@ function hoursText(value: number | null): string {
  * do suporte (matriz, atendentes, CSAT), antes em /suporte/sla.
  */
 export default async function SlaPage({ searchParams }: { searchParams: SearchParams }) {
-  const [user, query] = await Promise.all([requireUser(), searchParams]);
+  const [user, query] = await Promise.all([requireScreen("operacao.sla"), searchParams]);
   const period = parsePeriod(query);
   const requested = parseSlaFilters(query);
-  // Quem não é gestor enxerga o SLA do próprio departamento.
-  const filters: SlaFilters = user.isManager ? requested : { ...requested, departamento: user.departmentId };
+  // Seções: painel (indicadores e listas) e qualidade dos chamados (?tipo=chamado; padrão: quem acessa o Suporte).
+  const showPanel = can(user, "operacao.sla.painel.ver");
+  const showSupportQuality = requested.tipo === "chamado" && can(user, "operacao.sla.qualidade-chamados.ver");
+  // Editar a matriz de SLA = quem abre a aba SLA das configurações (padrão: admin).
+  const canEditRules = canSeeHref(user, "/admin/configuracoes?aba=sla");
+  const supportMonth = period.kind === "mes" ? period.key : undefined;
+  if (!showPanel) {
+    return (
+      <PageContainer>
+        <PageHeader title="Gestão de SLA" description={period.label} breadcrumbs={[{ label: "Operação" }, { label: "SLA" }]} />
+        {showSupportQuality ? <SupportSlaSection month={supportMonth} canEditRules={canEditRules} viewer={user} /> : <EmptyState title="Painel de SLA indisponível para o seu perfil" description="Fale com o administrador se precisar acompanhar os prazos da operação." />}
+      </PageContainer>
+    );
+  }
+  // Escopo da tela (padrão: gestores = empresa, com seletor de departamento; demais = o próprio departamento).
+  const scope = await resolveDataScope(user, "operacao.sla");
+  const allowedDepartments = scope.kind === "empresa" ? null : (scope.departmentKeys ?? new Set([user.departmentId]));
+  const lockedDepartment = allowedDepartments ? (requested.departamento && allowedDepartments.has(requested.departamento) ? requested.departamento : user.departmentId) : undefined;
+  const filters: SlaFilters = allowedDepartments ? { ...requested, departamento: lockedDepartment } : requested;
   const data = await getSlaOverview(period, filters);
   const { counts, compliance, targets } = data;
   const base = {
@@ -69,7 +88,6 @@ export default async function SlaPage({ searchParams }: { searchParams: SearchPa
   const complianceTone = compliance.rate === null ? "neutral" : compliance.rate >= targets.compliance ? "success" : compliance.rate >= targets.compliance - 0.1 ? "warning" : "danger";
   const listMode = filters.janela === "1h" ? "1h" : filters.lista === "todos" ? "todos" : "criticos";
   const hasFilters = Boolean(filters.departamento || filters.responsavel || filters.cliente || filters.prioridade || filters.tipo || filters.q);
-  const supportMonth = period.kind === "mes" ? period.key : undefined;
 
   const listTabs = [
     {
@@ -96,7 +114,7 @@ export default async function SlaPage({ searchParams }: { searchParams: SearchPa
         description={`Monitore prazos, riscos e violações em tempo real · ${period.label}${data.current ? "" : " (período fechado)"}`}
         breadcrumbs={[{ label: "Operação" }, { label: "SLA" }]}
         actions={
-          user.isAdmin ? (
+          canEditRules ? (
             <Button asChild variant="outline" className="h-11 md:h-9">
               <Link href="/admin/configuracoes?aba=sla">
                 <Timer /> Regras de SLA
@@ -127,7 +145,7 @@ export default async function SlaPage({ searchParams }: { searchParams: SearchPa
             options={data.options.departments}
             icon={<Building2 />}
             clear={["lista", "janela"]}
-            disabled={!user.isManager}
+            disabled={Boolean(allowedDepartments)}
           />
         </FilterField>
         <FilterField label="Responsável" className="w-[calc(50%-0.375rem)] min-w-0 sm:w-auto sm:min-w-[160px]">
@@ -348,7 +366,7 @@ export default async function SlaPage({ searchParams }: { searchParams: SearchPa
         médios em horas corridas desde o início do SLA.
       </p>
 
-      {filters.tipo === "chamado" && canAccessModule(user, "suporte") ? <SupportSlaSection month={supportMonth} isAdmin={user.isAdmin} /> : null}
+      {filters.tipo === "chamado" && showSupportQuality ? <SupportSlaSection month={supportMonth} canEditRules={canEditRules} viewer={user} /> : null}
     </PageContainer>
   );
 }

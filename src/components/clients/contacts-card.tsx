@@ -107,10 +107,13 @@ export interface ContactsCardProps {
   clientId: string;
   contacts: Contact[];
   className?: string;
+  /** Permissões calculadas no servidor: sem elas os botões não aparecem (as actions revalidam). */
+  canEdit?: boolean;
+  canRemove?: boolean;
 }
 
 /** Card lateral de contatos com adicionar/editar/remover e atalhos de telefone, WhatsApp e e-mail. */
-export function ContactsCard({ clientId, contacts, className }: ContactsCardProps) {
+export function ContactsCard({ clientId, contacts, className, canEdit = true, canRemove = true }: ContactsCardProps) {
   const router = useRouter();
   const [editing, setEditing] = React.useState<{ open: boolean; contact: Contact | null }>({ open: false, contact: null });
   const [removing, setRemoving] = React.useState<Contact | null>(null);
@@ -133,13 +136,15 @@ export function ContactsCard({ clientId, contacts, className }: ContactsCardProp
           Contatos
           <span className="rounded-full bg-surface-hover px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{contacts.length}</span>
         </CardTitle>
-        <Button variant="ghost" size="sm" onClick={() => setEditing({ open: true, contact: null })}>
-          <Plus /> Adicionar
-        </Button>
+        {canEdit ? (
+          <Button variant="ghost" size="sm" onClick={() => setEditing({ open: true, contact: null })}>
+            <Plus /> Adicionar
+          </Button>
+        ) : null}
       </CardHeader>
       <CardContent className="px-2 pb-2 pt-0">
         {contacts.length === 0 ? (
-          <EmptyState size="sm" icon={<UserRound />} title="Sem contatos" description="Adicione quem responde pela empresa." />
+          <EmptyState size="sm" icon={<UserRound />} title="Sem contatos" description={canEdit ? "Adicione quem responde pela empresa." : "Nenhum contato cadastrado."} />
         ) : (
           <ul className="flex flex-col">
             {contacts.map((c) => {
@@ -182,12 +187,16 @@ export function ContactsCard({ clientId, contacts, className }: ContactsCardProp
                       </div>
                     </div>
                     <div className={cn("flex shrink-0 items-center gap-0.5 md:opacity-0 md:transition-opacity md:group-hover/contact:opacity-100 md:focus-within:opacity-100")}>
-                      <Button variant="ghost" size="icon" className="size-8" aria-label={`Editar ${c.name}`} onClick={() => setEditing({ open: true, contact: c })}>
-                        <Pencil />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="size-8 text-muted hover:text-danger" aria-label={`Remover ${c.name}`} onClick={() => setRemoving(c)}>
-                        <Trash2 />
-                      </Button>
+                      {canEdit ? (
+                        <Button variant="ghost" size="icon" className="size-8" aria-label={`Editar ${c.name}`} onClick={() => setEditing({ open: true, contact: c })}>
+                          <Pencil />
+                        </Button>
+                      ) : null}
+                      {canRemove ? (
+                        <Button variant="ghost" size="icon" className="size-8 text-muted hover:text-danger" aria-label={`Remover ${c.name}`} onClick={() => setRemoving(c)}>
+                          <Trash2 />
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 </li>

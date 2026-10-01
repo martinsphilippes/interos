@@ -21,7 +21,7 @@ import { seedSupport } from "./seed/journey-support";
 import { seedWorkflowAndTasks } from "./seed/journey-workflow";
 import { seedEventsAndNotifications } from "./seed/journey-events";
 import { seedPerformance } from "./seed/journey-performance";
-import { seedDerived } from "./seed/derived";
+import { seedAmendments, seedBoletos, seedCommissionEngine, seedDerived, seedPayablesGeneral } from "./seed/derived";
 
 function elapsed(from: number): string {
   return `${((Date.now() - from) / 1000).toFixed(1)}s`;
@@ -74,6 +74,19 @@ async function main(): Promise<void> {
     console.log(`  ${name.padEnd(26)} ${String(count).padStart(5)}`);
   }
   // 5. Derivados calculados pelos motores sobre os dados gravados.
+  const tCommissions = Date.now();
+  const commissions = await seedCommissionEngine();
+  total += commissions.commissions + commissions.payables;
+  console.log(`  ${"commissions (motor)".padEnd(26)} ${String(commissions.commissions).padStart(5)}`);
+  console.log(`  ${"payables (motor)".padEnd(26)} ${String(commissions.payables).padStart(5)}  (${commissions.paid} pagos, ${commissions.scheduled - commissions.paid} a pagar, ${commissions.approved} aprovados · ${elapsed(tCommissions)})`);
+  const boletos = await seedBoletos();
+  console.log(`  ${"boletos (serviço)".padEnd(26)} ${String(boletos.registered.length).padStart(5)}  (registrados manualmente em cobranças abertas: ${boletos.registered.join(", ")})`);
+  const amendments = await seedAmendments();
+  total += amendments.applied.length;
+  console.log(`  ${"aditivos (serviço)".padEnd(26)} ${String(amendments.applied.length).padStart(5)}  (${amendments.applied.join(", ") || "nenhum"} aplicado em ctr_028 → v${amendments.version ?? "?"})`);
+  const cap = await seedPayablesGeneral();
+  total += cap.suppliers + cap.parcels + cap.recurring;
+  console.log(`  ${"contas a pagar (serviço)".padEnd(26)} ${String(cap.suppliers + cap.parcels + cap.recurring).padStart(5)}  (${cap.suppliers} fornecedores, ${cap.parcels} parcelas, ${cap.recurring} série recorrente)`);
   const tDerived = Date.now();
   const derived = await seedDerived();
   total += derived.snapshots + derived.bonus;

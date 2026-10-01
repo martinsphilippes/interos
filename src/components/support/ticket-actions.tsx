@@ -31,6 +31,8 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { useCanSee } from "@/components/auth/access-provider";
+import { ALL_SUPPORT_CAPABILITIES, type SupportCapabilities } from "./access-model";
 import { ArticleEditor, articleDraftFromTicket } from "./article-editor";
 import { LiveSlaBadge, responseDueLabel, useMinuteClock } from "./sla-live";
 import { TicketStatusBadge } from "./ticket-badges";
@@ -41,14 +43,15 @@ type DialogKey = "aguardar" | "resolver" | "fechar" | "reabrir" | "oportunidade"
 export interface TicketActionsProps {
   detail: TicketDetail;
   currentUserId: string;
-  canOperate: boolean;
-  canWriteArticles: boolean;
+  /** Capacidades calculadas no servidor (catálogo); cada botão aparece só com a sua. */
+  capabilities?: SupportCapabilities;
   articleCategories: string[];
   articleModules?: string[];
 }
 
 /** Painel de status do chamado: SLA ao vivo, transições (com diálogos), transferência e atalhos. */
-export function TicketActions({ detail, currentUserId, canOperate, canWriteArticles, articleCategories, articleModules = [] }: TicketActionsProps) {
+export function TicketActions({ detail, currentUserId, capabilities = ALL_SUPPORT_CAPABILITIES, articleCategories, articleModules = [] }: TicketActionsProps) {
+  const can = capabilities;
   const router = useRouter();
   const { ticket, row } = detail;
   const now = useMinuteClock();
@@ -104,68 +107,66 @@ export function TicketActions({ detail, currentUserId, canOperate, canWriteArtic
           </dl>
         ) : null}
 
-        {canOperate ? (
-          <div className="flex flex-col gap-2">
-            {isOpen && ticket.assigneeId !== currentUserId ? (
-              <Button className="min-h-[44px] md:min-h-9" loading={pending} onClick={() => run(() => assumeTicketAction({ ticketId: ticket.id }), "Chamado assumido")}>
-                <Hand /> Assumir chamado
-              </Button>
-            ) : null}
-            {isOpen ? (
-              <Button variant={ticket.assigneeId === currentUserId ? "primary" : "outline"} className="min-h-[44px] md:min-h-9" onClick={() => setDialog("resolver")}>
-                <CheckCircle2 /> Resolver
-              </Button>
-            ) : null}
-            {ticket.status === "em_atendimento" || ticket.status === "aberto" || ticket.status === "reaberto" ? (
-              <Button variant="outline" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("aguardar")}>
-                <PauseCircle /> Aguardar cliente
-              </Button>
-            ) : null}
-            {ticket.status === "aguardando_cliente" ? (
-              <Button variant="outline" className="min-h-[44px] md:min-h-9" loading={pending} onClick={() => run(() => resumeTicketAction({ ticketId: ticket.id }), "Atendimento retomado · SLA voltou a contar")}>
-                <PlayCircle /> Retomar atendimento
-              </Button>
-            ) : null}
-            {resolved ? (
-              <Button variant="outline" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("fechar")}>
-                <Lock /> Fechar chamado
-              </Button>
-            ) : null}
-            {closedOrResolved && detail.csatLink && ticket.csatScore === undefined ? (
-              <Button variant="outline" asChild className="min-h-[44px] md:min-h-9">
-                <a href={detail.csatLink} target="_blank" rel="noreferrer">
-                  <Star /> Formulário de avaliação (link do cliente) <ExternalLink className="ml-auto" />
-                </a>
-              </Button>
-            ) : null}
-            {!detail.opportunity ? (
-              <Button variant="outline" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("oportunidade")}>
-                <TrendingUp /> Gerar oportunidade
-              </Button>
-            ) : null}
-            {closedOrResolved && canWriteArticles ? (
-              <ArticleEditor
-                products={detail.catalog}
-                categories={articleCategories}
-                modules={articleModules}
-                sourceTicketId={ticket.id}
-                initial={articleDraftFromTicket(detail)}
-                trigger={
-                  <Button variant="outline" className="min-h-[44px] md:min-h-9">
-                    <BookPlus /> Criar artigo a partir deste chamado
-                  </Button>
-                }
-              />
-            ) : null}
-          </div>
-        ) : null}
-        {closedOrResolved ? (
+        <div className="flex flex-col gap-2 empty:hidden">
+          {can.assume && isOpen && ticket.assigneeId !== currentUserId ? (
+            <Button className="min-h-[44px] md:min-h-9" loading={pending} onClick={() => run(() => assumeTicketAction({ ticketId: ticket.id }), "Chamado assumido")}>
+              <Hand /> Assumir chamado
+            </Button>
+          ) : null}
+          {can.resolve && isOpen ? (
+            <Button variant={ticket.assigneeId === currentUserId ? "primary" : "outline"} className="min-h-[44px] md:min-h-9" onClick={() => setDialog("resolver")}>
+              <CheckCircle2 /> Resolver
+            </Button>
+          ) : null}
+          {can.pause && (ticket.status === "em_atendimento" || ticket.status === "aberto" || ticket.status === "reaberto") ? (
+            <Button variant="outline" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("aguardar")}>
+              <PauseCircle /> Aguardar cliente
+            </Button>
+          ) : null}
+          {can.pause && ticket.status === "aguardando_cliente" ? (
+            <Button variant="outline" className="min-h-[44px] md:min-h-9" loading={pending} onClick={() => run(() => resumeTicketAction({ ticketId: ticket.id }), "Atendimento retomado · SLA voltou a contar")}>
+              <PlayCircle /> Retomar atendimento
+            </Button>
+          ) : null}
+          {can.close && resolved ? (
+            <Button variant="outline" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("fechar")}>
+              <Lock /> Fechar chamado
+            </Button>
+          ) : null}
+          {closedOrResolved && detail.csatLink && ticket.csatScore === undefined ? (
+            <Button variant="outline" asChild className="min-h-[44px] md:min-h-9">
+              <a href={detail.csatLink} target="_blank" rel="noreferrer">
+                <Star /> Formulário de avaliação (link do cliente) <ExternalLink className="ml-auto" />
+              </a>
+            </Button>
+          ) : null}
+          {can.createOpportunity && !detail.opportunity ? (
+            <Button variant="outline" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("oportunidade")}>
+              <TrendingUp /> Gerar oportunidade
+            </Button>
+          ) : null}
+          {closedOrResolved && can.createArticle ? (
+            <ArticleEditor
+              products={detail.catalog}
+              categories={articleCategories}
+              modules={articleModules}
+              sourceTicketId={ticket.id}
+              initial={articleDraftFromTicket(detail)}
+              trigger={
+                <Button variant="outline" className="min-h-[44px] md:min-h-9">
+                  <BookPlus /> Criar artigo a partir deste chamado
+                </Button>
+              }
+            />
+          ) : null}
+        </div>
+        {can.reopen && closedOrResolved ? (
           <Button variant="ghost" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("reabrir")}>
             <RotateCcw /> Reabrir (reincidência)
           </Button>
         ) : null}
 
-        {canOperate && isOpen ? (
+        {can.assign && isOpen ? (
           <Button variant="outline" className="min-h-[44px] md:min-h-9" onClick={() => setDialog("transferir")}>
             <UserRoundCog /> Transferir
           </Button>
@@ -462,17 +463,27 @@ export function OpportunityDialog({ open, onOpenChange, detail }: { open: boolea
   );
 }
 
+/** Oportunidade gerada pelo chamado: vira link só para quem vê a tela de oportunidades. */
 export function OpportunityLink({ detail }: { detail: TicketDetail }) {
+  const canSeeOpportunities = useCanSee("/vendas/oportunidades");
   if (!detail.opportunity) return null;
   const origin = detail.opportunity.originUserId ? detail.users[detail.opportunity.originUserId]?.name : undefined;
-  return (
-    <Link href={`/vendas/oportunidades?oportunidade=${detail.opportunity.id}`} className="flex items-start gap-2 rounded-lg border border-success/30 bg-success-soft/50 p-3 text-sm hover:border-success/60">
+  const content = (
+    <>
       <TrendingUp className="mt-0.5 size-4 shrink-0 text-success-fg" />
       <span className="min-w-0">
         <span className="block font-medium">{detail.opportunity.title}</span>
         <span className="text-xs text-muted">Oportunidade gerada pelo suporte{origin ? ` · origem: ${origin}` : ""}</span>
       </span>
+    </>
+  );
+  const className = "flex items-start gap-2 rounded-lg border border-success/30 bg-success-soft/50 p-3 text-sm";
+  return canSeeOpportunities ? (
+    <Link href={`/vendas/oportunidades?oportunidade=${detail.opportunity.id}`} className={`${className} hover:border-success/60`}>
+      {content}
     </Link>
+  ) : (
+    <div className={className}>{content}</div>
   );
 }
 

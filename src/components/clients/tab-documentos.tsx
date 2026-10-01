@@ -10,11 +10,12 @@ import { UserCell } from "./client-badges";
 import { DocumentForm } from "./document-form";
 
 /** Aba Documentos: registro por link e lista versionada. */
-export function TabDocumentos({ data }: { data: Client360 }) {
+/** `canAttach` (calculado no servidor): sem a ação de anexar o formulário não aparece. */
+export function TabDocumentos({ data, canAttach = true }: { data: Client360; canAttach?: boolean }) {
   const { client, documents, users } = data;
   return (
     <div className="flex flex-col gap-5">
-      <DocumentForm clientId={client.id} />
+      {canAttach ? <DocumentForm clientId={client.id} /> : null}
       <section>
         <SectionTitle title="Documentos" count={documents.length} />
         <Card className="overflow-hidden">

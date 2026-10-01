@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { CircleDollarSign, LayoutGrid, Target, Trophy } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
+import { csCapabilities, csLinks } from "@/server/cs/access";
 import { getUpsellMatrix } from "@/server/cs/queries";
 import { OPPORTUNITY_KIND_LABELS, OPPORTUNITY_STAGE_LABELS, OPPORTUNITY_STAGE_VARIANT } from "@/components/clients/labels";
 import { formatCurrency, formatNumber, formatRelative } from "@/lib/format";
@@ -22,10 +22,14 @@ export const metadata: Metadata = { title: "Upsell" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Upsell: matriz de produtos da carteira e oportunidades de expansão originadas pelo CS. */
+/**
+ * Upsell: matriz de produtos da carteira e oportunidades de expansão originadas pelo CS. Tela cs.upsell; a matriz
+ * respeita o escopo efetivo e só quem pode gerar oportunidade vê as células clicáveis.
+ */
 export default async function UpsellPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("cs.upsell");
+  const caps = csCapabilities(user);
+  const links = csLinks(user);
   const data = await getUpsellMatrix(user, await searchParams);
   const { totals } = data;
 
@@ -33,9 +37,9 @@ export default async function UpsellPage({ searchParams }: { searchParams: Searc
     <PageContainer>
       <PageHeader
         title="Upsell e cross-sell"
-        description="Produtos contratados × disponíveis na carteira. Gere oportunidades para o vendedor responsável direto da matriz."
-        breadcrumbs={[{ label: "Customer Success", href: "/cs" }, { label: "Upsell" }]}
-        actions={<ScopeSelect owners={data.owners} value={data.scope.param} />}
+        description={caps.upsell ? "Produtos contratados × disponíveis na carteira. Gere oportunidades para o vendedor responsável direto da matriz." : "Produtos contratados × disponíveis na carteira."}
+        breadcrumbs={[{ label: "Customer Success", href: links.portfolio ? "/cs" : undefined }, { label: "Upsell" }]}
+        actions={<ScopeSelect owners={data.owners} value={data.scope.param} restricted={data.scope.restricted} />}
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -50,14 +54,14 @@ export default async function UpsellPage({ searchParams }: { searchParams: Searc
           <CardTitle>Matriz da carteira</CardTitle>
           <CardDescription>{data.rows.length} cliente(s) × {data.products.length} produto(s) ativos no catálogo.</CardDescription>
         </CardHeader>
-        <UpsellMatrixView data={data} />
+        <UpsellMatrixView data={data} canGenerate={caps.upsell} clientLink={links.client} />
       </Card>
 
       <section>
         <SectionTitle title="Oportunidades originadas pelo CS" count={data.opportunities.length} description="Upsell e cross-sell abertas e ganhas (perdidas ficam de fora)." />
         {data.opportunities.length === 0 ? (
           <Card>
-            <EmptyState icon={<Target />} title="Nenhuma oportunidade gerada pelo CS" description="Use a matriz acima para gerar a primeira." />
+            <EmptyState icon={<Target />} title="Nenhuma oportunidade gerada pelo CS" description={caps.upsell ? "Use a matriz acima para gerar a primeira." : undefined} />
           </Card>
         ) : (
           <Card className="overflow-hidden">
@@ -79,14 +83,22 @@ export default async function UpsellPage({ searchParams }: { searchParams: Searc
                 {data.opportunities.map((o) => (
                   <TableRow key={o.id}>
                     <TableCell className="max-w-[280px]">
-                      <Link href={`/vendas/oportunidades?oportunidade=${o.id}`} className="line-clamp-1 font-medium hover:text-brand hover:underline">
-                        {o.title}
-                      </Link>
+                      {links.opportunities ? (
+                        <Link href={`/vendas/oportunidades?oportunidade=${o.id}`} className="line-clamp-1 font-medium hover:text-brand hover:underline">
+                          {o.title}
+                        </Link>
+                      ) : (
+                        <span className="line-clamp-1 font-medium">{o.title}</span>
+                      )}
                     </TableCell>
                     <TableCell>
-                      <Link href={`/clientes/${o.clientId}`} className="hover:underline">
-                        {o.tradeName}
-                      </Link>
+                      {links.client ? (
+                        <Link href={`/clientes/${o.clientId}`} className="hover:underline">
+                          {o.tradeName}
+                        </Link>
+                      ) : (
+                        o.tradeName
+                      )}
                     </TableCell>
                     <TableCell className="text-sm">{OPPORTUNITY_KIND_LABELS[o.kind]}</TableCell>
                     <TableCell>

@@ -9,17 +9,21 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { formatNumber } from "@/lib/format";
 import { CHART_COLORS, chartActiveDot, chartAxisTick, chartCategoryTick, chartCursor, chartLegendStyle, chartTooltipItemStyle, chartTooltipLabelStyle, chartTooltipStyle } from "@/lib/chart-theme";
 import { TEMPERATURE_COLORS, type MarketingOverview } from "./marketing-model";
+import { useCanSeeFn } from "@/components/auth/access-provider";
 
 /* Séries e tinta de eixos/grade do tema escuro (src/lib/chart-theme.ts). */
 const SERIES_1 = CHART_COLORS.secondary;
 const SERIES_2 = CHART_COLORS.primary;
 const GRID = CHART_COLORS.grid;
 
-/** Recharts entrega o item clicado com os campos do dado e/ou em `payload`, conforme o tipo de gráfico. */
-function goTo(router: ReturnType<typeof useRouter>, entry: unknown) {
+/**
+ * Recharts entrega o item clicado com os campos do dado e/ou em `payload`, conforme o tipo de gráfico. Só navega
+ * quando o usuário abre a tela de destino (lista de leads).
+ */
+function goTo(router: ReturnType<typeof useRouter>, entry: unknown, canSee: (href: string) => boolean) {
   const item = entry as { href?: string; payload?: { href?: string } };
   const href = item.payload?.href ?? item.href;
-  if (href) router.push(href);
+  if (href && canSee(href)) router.push(href);
 }
 
 function ChartCard({ title, description, empty, children }: { title: string; description?: string; empty: boolean; children: React.ReactNode }) {
@@ -37,6 +41,7 @@ function ChartCard({ title, description, empty, children }: { title: string; des
 /** Barras horizontais de uma série; cada barra leva à lista de leads filtrada. */
 function RankingBars({ data, height }: { data: { name: string; leads: number; href: string }[]; height: number }) {
   const router = useRouter();
+  const canSee = useCanSeeFn();
   return (
     <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -45,7 +50,7 @@ function RankingBars({ data, height }: { data: { name: string; leads: number; hr
           <XAxis type="number" allowDecimals={false} tick={chartAxisTick} axisLine={false} tickLine={false} />
           <YAxis type="category" dataKey="name" width={150} tick={chartCategoryTick} axisLine={false} tickLine={false} interval={0} />
           <Tooltip cursor={chartCursor} contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} formatter={(value) => [formatNumber(Number(value)), "Leads"]} />
-          <Bar dataKey="leads" name="Leads" fill={SERIES_1} radius={[0, 4, 4, 0]} maxBarSize={22} className="cursor-pointer" onClick={(entry) => goTo(router, entry)}>
+          <Bar dataKey="leads" name="Leads" fill={SERIES_1} radius={[0, 4, 4, 0]} maxBarSize={22} className="cursor-pointer" onClick={(entry) => goTo(router, entry, canSee)}>
             <LabelList dataKey="leads" position="right" style={{ fontSize: 12, fill: "var(--color-foreground)" }} />
           </Bar>
         </BarChart>
@@ -72,6 +77,7 @@ export function LeadsByCampaignChart({ data }: { data: MarketingOverview["byCamp
 
 export function TemperatureDonut({ data }: { data: MarketingOverview["byTemperature"] }) {
   const router = useRouter();
+  const canSee = useCanSeeFn();
   const total = data.reduce((s, d) => s + d.leads, 0);
   return (
     <ChartCard title="Temperatura dos leads" description="Distribuição dos leads captados" empty={total === 0}>
@@ -79,7 +85,7 @@ export function TemperatureDonut({ data }: { data: MarketingOverview["byTemperat
         <div className="relative h-[180px] w-[180px] shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={data} dataKey="leads" nameKey="name" innerRadius={56} outerRadius={84} paddingAngle={2} stroke="var(--color-surface)" strokeWidth={2} className="cursor-pointer" onClick={(entry) => goTo(router, entry)}>
+              <Pie data={data} dataKey="leads" nameKey="name" innerRadius={56} outerRadius={84} paddingAngle={2} stroke="var(--color-surface)" strokeWidth={2} className="cursor-pointer" onClick={(entry) => goTo(router, entry, canSee)}>
                 {data.map((d) => (
                   <Cell key={d.key} fill={TEMPERATURE_COLORS[d.key]} />
                 ))}
@@ -95,7 +101,7 @@ export function TemperatureDonut({ data }: { data: MarketingOverview["byTemperat
         <ul className="flex w-full flex-col gap-1.5">
           {data.map((d) => (
             <li key={d.key}>
-              <button type="button" onClick={() => router.push(d.href)} className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-surface-hover md:min-h-8">
+              <button type="button" onClick={() => canSee(d.href) && router.push(d.href)} className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-surface-hover md:min-h-8">
                 <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: TEMPERATURE_COLORS[d.key] }} aria-hidden />
                 <span className="flex-1 text-left">{d.name}</span>
                 <span className="font-medium tabular-nums">{formatNumber(d.leads)}</span>

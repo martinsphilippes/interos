@@ -10,6 +10,9 @@ import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import { col, create, getById, getManyByIds, list, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { can } from "@/server/auth/permissions";
+import { resolvePermissionsForUser } from "@/server/auth/permission-store";
+import type { EffectivePermissions } from "@/domain/permissions";
 import { registerHandler } from "@/server/events/emit";
 import { registerWorkflowHandlers } from "@/server/events/handlers/workflow";
 import { notify } from "@/server/notifications";
@@ -59,19 +62,28 @@ ensureWorkflowHandlers();
 
 export const JOURNEY_TEMPLATE_KEY = "jornada-cliente";
 
-/** Ator das operações: referência do usuário com papel opcional (resolvido no banco quando ausente). */
-export type WorkflowActor = UserRef & { role?: RoleKey };
+/**
+ * Ator das operações: referência do usuário com papel e permissões efetivas opcionais. As Server Actions passam as
+ * do CurrentUser; quando ausentes, são lidas do usuário no banco (perfil, exceções e módulos ativos).
+ */
+export type WorkflowActor = UserRef & { role?: RoleKey; permissions?: EffectivePermissions };
 
-const MANAGER_ROLES: readonly RoleKey[] = ["admin", "diretoria", "gestor"];
-
-function isManagerRole(role: RoleKey | undefined): boolean {
-  return role !== undefined && MANAGER_ROLES.includes(role);
+interface ActorAccess {
+  role?: RoleKey;
+  permissions?: EffectivePermissions;
 }
 
-async function resolveActorRole(actor: WorkflowActor): Promise<RoleKey | undefined> {
-  if (actor.role) return actor.role;
+/**
+ * Papel e permissões efetivas do ator para as decisões do gate (aprovar, rejeitar, concluir com exceção). Nunca a
+ * matriz padrão do papel para um usuário existente: sem `permissions`, resolve as do usuário (resolvePermissionsForUser,
+ * memoizado por requisição). Ator sem documento de usuário (automação) mantém só o papel informado — matriz padrão.
+ */
+async function resolveActorAccess(actor: WorkflowActor): Promise<ActorAccess> {
+  if (actor.permissions) return { role: actor.role, permissions: actor.permissions };
   const user = await getById<User>(COLLECTIONS.users, actor.id);
-  return user?.role;
+  if (!user) return { role: actor.role };
+  const permissions = (await resolvePermissionsForUser(user)) ?? undefined;
+  return { role: actor.role ?? user.role, permissions };
 }
 
 function ref(user: Pick<User, "id" | "name">): UserRef {
@@ -158,9 +170,19 @@ export async function resolveApprovers(stage: WorkflowStage): Promise<User[]> {
   return Array.from(approvers.values());
 }
 
-function canApproveStage(stage: WorkflowStage, role: RoleKey | undefined): boolean {
-  if (isManagerRole(role)) return true;
+/**
+ * Pode aprovar/rejeitar o gate (A22, helper único): quem tem `operacao.workflow.aprovar-qualquer` (padrão: gestores)
+ * ou o papel aprovador da etapa. A UI passa `user.permissions` e o servidor as permissões efetivas do ator
+ * (resolveActorAccess); sem `permissions`, vale a matriz padrão do papel.
+ */
+export function canApproveStage(stage: Pick<WorkflowStage, "gate">, role: RoleKey | undefined, permissions?: EffectivePermissions): boolean {
+  if (role && can({ role, permissions }, "operacao.workflow.aprovar-qualquer")) return true;
   return Boolean(stage.gate.approverRole && role === stage.gate.approverRole);
+}
+
+/** Pode concluir a etapa com pendências (exceção ao gate): `operacao.workflow.concluir-com-excecao`. */
+export function canCompleteWithException(role: RoleKey | undefined, permissions?: EffectivePermissions): boolean {
+  return Boolean(role) && can({ role: role!, permissions }, "operacao.workflow.concluir-com-excecao");
 }
 
 // ---------------------------------------------------------------------------
@@ -535,7 +557,7 @@ function mergeFields(current: Record<string, unknown>, incoming: Record<string, 
  */
 export async function completeGate(input: CompleteGateInput): Promise<CompleteGateResult> {
   const actor: UserRef = { id: input.actor.id, name: input.actor.name };
-  const role = input.system ? undefined : await resolveActorRole(input.actor);
+  const access: ActorAccess = input.system ? {} : await resolveActorAccess(input.actor);
   const step = await loadStep(input.stepId);
   if (step.status === "concluida" || step.status === "pulada") throw new Error("Esta etapa já foi concluída");
 
@@ -561,7 +583,7 @@ export async function completeGate(input: CompleteGateInput): Promise<CompleteGa
   const evaluation = evaluateGate(current, stage, context.data, { documentsCount: context.documentsCount });
   const exception = input.exceptionReason?.trim();
   if (!evaluation.ok) {
-    const allowed = Boolean(exception) && (input.system || isManagerRole(role));
+    const allowed = Boolean(exception) && (input.system || canCompleteWithException(access.role, access.permissions));
     if (!allowed) {
       const message = exception ? "Só gestores ou administradores podem concluir uma etapa com pendências." : `Gate "${stage.gate.name}" não atendido — ${describeMissing(evaluation)}`;
       return { status: "blocked", step: current, evaluation, message };
@@ -570,7 +592,7 @@ export async function completeGate(input: CompleteGateInput): Promise<CompleteGa
 
   // 3) Aprovação (quando exigida e ainda não concedida).
   if (stage.gate.requiresApproval && !current.approval?.approvedAt && !input.system) {
-    if (!canApproveStage(stage, role)) {
+    if (!canApproveStage(stage, access.role, access.permissions)) {
       if (current.status === "aguardando_aprovacao") throw new Error("Esta etapa já aguarda aprovação");
       const approvers = await resolveApprovers(stage);
       const requestedAt = nowIso();
@@ -745,7 +767,7 @@ async function finalizeStep({ step, stage, instance, template, actor, fields, ex
 // ---------------------------------------------------------------------------
 
 export async function approveGate(stepId: string, actor: WorkflowActor): Promise<CompleteGateResult> {
-  const role = await resolveActorRole(actor);
+  const access = await resolveActorAccess(actor);
   const step = await loadStep(stepId);
   if (step.status !== "aguardando_aprovacao") throw new Error("Esta etapa não está aguardando aprovação");
   const instance = await loadInstance(step.instanceId);
@@ -753,7 +775,7 @@ export async function approveGate(stepId: string, actor: WorkflowActor): Promise
   if (!template) throw new Error("Template da jornada não encontrado");
   const stage = findStage(template, step.stageKey);
   if (!stage) throw new Error("Etapa não existe no template");
-  if (!canApproveStage(stage, role)) throw new Error("Você não tem permissão para aprovar esta etapa");
+  if (!canApproveStage(stage, access.role, access.permissions)) throw new Error("Você não tem permissão para aprovar esta etapa");
 
   const approvedAt = nowIso();
   const approval = { requestedAt: step.approval?.requestedAt, approvedAt, approvedBy: actor.id };
@@ -770,14 +792,14 @@ export async function approveGate(stepId: string, actor: WorkflowActor): Promise
 }
 
 export async function rejectGate(stepId: string, actor: WorkflowActor, reason: string): Promise<WorkflowStep> {
-  const role = await resolveActorRole(actor);
+  const access = await resolveActorAccess(actor);
   const step = await loadStep(stepId);
   if (step.status !== "aguardando_aprovacao") throw new Error("Esta etapa não está aguardando aprovação");
   const instance = await loadInstance(step.instanceId);
   const template = await getTemplateForInstance(instance);
   const stage = template ? findStage(template, step.stageKey) : null;
   if (!stage) throw new Error("Etapa não existe no template");
-  if (!canApproveStage(stage, role)) throw new Error("Você não tem permissão para rejeitar esta etapa");
+  if (!canApproveStage(stage, access.role, access.permissions)) throw new Error("Você não tem permissão para rejeitar esta etapa");
 
   const rejectedAt = nowIso();
   const approval = { requestedAt: step.approval?.requestedAt, rejectedAt, reason };

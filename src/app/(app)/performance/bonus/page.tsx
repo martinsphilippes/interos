@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Award, CircleDollarSign, Coins, FileText, Gem, Settings2, Target } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { can, canSeeHref, requireScreen } from "@/server/auth/session";
 import { getBonusPageData, getPerformanceAccess, resolveSubjectId } from "@/server/performance/queries";
 import { currentMonthKey, listRecentMonths, monthPeriod, periodFromKey } from "@/server/kpis/queries";
 import { DEPARTMENT_LABELS } from "@/domain/constants";
@@ -30,14 +30,22 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 /**
  * Bônus e Premiação: projeção do mês com o cálculo explicado linha a linha, simulador, histórico e
- * regulamento gerado da regra. Gestor/admin: equipe, bloqueios (registrar/confirmar/revogar com auditoria)
- * e fechamento da competência. Bônus é mensal: ?periodo=AAAA-MM (padrão: mês atual).
+ * regulamento gerado da regra. Gestão (seção performance.bonus.equipe.ver, padrão gestor/diretoria/admin): equipe
+ * dentro do escopo da tela, bloqueios (registrar/confirmar/revogar com auditoria, cada um com a sua chave) e
+ * fechamento da competência. Sem a seção, os dados da equipe não são lidos nem enviados. Bônus é mensal:
+ * ?periodo=AAAA-MM (padrão: mês atual).
  */
 export default async function BonusPage({ searchParams }: { searchParams: SearchParams }) {
-  const [viewer, query] = await Promise.all([requireUser(), searchParams]);
+  const [viewer, query] = await Promise.all([requireScreen("performance.bonus"), searchParams]);
   const requested = periodFromKey(one(query.periodo));
   const month = requested?.kind === "mes" ? requested : monthPeriod(currentMonthKey());
-  const access = await getPerformanceAccess(viewer);
+  const access = await getPerformanceAccess(viewer, "performance.bonus");
+  const capabilities = {
+    block: can(viewer, "performance.bonus.equipe.bloquear"),
+    confirm: can(viewer, "performance.bonus.equipe.aprovar"),
+    revoke: can(viewer, "performance.bonus.equipe.cancelar"),
+    close: can(viewer, "performance.bonus.equipe.concluir"),
+  };
   const subjectId = resolveSubjectId(viewer, access, one(query.usuario));
   const data = await getBonusPageData(viewer, access, subjectId, month);
   const c = data.subject;
@@ -84,7 +92,7 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
           <>
             {access.canViewOthers ? <UserSelect people={access.people} value={subjectId} /> : null}
             <PeriodSelect options={monthOptions} value={month.key} label="Competência" />
-            {viewer.isAdmin ? (
+            {canSeeHref(viewer, "/performance/bonus/regras") ? (
               <Button variant="outline" asChild className="min-h-[44px] md:min-h-0">
                 <Link href="/performance/bonus/regras">
                   <Settings2 /> Regras
@@ -110,9 +118,11 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
                 title={`Sem regra de bônus para ${c ? DEPARTMENT_LABELS[c.department] : "este colaborador"}`}
                 description={c?.department === "vendas" ? "Vendas é remunerada por comissão e prêmios de meta: veja o bloco de comissões no Meu Desempenho." : "Quando o administrador publicar uma regra para o departamento, a projeção aparece aqui."}
                 action={
-                  <Button variant="outline" asChild>
-                    <Link href={`/performance${self ? "" : `?usuario=${subjectId}`}`}>Ir para Meu Desempenho</Link>
-                  </Button>
+                  canSeeHref(viewer, "/performance") ? (
+                    <Button variant="outline" asChild>
+                      <Link href={`/performance${self ? "" : `?usuario=${subjectId}`}`}>Ir para Meu Desempenho</Link>
+                    </Button>
+                  ) : null
                 }
               />
             </Card>
@@ -214,7 +224,7 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
                   <CardDescription>Bônus projetado, faixa e bloqueios de quem você gerencia.</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <BonusTeamPanel rows={teamRows} month={month.key} monthLabel={month.label} options={data.blockOptions} periodOptions={monthOptions} canClose={viewer.isManager} />
+                  <BonusTeamPanel rows={teamRows} month={month.key} monthLabel={month.label} options={data.blockOptions} periodOptions={monthOptions} canClose={capabilities.close} canBlock={capabilities.block} />
                 </CardContent>
               </Card>
               <Card>
@@ -223,7 +233,7 @@ export default async function BonusPage({ searchParams }: { searchParams: Search
                   <CardDescription>Registro com evidência, confirmação ou revogação por gestor/admin, com trilha de auditoria.</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <BonusBlocksList blocks={data.blocks} audit={data.audit} manageableIds={access.manageableIds} />
+                  <BonusBlocksList blocks={data.blocks} audit={data.audit} manageableIds={access.manageableIds} canConfirm={capabilities.confirm} canRevoke={capabilities.revoke} />
                 </CardContent>
               </Card>
             </div>

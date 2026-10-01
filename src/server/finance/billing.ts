@@ -8,6 +8,7 @@ import { col, getManyByIds, list, nowIso, type ListOptions } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import { COLLECTIONS, type Billing, type Client, type Contract, type UserRef } from "@/domain/types";
+import { splitInstallments } from "@/domain/sale-closing";
 import type { FinanceGateSettings, ReleaseCheck, ReleaseGate } from "./schemas";
 
 export const SYSTEM_ACTOR: UserRef = { id: "system", name: "INTEROS (automação)" };
@@ -61,12 +62,23 @@ export type BillingDraft = Pick<Billing, "clientId" | "contractId" | "type" | "c
 /**
  * Cobranças de um contrato: adesão e hardware no primeiro vencimento; mensalidades do prazo
  * (recorrência mensal = 1 por mês; anual = 1 por ano no valor de 12 meses; único = nenhuma).
+ * Forma de pagamento: a combinada na venda (`contract.paymentMethod`), boleto para contratos antigos.
+ * Adesão parcelada (`contract.setupInstallments` > 1): N cobranças "setup" (parcela 1..N), a 1ª no primeiro
+ * vencimento e as demais no dia de vencimento dos meses seguintes; centavos exatos (a última leva o resto).
  */
 export function buildBillingPlan(contract: Contract, firstDueDate: string): BillingDraft[] {
   const drafts: BillingDraft[] = [];
   const firstKey = dateKey(firstDueDate);
-  const base = { clientId: contract.clientId, contractId: contract.id, status: "aberta" as const, method: "boleto" };
-  if (contract.setupTotal > 0) drafts.push({ ...base, type: "setup", competence: firstKey.slice(0, 7), amount: round2(contract.setupTotal), dueDate: firstDueDate });
+  const base = { clientId: contract.clientId, contractId: contract.id, status: "aberta" as const, method: contract.paymentMethod ?? "boleto" };
+  if (contract.setupTotal > 0) {
+    const parts = splitInstallments(round2(contract.setupTotal), contract.setupInstallments ?? 1);
+    if (parts.length === 1) drafts.push({ ...base, type: "setup", competence: firstKey.slice(0, 7), amount: round2(contract.setupTotal), dueDate: firstDueDate });
+    else
+      parts.forEach((amount, i) => {
+        const dueDate = i === 0 ? firstDueDate : dayInMonth(firstKey.slice(0, 7), i, contract.billingDay);
+        drafts.push({ ...base, type: "setup", competence: dateKey(dueDate).slice(0, 7), installment: i + 1, amount, dueDate });
+      });
+  }
   if (contract.hardwareTotal > 0) drafts.push({ ...base, type: "hardware", competence: firstKey.slice(0, 7), amount: round2(contract.hardwareTotal), dueDate: firstDueDate });
   if (contract.monthlyTotal > 0 && contract.recurrence !== "unico") {
     const step = contract.recurrence === "anual" ? 12 : 1;
@@ -82,6 +94,105 @@ export function buildBillingPlan(contract: Contract, firstDueDate: string): Bill
 }
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// ---------------------------------------------------------------------------
+// Cobrança recorrente: extensão do plano (D24b) e estado derivado "vencido"
+// ---------------------------------------------------------------------------
+
+/** Id determinístico de uma cobrança gerada pelo plano/extensão: bill_<contrato>_m<n> (mensalidade), _s<n> (adesão), _h<n> (hardware). */
+export function billingDocId(contractId: string, type: Billing["type"], n: number, attempt = 1): string {
+  const prefix = type === "mensalidade" ? "m" : type === "setup" ? "s" : type === "hardware" ? "h" : "v";
+  return `bill_${contractId}_${prefix}${n}${attempt > 1 ? `_r${attempt}` : ""}`;
+}
+
+/** Passo (meses) entre mensalidades e valor de cada uma conforme a recorrência do contrato. */
+export function recurringStep(contract: Pick<Contract, "recurrence" | "monthlyTotal">): { step: number; amount: number } {
+  const step = contract.recurrence === "anual" ? 12 : 1;
+  return { step, amount: round2(contract.monthlyTotal * step) };
+}
+
+/** Maior parcela de mensalidade existente (não cancelada) e a cobrança correspondente. */
+export function lastRecurringBilling(billings: Billing[]): { installment: number; billing?: Billing } {
+  const recurring = billings.filter((b) => b.type === "mensalidade" && b.status !== "cancelada");
+  const installment = recurring.reduce((max, b) => Math.max(max, b.installment ?? 0), 0);
+  return { installment, billing: recurring.find((b) => (b.installment ?? 0) === installment) };
+}
+
+export interface ExtendBillingPlanInput {
+  /** Primeira parcela a gerar (normalmente a maior existente + 1). */
+  fromInstallment: number;
+  months: number;
+  /** Vencimento da parcela `fromInstallment` (ISO); as seguintes caem no dia de vencimento dos meses seguintes. */
+  firstDueDate: string;
+  /** Valor de cada mensalidade (padrão: mensalidade atual do contrato × passo da recorrência). */
+  monthlyAmount?: number;
+}
+
+/**
+ * Extensão do plano de cobranças (puro): `months` mensalidades a partir de `fromInstallment`, mantendo a numeração
+ * (`installment`) e a competência pelo vencimento. Recorrência anual gera 1 parcela por ano no valor de 12 meses.
+ */
+export function extendBillingPlan(contract: Contract, input: ExtendBillingPlanInput): BillingDraft[] {
+  if (contract.recurrence === "unico" || input.months <= 0) return [];
+  const { step, amount: defaultAmount } = recurringStep(contract);
+  const amount = round2(input.monthlyAmount ?? defaultAmount);
+  if (amount <= 0) return [];
+  const firstKey = dateKey(input.firstDueDate);
+  const base = { clientId: contract.clientId, contractId: contract.id, status: "aberta" as const, method: contract.paymentMethod ?? "boleto" };
+  const drafts: BillingDraft[] = [];
+  for (let i = 0; i < input.months; i++) {
+    const dueDate = i === 0 ? dueIso(firstKey) : dayInMonth(firstKey.slice(0, 7), i * step, contract.billingDay);
+    drafts.push({ ...base, type: "mensalidade", competence: dateKey(dueDate).slice(0, 7), installment: input.fromInstallment + i, amount, dueDate });
+  }
+  return drafts;
+}
+
+/** Vencimento da parcela `n` a partir da última mensalidade existente (mesmo dia de vencimento, meses seguintes). */
+export function nextRecurringDueDate(contract: Pick<Contract, "billingDay" | "recurrence">, last: Billing, n: number): string {
+  const step = contract.recurrence === "anual" ? 12 : 1;
+  return dayInMonth(dateKey(last.dueDate).slice(0, 7), (n - (last.installment ?? 0)) * step, contract.billingDay);
+}
+
+/** Contrato com prazo indeterminado (sem prazo) ou com renovação automática: a cobrança segue o horizonte rolante. */
+export function hasRollingBilling(contract: Pick<Contract, "autoRenew" | "termMonths">): boolean {
+  return Boolean(contract.autoRenew) || !(contract.termMonths > 0);
+}
+
+/**
+ * Mensalidades que faltam gerar (D24b): para contratos com horizonte rolante, até cobrir `today + horizonMonths`;
+ * para contratos com prazo fixo, até completar o prazo (`termMonths`). Nunca refaz parcelas abaixo da maior
+ * existente (buracos vêm de cancelamentos deliberados). Devolve os números das parcelas a criar.
+ */
+export function pendingRecurringInstallments(contract: Contract, billings: Billing[], options: { horizonMonths: number; today?: string; months?: number }): number[] {
+  if (contract.recurrence === "unico" || contract.monthlyTotal <= 0) return [];
+  const { installment: max, billing: last } = lastRecurringBilling(billings);
+  if (!last || max <= 0) return [];
+  const step = contract.recurrence === "anual" ? 12 : 1;
+  let target = max;
+  if (options.months !== undefined) target = max + Math.max(0, Math.floor(options.months / step));
+  else if (hasRollingBilling(contract)) {
+    const today = options.today ?? todayKey();
+    const horizonEnd = dayInMonth(today.slice(0, 7), options.horizonMonths, 28);
+    let n = max;
+    while (n - max < 60) {
+      const due = nextRecurringDueDate(contract, last, n + 1);
+      if (due > horizonEnd) break;
+      n += 1;
+    }
+    target = n;
+  } else {
+    const term = contract.recurrence === "anual" ? Math.max(1, Math.ceil(contract.termMonths / 12)) : contract.termMonths;
+    target = Math.max(max, term);
+  }
+  const out: number[] = [];
+  for (let n = max + 1; n <= target; n++) out.push(n);
+  return out;
+}
+
+/** Contrato liberado cuja vigência terminou (estado DERIVADO: nada muda no banco). Fica fora do MRR e ganha o badge "Vencido". */
+export function isContractExpired(contract: Pick<Contract, "status" | "endDate">, today = todayKey()): boolean {
+  return contract.status === "liberado" && Boolean(contract.endDate) && dateKey(contract.endDate) < today;
+}
 
 // ---------------------------------------------------------------------------
 // Gate de liberação

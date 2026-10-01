@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Building2, CalendarClock, CheckCircle2, ExternalLink, MapPin, Navigation, RefreshCw, Target, XCircle } from "lucide-react";
 import type { TimelineEvent } from "@/domain/types";
@@ -23,7 +22,9 @@ import { cn } from "@/lib/utils";
 import { cancelVisitAction, completeVisitAction, rescheduleVisitAction } from "@/server/sales/actions";
 import type { VisitRow } from "@/server/sales/queries";
 import { VISIT_STATUS_LABELS, VISIT_STATUS_VARIANT, opportunityHref } from "./model";
+import { useSalesAccess } from "./sales-access";
 import { useSalesUrl } from "./use-sales-url";
+import { ScreenLink } from "@/components/auth/access-provider";
 
 const PENDING = new Set<VisitRow["status"]>(["agendada", "remarcada"]);
 
@@ -117,6 +118,7 @@ export function VisitDrawer({ detail }: { detail: { visit: VisitRow; activities:
 
 function VisitInner({ visit, activities }: { visit: VisitRow; activities: TimelineEvent[] }) {
   const router = useRouter();
+  const caps = useSalesAccess();
   const [dialog, setDialog] = React.useState<"concluir" | "cancelar" | "remarcar" | null>(null);
   const [text, setText] = React.useState("");
   const [when, setWhen] = React.useState(isoToDateTimeLocal(visit.scheduledAt));
@@ -161,31 +163,53 @@ function VisitInner({ visit, activities }: { visit: VisitRow; activities: Timeli
         <DrawerDescription asChild>
           <div className="flex flex-col gap-1.5 text-sm">
             {visit.clientId ? (
-              <Link href={`/clientes/${visit.clientId}`} className="inline-flex items-center gap-1.5 font-medium text-secondary hover:underline">
+              <ScreenLink
+                href={`/clientes/${visit.clientId}`}
+                className="inline-flex items-center gap-1.5 font-medium text-secondary hover:underline"
+                fallback={
+                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                    <Building2 className="size-4" /> {visit.clientName}
+                  </span>
+                }
+              >
                 <Building2 className="size-4" /> {visit.clientName}
-              </Link>
+              </ScreenLink>
             ) : null}
             {visit.opportunityId ? (
-              <Link href={opportunityHref(visit.opportunityId)} className="inline-flex items-center gap-1.5 text-muted hover:text-foreground hover:underline">
+              <ScreenLink
+                href={opportunityHref(visit.opportunityId)}
+                className="inline-flex items-center gap-1.5 text-muted hover:text-foreground hover:underline"
+                fallback={
+                  <span className="inline-flex items-center gap-1.5 text-muted">
+                    <Target className="size-4" /> {visit.opportunityTitle ?? "Oportunidade"}
+                  </span>
+                }
+              >
                 <Target className="size-4" /> {visit.opportunityTitle ?? "Oportunidade"}
-              </Link>
+              </ScreenLink>
             ) : null}
             <span className="inline-flex items-center gap-1.5 text-foreground">
               <CalendarClock className="size-4 text-muted" /> {formatDateTime(visit.scheduledAt)} · {visit.durationMinutes} min · {visit.sellerName}
             </span>
           </div>
         </DrawerDescription>
-        {pendingVisit ? (
+        {pendingVisit && (caps.visits.complete || caps.visits.edit || caps.visits.cancel) ? (
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" className="min-h-[44px] md:min-h-0" onClick={() => openDialog("concluir")}>
-              <CheckCircle2 /> Concluir
-            </Button>
-            <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => openDialog("remarcar")}>
-              <RefreshCw /> Remarcar
-            </Button>
-            <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => openDialog("cancelar")}>
-              <XCircle className="text-danger" /> Cancelar
-            </Button>
+            {caps.visits.complete ? (
+              <Button size="sm" className="min-h-[44px] md:min-h-0" onClick={() => openDialog("concluir")}>
+                <CheckCircle2 /> Concluir
+              </Button>
+            ) : null}
+            {caps.visits.edit ? (
+              <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => openDialog("remarcar")}>
+                <RefreshCw /> Remarcar
+              </Button>
+            ) : null}
+            {caps.visits.cancel ? (
+              <Button size="sm" variant="outline" className="min-h-[44px] md:min-h-0" onClick={() => openDialog("cancelar")}>
+                <XCircle className="text-danger" /> Cancelar
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </DrawerHeader>

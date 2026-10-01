@@ -18,6 +18,8 @@ import { LeadStatusBadge } from "./lead-badges";
 import { LeadChannelIcon } from "@/components/ui/lead-channel-icon";
 import { TEMPERATURE_LABELS, leadsHref, type ContactChannel, type UserOption } from "./marketing-model";
 import { INBOX_TABS, type InboxLead, type InboxTab, type SourcePerformance } from "./workspace-model";
+import { ScreenLink, useCanSee } from "@/components/auth/access-provider";
+import { useMarketingAccess } from "./marketing-access";
 
 const ROWS = 8;
 const TEMPERATURE_TONE = { quente: "danger", morno: "warning", frio: "info" } as const;
@@ -41,6 +43,8 @@ export function LeadCapture({ sources, leads, sellers, channels = { whatsapp: fa
   const [tab, setTab] = React.useState<InboxTab>("todos");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [dialog, setDialog] = React.useState<{ kind: "contato"; channel: ContactChannel } | { kind: "qualificar" } | null>(null);
+  const caps = useMarketingAccess();
+  const canOpenLeads = useCanSee("/marketing/leads");
 
   const byOrigin = origin ? leads.filter((l) => l.origin === origin) : leads;
   const counts = Object.fromEntries(INBOX_TABS.map((t) => [t.key, t.statuses ? byOrigin.filter((l) => (t.statuses as readonly string[]).includes(l.status)).length : byOrigin.length])) as Record<InboxTab, number>;
@@ -51,9 +55,10 @@ export function LeadCapture({ sources, leads, sellers, channels = { whatsapp: fa
   const chips = sources.filter((s) => s.leads > 0);
   const moreHref = leadsHref({ origin: origin ?? undefined, status: tabDef.statuses ? [...tabDef.statuses] : undefined, sort: "data" });
 
+  // Sem marketing.leads.registrar o atalho só abre o app/discador (não há registro a fazer).
   const openContact = (lead: InboxLead, channel: ContactChannel) => {
     setSelectedId(lead.id);
-    setDialog({ kind: "contato", channel });
+    if (caps.leads.register) setDialog({ kind: "contato", channel });
   };
 
   return (
@@ -209,13 +214,13 @@ export function LeadCapture({ sources, leads, sellers, channels = { whatsapp: fa
           <span>
             {Math.min(rows.length, filtered.length)} de {filtered.length} lead{filtered.length === 1 ? "" : "s"}
           </span>
-          <CardLink href={moreHref}>Ver todos na lista de leads</CardLink>
+          {canOpenLeads ? <CardLink href={moreHref}>Ver todos na lista de leads</CardLink> : null}
         </div>
       </Card>
 
-      {selected ? <LeadPanel key={selected.id} lead={selected} onClose={() => setSelectedId(null)} onContact={openContact} onQualify={() => setDialog({ kind: "qualificar" })} channels={channels} /> : null}
+      {selected ? <LeadPanel key={selected.id} lead={selected} onClose={() => setSelectedId(null)} onContact={openContact} onQualify={caps.leads.qualify ? () => setDialog({ kind: "qualificar" }) : undefined} channels={channels} /> : null}
 
-      {selected && dialog?.kind === "contato" ? (
+      {selected && dialog?.kind === "contato" && caps.leads.register ? (
         <ContactDialog
           key={`${selected.id}-${dialog.channel}`}
           open
@@ -226,7 +231,7 @@ export function LeadCapture({ sources, leads, sellers, channels = { whatsapp: fa
           description={`Com ${selected.name}. ${dialog.channel === "ligacao" ? (channels.voip ? "VoIP conectado" : "VoIP não conectado") : channels.whatsapp ? "WhatsApp conectado" : "WhatsApp não conectado"}: a conversa acontece no app/discador e aqui fica o registro do que foi tratado.`}
         />
       ) : null}
-      {selected ? <QualifyDialog open={dialog?.kind === "qualificar"} onOpenChange={(open) => setDialog(open ? { kind: "qualificar" } : null)} leadId={selected.id} leadName={selected.name} sellers={sellers} /> : null}
+      {selected && caps.leads.qualify ? <QualifyDialog open={dialog?.kind === "qualificar"} onOpenChange={(open) => setDialog(open ? { kind: "qualificar" } : null)} leadId={selected.id} leadName={selected.name} sellers={sellers} /> : null}
     </div>
   );
 }
@@ -293,7 +298,10 @@ function PanelRow({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-function LeadPanel({ lead, onClose, onContact, onQualify, channels }: { lead: InboxLead; onClose: () => void; onContact: (lead: InboxLead, channel: ContactChannel) => void; onQualify: () => void; channels: { whatsapp: boolean; voip: boolean } }) {
+/** `onQualify` ausente = sem marketing.leads.qualificar (o botão "Distribuir para vendas" não aparece). */
+function LeadPanel({ lead, onClose, onContact, onQualify, channels }: { lead: InboxLead; onClose: () => void; onContact: (lead: InboxLead, channel: ContactChannel) => void; onQualify?: () => void; channels: { whatsapp: boolean; voip: boolean } }) {
+  const opportunityHref = lead.opportunityId ? `/vendas/oportunidades?oportunidade=${lead.opportunityId}` : `/marketing/leads?lead=${lead.id}`;
+  const canOpenHandoff = useCanSee(opportunityHref);
   const wa = whatsappHref(lead.phone);
   const tel = telHref(lead.phone);
   const last = lead.lastInteraction;
@@ -333,9 +341,9 @@ function LeadPanel({ lead, onClose, onContact, onQualify, channels }: { lead: In
         <Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar painel do lead" className="md:hidden">
           <X />
         </Button>
-        <Link href={`/marketing/leads?lead=${lead.id}`} className="hidden shrink-0 items-center gap-1 text-[13px] font-medium text-brand-fg hover:underline md:inline-flex">
+        <ScreenLink href={`/marketing/leads?lead=${lead.id}`} className="hidden shrink-0 items-center gap-1 text-[13px] font-medium text-brand-fg hover:underline md:inline-flex">
           Ficha do lead <ArrowRight className="size-4" />
-        </Link>
+        </ScreenLink>
       </div>
 
       <div className="mt-4 grid gap-x-6 gap-y-1 md:grid-cols-2">
@@ -429,16 +437,22 @@ function LeadPanel({ lead, onClose, onContact, onQualify, channels }: { lead: In
           </a>
         </Button>
         {handedOff ? (
-          <Button asChild variant="outline" className="min-h-[44px] md:min-h-0">
-            <Link href={lead.opportunityId ? `/vendas/oportunidades?oportunidade=${lead.opportunityId}` : `/marketing/leads?lead=${lead.id}`}>
-              <BadgeCheck /> Já com vendas · abrir oportunidade
-            </Link>
-          </Button>
-        ) : (
+          canOpenHandoff ? (
+            <Button asChild variant="outline" className="min-h-[44px] md:min-h-0">
+              <Link href={opportunityHref}>
+                <BadgeCheck /> Já com vendas · abrir oportunidade
+              </Link>
+            </Button>
+          ) : (
+            <Badge variant="success" className="self-center justify-self-start">
+              <BadgeCheck /> Já com vendas
+            </Badge>
+          )
+        ) : onQualify ? (
           <Button onClick={onQualify} disabled={closed} className="min-h-[44px] md:min-h-0">
             <ArrowRight /> Distribuir para vendas
           </Button>
-        )}
+        ) : null}
       </div>
     </Card>
   );

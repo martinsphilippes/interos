@@ -4,15 +4,28 @@ import "server-only";
  * período anterior, origem e desempenho por canal, caixa de entrada de leads com a última interação,
  * automações de captação e a lista de prospecção ativa em destaque. Tudo agregado em memória a partir
  * das coleções da organização.
+ *
+ * Autorização: a página passa o escopo da tela marketing.visao-geral (leads pelo dono, com a fila sem dono para quem
+ * distribui; campanhas pelo dono; prospecção pelo dono da lista ou do contato) e se a seção de automações
+ * (marketing.visao-geral.automacoes.ver) está liberada — sem ela as regras nem são lidas.
  */
+
+export interface WorkspaceAccess {
+  leads: LeadAccess;
+  /** Seção "Automações de captação" liberada. */
+  automations: boolean;
+}
+
+const FULL_ACCESS: WorkspaceAccess = { leads: { scope: FULL_SCOPE, pool: true }, automations: true };
 import { list } from "@/server/db";
-import { canAccessModule } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { eventTypeLabel } from "@/domain/event-labels";
 import { COLLECTIONS, type AutomationRule, type Campaign, type Communication, type CurrentUser, type DomainEvent, type LeadSource, type Product, type Prospect, type ProspectList, type User } from "@/domain/types";
 import { dateKey, formatDateKey } from "@/lib/format";
 import { inPeriod, leadsHref, periodRange, type PeriodKey, type UserOption } from "@/components/marketing/marketing-model";
 import type { CaptureAutomation, InboxLead, LastInteraction, MarketingWorkspace, ProspectHighlight, SourcePerformance } from "@/components/marketing/workspace-model";
 import { campaignSpendInPeriod, loadEnrichedLeads } from "./queries";
+import { FULL_SCOPE, campaignInScope, prospectInScope, prospectListInScope, leadInScope, type LeadAccess } from "./access";
 
 const DAY_MS = 86_400_000;
 
@@ -55,22 +68,30 @@ function toAutomation(rule: AutomationRule): CaptureAutomation {
 
 const COMM_CHANNEL: Record<Communication["channel"], LastInteraction["channel"]> = { whatsapp: "whatsapp", voip: "ligacao", email: "email", interno: "outro" };
 
-export async function getMarketingWorkspace(user: CurrentUser, period: PeriodKey): Promise<MarketingWorkspace> {
+export async function getMarketingWorkspace(user: CurrentUser, period: PeriodKey, access: WorkspaceAccess = FULL_ACCESS): Promise<MarketingWorkspace> {
   const range = periodRange(period);
   const prev = previousRange(range.startKey, range.endKey);
   const today = dateKey(new Date());
-  const [leads, sources, campaigns, communications, contactEvents, rules, lists, prospects, users, products] = await Promise.all([
+  const scope = access.leads.scope;
+  const [allLeads, sources, allCampaigns, communications, contactEvents, rules, allLists, allProspects, users, products] = await Promise.all([
     loadEnrichedLeads(),
     list<LeadSource>(COLLECTIONS.leadSources),
     list<Campaign>(COLLECTIONS.campaigns),
     list<Communication>(COLLECTIONS.communications, { where: [["entityType", "==", "lead"]] }),
     list<DomainEvent>(COLLECTIONS.events, { where: [["type", "==", "lead.contacted"]] }),
-    list<AutomationRule>(COLLECTIONS.automationRules),
+    access.automations ? list<AutomationRule>(COLLECTIONS.automationRules) : Promise.resolve([] as AutomationRule[]),
     list<ProspectList>(COLLECTIONS.prospectLists),
     list<Prospect>(COLLECTIONS.prospects),
     list<User>(COLLECTIONS.users),
     list<Product>(COLLECTIONS.products),
   ]);
+  const leads = allLeads.filter((l) => leadInScope(access.leads, l));
+  const campaigns = allCampaigns.filter((c) => campaignInScope(scope, c));
+  const listById = new Map(allLists.map((l) => [l.id, l]));
+  const prospects = allProspects.filter((p) => prospectInScope(scope, p, listById.get(p.listId)));
+  const allByList = new Map<string, Prospect[]>();
+  for (const p of allProspects) allByList.set(p.listId, [...(allByList.get(p.listId) ?? []), p]);
+  const lists = allLists.filter((l) => prospectListInScope(scope, l, allByList.get(l.id) ?? []));
   const userById = new Map(users.map((u) => [u.id, u]));
   const productName = new Map(products.map((p) => [p.id, p.name]));
   const live = leads.filter((l) => !l.duplicateOfId);
@@ -212,7 +233,7 @@ export async function getMarketingWorkspace(user: CurrentUser, period: PeriodKey
     sources: sourcePerf,
     inbox,
     automations: rules.filter(isCaptureRule).map(toAutomation).sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name, "pt-BR")),
-    canToggleAutomations: user.isAdmin && canAccessModule(user, "admin"),
+    canToggleAutomations: access.automations && can(user, "admin.automacoes.ativar"),
     prospect,
     otherActiveLists: Math.max(0, active.length - 1),
     sellers,

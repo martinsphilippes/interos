@@ -1,6 +1,6 @@
 /**
  * Performance: fotografias dos indicadores de estado (meses anteriores), metas do mês atual e do anterior
- * (por colaborador conforme a função, por departamento e da empresa), comissões das vendas ganhas,
+ * (por colaborador conforme a função, por departamento e da empresa), a exceção de comissão por contrato,
  * bloqueios de bônus de exemplo, campanhas de gamificação, pontos derivados dos eventos do seed e medalhas.
  *
  * Os snapshots dos indicadores de fluxo/taxa e o fechamento do bônus da competência anterior são calculados
@@ -10,7 +10,7 @@ import {
   COLLECTIONS,
   type Achievement,
   type BonusBlock,
-  type Commission,
+  type CommissionRule,
   type DomainEvent,
   type GamificationCampaign,
   type GamificationPoints,
@@ -21,7 +21,7 @@ import {
 import type { DepartmentKey } from "../../src/domain/constants";
 import { ACHIEVEMENT_DEFS, DEFAULT_GAMIFICATION, POINT_RULES, type AchievementKey } from "../../src/server/performance/schemas";
 import { goalDocId } from "../../src/server/kpis/schemas";
-import { addDays, competence, dayInCompetence, daysAgo, id, rng, type SeedDoc } from "./lib";
+import { competence, dayInCompetence, daysAgo, rng, type SeedDoc } from "./lib";
 import type { SeedContext, UserKey } from "./context";
 import { KPI_TARGETS } from "./kpis";
 
@@ -149,44 +149,37 @@ function seedGoals(ctx: SeedContext): void {
   }
 }
 
-function seedCommissions(ctx: SeedContext): void {
-  const { store } = ctx;
-  let seq = 0;
-  const RULES = { setup: { id: "comm_rule_setup", pct: 25 }, recorrencia: { id: "comm_rule_recorrencia", pct: 100 }, hardware: { id: "comm_rule_hardware", pct: 2.5 } } as const;
-  for (const opp of ctx.opportunities.filter((o) => o.stage === "ganho")) {
-    const contract = ctx.contracts.find((c) => c.id === opp.contractId);
-    const released = contract?.status === "liberado";
-    const comp = competence(0, new Date(opp.wonAt!));
-    for (const p of opp.products) {
-      const lines: { type: Commission["revenueType"]; base: number }[] = [
-        { type: "setup", base: p.setupValue },
-        { type: "recorrencia", base: p.monthlyValue },
-        { type: "hardware", base: p.hardwareValue },
-      ];
-      for (const line of lines) {
-        if (line.base <= 0) continue;
-        seq += 1;
-        const rule = RULES[line.type];
-        const releaseAt = line.type === "recorrencia" ? addDays(contract?.startDate ?? opp.wonAt!, 90) : released ? contract!.releasedAt : undefined;
-        const status: Commission["status"] = line.type === "recorrencia" ? "prevista" : released ? "liberada" : "prevista";
-        store.add(COLLECTIONS.commissions, id("commission", seq), {
-          userId: opp.ownerId,
-          clientId: opp.clientId,
-          contractId: opp.contractId,
-          opportunityId: opp.id,
-          productId: p.productId,
-          revenueType: line.type,
-          baseAmount: line.base,
-          amount: Number(((line.base * rule.pct) / 100).toFixed(2)),
-          competence: comp,
-          status,
-          releaseAt,
-          ruleId: rule.id,
-          createdAt: opp.wonAt!,
-        } satisfies SeedDoc<Commission>);
-      }
-    }
-  }
+/**
+ * Comissões e títulos NÃO são montados aqui: são gerados pelo motor (src/server/commissions/engine.ts) depois da
+ * gravação, a partir dos contratos, cobranças e regras do seed, com a data de referência do seed
+ * (scripts/seed/derived.ts → seedCommissionEngine). Aqui só entra a exceção de comissão por contrato (D19).
+ */
+function seedCommissionException(ctx: SeedContext): void {
+  const contract = ctx.contracts.find((c) => c.id === "ctr_027");
+  const item = contract?.items.find((i) => i.setupValue > 0);
+  if (!contract || !item) return;
+  ctx.store.add(COLLECTIONS.commissionRules, "comm_rule_excecao_ctr_027", {
+    name: `Exceção ${contract.number} — adesão R$ 1.000 fixos com carência de 90 dias`,
+    scope: "contrato",
+    contractId: contract.id,
+    clientId: contract.clientId,
+    productId: item.productId,
+    revenueType: "setup",
+    mode: "valor",
+    value: 1000,
+    releaseCondition: "pagamento",
+    trigger: "pagamento_e_permanencia",
+    baseSource: "contratado",
+    minTenureDays: 90,
+    recurringCompetences: null,
+    overridesDefault: true,
+    reason: "Cliente âncora da rede de autopeças: diretoria aprovou comissão fixa na adesão, condicionada a 90 dias de permanência.",
+    active: true,
+    createdBy: ctx.users.karem.id,
+    approvedBy: ctx.users.karem.id,
+    createdAt: contract.createdAt,
+    updatedAt: contract.createdAt,
+  } satisfies SeedDoc<CommissionRule>);
 }
 
 function seedBonusBlocks(ctx: SeedContext): void {
@@ -350,7 +343,7 @@ function seedGamification(ctx: SeedContext): void {
 export async function seedPerformance(ctx: SeedContext): Promise<void> {
   seedStateSnapshots(ctx);
   seedGoals(ctx);
-  seedCommissions(ctx);
+  seedCommissionException(ctx);
   seedBonusBlocks(ctx);
   seedCampaigns(ctx);
   seedGamification(ctx);

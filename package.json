@@ -8,9 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "check:access": "tsx scripts/check-access.ts",
     "seed": "tsx --conditions=react-server --env-file=.env.local scripts/seed.ts",
     "seed:prod": "tsx --conditions=react-server --env-file=.env.production.local scripts/seed.ts",
     "test:e2e": "tsx --env-file=.env.local scripts/e2e.ts",
+    "test:rules": "tsx scripts/test-rules.ts",
     "firebase:emulators": "firebase emulators:start --only auth,firestore --project interos-crm",
     "firebase:deploy:rules": "firebase deploy --only firestore"
   },
@@ -52,6 +55,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pdfkit": "^0.17.6",
@@ -63,7 +67,8 @@
     "playwright": "^1.63.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   },
   "description": "Plataforma Interos",
   "engines": {

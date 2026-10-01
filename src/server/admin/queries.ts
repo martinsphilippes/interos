@@ -1,6 +1,8 @@
 import "server-only";
 import { getManyByIds, list } from "@/server/db";
-import { COLLECTIONS, type Department, type ImplementationTemplate, type LeadSource, type Product, type Settings, type SlaRule, type Task, type User, type WorkflowTemplate } from "@/domain/types";
+import { can } from "@/server/auth/permissions";
+import { filterByScope, resolveDataScope } from "@/server/auth/scope";
+import { COLLECTIONS, type CurrentUser, type Department, type ImplementationTemplate, type LeadSource, type Product, type Settings, type SlaRule, type Task, type User, type WorkflowTemplate } from "@/domain/types";
 import { SETTING_DEFAULTS, SETTING_KEYS, type SettingKey, type SettingValues } from "./schemas";
 
 /**
@@ -77,19 +79,28 @@ export interface UserRow extends User {
   reportsCount: number;
 }
 
-export async function listUsersForAdmin(): Promise<{ users: UserRow[]; departments: Department[] }> {
+/**
+ * Usuários da tela de administração. Com o ator informado, aplica o escopo de dados da tela Usuários
+ * (`admin.usuarios`: dono = o próprio usuário, o gestor dele ou o departamento) e omite o salário base de quem não
+ * tem `admin.usuarios.remuneracao.ver` (o valor nem chega ao cliente).
+ */
+export async function listUsersForAdmin(actor?: CurrentUser): Promise<{ users: UserRow[]; departments: Department[] }> {
   const [users, departments] = await Promise.all([listUsers(), listDepartments()]);
   const departmentNames = new Map(departments.map((d) => [d.key, d.name]));
   const userNames = new Map(users.map((u) => [u.id, u.name]));
   const reports = new Map<string, number>();
   for (const u of users) if (u.managerId) reports.set(u.managerId, (reports.get(u.managerId) ?? 0) + 1);
+  const showSalary = !actor || can(actor, "admin.usuarios.remuneracao.ver");
   const rows: UserRow[] = users.map((u) => ({
     ...u,
+    baseSalary: showSalary ? u.baseSalary : undefined,
     departmentName: departmentNames.get(u.departmentId) ?? u.departmentId,
     managerName: u.managerId ? userNames.get(u.managerId) : undefined,
     reportsCount: reports.get(u.id) ?? 0,
   }));
-  return { users: rows, departments };
+  if (!actor) return { users: rows, departments };
+  const scope = await resolveDataScope(actor, "admin.usuarios");
+  return { users: filterByScope(rows, (u) => ({ owners: [u.id, u.managerId], departmentId: u.departmentId }), scope), departments };
 }
 
 /** Tarefas ainda abertas atribuídas ao usuário (bloqueiam a exclusão). */

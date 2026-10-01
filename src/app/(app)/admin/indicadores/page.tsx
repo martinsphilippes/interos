@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Activity, CheckCircle2, Sigma, Target } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
 import { currentMonthKey, getKpiAdminData, listRecentMonths, monthPeriod } from "@/server/kpis/queries";
 import { formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Indicadores" };
 
 /** Administração das definições de KPI: fórmula do registro, meta, faixa, atenção, peso e ativação. */
 export default async function AdminIndicadoresPage() {
-  await requireRole("admin");
+  const user = await requireScreen("admin.indicadores");
   const period = monthPeriod(currentMonthKey());
   const data = await getKpiAdminData(period);
 
@@ -42,7 +42,11 @@ export default async function AdminIndicadoresPage() {
       </div>
 
       <Suspense fallback={null}>
-        <KpiAdminWorkspace rows={data.rows} formulas={data.formulas} owners={data.owners} periodLabel={period.label} snapshotMonths={snapshotMonths} />
+        <KpiAdminWorkspace rows={data.rows} formulas={data.formulas} owners={data.owners} periodLabel={period.label} snapshotMonths={snapshotMonths}
+          canEdit={can(user, "admin.indicadores.editar")}
+          canToggle={can(user, "admin.indicadores.ativar")}
+          canSnapshot={can(user, "admin.indicadores.registrar-snapshot")}
+        />
       </Suspense>
     </PageContainer>
   );

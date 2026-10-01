@@ -13,6 +13,7 @@ import type { LeadDuplicate } from "@/server/marketing/service";
 import { LeadFormFields, emptyLeadForm, leadFormPayload, type LeadFormState } from "./lead-form-fields";
 import { LEAD_STATUS_LABELS, TEMPERATURE_LABELS, type MarketingOptions } from "./marketing-model";
 import { useUrlFlag } from "@/lib/use-url-flag";
+import { ScreenLink } from "@/components/auth/access-provider";
 
 interface DuplicateState {
   leads: LeadDuplicate[];
@@ -119,10 +120,15 @@ export function NewLeadDialog({ options, currentUserId, openOnUrlFlag }: { optio
                         {dups.leads.map((d) => (
                           <li key={d.id}>
                             Lead{" "}
-                            <Link href={`/marketing/leads?lead=${d.id}`} target="_blank" className="font-medium text-brand hover:underline">
-                              {d.name}
-                              {d.company ? ` · ${d.company}` : ""}
-                            </Link>{" "}
+                            {d.restricted ? (
+                              // Fora do escopo do usuário: só o aviso (sem dados nem link).
+                              <span className="font-medium">{d.name}</span>
+                            ) : (
+                              <Link href={`/marketing/leads?lead=${d.id}`} target="_blank" className="font-medium text-brand hover:underline">
+                                {d.name}
+                                {d.company ? ` · ${d.company}` : ""}
+                              </Link>
+                            )}{" "}
                             <span className="text-muted">
                               ({LEAD_STATUS_LABELS[d.status].toLowerCase()} · {d.reasons.join(", ")})
                             </span>
@@ -131,9 +137,13 @@ export function NewLeadDialog({ options, currentUserId, openOnUrlFlag }: { optio
                         {dups.client ? (
                           <li>
                             Cliente{" "}
-                            <Link href={`/clientes/${dups.client.id}`} target="_blank" className="font-medium text-brand hover:underline">
-                              {dups.client.tradeName}
-                            </Link>{" "}
+                            {dups.client.id ? (
+                              <ScreenLink href={`/clientes/${dups.client.id}`} target="_blank" className="font-medium text-brand hover:underline" fallback={<span className="font-medium">{dups.client.tradeName}</span>}>
+                                {dups.client.tradeName}
+                              </ScreenLink>
+                            ) : (
+                              <span className="font-medium">{dups.client.tradeName}</span>
+                            )}{" "}
                             <span className="text-muted">({dups.client.reasons.join(", ")}) — ao qualificar, o lead será vinculado a ele.</span>
                           </li>
                         ) : null}

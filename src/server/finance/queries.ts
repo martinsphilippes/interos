@@ -14,7 +14,9 @@ import {
   type ChurnRecord,
   type Client,
   type Communication,
+  type Contact,
   type Contract,
+  type ContractAmendment,
   type Document,
   type DomainEvent,
   type ImplementationProject,
@@ -26,9 +28,14 @@ import {
   type User,
   type WorkflowStep,
 } from "@/domain/types";
-import { AGING_BUCKETS, agingBucket, allSigned, daysBetween, evaluateReleaseGate, listBillingsSwept, requiredPaymentBilling, todayKey, type AgingBucketKey } from "./billing";
+import { AGING_BUCKETS, agingBucket, allSigned, daysBetween, evaluateReleaseGate, isContractExpired, listBillingsSwept, pendingRecurringInstallments, requiredPaymentBilling, todayKey, type AgingBucketKey } from "./billing";
+import { getFinanceAlertSettings } from "./alerts";
 import { getGateSettings, mergedBillingData } from "./service";
-import { BILLING_STATUSES, BILLING_TYPES, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
+import { buildContractSummary, redactContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
+import type { DataScope } from "@/server/auth/scope";
+import { canSeeFinanceValues, filterBillingsByContracts, filterContractsByScope, isCompanyScope, ownersPredicate, visibleContractIds } from "./access";
+import { maskMoneyText, redactAmendment, redactBilling, redactContract } from "./redact";
+import { BILLING_STATUSES, BILLING_TYPES, BOLETO_FILTERS, boletoState, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type BoletoFilter, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
 
 // ---------------------------------------------------------------------------
 // Utilitários
@@ -46,6 +53,19 @@ export interface Option {
 }
 
 type SearchParams = Record<string, string | string[] | undefined>;
+
+/**
+ * Opções de leitura das telas (A7/A13): `scope` = escopo da tela (resolveDataScope; ausente = empresa, como antes) e
+ * `hideValues` = sem "Visualizar valores" (os números saem zerados e o resultado marca `valuesHidden`).
+ */
+export interface FinanceReadOptions {
+  scope?: DataScope;
+  hideValues?: boolean;
+}
+
+async function scoped<T extends Contract>(contracts: T[], scope: DataScope | undefined): Promise<T[]> {
+  return scope ? filterContractsByScope(contracts, scope) : contracts;
+}
 const one = (params: SearchParams, key: string) => {
   const v = params[key];
   return (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
@@ -144,12 +164,17 @@ export interface ContractRow {
   pendingReason?: string;
   sla: SlaView | null;
   stepStatus?: WorkflowStep["status"];
+  /** Vigência terminada sem renovação aplicada (estado derivado, D24b). */
+  expired: boolean;
+  endDate?: string;
 }
 
 export interface ContractListResult {
   rows: ContractRow[];
   total: number;
   facets: { clients: Option[]; owners: Option[] };
+  /** Valores ocultos (A13): setupTotal/monthlyTotal/hardwareTotal chegam zerados. */
+  valuesHidden?: boolean;
 }
 
 function matchesStatus(contract: Contract, status: string | undefined, releasedMonth: string): boolean {
@@ -165,8 +190,9 @@ const normalize = (text: string) =>
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 
-export async function listContracts(filters: ContractFilters = {}): Promise<ContractListResult> {
-  const [contracts, steps] = await Promise.all([list<Contract>(COLLECTIONS.contracts), financeStepsByClient()]);
+export async function listContracts(filters: ContractFilters = {}, options: FinanceReadOptions = {}): Promise<ContractListResult> {
+  const [all, steps] = await Promise.all([list<Contract>(COLLECTIONS.contracts), financeStepsByClient()]);
+  const contracts = await scoped(all, options.scope);
   const [names, users] = await Promise.all([clientNames(contracts.map((c) => c.clientId)), usersMap(contracts.map((c) => c.ownerId))]);
   const start = periodStart(filters.period);
   const month = todayKey().slice(0, 7);
@@ -190,9 +216,9 @@ export async function listContracts(filters: ContractFilters = {}): Promise<Cont
         financialStatus: c.financialStatus,
         clientId: c.clientId,
         clientName: names.get(c.clientId) ?? c.clientId,
-        setupTotal: c.setupTotal,
-        monthlyTotal: c.monthlyTotal,
-        hardwareTotal: c.hardwareTotal,
+        setupTotal: options.hideValues ? 0 : c.setupTotal,
+        monthlyTotal: options.hideValues ? 0 : c.monthlyTotal,
+        hardwareTotal: options.hideValues ? 0 : c.hardwareTotal,
         signersSigned: c.signers.filter((s) => s.status === "assinado").length,
         signersTotal: c.signers.length,
         ownerId: c.ownerId,
@@ -203,6 +229,8 @@ export async function listContracts(filters: ContractFilters = {}): Promise<Cont
         pendingReason: c.pendingReason,
         sla: inFinance ? (step?.sla ?? null) : null,
         stepStatus: inFinance ? step?.status : undefined,
+        expired: isContractExpired(c),
+        endDate: c.endDate,
       };
     });
 
@@ -216,7 +244,7 @@ export async function listContracts(filters: ContractFilters = {}): Promise<Cont
   const owners = Object.values(users)
     .map((u) => ({ value: u.id, label: u.name }))
     .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-  return { rows, total: contracts.length, facets: { clients, owners } };
+  return { rows, total: contracts.length, facets: { clients, owners }, ...(options.hideValues ? { valuesHidden: true } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -244,28 +272,39 @@ export interface FinanceOverview {
   delinquency: number | null;
   wonWithoutContract: WonWithoutContract[];
   month: string;
+  /** Valores ocultos (A13): quantias zeradas; a tela mostra "Restrito". */
+  valuesHidden?: boolean;
 }
 
-export async function getFinanceOverview(): Promise<FinanceOverview> {
-  const [contracts, billings, wonOpps] = await Promise.all([
+export async function getFinanceOverview(options: FinanceReadOptions = {}): Promise<FinanceOverview> {
+  const [allContracts, allBillings, allWon] = await Promise.all([
     list<Contract>(COLLECTIONS.contracts),
     listBillingsSwept(),
     list<Opportunity>(COLLECTIONS.opportunities, { where: [["stage", "==", "ganho"]] }),
   ]);
+  // Escopo (A7): contratos e cobranças pelos donos do contrato; vendas ganhas pelo vendedor da oportunidade.
+  const scope = options.scope;
+  const contracts = await scoped(allContracts, scope);
+  const billings = scope && !isCompanyScope(scope) ? filterBillingsByContracts(allBillings, new Set(contracts.map((c) => c.id))) : allBillings;
+  const allows = scope ? await ownersPredicate(scope) : () => true;
+  const wonOpps = allWon.filter((o) => allows([o.ownerId]));
   const month = todayKey().slice(0, 7);
   const inGroup = (g: ContractQueueGroup) => contracts.filter((c) => (CONTRACT_QUEUE_GROUPS[g] as readonly string[]).includes(c.status)).length;
   const released = contracts.filter((c) => c.status === "liberado");
+  // MRR só dos contratos liberados com vigência em curso (vencidos sem renovação ficam de fora, D24b).
+  const inForce = released.filter((c) => !isContractExpired(c));
   const overdue = billings.filter((b) => b.status === "vencida");
   const active = billings.filter((b) => b.status !== "cancelada");
   const billedMonth = active.filter((b) => b.competence === month).reduce((s, b) => s + b.amount, 0);
   const receivedMonth = billings.filter((b) => b.status === "paga" && monthOf(b.paidAt) === month).reduce((s, b) => s + (b.paidAmount ?? b.amount), 0);
   const overdueAmount = overdue.reduce((s, b) => s + b.amount, 0);
 
-  const withContract = new Set(contracts.filter((c) => c.status !== "cancelado" && c.opportunityId).map((c) => c.opportunityId));
+  // Venda "sem contrato" olha TODOS os contratos (o contrato pode ser de outro dono fora do escopo).
+  const withContract = new Set(allContracts.filter((c) => c.status !== "cancelado" && c.opportunityId).map((c) => c.opportunityId));
   const orphans = wonOpps.filter((o) => !withContract.has(o.id));
   const names = await clientNames(orphans.map((o) => o.clientId));
 
-  return {
+  const overview: FinanceOverview = {
     counts: {
       contrato: inGroup("contrato"),
       assinatura: inGroup("assinatura"),
@@ -273,8 +312,8 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
       pendencia: inGroup("pendencia"),
       liberadosMes: released.filter((c) => monthOf(c.releasedAt) === month).length,
     },
-    mrrActive: released.reduce((s, c) => s + c.monthlyTotal, 0),
-    activeContracts: released.length,
+    mrrActive: inForce.reduce((s, c) => s + c.monthlyTotal, 0),
+    activeContracts: inForce.length,
     overdue: { amount: overdueAmount, count: overdue.length },
     billedMonth,
     receivedMonth,
@@ -283,6 +322,21 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
       .map((o) => ({ opportunityId: o.id, title: o.title, clientId: o.clientId, clientName: names.get(o.clientId) ?? o.clientId, monthlyTotal: o.monthlyTotal, setupTotal: o.setupTotal, wonAt: o.wonAt }))
       .sort((a, b) => (b.wonAt ?? "").localeCompare(a.wonAt ?? "")),
     month,
+  };
+  return options.hideValues ? redactOverview(overview) : overview;
+}
+
+/** Visão geral sem valores (A13): contagens ficam; quantias e a inadimplência (razão entre quantias) saem. */
+export function redactOverview(o: FinanceOverview): FinanceOverview {
+  return {
+    ...o,
+    mrrActive: 0,
+    overdue: { amount: 0, count: o.overdue.count },
+    billedMonth: 0,
+    receivedMonth: 0,
+    delinquency: null,
+    wonWithoutContract: o.wonWithoutContract.map((w) => ({ ...w, monthlyTotal: 0, setupTotal: 0 })),
+    valuesHidden: true,
   };
 }
 
@@ -318,13 +372,42 @@ export interface ContractDetail {
   products: ProductOption[];
   /** Itens/condições editáveis (não assinado por todos, não liberado/cancelado). */
   editable: boolean;
+  /** Resumo do contratado (D7): o que a venda contratou, com vendedor e contato. */
+  summary: ContractSummaryData;
+  /** Vigência terminada sem renovação (estado derivado). */
+  expired: boolean;
+  /** Mensalidades que "Gerar próximas cobranças" criaria agora (0 = botão não aparece). */
+  pendingRecurring: number;
+  /** Aditivos do contrato (D25), do mais recente ao mais antigo. */
+  amendments: ContractAmendment[];
+  /** Valores ocultos (A13): contrato, cobranças, aditivos, resumo e catálogo chegam sem números. */
+  valuesHidden?: boolean;
+}
+
+/**
+ * Detalhe do contrato sem valores (A13), para o que vai à tela. O gate, o hash do documento e as cobranças pendentes
+ * já foram calculados com os dados reais em getContract; textos livres (histórico) têm as quantias mascaradas.
+ */
+export function redactContractDetail(detail: ContractDetail): ContractDetail {
+  return {
+    ...detail,
+    contract: redactContract(detail.contract),
+    opportunity: null,
+    billings: detail.billings.map(redactBilling),
+    amendments: detail.amendments.map(redactAmendment),
+    summary: redactContractSummary(detail.summary),
+    products: detail.products.map((p) => ({ ...p, setupPrice: 0, monthlyPrice: 0, hardwarePrice: 0 })),
+    history: detail.history.map((e) => ({ ...e, title: maskMoneyText(e.title), description: maskMoneyText(e.description) })),
+    gate: { ...detail.gate, checks: detail.gate.checks.map((c) => ({ ...c, detail: maskMoneyText(c.detail) })) },
+    valuesHidden: true,
+  };
 }
 
 /** Memoizado por requisição: generateMetadata e a página compartilham a leitura. */
 export const getContract = cache(async (id: string): Promise<ContractDetail | null> => {
   const contract = await getById<Contract>(COLLECTIONS.contracts, id);
   if (!contract) return null;
-  const [client, opportunity, billings, settings, clientDocs, timeline, steps, projects, contractEvents, catalog] = await Promise.all([
+  const [client, opportunity, billings, settings, clientDocs, timeline, steps, projects, contractEvents, catalog, amendments, alertSettings] = await Promise.all([
     getById<Client>(COLLECTIONS.clients, contract.clientId),
     contract.opportunityId ? getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : Promise.resolve(null),
     listBillingsSwept({ where: [["contractId", "==", contract.id]] }),
@@ -335,6 +418,8 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
     list<ImplementationProject>(COLLECTIONS.implementationProjects, { where: [["contractId", "==", contract.id]] }),
     list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", contract.id]] }),
     list<Product>(COLLECTIONS.products),
+    list<ContractAmendment>(COLLECTIONS.contractAmendments, { where: [["contractId", "==", contract.id]] }),
+    getFinanceAlertSettings(),
   ]);
   if (!client) return null;
 
@@ -345,7 +430,8 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const project = projects.find((p) => p.status !== "cancelada") ?? null;
-  const related = new Set([contract.id, ...billingIds, ...(project ? [project.id] : []), ...(contract.opportunityId ? [contract.opportunityId] : [])]);
+  amendments.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const related = new Set([contract.id, ...billingIds, ...(project ? [project.id] : []), ...(contract.opportunityId ? [contract.opportunityId] : []), ...amendments.map((a) => a.id)]);
   const history = timeline
     .filter((e) => (e.entityId && related.has(e.entityId)) || e.department === "financeiro")
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
@@ -380,6 +466,8 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
   const users = await usersMap([
     contract.ownerId,
     contract.releasedBy,
+    contract.cancelledBy,
+    contract.sellerId,
     contract.createdBy,
     opportunity?.ownerId,
     client.ownerSalesId,
@@ -391,7 +479,12 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
   ]);
 
   const signedByAll = Boolean(contract.signatureEnvelopeId) && allSigned(contract);
+  const contactId = contract.contactId ?? opportunity?.closing?.contactId;
+  const contact = contactId ? await getById<Contact>(COLLECTIONS.contacts, contactId) : null;
+  const sellerId = contract.sellerId ?? opportunity?.ownerId;
+  const summary = buildContractSummary(contract, { billings, sellerName: sellerId ? users[sellerId]?.name : undefined, contact });
   return {
+    summary,
     contract,
     client,
     opportunity,
@@ -412,6 +505,9 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
       .sort((a, b) => a.order - b.order)
       .map((p) => ({ id: p.id, name: p.name, setupPrice: p.setupPrice, monthlyPrice: p.monthlyPrice, hardwarePrice: p.hardwarePrice })),
     editable: contract.status !== "liberado" && contract.status !== "cancelado" && !signedByAll,
+    expired: isContractExpired(contract),
+    pendingRecurring: contract.status === "liberado" || contract.status === "pago" ? pendingRecurringInstallments(contract, billings, { horizonMonths: alertSettings.horizonteCobrancasMeses }).length : 0,
+    amendments,
   };
 });
 
@@ -439,10 +535,12 @@ export interface SignatureRow {
 export interface SignatureQueue {
   waiting: SignatureRow[];
   toSend: SignatureRow[];
+  /** Valores ocultos (A13): mensalidade zerada. */
+  valuesHidden?: boolean;
 }
 
-export async function listSignatureQueue(): Promise<SignatureQueue> {
-  const contracts = (await list<Contract>(COLLECTIONS.contracts)).filter((c) => c.status === "aguardando_assinatura" || c.status === "aguardando_contrato" || (c.status === "pendencia" && !allSigned(c)));
+export async function listSignatureQueue(options: FinanceReadOptions = {}): Promise<SignatureQueue> {
+  const contracts = (await scoped(await list<Contract>(COLLECTIONS.contracts), options.scope)).filter((c) => c.status === "aguardando_assinatura" || c.status === "aguardando_contrato" || (c.status === "pendencia" && !allSigned(c)));
   const ids = contracts.map((c) => c.id);
   const [names, users, sentEvents, comms] = await Promise.all([
     clientNames(contracts.map((c) => c.clientId)),
@@ -465,7 +563,7 @@ export async function listSignatureQueue(): Promise<SignatureQueue> {
       status: c.status,
       clientId: c.clientId,
       clientName: names.get(c.clientId) ?? c.clientId,
-      monthlyTotal: c.monthlyTotal,
+      monthlyTotal: options.hideValues ? 0 : c.monthlyTotal,
       sentAt: sentAt.get(c.id),
       daysWaiting: Math.max(0, daysBetween(dateKey(since), today)),
       signers: c.signers,
@@ -479,6 +577,7 @@ export async function listSignatureQueue(): Promise<SignatureQueue> {
   return {
     waiting: rows.filter((r) => r.envelope).sort((a, b) => b.daysWaiting - a.daysWaiting),
     toSend: rows.filter((r) => !r.envelope).sort((a, b) => b.daysWaiting - a.daysWaiting),
+    ...(options.hideValues ? { valuesHidden: true } : {}),
   };
 }
 
@@ -492,18 +591,22 @@ export interface BillingFilters {
   competence?: string;
   clientId?: string;
   contractId?: string;
+  /** Situação do boleto: sem boleto · emitido · pago (D20). */
+  boleto?: BoletoFilter;
 }
 
 export function parseBillingFilters(params: SearchParams): BillingFilters {
   const status = one(params, "status");
   const type = one(params, "tipo");
   const comp = one(params, "competencia");
+  const boleto = one(params, "boleto");
   return {
     status: (BILLING_STATUSES as readonly string[]).includes(status ?? "") ? (status as Billing["status"]) : undefined,
     type: (BILLING_TYPES as readonly string[]).includes(type ?? "") ? (type as Billing["type"]) : undefined,
     competence: comp && /^\d{4}-\d{2}$/.test(comp) ? comp : undefined,
     clientId: one(params, "cliente"),
     contractId: one(params, "contrato"),
+    boleto: (BOLETO_FILTERS as readonly string[]).includes(boleto ?? "") ? (boleto as BoletoFilter) : undefined,
   };
 }
 
@@ -512,24 +615,36 @@ export interface BillingRow extends Billing {
   contractNumber: string;
   /** Dias de atraso (vencidas) ou até o vencimento (negativo = já venceu). */
   daysToDue: number;
+  /** Situação do boleto (badge/filtro). */
+  boletoState: BoletoFilter;
 }
 
 export interface BillingListResult {
   rows: BillingRow[];
   totals: { count: number; amount: number; open: number; overdue: number; paid: number };
   facets: { clients: Option[]; competences: Option[] };
+  /** Valores ocultos (A13): quantias zeradas. */
+  valuesHidden?: boolean;
 }
 
-export async function listBillings(filters: BillingFilters = {}): Promise<BillingListResult> {
-  const billings = await listBillingsSwept(filters.contractId ? { where: [["contractId", "==", filters.contractId]] } : {});
+export async function listBillings(filters: BillingFilters = {}, options: FinanceReadOptions = {}): Promise<BillingListResult> {
+  const swept = await listBillingsSwept(filters.contractId ? { where: [["contractId", "==", filters.contractId]] } : {});
+  // Escopo (A7): a cobrança herda os donos do contrato.
+  const billings = options.scope ? filterBillingsByContracts(swept, await visibleContractIds(options.scope)) : swept;
   const [names, contracts] = await Promise.all([clientNames(billings.map((b) => b.clientId)), getManyByIds<Contract>(COLLECTIONS.contracts, billings.map((b) => b.contractId))]);
   const today = todayKey();
   const filtered = billings.filter(
-    (b) => (!filters.status || b.status === filters.status) && (!filters.type || b.type === filters.type) && (!filters.competence || b.competence === filters.competence) && (!filters.clientId || b.clientId === filters.clientId),
+    (b) =>
+      (!filters.status || b.status === filters.status) &&
+      (!filters.type || b.type === filters.type) &&
+      (!filters.competence || b.competence === filters.competence) &&
+      (!filters.clientId || b.clientId === filters.clientId) &&
+      (!filters.boleto || boletoState(b) === filters.boleto),
   );
   const rank: Record<Billing["status"], number> = { vencida: 0, aberta: 1, paga: 2, cancelada: 3 };
   const rows: BillingRow[] = filtered
-    .map((b) => ({ ...b, clientName: names.get(b.clientId) ?? b.clientId, contractNumber: contracts.get(b.contractId)?.number ?? "—", daysToDue: daysBetween(today, dateKey(b.dueDate)) }))
+    .map((b) => (options.hideValues ? redactBilling(b) : b))
+    .map((b) => ({ ...b, clientName: names.get(b.clientId) ?? b.clientId, contractNumber: contracts.get(b.contractId)?.number ?? "—", daysToDue: daysBetween(today, dateKey(b.dueDate)), boletoState: boletoState(b) }))
     .sort((a, b) => rank[a.status] - rank[b.status] || (a.status === "paga" || a.status === "cancelada" ? b.dueDate.localeCompare(a.dueDate) : a.dueDate.localeCompare(b.dueDate)));
 
   const sum = (items: Billing[]) => items.reduce((s, b) => s + b.amount, 0);
@@ -540,16 +655,18 @@ export async function listBillings(filters: BillingFilters = {}): Promise<Billin
   const clients = Array.from(new Set(billings.map((b) => b.clientId)))
     .map((id) => ({ value: id, label: names.get(id) ?? id }))
     .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  const hide = options.hideValues;
   return {
     rows,
     totals: {
       count: filtered.length,
-      amount: sum(filtered.filter((b) => b.status !== "cancelada")),
-      open: sum(filtered.filter((b) => b.status === "aberta")),
-      overdue: sum(filtered.filter((b) => b.status === "vencida")),
-      paid: filtered.filter((b) => b.status === "paga").reduce((s, b) => s + (b.paidAmount ?? b.amount), 0),
+      amount: hide ? 0 : sum(filtered.filter((b) => b.status !== "cancelada")),
+      open: hide ? 0 : sum(filtered.filter((b) => b.status === "aberta")),
+      overdue: hide ? 0 : sum(filtered.filter((b) => b.status === "vencida")),
+      paid: hide ? 0 : filtered.filter((b) => b.status === "paga").reduce((s, b) => s + (b.paidAmount ?? b.amount), 0),
     },
     facets: { clients, competences },
+    ...(hide ? { valuesHidden: true } : {}),
   };
 }
 
@@ -576,7 +693,11 @@ export interface ReceivableClient {
   nextDueDate?: string;
   buckets: Partial<Record<AgingBucketKey, number>>;
   /** Cobrança vencida mais antiga (alvo da ação de cobrança). */
-  oldestOverdue?: Pick<Billing, "id" | "type" | "installment" | "amount" | "dueDate" | "status">;
+  oldestOverdue?: Pick<Billing, "id" | "type" | "installment" | "amount" | "dueDate" | "status" | "boleto" | "pix" | "paymentUrl" | "externalId">;
+  /** Boletos registrados/emitidos nas cobranças em aberto e vencidas do cliente. */
+  boletoIssued: number;
+  /** Cobranças em aberto/vencidas ainda sem boleto registrado. */
+  boletoMissing: number;
 }
 
 export interface MonthlyFlow {
@@ -594,10 +715,13 @@ export interface ReceivablesAging {
   byClient: ReceivableClient[];
   delinquents: ReceivableClient[];
   monthly: MonthlyFlow[];
+  /** Valores ocultos (A13): quantias zeradas (contagens e dias ficam). */
+  valuesHidden?: boolean;
 }
 
-export async function getReceivablesAging(): Promise<ReceivablesAging> {
-  const billings = await listBillingsSwept();
+export async function getReceivablesAging(options: FinanceReadOptions = {}): Promise<ReceivablesAging> {
+  const swept = await listBillingsSwept();
+  const billings = options.scope ? filterBillingsByContracts(swept, await visibleContractIds(options.scope)) : swept;
   const today = todayKey();
   const receivable = billings.filter((b) => b.status === "aberta" || b.status === "vencida");
   const names = await clientNames(receivable.map((b) => b.clientId));
@@ -609,13 +733,15 @@ export async function getReceivablesAging(): Promise<ReceivablesAging> {
     const bucket = buckets.find((x) => x.key === key)!;
     bucket.amount += b.amount;
     bucket.count += 1;
-    const row = byClient.get(b.clientId) ?? { clientId: b.clientId, clientName: names.get(b.clientId) ?? b.clientId, open: 0, overdue: 0, overdueCount: 0, openCount: 0, oldestOverdueDays: 0, buckets: {} };
+    const row = byClient.get(b.clientId) ?? { clientId: b.clientId, clientName: names.get(b.clientId) ?? b.clientId, open: 0, overdue: 0, overdueCount: 0, openCount: 0, oldestOverdueDays: 0, buckets: {}, boletoIssued: 0, boletoMissing: 0 };
     row.buckets[key] = (row.buckets[key] ?? 0) + b.amount;
+    if (boletoState(b) === "sem_boleto") row.boletoMissing += 1;
+    else row.boletoIssued += 1;
     if (b.status === "vencida") {
       row.overdue += b.amount;
       row.overdueCount += 1;
       row.oldestOverdueDays = Math.max(row.oldestOverdueDays, -daysBetween(today, dateKey(b.dueDate)));
-      if (!row.oldestOverdue || b.dueDate < row.oldestOverdue.dueDate) row.oldestOverdue = { id: b.id, type: b.type, installment: b.installment, amount: b.amount, dueDate: b.dueDate, status: b.status };
+      if (!row.oldestOverdue || b.dueDate < row.oldestOverdue.dueDate) row.oldestOverdue = { id: b.id, type: b.type, installment: b.installment, amount: b.amount, dueDate: b.dueDate, status: b.status, boleto: b.boleto, pix: b.pix, paymentUrl: b.paymentUrl, externalId: b.externalId };
     } else {
       row.open += b.amount;
       row.openCount += 1;
@@ -636,7 +762,29 @@ export async function getReceivablesAging(): Promise<ReceivablesAging> {
 
   const totalOpen = receivable.filter((b) => b.status === "aberta").reduce((s, b) => s + b.amount, 0);
   const totalOverdue = receivable.filter((b) => b.status === "vencida").reduce((s, b) => s + b.amount, 0);
-  return { buckets, totalOpen, totalOverdue, totalToReceive: totalOpen + totalOverdue, byClient: clients, delinquents: clients.filter((c) => c.overdueCount > 0), monthly };
+  const aging: ReceivablesAging = { buckets, totalOpen, totalOverdue, totalToReceive: totalOpen + totalOverdue, byClient: clients, delinquents: clients.filter((c) => c.overdueCount > 0), monthly };
+  return options.hideValues ? redactAging(aging) : aging;
+}
+
+/** Contas a Receber sem valores (A13): ordem, contagens, faixas e dias ficam; quantias saem. */
+export function redactAging(a: ReceivablesAging): ReceivablesAging {
+  const client = (c: ReceivableClient): ReceivableClient => ({
+    ...c,
+    open: 0,
+    overdue: 0,
+    buckets: Object.fromEntries(Object.keys(c.buckets).map((k) => [k, 0])),
+    oldestOverdue: c.oldestOverdue ? redactBilling(c.oldestOverdue) : undefined,
+  });
+  return {
+    buckets: a.buckets.map((b) => ({ ...b, amount: 0 })),
+    totalOpen: 0,
+    totalOverdue: 0,
+    totalToReceive: 0,
+    byClient: a.byClient.map(client),
+    delinquents: a.delinquents.map(client),
+    monthly: a.monthly.map((m) => ({ ...m, billed: 0, received: 0 })),
+    valuesHidden: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -674,14 +822,20 @@ export interface RecurrenceMetrics {
   history: MrrPoint[];
   renewals: RenewalRow[];
   targetGrowth: number | null;
+  /** Valores ocultos (A13): MRR e quantias zerados (contagens, datas e variações relativas ficam de fora também). */
+  valuesHidden?: boolean;
 }
 
-export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
-  const [contracts, churn, goals] = await Promise.all([
+export async function getRecurrenceMetrics(options: FinanceReadOptions = {}): Promise<RecurrenceMetrics> {
+  const [allContracts, allChurn, goals] = await Promise.all([
     list<Contract>(COLLECTIONS.contracts),
     list<ChurnRecord>(COLLECTIONS.churnRecords),
     list<{ id: string; organizationId: string; createdAt: string; updatedAt: string; key: string; value: { mrrCrescimento?: number } }>(COLLECTIONS.settings, { where: [["key", "==", "metas_referencia"]] }),
   ]);
+  // Escopo (A7): contratos pelos donos; churn pelos clientes dos contratos visíveis.
+  const contracts = await scoped(allContracts, options.scope);
+  const visibleClients = new Set(contracts.map((c) => c.clientId));
+  const churn = options.scope && !isCompanyScope(options.scope) ? allChurn.filter((r) => visibleClients.has(r.clientId)) : allChurn;
   const month = todayKey().slice(0, 7);
   const released = contracts.filter((c) => c.releasedAt);
 
@@ -695,7 +849,9 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
     cancelledAt.set(c.id, churnDate ?? c.updatedAt);
   }
   const mrrAt = (endIso: string) =>
-    released.filter((c) => c.releasedAt! <= endIso && !(cancelledAt.has(c.id) && cancelledAt.get(c.id)! <= endIso)).reduce((s, c) => s + c.monthlyTotal, 0);
+    released
+      .filter((c) => c.releasedAt! <= endIso && !(cancelledAt.has(c.id) && cancelledAt.get(c.id)! <= endIso) && !(c.status === "liberado" && c.endDate && dateKey(c.endDate) < dateKey(endIso)))
+      .reduce((s, c) => s + c.monthlyTotal, 0);
 
   const months = Array.from({ length: 9 }, (_, i) => monthKey(i - 8));
   const points = months.map((m) => ({ month: m, label: formatCompetence(m), mrr: m === month ? mrrAt(new Date().toISOString()) : mrrAt(lastDayIso(m)) }));
@@ -704,7 +860,8 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
     return { ...p, growth: prev > 0 ? (p.mrr - prev) / prev : null };
   });
 
-  const active = contracts.filter((c) => c.status === "liberado");
+  // Vigência terminada sem renovação = fora do MRR (estado derivado; os vencidos seguem na lista de renovação).
+  const active = contracts.filter((c) => c.status === "liberado" && !isContractExpired(c));
   const byProduct = new Map<string, { productId: string; name: string; mrr: number; contracts: Set<string> }>();
   for (const c of active) {
     for (const item of c.items) {
@@ -721,14 +878,15 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
   const lostMrrMonth = churnThisMonth.reduce((s, r) => s + r.lostMrr, 0);
 
   const today = todayKey();
-  const names = await clientNames(active.map((c) => c.clientId));
-  const renewals: RenewalRow[] = active
+  const renewable = contracts.filter((c) => c.status === "liberado");
+  const names = await clientNames(renewable.map((c) => c.clientId));
+  const renewals: RenewalRow[] = renewable
     .filter((c) => c.endDate)
     .map((c) => ({ contractId: c.id, number: c.number, clientId: c.clientId, clientName: names.get(c.clientId) ?? c.clientId, endDate: c.endDate!, daysLeft: daysBetween(today, dateKey(c.endDate!)), monthlyTotal: c.monthlyTotal }))
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
 
   const target = goals[0]?.value?.mrrCrescimento;
-  return {
+  const metrics: RecurrenceMetrics = {
     mrr: active.reduce((s, c) => s + c.monthlyTotal, 0),
     activeContracts: active.length,
     byProduct: Array.from(byProduct.values())
@@ -745,6 +903,23 @@ export async function getRecurrenceMetrics(): Promise<RecurrenceMetrics> {
     renewals,
     targetGrowth: typeof target === "number" ? target : null,
   };
+  return options.hideValues ? redactRecurrence(metrics) : metrics;
+}
+
+/** Recorrência sem valores (A13): contagens, datas e produtos ficam; MRR, quantias e variações saem. */
+export function redactRecurrence(m: RecurrenceMetrics): RecurrenceMetrics {
+  return {
+    ...m,
+    mrr: 0,
+    byProduct: m.byProduct.map((p) => ({ ...p, mrr: 0 })),
+    newMrrMonth: 0,
+    lostMrrMonth: 0,
+    netNewMrr: 0,
+    growthMonth: null,
+    history: m.history.map((h) => ({ ...h, mrr: 0, growth: null })),
+    renewals: m.renewals.map((r) => ({ ...r, monthlyTotal: 0 })),
+    valuesHidden: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -760,28 +935,84 @@ export interface ClientFinancialSummary {
   overdueCount: number;
   paidLast12Months: number;
   nextDue?: { billingId: string; dueDate: string; amount: number; type: Billing["type"] };
+  /** Último pagamento identificado (data, valor pago e forma). */
+  lastPayment?: { billingId: string; contractId: string; paidAt: string; amount: number; method?: string; type: Billing["type"]; installment?: number; competence: string };
   contracts: { id: string; number: string; status: Contract["status"]; monthlyTotal: number }[];
   /** Contrato ainda no Financeiro (não liberado nem cancelado), se houver. */
   pendingContract?: { id: string; number: string; status: Contract["status"]; pendingReason?: string };
+  /** Contrato vigente: o liberado mais recente; sem liberado, o mais recente não cancelado (D7/D17). */
+  currentContractId?: string;
+  /** Valores ocultos ("Visualizar valores", A13): quantias zeradas; a ficha mostra "Restrito". */
+  valuesHidden?: boolean;
 }
 
-export async function getClientFinancialSummary(clientId: string): Promise<ClientFinancialSummary> {
-  const [contracts, billings] = await Promise.all([list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", clientId]] }), listBillingsSwept({ where: [["clientId", "==", clientId]] })]);
+/** Contrato vigente do cliente: o liberado mais recente; sem liberado, o mais recente ainda não cancelado. */
+export function pickCurrentContract(contracts: Contract[]): Contract | undefined {
+  const byRecency = (a: Contract, b: Contract) => (b.releasedAt ?? b.createdAt).localeCompare(a.releasedAt ?? a.createdAt);
+  return [...contracts].filter((c) => c.status === "liberado").sort(byRecency)[0] ?? [...contracts].filter((c) => c.status !== "cancelado").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+/**
+ * Resumo financeiro do cliente. Aceita contratos e cobranças já carregados (a ficha 360º lê ambos uma única vez,
+ * com a varredura de vencidas aplicada); sem eles, lê do Financeiro.
+ */
+export async function getClientFinancialSummary(clientId: string, preloaded?: { contracts: Contract[]; billings: Billing[] }, options: { hideValues?: boolean } = {}): Promise<ClientFinancialSummary> {
+  // Sem a opção explícita, vale o usuário da requisição (A13): sem "Visualizar valores" o resumo sai sem números.
+  const hideValues = options.hideValues ?? (await viewerHidesValues());
+  const summary = await buildClientFinancialSummary(clientId, preloaded);
+  return hideValues ? redactClientFinancialSummary(summary) : summary;
+}
+
+/** O usuário da requisição NÃO tem "Visualizar valores"? Sem sessão (ou fora de requisição) → oculta (falha fechada). */
+async function viewerHidesValues(): Promise<boolean> {
+  try {
+    // Import dinâmico: mantém este módulo utilizável fora de requisição (scripts), onde a sessão não existe.
+    const { getCurrentUser } = await import("@/server/auth/session");
+    const user = await getCurrentUser();
+    return !user || !canSeeFinanceValues(user);
+  } catch {
+    return true;
+  }
+}
+
+/** Resumo financeiro do cliente sem valores (A13): contagens, datas e contratos ficam; quantias saem. */
+export function redactClientFinancialSummary(s: ClientFinancialSummary): ClientFinancialSummary {
+  return {
+    ...s,
+    mrr: 0,
+    openAmount: 0,
+    overdueAmount: 0,
+    paidLast12Months: 0,
+    nextDue: s.nextDue ? { ...s.nextDue, amount: 0 } : undefined,
+    lastPayment: s.lastPayment ? { ...s.lastPayment, amount: 0 } : undefined,
+    contracts: s.contracts.map((c) => ({ ...c, monthlyTotal: 0 })),
+    valuesHidden: true,
+  };
+}
+
+async function buildClientFinancialSummary(clientId: string, preloaded?: { contracts: Contract[]; billings: Billing[] }): Promise<ClientFinancialSummary> {
+  const [contracts, billings] = preloaded
+    ? [preloaded.contracts, preloaded.billings]
+    : await Promise.all([list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", clientId]] }), listBillingsSwept({ where: [["clientId", "==", clientId]] })]);
   const today = todayKey();
   const yearAgo = dateKey(new Date(Date.now() - 365 * 86_400_000));
   const open = billings.filter((b) => b.status === "aberta");
   const overdue = billings.filter((b) => b.status === "vencida");
   const next = [...open].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).find((b) => dateKey(b.dueDate) >= today);
+  const paid = billings.filter((b) => b.status === "paga" && b.paidAt).sort((a, b) => b.paidAt!.localeCompare(a.paidAt!) || b.dueDate.localeCompare(a.dueDate));
+  const last = paid[0];
   const pending = contracts.filter((c) => c.status !== "liberado" && c.status !== "cancelado").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   return {
-    mrr: contracts.filter((c) => c.status === "liberado").reduce((s, c) => s + c.monthlyTotal, 0),
+    mrr: contracts.filter((c) => c.status === "liberado" && !isContractExpired(c)).reduce((s, c) => s + c.monthlyTotal, 0),
     openAmount: open.reduce((s, b) => s + b.amount, 0),
     openCount: open.length,
     overdueAmount: overdue.reduce((s, b) => s + b.amount, 0),
     overdueCount: overdue.length,
-    paidLast12Months: billings.filter((b) => b.status === "paga" && b.paidAt && dateKey(b.paidAt) >= yearAgo).reduce((s, b) => s + (b.paidAmount ?? b.amount), 0),
+    paidLast12Months: paid.filter((b) => dateKey(b.paidAt) >= yearAgo).reduce((s, b) => s + (b.paidAmount ?? b.amount), 0),
     nextDue: next ? { billingId: next.id, dueDate: next.dueDate, amount: next.amount, type: next.type } : undefined,
-    contracts: contracts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => ({ id: c.id, number: c.number, status: c.status, monthlyTotal: c.monthlyTotal })),
+    lastPayment: last ? { billingId: last.id, contractId: last.contractId, paidAt: last.paidAt!, amount: last.paidAmount ?? last.amount, method: last.method, type: last.type, installment: last.installment, competence: last.competence } : undefined,
+    contracts: [...contracts].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => ({ id: c.id, number: c.number, status: c.status, monthlyTotal: c.monthlyTotal })),
     pendingContract: pending ? { id: pending.id, number: pending.number, status: pending.status, pendingReason: pending.pendingReason } : undefined,
+    currentContractId: pickCurrentContract(contracts)?.id,
   };
 }

@@ -17,16 +17,15 @@ const KIND_TONE: Record<AgendaItem["kind"], string> = {
 export const AGENDA_KIND_LABELS: Record<AgendaItem["kind"], string> = { visita: "Visita", tarefa: "Tarefa", followup: "Follow-up" };
 
 function Item({ item, compact }: { item: AgendaItem; compact?: boolean }) {
-  return (
-    <Link
-      href={item.href}
-      className={cn(
-        "flex items-start gap-1.5 rounded-md border border-border border-l-[3px] bg-surface px-2 py-1.5 text-xs shadow-card transition-colors hover:bg-surface-hover [&_svg]:mt-0.5 [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted",
-        KIND_TONE[item.kind],
-        item.done && "opacity-60",
-      )}
-      title={`${AGENDA_KIND_LABELS[item.kind]}: ${item.title}${item.subtitle ? ` — ${item.subtitle}` : ""}`}
-    >
+  const className = cn(
+    "flex items-start gap-1.5 rounded-md border border-border border-l-[3px] bg-surface px-2 py-1.5 text-xs shadow-card transition-colors [&_svg]:mt-0.5 [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted",
+    item.href && "hover:bg-surface-hover",
+    KIND_TONE[item.kind],
+    item.done && "opacity-60",
+  );
+  const title = `${AGENDA_KIND_LABELS[item.kind]}: ${item.title}${item.subtitle ? ` — ${item.subtitle}` : ""}`;
+  const content = (
+    <>
       {KIND_ICON[item.kind]}
       <span className="min-w-0 flex-1">
         <span className={cn("block truncate font-medium", item.done && "line-through", item.overdue && "text-danger-fg")}>
@@ -34,6 +33,19 @@ function Item({ item, compact }: { item: AgendaItem; compact?: boolean }) {
         </span>
         {!compact && (item.subtitle || item.ownerName) ? <span className="block truncate text-muted">{[item.subtitle, item.ownerName].filter(Boolean).join(" · ")}</span> : null}
       </span>
+    </>
+  );
+  // Sem acesso à tela de destino (a página limpa o href), o item aparece sem link.
+  if (!item.href) {
+    return (
+      <div className={className} title={title}>
+        {content}
+      </div>
+    );
+  }
+  return (
+    <Link href={item.href} className={className} title={title}>
+      {content}
     </Link>
   );
 }

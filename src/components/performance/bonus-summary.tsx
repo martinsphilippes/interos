@@ -74,7 +74,8 @@ export function BonusAlerts({ c }: { c: BonusComputation }) {
 }
 
 /** Cartão "Meu bônus do mês" (Meu Desempenho): projeção, faixa, quanto falta, bloqueios e extras. */
-export function BonusSummaryCard({ c, href }: { c: BonusComputation; href: string }) {
+/** `href` ausente = o visitante não vê a tela de Bônus (o link de detalhamento não aparece). */
+export function BonusSummaryCard({ c, href }: { c: BonusComputation; href?: string }) {
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-3">
@@ -86,9 +87,11 @@ export function BonusSummaryCard({ c, href }: { c: BonusComputation; href: strin
             {c.period.label} · {c.rule ? `${c.rule.name} (v${c.rule.version})` : "sem regra vigente"}
           </CardDescription>
         </div>
-        <Link href={href} className="inline-flex min-h-[44px] items-center gap-1 text-sm font-medium text-brand hover:underline md:min-h-0">
-          Detalhamento <ChevronRight className="size-4" aria-hidden />
-        </Link>
+        {href ? (
+          <Link href={href} className="inline-flex min-h-[44px] items-center gap-1 text-sm font-medium text-brand hover:underline md:min-h-0">
+            Detalhamento <ChevronRight className="size-4" aria-hidden />
+          </Link>
+        ) : null}
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-0">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

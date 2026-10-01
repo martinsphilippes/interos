@@ -14,11 +14,12 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Perfil do próprio usuário: cada pessoa só enxerga e edita o seu.
+    // Perfil do próprio usuário: cada pessoa só lê o seu. Nenhuma escrita pelo cliente — papel, departamento,
+    // situação e presença são gravados só pelo servidor (Admin SDK: admin/actions.ts e users/presence.ts).
+    // Permitir create/update aqui deixaria qualquer conta do Auth criar ou promover o próprio documento (ex.: role "admin").
     match /users/{userId} {
-      allow read, update: if isOwner(userId);
-      allow create: if isOwner(userId) && request.resource.data.keys().hasAll(['createdAt']);
-      allow delete: if false;
+      allow read: if isOwner(userId);
+      allow create, update, delete: if false;
     }
 
     // Coleções de domínio: acesso somente pelo servidor (Admin SDK ignora as regras).
@@ -28,6 +29,30 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /process_runs/{docId} {
+      allow read, write: if false;
+    }
+    // Contadores transacionais de numeração (VEN, CT, PR…): escritos só pelo servidor.
+    match /counters/{docId} {
+      allow read, write: if false;
+    }
+    // Contas a pagar (títulos de comissão, bônus e lançamentos manuais): valores e credores, só pelo servidor.
+    match /payables/{docId} {
+      allow read, write: if false;
+    }
+    // Eventos de pagamento do provedor de cobrança (deduplicação da baixa automática): só pelo servidor.
+    match /payment_events/{docId} {
+      allow read, write: if false;
+    }
+    // Aditivos de contrato (antes/depois das cláusulas, assinaturas): só pelo servidor.
+    match /contract_amendments/{docId} {
+      allow read, write: if false;
+    }
+    // Fornecedores (dados bancários e PIX de credores): só pelo servidor.
+    match /suppliers/{docId} {
+      allow read, write: if false;
+    }
+    // Perfis de acesso e exceções individuais de permissão: só pelo servidor.
+    match /permission_profiles/{docId} {
       allow read, write: if false;
     }
 

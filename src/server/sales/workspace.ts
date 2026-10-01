@@ -9,16 +9,14 @@ import "server-only";
  * wa.me/mailto: com o texto. Ligações são sempre registro manual (não há adaptador VoIP). Cada registro
  * emite o evento correspondente (timeline do cliente, CS, automações).
  */
-import { canAccessModule } from "@/server/auth/session";
+import { resolvePermissionsForUser } from "@/server/auth/permission-store";
 import { create, getById, list, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
-import { MANUAL, recordCommunication } from "@/server/integrations/communications";
-import { sendEmail, sendWhatsappText } from "@/server/integrations/providers";
+import { MANUAL, recordCommunication, sendOrRecord } from "@/server/integrations/communications";
 import { notify } from "@/server/notifications";
 import { assignTaskInternal } from "@/server/tasks/service";
 import { COLLECTIONS, type Client, type Contact, type DomainEvent, type Document, type Opportunity, type Task, type User, type UserRef, type Visit } from "@/domain/types";
 import { formatCallDuration } from "@/lib/format";
-import { getSalesChannelStatus } from "./channels";
 import { isClosed, loadOpportunity } from "./service";
 import type { WorkspaceMessageChannel } from "./schemas";
 
@@ -43,47 +41,31 @@ async function touch(opp: Opportunity, at: string): Promise<void> {
 export interface MessageResult {
   communicationId: string;
   eventId: string;
-  /** "enviada" pelo provedor, "falha" no provedor ou "manual" (canal não conectado). */
-  delivery: "enviada" | "falha" | "manual";
+  /** "enviada" pelo provedor, "falha" no provedor, "manual" (canal não conectado) ou "nao_enviada" (opt-out do cliente). */
+  delivery: "enviada" | "falha" | "manual" | "nao_enviada";
   error?: string;
 }
 
 /**
  * Mensagem de WhatsApp ou e-mail escrita no composer. Envia pelo provedor quando o canal está conectado;
- * senão registra manualmente (o usuário envia pelo próprio app).
+ * senão registra manualmente (o usuário envia pelo próprio app). Helper único: `sendOrRecord`.
  */
 export async function sendOrRegisterMessage(input: { opportunityId: string; channel: WorkspaceMessageChannel; body: string }, actor: UserRef): Promise<MessageResult> {
   const { opp, client, contact, who } = await contextOf(input.opportunityId);
-  const channels = await getSalesChannelStatus();
   const whatsapp = input.channel === "whatsapp";
   const to = whatsapp ? (contact?.whatsapp ?? client.whatsapp ?? contact?.phone ?? client.phone) : (contact?.email ?? client.email);
-  const connected = whatsapp ? channels.whatsapp : channels.email;
-
-  let delivery: MessageResult["delivery"] = "manual";
-  let externalId: string | undefined;
-  let error: string | undefined;
-  if (connected && to) {
-    const result = whatsapp ? await sendWhatsappText(to, input.body) : await sendEmail({ to, subject: `${opp.title} — ${client.tradeName}`, text: input.body });
-    delivery = result.ok ? "enviada" : "falha";
-    if (result.ok) externalId = result.externalId;
-    else error = result.error;
-  }
-  const base = {
+  const sent = await sendOrRecord({
+    channel: input.channel,
+    to,
+    subject: `${opp.title} — ${client.tradeName}`,
+    text: input.body,
     clientId: opp.clientId,
     contactId: contact?.id,
-    channel: input.channel,
-    direction: "saida" as const,
-    userId: actor.id,
-    entityType: "opportunity",
-    entityId: opp.id,
-    body: input.body,
-    externalId,
-    createdBy: actor.id,
-  };
-  const communication = await recordCommunication(
-    delivery === "manual" ? { ...base, ...MANUAL } : { ...base, status: delivery, provider: whatsapp ? "meta" : "resend" },
-  );
-  const suffix = delivery === "manual" ? " (registro manual)" : delivery === "falha" ? " (falha no envio)" : "";
+    entity: { type: "opportunity", id: opp.id },
+    actor,
+  });
+  const { communication, delivery, error } = sent;
+  const suffix = delivery === "manual" ? " (registro manual)" : delivery === "falha" ? " (falha no envio)" : delivery === "nao_enviada" ? " (não enviada: opt-out)" : "";
   const event = await emitEvent({
     type: whatsapp ? "whatsapp.message.sent" : "email.sent",
     actor,
@@ -196,7 +178,9 @@ export async function transferOpportunity(input: { opportunityId: string; ownerI
     getById<Client>(COLLECTIONS.clients, opp.clientId),
   ]);
   if (!newOwner || newOwner.active === false) throw new Error("Vendedor não encontrado ou inativo");
-  if (!canAccessModule({ role: newOwner.role, isAdmin: newOwner.role === "admin" }, "vendas")) throw new Error(`${newOwner.name} não tem acesso ao módulo de Vendas`);
+  // Permissão de OUTRO usuário (A28): perfil, exceções e módulos ativos do novo responsável.
+  const newOwnerPermissions = await resolvePermissionsForUser(newOwner);
+  if (!newOwnerPermissions?.has("vendas.acessar")) throw new Error(`${newOwner.name} não tem acesso ao módulo de Vendas`);
 
   const now = nowIso();
   await update<Opportunity>(COLLECTIONS.opportunities, opp.id, { ownerId: newOwner.id, lastActivityAt: now });
@@ -236,12 +220,16 @@ export async function transferOpportunity(input: { opportunityId: string; ownerI
     eventId: event.id,
   });
   if (previous && previous.id !== actor.id) {
+    // O dono anterior só recebe o link direto se ainda enxerga a oportunidade (originou ou escopo "empresa"); senão
+    // vai para a lista, em vez de um link que cairia no aviso de acesso negado.
+    const previousScope = (await resolvePermissionsForUser(previous))?.scopes["vendas.oportunidades"];
+    const previousSees = opp.originUserId === previous.id || previousScope === "empresa" || previousScope === "unidades";
     await notify({
       userIds: [previous.id],
       kind: "informativa",
       title: `Oportunidade transferida para ${newOwner.name}: ${clientName}`,
       body: `${opp.title} · por ${actor.name}`,
-      href: `/vendas/oportunidades?oportunidade=${opp.id}`,
+      href: previousSees ? `/vendas/oportunidades?oportunidade=${opp.id}` : "/vendas/oportunidades",
       entity: { type: "opportunity", id: opp.id },
       eventId: event.id,
     });

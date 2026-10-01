@@ -46,7 +46,7 @@ function draftValue(field: GateFieldView): string {
  */
 export function GatePanel({ detail, onCompleted }: GatePanelProps) {
   const router = useRouter();
-  const { step, stage, gate, nextStage, canApprove, canException, approverNames } = detail;
+  const { step, stage, gate, nextStage, canApprove, canException, canEdit, canComplete, approverNames } = detail;
   const [pending, startTransition] = React.useTransition();
   const [drafts, setDrafts] = React.useState<Record<string, string>>(() => Object.fromEntries(gate.fields.map((f) => [f.path, draftValue(f)])));
   const [prevUpdatedAt, setPrevUpdatedAt] = React.useState(step.updatedAt);
@@ -63,7 +63,9 @@ export function GatePanel({ detail, onCompleted }: GatePanelProps) {
 
   const isOpen = step.status === "em_andamento" || step.status === "aguardando_cliente" || step.status === "aguardando_aprovacao";
   const awaitingApproval = step.status === "aguardando_aprovacao";
-  const editable = isOpen && !awaitingApproval;
+  // Preencher campos/checklist exige "editar"; o bloco de conclusão exige "concluir" (catálogo operacao.workflow.*).
+  const editable = isOpen && !awaitingApproval && canEdit;
+  const completable = isOpen && !awaitingApproval && canComplete;
   const checklistPct = gate.checklist.length ? Math.round((gate.checklist.filter((c) => c.done).length / gate.checklist.length) * 100) : 0;
   const dirtyFields = Object.fromEntries(Object.entries(drafts).filter(([path, value]) => value !== draftValue(gate.fields.find((f) => f.path === path)!)));
   const hasDirty = Object.keys(dirtyFields).length > 0;
@@ -276,7 +278,7 @@ export function GatePanel({ detail, onCompleted }: GatePanelProps) {
       ) : null}
 
       {/* Conclusão */}
-      {editable ? (
+      {completable ? (
         <section className="flex flex-col gap-3 rounded-lg border border-border p-3">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="gate-notes">Observação ao concluir (opcional)</Label>

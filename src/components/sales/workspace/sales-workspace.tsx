@@ -42,7 +42,6 @@ export interface SalesWorkspaceProps {
   showOwner: boolean;
   currentUserId: string;
   currentUserName: string;
-  isManager: boolean;
   visitDetail: React.ComponentProps<typeof VisitDrawer>["detail"];
 }
 
@@ -50,7 +49,7 @@ export interface SalesWorkspaceProps {
  * Workspace da Central de Vendas: fila "Meu funil" | oportunidade (cabeçalho + conversa + composer) |
  * contexto do cliente. No celular vira pilha: fila → oportunidade → conversa (?tela=conversa).
  */
-export function SalesWorkspace({ items, stages, detail, selectedId, explicit, queueTitle, showOwner, currentUserId, currentUserName, isManager, visitDetail }: SalesWorkspaceProps) {
+export function SalesWorkspace({ items, stages, detail, selectedId, explicit, queueTitle, showOwner, currentUserId, currentUserName, visitDetail }: SalesWorkspaceProps) {
   const { searchParams, href } = useSalesUrl();
   const level: "fila" | "oportunidade" | "conversa" = !explicit ? "fila" : searchParams.get("tela") === "conversa" ? "conversa" : "oportunidade";
   const contactLabel = detail && (detail.client.status === "lead" || detail.client.status === "prospect") ? "Lead" : "Cliente";
@@ -67,7 +66,7 @@ export function SalesWorkspace({ items, stages, detail, selectedId, explicit, qu
               <Link href={href({ oportunidade: null, tela: null, visita: null })} className="inline-flex min-h-[44px] items-center gap-1.5 self-start text-sm text-muted hover:text-foreground">
                 <ArrowLeft className="size-4" /> {queueTitle}
               </Link>
-              <MobileSummary detail={detail} conversationHref={href({ tela: "conversa" })} currentUserId={currentUserId} isManager={isManager} />
+              <MobileSummary detail={detail} conversationHref={href({ tela: "conversa" })} currentUserId={currentUserId} />
             </div>
 
             <Card className={cn("flex min-w-0 flex-col overflow-hidden", COLUMN_HEIGHT, "max-lg:h-[calc(100dvh-9rem)]", level !== "conversa" && "max-lg:hidden")}>
@@ -76,7 +75,7 @@ export function SalesWorkspace({ items, stages, detail, selectedId, explicit, qu
                   <ArrowLeft className="size-4" /> {detail.opportunity.code} · {detail.client.tradeName}
                 </Link>
               </div>
-              <OpportunityHeader detail={detail} currentUserId={currentUserId} isManager={isManager} className="max-lg:hidden" />
+              <OpportunityHeader detail={detail} currentUserId={currentUserId} className="max-lg:hidden" />
               <ConversationThread items={detail.conversation} currentUserName={currentUserName} contactLabel={contactLabel} />
               <Composer detail={detail} />
             </Card>
@@ -102,7 +101,7 @@ export function SalesWorkspace({ items, stages, detail, selectedId, explicit, qu
   );
 }
 
-function OpportunityHeader({ detail, currentUserId, isManager, className }: { detail: WorkspaceDetail; currentUserId: string; isManager: boolean; className?: string }) {
+function OpportunityHeader({ detail, currentUserId, className }: { detail: WorkspaceDetail; currentUserId: string; className?: string }) {
   const opp = detail.opportunity;
   const owner = detail.users[opp.ownerId];
   const priority = PRIORITY[opp.temperature];
@@ -135,8 +134,8 @@ function OpportunityHeader({ detail, currentUserId, isManager, className }: { de
           <span className="truncate text-foreground">{owner?.name ?? "—"}</span>
         </span>
       </div>
-      <OpportunityActions detail={detail} currentUserId={currentUserId} isManager={isManager} />
-      {opp.stage === "ganho" ? <p className="rounded-md bg-success-soft px-3 py-1.5 text-sm text-success-fg">Ganha em {formatDateTime(opp.wonAt)}. Contrato e comissões gerados; a jornada segue no Financeiro.</p> : null}
+      <OpportunityActions detail={detail} currentUserId={currentUserId} />
+      {opp.stage === "ganho" ? <p className="rounded-md bg-success-soft px-3 py-1.5 text-sm text-success-fg">Ganha em {formatDateTime(opp.wonAt)}{opp.saleNumber ? ` · venda ${opp.saleNumber}` : ""}. Contrato e comissões gerados; a jornada segue no Financeiro.</p> : null}
       {opp.stage === "perdido" ? (
         <p className="rounded-md bg-danger-soft px-3 py-1.5 text-sm text-danger-fg">
           Perdida em {formatDateTime(opp.lostAt)} · {lossReasonLabel(opp.lossReason)}
@@ -148,7 +147,7 @@ function OpportunityHeader({ detail, currentUserId, isManager, className }: { de
 }
 
 /** Resumo da oportunidade no celular (referência "Central de Vendas" do app). */
-function MobileSummary({ detail, conversationHref, currentUserId, isManager }: { detail: WorkspaceDetail; conversationHref: string; currentUserId: string; isManager: boolean }) {
+function MobileSummary({ detail, conversationHref, currentUserId }: { detail: WorkspaceDetail; conversationHref: string; currentUserId: string }) {
   const opp = detail.opportunity;
   const open = isOpenStage(opp.stage);
   const nextAction = detail.nextActions[0];
@@ -195,7 +194,7 @@ function MobileSummary({ detail, conversationHref, currentUserId, isManager }: {
             <MessagesSquare /> Conversa e histórico ({messages}) <ChevronRight />
           </Link>
         </Button>
-        <OpportunityActions detail={detail} currentUserId={currentUserId} isManager={isManager} />
+        <OpportunityActions detail={detail} currentUserId={currentUserId} />
       </Card>
     </>
   );

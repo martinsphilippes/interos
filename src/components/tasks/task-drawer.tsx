@@ -39,7 +39,7 @@ import {
 import { completeProcessTask } from "@/server/process-engine/actions";
 import { ClientCombobox } from "./client-combobox";
 import { ChecklistIndicator, DueLabel, RecurrenceHint, TaskStatusBadge } from "./task-bits";
-import { ORIGIN_LABELS, PROCESS_TYPE_LABELS, clientHref, type AssignableUser, type ClientOption, type TaskDetail } from "./task-model";
+import { ALL_TASK_CAPABILITIES, ORIGIN_LABELS, PROCESS_TYPE_LABELS, clientHref, type AssignableUser, type ClientOption, type TaskCapabilities, type TaskDetail } from "./task-model";
 import { useTaskUrl } from "./use-task-url";
 
 export interface TaskDrawerProps {
@@ -48,25 +48,29 @@ export interface TaskDrawerProps {
   clients: ClientOption[];
   currentUserId: string;
   canDelete: boolean;
+  /** Permissões calculadas no servidor: sem editar, o drawer fica somente leitura (as actions revalidam). */
+  can?: TaskCapabilities;
 }
 
 /**
  * Drawer de detalhe (?tarefa=<id>). Recebe tudo do servidor; cada edição chama uma Server Action
  * e faz router.refresh() para o servidor devolver o estado atualizado.
  */
-export function TaskDrawer({ detail, users, clients, currentUserId, canDelete }: TaskDrawerProps) {
+export function TaskDrawer({ detail, users, clients, currentUserId, canDelete, can = ALL_TASK_CAPABILITIES }: TaskDrawerProps) {
   const { navigate } = useTaskUrl();
   const close = () => navigate({ tarefa: null }, { replace: true });
   return (
     <Drawer open={Boolean(detail)} onOpenChange={(open) => !open && close()}>
       <DrawerContent size="lg">
-        {detail ? <DrawerInner key={detail.task.id} detail={detail} users={users} clients={clients} currentUserId={currentUserId} canDelete={canDelete} onClose={close} /> : null}
+        {detail ? <DrawerInner key={detail.task.id} detail={detail} users={users} clients={clients} currentUserId={currentUserId} canDelete={canDelete} can={can} onClose={close} /> : null}
       </DrawerContent>
     </Drawer>
   );
 }
 
-function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose }: TaskDrawerProps & { detail: TaskDetail; onClose: () => void }) {
+function DrawerInner({ detail, users, clients, currentUserId, canDelete, can = ALL_TASK_CAPABILITIES, onClose }: TaskDrawerProps & { detail: TaskDetail; onClose: () => void }) {
+  // Somente leitura sem a chave de edição (campos, checklist e status intermediário).
+  const readOnly = !can.edit;
   const router = useRouter();
   const { task, comments, events } = detail;
   const [pending, startTransition] = React.useTransition();
@@ -153,7 +157,7 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
             if (e.key === "Escape") setTitle(task.title);
           }}
           aria-label="Título da tarefa"
-          disabled={pending}
+          disabled={pending || readOnly}
           className="w-full rounded-md border border-transparent bg-transparent px-1 -mx-1 text-lg font-semibold leading-tight tracking-tight outline-none transition-colors hover:border-border focus:border-brand focus:ring-2 focus:ring-brand/25"
         />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
@@ -181,13 +185,13 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
         {/* Descrição */}
         <section className="flex flex-col gap-1.5">
           <Label htmlFor="task-description">Descrição</Label>
-          <Textarea id="task-description" value={description} onChange={(e) => setDescription(e.target.value)} onBlur={saveDescription} placeholder="Descreva o que precisa ser feito…" disabled={pending} className="min-h-[72px]" />
+          <Textarea id="task-description" value={description} onChange={(e) => setDescription(e.target.value)} onBlur={saveDescription} placeholder="Descreva o que precisa ser feito…" disabled={pending || readOnly} className="min-h-[72px]" />
         </section>
 
         {/* Campos */}
         <section className="grid gap-3 sm:grid-cols-2">
           <Field label="Responsável" htmlFor="task-assignee">
-            <Select id="task-assignee" value={task.assigneeId ?? ""} placeholder="Sem responsável" disabled={pending} onChange={(e) => e.target.value && run(() => assignTask({ id: task.id, assigneeId: e.target.value }), "Responsável atualizado")}>
+            <Select id="task-assignee" value={task.assigneeId ?? ""} placeholder="Sem responsável" disabled={pending || !can.assign} onChange={(e) => e.target.value && run(() => assignTask({ id: task.id, assigneeId: e.target.value }), "Responsável atualizado")}>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}
@@ -198,7 +202,7 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
             </Select>
           </Field>
           <Field label="Status" htmlFor="task-status">
-            <Select id="task-status" value={task.status} disabled={pending} onChange={(e) => run(() => changeTaskStatus({ id: task.id, status: e.target.value as TaskStatus }), "Status atualizado")}>
+            <Select id="task-status" value={task.status} disabled={pending || readOnly} onChange={(e) => run(() => changeTaskStatus({ id: task.id, status: e.target.value as TaskStatus }), "Status atualizado")}>
               {TASK_STATUS.map((s) => (
                 <option key={s} value={s}>
                   {TASK_STATUS_LABELS[s]}
@@ -207,7 +211,7 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
             </Select>
           </Field>
           <Field label="Prioridade" htmlFor="task-priority">
-            <Select id="task-priority" value={task.priority} disabled={pending} onChange={(e) => patch({ priority: e.target.value as Priority }, "Prioridade atualizada")}>
+            <Select id="task-priority" value={task.priority} disabled={pending || readOnly} onChange={(e) => patch({ priority: e.target.value as Priority }, "Prioridade atualizada")}>
               {PRIORITIES.map((p) => (
                 <option key={p} value={p}>
                   {PRIORITY_LABELS[p]}
@@ -223,13 +227,13 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
                 mode="datetime-local"
                 suppressHydrationWarning
                 defaultValue={isoToDateTimeLocal(task.dueAt)}
-                disabled={pending}
+                disabled={pending || readOnly}
                 onBlur={(e) => {
                   const iso = dateValueToIso(e.target.value);
                   if ((iso ?? null) !== (task.dueAt ?? null)) patch({ dueAt: iso ?? null }, "Prazo atualizado");
                 }}
               />
-              {task.dueAt ? (
+              {task.dueAt && !readOnly ? (
                 <Button variant="ghost" size="icon" className="size-9 shrink-0" aria-label="Remover prazo" disabled={pending} onClick={() => patch({ dueAt: null }, "Prazo removido")}>
                   <X />
                 </Button>
@@ -237,10 +241,10 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
             </div>
           </Field>
           <Field label="Cliente" htmlFor="task-client">
-            <ClientCombobox id="task-client" clients={clients} value={task.clientId} disabled={pending} onChange={(id) => patch({ clientId: id ?? null }, id ? "Cliente vinculado" : "Cliente removido")} />
+            <ClientCombobox id="task-client" clients={clients} value={task.clientId} disabled={pending || readOnly} onChange={(id) => patch({ clientId: id ?? null }, id ? "Cliente vinculado" : "Cliente removido")} />
           </Field>
           <Field label="Departamento" htmlFor="task-department">
-            <Select id="task-department" value={task.departmentId} disabled={pending} onChange={(e) => patch({ departmentId: e.target.value as DepartmentKey }, "Departamento atualizado")}>
+            <Select id="task-department" value={task.departmentId} disabled={pending || readOnly} onChange={(e) => patch({ departmentId: e.target.value as DepartmentKey }, "Departamento atualizado")}>
               {DEPARTMENT_KEYS.map((d) => (
                 <option key={d} value={d}>
                   {DEPARTMENT_LABELS[d]}
@@ -249,7 +253,7 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
             </Select>
           </Field>
           <Field label="Tags" htmlFor="task-tags" className="sm:col-span-2">
-            <Input id="task-tags" value={tags} onChange={(e) => setTags(e.target.value)} onBlur={saveTags} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} placeholder="separadas por vírgula" disabled={pending} />
+            <Input id="task-tags" value={tags} onChange={(e) => setTags(e.target.value)} onBlur={saveTags} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} placeholder="separadas por vírgula" disabled={pending || readOnly} />
           </Field>
         </section>
 
@@ -269,31 +273,35 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
               <li key={item.id} className="group flex items-center gap-2">
                 <Checkbox
                   checked={item.done}
-                  disabled={pending}
+                  disabled={pending || readOnly}
                   onCheckedChange={() => run(() => toggleChecklistItem({ id: task.id, itemId: item.id }))}
                   label={<span className={cn(item.done && "text-muted line-through")}>{item.label}</span>}
                   className="flex-1"
                 />
-                <Button variant="ghost" size="icon" className="size-9 shrink-0 text-muted-light hover:text-danger md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100" aria-label={`Remover ${item.label}`} disabled={pending} onClick={() => run(() => removeChecklistItem({ id: task.id, itemId: item.id }))}>
-                  <X />
-                </Button>
+                {readOnly ? null : (
+                  <Button variant="ghost" size="icon" className="size-9 shrink-0 text-muted-light hover:text-danger md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100" aria-label={`Remover ${item.label}`} disabled={pending} onClick={() => run(() => removeChecklistItem({ id: task.id, itemId: item.id }))}>
+                    <X />
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
-          <form
-            className="flex items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const label = newItem.trim();
-              if (!label) return;
-              run(() => addChecklistItem({ id: task.id, label }), undefined, () => setNewItem(""));
-            }}
-          >
-            <Input value={newItem} onChange={(e) => setNewItem(e.target.value)} placeholder="Novo item do checklist" aria-label="Novo item do checklist" disabled={pending} />
-            <Button type="submit" variant="outline" size="icon" className="size-9 shrink-0" aria-label="Adicionar item" disabled={pending || !newItem.trim()}>
-              <Plus />
-            </Button>
-          </form>
+          {readOnly ? null : (
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const label = newItem.trim();
+                if (!label) return;
+                run(() => addChecklistItem({ id: task.id, label }), undefined, () => setNewItem(""));
+              }}
+            >
+              <Input value={newItem} onChange={(e) => setNewItem(e.target.value)} placeholder="Novo item do checklist" aria-label="Novo item do checklist" disabled={pending} />
+              <Button type="submit" variant="outline" size="icon" className="size-9 shrink-0" aria-label="Adicionar item" disabled={pending || !newItem.trim()}>
+                <Plus />
+              </Button>
+            </form>
+          )}
         </section>
 
         {/* Comentários */}
@@ -317,22 +325,24 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
               </li>
             ))}
           </ul>
-          <form
-            className="flex flex-col gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const body = comment.trim();
-              if (!body) return;
-              run(() => addComment({ taskId: task.id, body }), "Comentário adicionado", () => setComment(""));
-            }}
-          >
-            <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Escreva um comentário…" aria-label="Novo comentário" disabled={pending} className="min-h-[64px]" />
-            <div className="flex justify-end">
-              <Button type="submit" size="sm" variant="secondary" disabled={pending || !comment.trim()}>
-                Comentar
-              </Button>
-            </div>
-          </form>
+          {can.comment ? (
+            <form
+              className="flex flex-col gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const body = comment.trim();
+                if (!body) return;
+                run(() => addComment({ taskId: task.id, body }), "Comentário adicionado", () => setComment(""));
+              }}
+            >
+              <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Escreva um comentário…" aria-label="Novo comentário" disabled={pending} className="min-h-[64px]" />
+              <div className="flex justify-end">
+                <Button type="submit" size="sm" variant="secondary" disabled={pending || !comment.trim()}>
+                  Comentar
+                </Button>
+              </div>
+            </form>
+          ) : null}
         </section>
 
         {/* Histórico */}
@@ -366,29 +376,31 @@ function DrawerInner({ detail, users, clients, currentUserId, canDelete, onClose
               <Trash2 /> Excluir
             </Button>
           ) : null}
-          {isOpen ? (
+          {isOpen && can.cancel ? (
             <Button variant="outline" disabled={pending} onClick={() => setConfirm("cancel")}>
               <XCircle /> Cancelar tarefa
             </Button>
           ) : null}
         </div>
         {isOpen ? (
-          <Button
-            loading={pending}
-            onClick={() => {
-              // Etapa de processo: a conclusão passa pelo motor de processos (valida obrigatórios e segue o fluxo).
-              if (processContext?.needsOutcome) setAskOutcome(true);
-              else if (processContext) run(() => completeProcessTask(task.id), "Etapa do processo concluída");
-              else run(() => completeTask({ id: task.id }), "Tarefa concluída");
-            }}
-          >
-            <CheckCircle2 /> Concluir
-          </Button>
-        ) : (
+          (processContext ? can.answerProcess : can.complete) ? (
+            <Button
+              loading={pending}
+              onClick={() => {
+                // Etapa de processo: a conclusão passa pelo motor de processos (valida obrigatórios e segue o fluxo).
+                if (processContext?.needsOutcome) setAskOutcome(true);
+                else if (processContext) run(() => completeProcessTask(task.id), "Etapa do processo concluída");
+                else run(() => completeTask({ id: task.id }), "Tarefa concluída");
+              }}
+            >
+              <CheckCircle2 /> Concluir
+            </Button>
+          ) : null
+        ) : can.reopen ? (
           <Button variant="secondary" loading={pending} onClick={() => run(() => reopenTask({ id: task.id }), "Tarefa reaberta")}>
             <RotateCcw /> Reabrir
           </Button>
-        )}
+        ) : null}
       </DrawerFooter>
 
       {processContext?.needsOutcome ? (

@@ -20,8 +20,11 @@ function readVote(id: string): "sim" | "nao" | null {
 
 const subscribe = () => () => {};
 
-/** "Este artigo foi útil?" com os contadores reais (helpful / notHelpful). O voto é lembrado neste navegador. */
-export function ArticleFeedback({ articleId, helpful, notHelpful }: { articleId: string; helpful: number; notHelpful: number }) {
+/**
+ * "Este artigo foi útil?" com os contadores reais (helpful / notHelpful). O voto é lembrado neste navegador.
+ * `canVote` vem do servidor (suporte.base-de-conhecimento.avaliar): sem ele, só os contadores aparecem.
+ */
+export function ArticleFeedback({ articleId, helpful, notHelpful, canVote = true }: { articleId: string; helpful: number; notHelpful: number; canVote?: boolean }) {
   const router = useRouter();
   const stored = React.useSyncExternalStore(subscribe, () => readVote(articleId), () => null);
   const [voted, setVoted] = React.useState<"sim" | "nao" | null>(null);
@@ -47,20 +50,22 @@ export function ArticleFeedback({ articleId, helpful, notHelpful }: { articleId:
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface-muted p-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <p className="text-sm font-semibold text-foreground">Este artigo foi útil?</p>
+        <p className="text-sm font-semibold text-foreground">{canVote ? "Este artigo foi útil?" : "Avaliações do artigo"}</p>
         <p className="text-xs text-muted">
           {total > 0 ? `${helpful} acharam útil · ${notHelpful} não acharam` : "Ainda sem avaliações."}
           {current ? ` · seu voto: ${current === "sim" ? "útil" : "não útil"}` : ""}
         </p>
       </div>
-      <div className="flex gap-2">
-        <Button variant={current === "sim" ? "success" : "outline"} size="sm" loading={pending} disabled={Boolean(current)} onClick={() => vote(true)} className="min-h-[44px] md:min-h-8">
-          <ThumbsUp /> Sim
-        </Button>
-        <Button variant={current === "nao" ? "destructive" : "outline"} size="sm" loading={pending} disabled={Boolean(current)} onClick={() => vote(false)} className="min-h-[44px] md:min-h-8">
-          <ThumbsDown /> Não
-        </Button>
-      </div>
+      {canVote ? (
+        <div className="flex gap-2">
+          <Button variant={current === "sim" ? "success" : "outline"} size="sm" loading={pending} disabled={Boolean(current)} onClick={() => vote(true)} className="min-h-[44px] md:min-h-8">
+            <ThumbsUp /> Sim
+          </Button>
+          <Button variant={current === "nao" ? "destructive" : "outline"} size="sm" loading={pending} disabled={Boolean(current)} onClick={() => vote(false)} className="min-h-[44px] md:min-h-8">
+            <ThumbsDown /> Não
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -3,12 +3,12 @@
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { MOBILE_NAV, type NavSection } from "@/domain/constants";
+import type { NavItem, NavSection } from "@/domain/constants";
 import { GlobalSearch } from "./global-search";
 import { HelpMenu } from "./help-menu";
 import { NotificationsBell } from "./notifications-bell";
 import { PresenceSelect } from "./presence-select";
-import { UserMenu, type ShellUser } from "./user-menu";
+import { UserMenu, type ShellLinks, type ShellUser } from "./user-menu";
 import { InterosMark } from "./logo";
 import { resolveActiveHref } from "./sidebar";
 import { cn } from "@/lib/utils";
@@ -20,12 +20,16 @@ export interface TopBarProps {
   onOpenMenu?: () => void;
   /** Seções da navegação (título da tela no cabeçalho mobile). */
   sections?: NavSection[];
+  /** Itens da barra inferior visíveis (as "abas raiz" do celular não mostram o botão voltar). */
+  mobileNav?: NavItem[];
+  /** Links fixos do shell já filtrados no servidor. */
+  links?: ShellLinks;
   /** Mostra o seletor de presença (papéis operacionais e gestores). */
   showPresence?: boolean;
   className?: string;
 }
 
-const ROOT_PATHS = new Set(MOBILE_NAV.map((i) => i.href));
+const EMPTY_LINKS: ShellLinks = { search: [], searchCreate: [], help: [], userMenu: [] };
 const EXTRA_TITLES: Record<string, string> = { "/menu": "Menu", "/notificacoes": "Notificações", "/meu-dia": "Meu Dia" };
 
 /** Título da tela no cabeçalho mobile: item de navegação mais específico que casa com a rota. */
@@ -46,10 +50,10 @@ function parentPath(pathname: string): string {
  * Top bar escura. Desktop: busca em pílula (Ctrl+K), presença, ajuda, sino com contador e bloco do usuário.
  * Mobile: voltar (fora das abas raiz) ou símbolo, título da tela, busca, sino e avatar.
  */
-export function TopBar({ user, unreadCount, sections = [], showPresence = false, className }: TopBarProps) {
+export function TopBar({ user, unreadCount, sections = [], mobileNav = [], links = EMPTY_LINKS, showPresence = false, className }: TopBarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const isRoot = ROOT_PATHS.has(pathname);
+  const isRoot = mobileNav.some((i) => i.href === pathname);
   const title = mobileTitle(pathname, sections);
 
   const goBack = () => {
@@ -81,16 +85,16 @@ export function TopBar({ user, unreadCount, sections = [], showPresence = false,
 
         {/* Busca: ícone no mobile, pílula no desktop */}
         <div className="flex items-center md:flex-1">
-          <GlobalSearch />
+          <GlobalSearch shortcuts={links.search} createLinks={links.searchCreate} />
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
           {showPresence ? <PresenceSelect value={user.presence} className="hidden md:inline-flex" /> : null}
-          <HelpMenu className="hidden md:inline-flex" />
+          <HelpMenu links={links.help} className="hidden md:inline-flex" />
           <NotificationsBell unreadCount={unreadCount} />
           <span className="mx-1 hidden h-8 w-px bg-border md:block" aria-hidden />
-          <UserMenu user={user} variant="topbar" className="hidden md:flex" />
-          <UserMenu user={user} variant="compact" className="md:hidden" />
+          <UserMenu user={user} links={links.userMenu} variant="topbar" className="hidden md:flex" />
+          <UserMenu user={user} links={links.userMenu} variant="compact" className="md:hidden" />
         </div>
       </div>
     </header>

@@ -24,13 +24,18 @@ import { LeadFormFields, leadFormPayload, leadToForm, type LeadFormState } from 
 import { LEAD_STATUS_LABELS, type LeadDetail, type MarketingOptions } from "./marketing-model";
 import { useMarketingUrl } from "./use-marketing-url";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { CanSee, ScreenLink } from "@/components/auth/access-provider";
+import { useMarketingAccess } from "./marketing-access";
 
 export interface LeadDrawerProps {
   detail: LeadDetail | null;
   options: MarketingOptions;
 }
 
-/** Drawer do lead (?lead=<id>): dados editáveis, gate de MQL, score explicado e ações. */
+/**
+ * Drawer do lead (?lead=<id>): dados editáveis, gate de MQL, score explicado e ações. Cada ação aparece só com a
+ * chave correspondente (useMarketingAccess); sem marketing.leads.editar a ficha fica somente leitura.
+ */
 export function LeadDrawer({ detail, options }: LeadDrawerProps) {
   const { navigate } = useMarketingUrl();
   const close = () => navigate({ lead: null }, { replace: true });
@@ -52,6 +57,7 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
   const [nextAction, setNextAction] = React.useState(lead.nextAction ?? "");
   const [nextActionAt, setNextActionAt] = React.useState(isoToDateTimeLocal(lead.nextActionAt));
   const [prevUpdatedAt, setPrevUpdatedAt] = React.useState(lead.updatedAt);
+  const caps = useMarketingAccess().leads;
 
   // O servidor devolveu o lead atualizado: realinha os rascunhos locais.
   if (lead.updatedAt !== prevUpdatedAt) {
@@ -106,28 +112,34 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
         <div className="mt-2 flex flex-wrap gap-2">
           {open ? (
             <>
-              <Button size="sm" onClick={() => setDialog("contact")}>
-                <MessageSquarePlus /> Registrar contato
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => setDialog("qualify")}>
-                <BadgeCheck /> Qualificar
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setDialog("disqualify")}>
-                <UserX /> Desqualificar
-              </Button>
+              {caps.register ? (
+                <Button size="sm" onClick={() => setDialog("contact")}>
+                  <MessageSquarePlus /> Registrar contato
+                </Button>
+              ) : null}
+              {caps.qualify ? (
+                <Button size="sm" variant="secondary" onClick={() => setDialog("qualify")}>
+                  <BadgeCheck /> Qualificar
+                </Button>
+              ) : null}
+              {caps.disqualify ? (
+                <Button size="sm" variant="outline" onClick={() => setDialog("disqualify")}>
+                  <UserX /> Desqualificar
+                </Button>
+              ) : null}
             </>
           ) : null}
-          {lead.status === "desqualificado" && !lead.duplicateOfId ? (
+          {caps.edit && lead.status === "desqualificado" && !lead.duplicateOfId ? (
             <Button size="sm" variant="outline" loading={pending} onClick={() => run(() => changeLeadStatusAction({ leadId: lead.id, status: "em_contato" }), "Lead devolvido ao funil")}>
               Voltar ao funil
             </Button>
           ) : null}
-          {lead.status === "qualificado" ? (
+          {caps.edit && lead.status === "qualificado" ? (
             <Button size="sm" variant="outline" loading={pending} onClick={() => run(() => changeLeadStatusAction({ leadId: lead.id, status: "convertido" }), "Lead marcado como convertido")}>
               Marcar como convertido
             </Button>
           ) : null}
-          {!closed && !lead.duplicateOfId ? (
+          {caps.disqualify && !closed && !lead.duplicateOfId ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="ghost" aria-label="Mais ações">
@@ -164,17 +176,17 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
             {detail.client ? (
               <p className="flex items-center gap-2">
                 <Building2 className="size-4 text-muted" /> Cliente:{" "}
-                <Link href={`/clientes/${detail.client.id}`} className="font-medium text-brand hover:underline">
+                <ScreenLink href={`/clientes/${detail.client.id}`} className="font-medium text-brand hover:underline" fallback={<span className="font-medium">{detail.client.tradeName}</span>}>
                   {detail.client.tradeName}
-                </Link>
+                </ScreenLink>
               </p>
             ) : null}
             {detail.opportunity ? (
               <p className="flex items-center gap-2">
                 <Target className="size-4 text-muted" /> Oportunidade:{" "}
-                <Link href={`/vendas/oportunidades?oportunidade=${detail.opportunity.id}`} className="font-medium text-brand hover:underline">
+                <ScreenLink href={`/vendas/oportunidades?oportunidade=${detail.opportunity.id}`} className="font-medium text-brand hover:underline" fallback={<span className="font-medium">{detail.opportunity.title}</span>}>
                   {detail.opportunity.title}
-                </Link>
+                </ScreenLink>
                 {detail.opportunity.ownerName ? <span className="text-muted">· {detail.opportunity.ownerName}</span> : null}
               </p>
             ) : null}
@@ -216,13 +228,15 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
               </li>
             </ul>
             {score.score !== lead.score ? <p className="mt-2 text-xs text-muted">Score gravado: {lead.score}. Salve os dados para recalcular com as regras atuais.</p> : null}
-            <p className="mt-2 text-xs text-muted">
-              Regras em{" "}
-              <Link href="/admin/configuracoes" className="text-brand hover:underline">
-                Configurações → Lead scoring
-              </Link>
-              .
-            </p>
+            <CanSee href="/admin/configuracoes">
+              <p className="mt-2 text-xs text-muted">
+                Regras em{" "}
+                <Link href="/admin/configuracoes" className="text-brand hover:underline">
+                  Configurações → Lead scoring
+                </Link>
+                .
+              </p>
+            </CanSee>
           </div>
         </section>
 
@@ -233,12 +247,12 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
               label="Consentimento LGPD"
               description={lead.consent && lead.consentAt ? `Registrado em ${formatDateTime(lead.consentAt)}` : "Sem consentimento registrado"}
               checked={lead.consent}
-              disabled={pending}
+              disabled={pending || !caps.edit}
               onCheckedChange={(consent) => run(() => setLeadConsent({ leadId: lead.id, consent }), consent ? "Consentimento registrado" : "Consentimento revogado")}
             />
           </div>
           <FormField label="Responsável" htmlFor="lead-owner" className="rounded-lg border border-border p-4">
-            <Select id="lead-owner" value={lead.ownerId ?? ""} disabled={pending} onChange={(e) => run(() => assignLeadAction({ leadId: lead.id, ownerId: e.target.value || undefined }), "Responsável atualizado")}>
+            <Select id="lead-owner" value={lead.ownerId ?? ""} disabled={pending || !caps.assign} onChange={(e) => run(() => assignLeadAction({ leadId: lead.id, ownerId: e.target.value || undefined }), "Responsável atualizado")}>
               <option value="">Sem responsável</option>
               {options.users.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -255,14 +269,16 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
             }}
           >
             <FormField label="Próxima ação" htmlFor="lead-next">
-              <Input id="lead-next" value={nextAction} onChange={(e) => setNextAction(e.target.value)} placeholder="Ex.: Ligar para confirmar interesse" />
+              <Input id="lead-next" value={nextAction} onChange={(e) => setNextAction(e.target.value)} placeholder="Ex.: Ligar para confirmar interesse" disabled={!caps.edit} />
             </FormField>
             <FormField label="Data" htmlFor="lead-next-at">
-              <DateInput id="lead-next-at" mode="datetime-local" value={nextActionAt} onChange={(e) => setNextActionAt(e.target.value)} invalid={lead.overdue} />
+              <DateInput id="lead-next-at" mode="datetime-local" value={nextActionAt} onChange={(e) => setNextActionAt(e.target.value)} invalid={lead.overdue} disabled={!caps.edit} />
             </FormField>
-            <Button type="submit" variant="outline" loading={pending}>
-              Salvar
-            </Button>
+            {caps.edit ? (
+              <Button type="submit" variant="outline" loading={pending}>
+                Salvar
+              </Button>
+            ) : null}
           </form>
         </section>
 
@@ -270,12 +286,19 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
         <section>
           <h3 className="mb-3 text-sm font-semibold">Dados do lead</h3>
           <form onSubmit={saveData} className="flex flex-col gap-4">
-            <LeadFormFields value={form} onChange={(patch) => setForm((f) => ({ ...f, ...patch }))} options={options} compact idPrefix="edit-lead" />
-            <div className="flex justify-end">
-              <Button type="submit" loading={pending}>
-                Salvar dados
-              </Button>
-            </div>
+            {/* Sem marketing.leads.editar: os campos ficam só para leitura. */}
+            <fieldset disabled={!caps.edit} className="contents">
+              <LeadFormFields value={form} onChange={(patch) => setForm((f) => ({ ...f, ...patch }))} options={options} compact idPrefix="edit-lead" />
+            </fieldset>
+            {caps.edit ? (
+              <div className="flex justify-end">
+                <Button type="submit" loading={pending}>
+                  Salvar dados
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted">Seu perfil pode consultar, mas não editar os dados do lead.</p>
+            )}
           </form>
         </section>
 
@@ -329,10 +352,10 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
         </section>
       </DrawerBody>
 
-      <ContactDialog open={dialog === "contact"} onOpenChange={(v) => setDialog(v ? "contact" : null)} leadId={lead.id} leadName={lead.name} />
-      <QualifyDialog open={dialog === "qualify"} onOpenChange={(v) => setDialog(v ? "qualify" : null)} leadId={lead.id} leadName={lead.name} sellers={options.sellers} />
-      <DisqualifyDialog open={dialog === "disqualify"} onOpenChange={(v) => setDialog(v ? "disqualify" : null)} leadId={lead.id} leadName={lead.name} />
-      <DuplicateDialog open={dialog === "duplicate"} onOpenChange={(v) => setDialog(v ? "duplicate" : null)} leadId={lead.id} leadName={lead.name} candidates={duplicateCandidates} />
+      {caps.register ? <ContactDialog open={dialog === "contact"} onOpenChange={(v) => setDialog(v ? "contact" : null)} leadId={lead.id} leadName={lead.name} /> : null}
+      {caps.qualify ? <QualifyDialog open={dialog === "qualify"} onOpenChange={(v) => setDialog(v ? "qualify" : null)} leadId={lead.id} leadName={lead.name} sellers={options.sellers} /> : null}
+      {caps.disqualify ? <DisqualifyDialog open={dialog === "disqualify"} onOpenChange={(v) => setDialog(v ? "disqualify" : null)} leadId={lead.id} leadName={lead.name} /> : null}
+      {caps.disqualify ? <DuplicateDialog open={dialog === "duplicate"} onOpenChange={(v) => setDialog(v ? "duplicate" : null)} leadId={lead.id} leadName={lead.name} candidates={duplicateCandidates} /> : null}
     </>
   );
 }

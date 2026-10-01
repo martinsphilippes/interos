@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Building2, Calculator, Database, Info, Network, User as UserIcon, Users } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { can, canSeeHref, getCurrentUser, requireScreen } from "@/server/auth/session";
+import { resolveDataScope, type DataScope } from "@/server/auth/scope";
 import { getKpiDrilldown, listKpiDefinitions, parsePeriod, periodOptions } from "@/server/kpis/queries";
 import { isDepartmentKey } from "@/server/kpis/engine";
 import { DIRECTION_LABELS, SCOPE_LABELS, UNIT_LABELS, departmentLabel, formatKpiValue, kpiHref, type KpiScope } from "@/server/kpis/schemas";
@@ -24,40 +25,63 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
+/** Título da aba (A30): o nome do indicador só é lido depois de checar a tela. */
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
-  const { kpiKey } = await params;
+  const [{ kpiKey }, user] = await Promise.all([params, getCurrentUser()]);
+  if (!user || !can(user, "performance.indicadores.ver")) return { title: "Indicador" };
   const defs = await listKpiDefinitions({ includeVirtual: true });
   return { title: defs.find((d) => d.key === decodeURIComponent(kpiKey))?.name ?? "Indicador" };
 }
 
 const TARGET_SOURCE_LABELS = { meta: "Meta do período", meta_colaborador: "Meta padrão do colaborador", indicador: "Meta do indicador" } as const;
 
-/** Drill-down de um indicador: número, meta, tendência, fórmula e os registros que o compõem. */
+/**
+ * O pedido (?escopo=&id=) cabe no escopo da tela performance.indicadores? Empresa: qualquer um. Demais: colaborador
+ * dentro do escopo (ou o próprio) e, com "departamento", o departamento do registro no escopo; o consolidado da
+ * empresa só com escopo "empresa". Fora do escopo → o próprio usuário (como antes para quem não é gestor).
+ */
+function allowedSubject(dataScope: DataScope, userId: string, scope: KpiScope, scopeId: string | undefined): boolean {
+  if (dataScope.kind === "empresa" || dataScope.kind === "unidades") return true;
+  if (scope === "usuario") return scopeId === undefined || scopeId === userId || Boolean(dataScope.userIds?.has(scopeId));
+  if (scope === "departamento") return Boolean(scopeId && (dataScope.departmentKeys as ReadonlySet<string> | undefined)?.has(scopeId));
+  return false;
+}
+
+/**
+ * Drill-down de um indicador: número, meta, tendência, fórmula e os registros que o compõem. Tela
+ * performance.indicadores: o recorte (empresa, departamento, colaborador) segue o escopo da tela (padrão: gestores
+ * qualquer um; demais só o próprio) e a quebra por colaborador/departamento exige a seção de detalhamento.
+ */
 export default async function KpiDrilldownPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
-  const [{ kpiKey: rawKey }, query, user] = await Promise.all([params, searchParams, requireUser()]);
+  const [{ kpiKey: rawKey }, query, user] = await Promise.all([params, searchParams, requireScreen("performance.indicadores")]);
   const kpiKey = decodeURIComponent(rawKey);
   const period = parsePeriod(query);
+  const dataScope = await resolveDataScope(user, "performance.indicadores");
+  const companyWide = dataScope.kind === "empresa" || dataScope.kind === "unidades";
 
-  // Gestor, diretoria e admin veem qualquer escopo; os demais, apenas o próprio.
   const requestedScope = one(query.escopo);
   let scope: KpiScope = requestedScope === "departamento" || requestedScope === "usuario" ? requestedScope : "empresa";
   let scopeId = one(query.id);
   let restricted = false;
-  if (!user.isManager) {
-    restricted = scope !== "usuario" || (scopeId !== undefined && scopeId !== user.id);
+  if (!allowedSubject(dataScope, user.id, scope, scopeId)) {
+    restricted = true;
     scope = "usuario";
     scopeId = user.id;
   }
   if (scope === "usuario" && !scopeId) scopeId = user.id;
   if (scope === "departamento" && !isDepartmentKey(scopeId)) {
-    scope = "empresa";
-    scopeId = undefined;
+    scope = companyWide ? "empresa" : "usuario";
+    scopeId = companyWide ? undefined : user.id;
   }
   if (scope === "empresa") scopeId = undefined;
 
-  const data = await getKpiDrilldown(kpiKey, period, scope, scopeId, { withBreakdown: user.isManager });
+  const withBreakdown = can(user, "performance.indicadores.detalhamento.ver");
+  const data = await getKpiDrilldown(kpiKey, period, scope, scopeId, { withBreakdown });
   if (!data) notFound();
-  const { result, history, byUser, byDepartment, subjectName, userNames } = data;
+  const { result, history, subjectName, userNames } = data;
+  // Quebra só com o que cabe no escopo (padrão da seção: gestores, escopo empresa = tudo).
+  const byUser = companyWide ? data.byUser : data.byUser.filter((r) => allowedSubject(dataScope, user.id, "usuario", r.id));
+  const byDepartment = companyWide ? data.byDepartment : data.byDepartment.filter((r) => allowedSubject(dataScope, user.id, "departamento", r.id));
   const { kpi } = result;
   const meta = kpi.formulaMeta;
   const suffix = meta?.suffix;
@@ -71,14 +95,14 @@ export default async function KpiDrilldownPage({ params, searchParams }: { param
         title={kpi.name}
         badge={<KpiStatusBadge status={result.status} size="md" noData={result.value === null && result.target !== null} />}
         description={`${departmentLabel(kpi.department)} · ${period.label}`}
-        breadcrumbs={[{ label: "Gestão", href: user.isManager ? "/gestao" : undefined }, { label: "Indicadores" }, { label: kpi.name }]}
+        breadcrumbs={[{ label: "Gestão", href: canSeeHref(user, "/gestao") ? "/gestao" : undefined }, { label: "Indicadores" }, { label: kpi.name }]}
         actions={<PeriodSelect options={periodOptions()} value={period.key} />}
       >
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Badge variant="outline" size="md" className="[&_svg]:size-3.5">
             {scopeIcon} {SCOPE_LABELS[scope]}: {subjectName}
           </Badge>
-          {scope !== "empresa" && user.isManager ? (
+          {scope !== "empresa" && companyWide ? (
             <Link href={kpiHref(kpiKey, period, "empresa")} className="inline-flex min-h-[44px] items-center text-sm text-brand hover:underline md:min-h-0">
               Ver empresa
             </Link>
@@ -177,7 +201,7 @@ export default async function KpiDrilldownPage({ params, searchParams }: { param
         </CardContent>
       </Card>
 
-      {user.isManager ? (
+      {withBreakdown ? (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           <Card>
             <CardHeader>

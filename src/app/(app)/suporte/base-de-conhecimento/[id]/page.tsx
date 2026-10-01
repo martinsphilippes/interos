@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { AlertCircle, BookOpen, Boxes, Eye, FolderTree, KeyRound, Package, Pencil, Tag, Ticket, UserRound } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { can, canSeeHref, getCurrentUser, requireScreen } from "@/server/auth/session";
 import { getArticle, listArticles } from "@/server/support/queries";
 import { incrementArticleViews } from "@/server/support/service";
-import { canEditArticles } from "@/server/support/schemas";
 import { formatDate, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
@@ -19,22 +18,26 @@ import { Markdown } from "@/components/support/markdown";
 
 type Params = Promise<{ id: string }>;
 
+/** Título da aba (A30): sem a tela, título genérico sem ler o artigo; rascunho só com a seção de rascunhos. */
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { id } = await params;
+  const user = await getCurrentUser();
+  if (!user || !can(user, "suporte.base-de-conhecimento.ver")) return { title: "Artigo" };
   const detail = await getArticle(id);
-  return { title: detail?.article.title ?? "Artigo" };
+  if (!detail || (!detail.article.published && !can(user, "suporte.base-de-conhecimento.rascunhos.ver"))) return { title: "Artigo" };
+  return { title: detail.article.title };
 }
 
 const kbLink = (key: string, value: string) => `/suporte/base-de-conhecimento?${key}=${encodeURIComponent(value)}`;
 
 /** Artigo da base: metadados (produto, módulo, categoria, problema, palavras-chave), conteúdo, "foi útil?" e relacionados. */
 export default async function ArticlePage({ params }: { params: Params }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "suporte")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("suporte.base-de-conhecimento");
   const { id } = await params;
-  const editor = canEditArticles(user);
+  const editor = can(user, "suporte.base-de-conhecimento.editar");
+  const showDrafts = can(user, "suporte.base-de-conhecimento.rascunhos.ver");
   const [detail, kb] = await Promise.all([getArticle(id), editor ? listArticles({ includeDrafts: true }) : Promise.resolve(null)]);
-  if (!detail || (!detail.article.published && !editor)) notFound();
+  if (!detail || (!detail.article.published && !showDrafts)) notFound();
   const { article } = detail;
   const keywords = article.keywords ?? [];
 
@@ -118,7 +121,7 @@ export default async function ArticlePage({ params }: { params: Params }) {
               ) : null}
             </CardContent>
           </Card>
-          <ArticleFeedback articleId={article.id} helpful={article.helpful ?? 0} notHelpful={article.notHelpful ?? 0} />
+          <ArticleFeedback articleId={article.id} helpful={article.helpful ?? 0} notHelpful={article.notHelpful ?? 0} canVote={can(user, "suporte.base-de-conhecimento.avaliar")} />
         </div>
 
         <aside className="flex flex-col gap-4">
@@ -155,7 +158,7 @@ export default async function ArticlePage({ params }: { params: Params }) {
                     icon: <Ticket />,
                     label: "Origem",
                     value: detail.sourceTicket ? `${detail.sourceTicket.number} · ${detail.sourceTicket.subject}` : undefined,
-                    href: detail.sourceTicket ? `/suporte?chamado=${detail.sourceTicket.id}` : undefined,
+                    href: detail.sourceTicket && canSeeHref(user, "/suporte") ? `/suporte?chamado=${detail.sourceTicket.id}` : undefined,
                   },
                 ]}
               />

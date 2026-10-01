@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { AlertTriangle, CalendarCheck, CalendarX, ChevronLeft, ChevronRight, History } from "lucide-react";
-import { canAccessModule, requireUser } from "@/server/auth/session";
+import { canSeeHref, requireScreen } from "@/server/auth/session";
+import { csCapabilities, csLinks } from "@/server/cs/access";
 import { getCheckpointAgenda } from "@/server/cs/queries";
 import { dateKey, formatDateKey, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -21,10 +21,15 @@ export const metadata: Metadata = { title: "Checkpoints" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Agenda de checkpoints (próximas interações da carteira) por semana ou mês, com vencidos em destaque. */
+/**
+ * Agenda de checkpoints (próximas interações da carteira) por semana ou mês, com vencidos em destaque. Tela
+ * cs.checkpoints; a agenda respeita o escopo efetivo e o registro de checkpoint segue a capacidade do usuário.
+ */
 export default async function CheckpointsPage({ searchParams }: { searchParams: SearchParams }) {
-  const user = await requireUser();
-  if (!canAccessModule(user, "cs")) redirect("/meu-dia?erro=sem-permissao");
+  const user = await requireScreen("cs.checkpoints");
+  const caps = csCapabilities(user);
+  const links = csLinks(user);
+  const timelineLink = canSeeHref(user, "/clientes/_?aba=timeline");
   const params = await searchParams;
   const agenda = await getCheckpointAgenda(user, params);
   const today = dateKey(new Date());
@@ -44,8 +49,8 @@ export default async function CheckpointsPage({ searchParams }: { searchParams: 
       <PageHeader
         title="Checkpoints"
         description="Próximas interações da carteira. Registrar um checkpoint atualiza adoção, satisfação, riscos e recalcula a saúde."
-        breadcrumbs={[{ label: "Customer Success", href: "/cs" }, { label: "Checkpoints" }]}
-        actions={<ScopeSelect owners={agenda.owners} value={agenda.scope.param} />}
+        breadcrumbs={[{ label: "Customer Success", href: links.portfolio ? "/cs" : undefined }, { label: "Checkpoints" }]}
+        actions={<ScopeSelect owners={agenda.owners} value={agenda.scope.param} restricted={agenda.scope.restricted} />}
       />
 
       {agenda.overdue.length > 0 ? (
@@ -58,7 +63,7 @@ export default async function CheckpointsPage({ searchParams }: { searchParams: 
           </CardHeader>
           <CardContent className="grid gap-2 pt-0 sm:grid-cols-2 lg:grid-cols-4">
             {agenda.overdue.map((item) => (
-              <AgendaItemCard key={item.clientId} item={item} showDate />
+              <AgendaItemCard key={item.clientId} item={item} showDate canCheckpoint={caps.checkpoint} clientLink={links.client} />
             ))}
           </CardContent>
         </Card>
@@ -101,7 +106,7 @@ export default async function CheckpointsPage({ searchParams }: { searchParams: 
           {agenda.days.map((day) => (
             <section key={day.key} className={cn("flex min-h-[120px] flex-col gap-2 rounded-lg border border-border bg-surface-muted p-2", day.key === today && "border-brand bg-brand-soft/30")} aria-label={formatDateKey(day.key, "EEEE, dd/MM")}>
               <p className={cn("text-xs font-semibold uppercase tracking-wide text-muted", day.key === today && "text-brand-fg")}>{formatDateKey(day.key, "EEE dd/MM")}</p>
-              {day.items.length === 0 ? <p className="text-xs text-muted-light">—</p> : day.items.map((item) => <AgendaItemCard key={item.clientId} item={item} />)}
+              {day.items.length === 0 ? <p className="text-xs text-muted-light">—</p> : day.items.map((item) => <AgendaItemCard key={item.clientId} item={item} canCheckpoint={caps.checkpoint} clientLink={links.client} />)}
             </section>
           ))}
         </div>
@@ -118,7 +123,7 @@ export default async function CheckpointsPage({ searchParams }: { searchParams: 
                     <p className={cn("text-sm font-medium capitalize", day.key === today && "text-brand-fg")}>{formatDateKey(day.key, "EEE, dd 'de' MMM")}</p>
                     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                       {day.items.map((item) => (
-                        <AgendaItemCard key={item.clientId} item={item} />
+                        <AgendaItemCard key={item.clientId} item={item} canCheckpoint={caps.checkpoint} clientLink={links.client} />
                       ))}
                     </div>
                   </li>
@@ -139,14 +144,18 @@ export default async function CheckpointsPage({ searchParams }: { searchParams: 
                 {agenda.withoutSchedule.map((c) => (
                   <li key={c.clientId} className="flex items-center justify-between gap-3 px-4 py-2.5">
                     <div className="min-w-0">
-                      <Link href={`/clientes/${c.clientId}?aba=cs`} className="text-sm font-medium hover:underline">
-                        {c.tradeName}
-                      </Link>
+                      {links.client ? (
+                        <Link href={`/clientes/${c.clientId}?aba=cs`} className="text-sm font-medium hover:underline">
+                          {c.tradeName}
+                        </Link>
+                      ) : (
+                        <span className="text-sm font-medium">{c.tradeName}</span>
+                      )}
                       <div>
                         <OwnerCell owner={c.owner} />
                       </div>
                     </div>
-                    <CheckpointDialog clientId={c.clientId} clientName={c.tradeName} />
+                    {caps.checkpoint ? <CheckpointDialog clientId={c.clientId} clientName={c.tradeName} /> : null}
                   </li>
                 ))}
               </ul>
@@ -163,9 +172,13 @@ export default async function CheckpointsPage({ searchParams }: { searchParams: 
                 {agenda.recent.map((e) => (
                   <li key={e.id} className="px-4 py-2.5">
                     <div className="flex items-baseline justify-between gap-3">
-                      <Link href={`/clientes/${e.clientId}?aba=timeline`} className="text-sm font-medium hover:underline">
-                        {e.tradeName}
-                      </Link>
+                      {timelineLink ? (
+                        <Link href={`/clientes/${e.clientId}?aba=timeline`} className="text-sm font-medium hover:underline">
+                          {e.tradeName}
+                        </Link>
+                      ) : (
+                        <span className="text-sm font-medium">{e.tradeName}</span>
+                      )}
                       <span className="shrink-0 text-xs text-muted">{formatDateTime(e.occurredAt)}</span>
                     </div>
                     <p className="text-xs text-muted">{e.title}</p>

@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { AlertTriangle, Building2, Plus, Rocket, UserPlus, Wallet } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { can, requireScreen } from "@/server/auth/session";
+import { clientScope } from "@/server/clients/access";
 import { listClients, parseClientFilters } from "@/server/clients/queries";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -18,22 +19,27 @@ export const metadata: Metadata = { title: "Clientes 360º" };
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 export default async function ClientesPage({ searchParams }: { searchParams: SearchParams }) {
-  await requireUser();
+  const user = await requireScreen("operacao.clientes");
   const filters = parseClientFilters(await searchParams);
-  const { items, total, stats, facets } = await listClients(filters);
+  // Escopo da tela (padrão: empresa para todos); o CEO/CTO pode restringir a meus/equipe/departamento.
+  const scope = await clientScope(user);
+  const { items, total, stats, facets } = await listClients(filters, scope);
+  const canCreate = can(user, "operacao.clientes.criar");
   const filtered = Boolean(filters.q || filters.status || filters.stage || filters.ownerSalesId || filters.ownerCsId || filters.health || filters.segment || filters.city);
 
   return (
     <PageContainer size="full">
       <PageHeader
         title="Clientes 360º"
-        description="A base inteira da Intercert: jornada, saúde, receita e relacionamento de cada cliente em um só lugar."
+        description={scope.kind === "empresa" ? "A base inteira da Intercert: jornada, saúde, receita e relacionamento de cada cliente em um só lugar." : "Os clientes da sua carteira: jornada, saúde, receita e relacionamento de cada cliente em um só lugar."}
         actions={
-          <Button asChild>
-            <Link href="/clientes/novo">
-              <Plus /> Novo cliente
-            </Link>
-          </Button>
+          canCreate ? (
+            <Button asChild>
+              <Link href="/clientes/novo">
+                <Plus /> Novo cliente
+              </Link>
+            </Button>
+          ) : undefined
         }
       />
 

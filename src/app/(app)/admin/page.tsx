@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChevronRight, Network, Package, Plug, Settings, Users, Workflow, Zap } from "lucide-react";
-import { requireRole } from "@/server/auth/session";
+import { requireScreen } from "@/server/auth/session";
 import { getAdminOverview } from "@/server/admin/queries";
 import { getIntegrationStatus } from "@/server/integrations/status";
 import { formatNumber } from "@/lib/format";
@@ -9,6 +9,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { CanSee } from "@/components/auth/access-provider";
 
 export const metadata: Metadata = { title: "Administração" };
 
@@ -23,7 +24,7 @@ interface AreaCard {
 
 /** Índice da administração: um card por área com contagens reais do banco. */
 export default async function AdminPage() {
-  await requireRole("admin");
+  await requireScreen("admin.painel");
   const o = await getAdminOverview();
   const integrations = getIntegrationStatus();
   const connected = integrations.filter((i) => i.state === "conectado").length;
@@ -109,37 +110,39 @@ export default async function AdminPage() {
       <PageHeader title="Administração" description="Cadastros e parâmetros que sustentam a operação do INTEROS. Só administradores alteram estes dados." />
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {areas.map((area) => (
-          <li key={area.href}>
-            <Link href={area.href} className="block h-full">
-              <Card className="flex h-full flex-col transition-colors hover:border-border-strong hover:bg-surface-muted">
-                <CardContent className="flex flex-1 flex-col gap-3">
-                  <div className="flex items-start gap-3">
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand-fg [&_svg]:size-5">{area.icon}</span>
-                    <div className="min-w-0 flex-1">
-                      <h2 className="flex items-center gap-1 text-base font-semibold leading-tight">
-                        {area.title}
-                        <ChevronRight className="size-4 text-muted-light" aria-hidden />
-                      </h2>
-                      <p className="mt-1 text-sm text-muted">{area.description}</p>
-                    </div>
-                  </div>
-                  <dl className="mt-auto flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                    {area.stats.map((s) => (
-                      <div key={s.label} className="flex items-baseline gap-1">
-                        <dd className="font-semibold tabular-nums text-foreground">{s.value}</dd>
-                        <dt className="text-muted">{s.label}</dt>
+          <CanSee key={area.href} href={area.href}>
+            <li>
+              <Link href={area.href} className="block h-full">
+                <Card className="flex h-full flex-col transition-colors hover:border-border-strong hover:bg-surface-muted">
+                  <CardContent className="flex flex-1 flex-col gap-3">
+                    <div className="flex items-start gap-3">
+                      <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand-fg [&_svg]:size-5">{area.icon}</span>
+                      <div className="min-w-0 flex-1">
+                        <h2 className="flex items-center gap-1 text-base font-semibold leading-tight">
+                          {area.title}
+                          <ChevronRight className="size-4 text-muted-light" aria-hidden />
+                        </h2>
+                        <p className="mt-1 text-sm text-muted">{area.description}</p>
                       </div>
-                    ))}
-                  </dl>
-                  {area.warning ? (
-                    <Badge variant="warning" size="sm" className="self-start">
-                      {area.warning}
-                    </Badge>
-                  ) : null}
-                </CardContent>
-              </Card>
-            </Link>
-          </li>
+                    </div>
+                    <dl className="mt-auto flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                      {area.stats.map((s) => (
+                        <div key={s.label} className="flex items-baseline gap-1">
+                          <dd className="font-semibold tabular-nums text-foreground">{s.value}</dd>
+                          <dt className="text-muted">{s.label}</dt>
+                        </div>
+                      ))}
+                    </dl>
+                    {area.warning ? (
+                      <Badge variant="warning" size="sm" className="self-start">
+                        {area.warning}
+                      </Badge>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </Link>
+            </li>
+          </CanSee>
         ))}
       </ul>
     </PageContainer>

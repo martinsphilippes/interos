@@ -32,6 +32,9 @@ import { HEALTH_LEVELS, type DepartmentKey, type HealthLevel } from "@/domain/co
 import { csatAverage, getHealthConfig, HEALTH_WINDOW_DAYS, isOpenTicket, isPortfolioClient, lastInteractionOf, overdueBillings, type HealthConfig } from "./health";
 import { checkActivation, getLastHealthSweep, RENEWAL_LOOKAHEAD_DAYS, type ActivationCheck, type RecalculateAllResult, type SuccessPlanWithTasks } from "./service";
 import { explainHealth } from "./schemas";
+import { resolveDataScope, type DataScope } from "@/server/auth/scope";
+import { can } from "@/server/auth/permissions";
+import { clientOwners, isUnrestricted, loadOwnerFilter, ownerFilter, planOwners, type CsScreen } from "./access";
 
 const DAY_MS = 86_400_000;
 const OPEN_OPPORTUNITY = new Set<Opportunity["stage"]>(["qualificacao", "diagnostico", "proposta", "negociacao", "fechamento"]);
@@ -70,13 +73,33 @@ export async function listCsUsers(): Promise<UserLite[]> {
 }
 
 export interface CsScope {
-  /** Responsável filtrado; undefined = carteira inteira. */
+  /** Responsável filtrado; undefined = carteira inteira (dentro do limite). */
   ownerId?: string;
   /** Valor do parâmetro `responsavel` na URL ("todos" ou id). */
   param: string;
+  /** O limite recorta a carteira (escopo diferente de "empresa"): "Toda a equipe" vira "Toda a sua carteira". */
+  restricted?: boolean;
 }
 
-/** Escopo padrão: analista de CS vê a própria carteira; gestores e demais áreas veem a equipe inteira. */
+/**
+ * Visão com o limite da tela (só no servidor: o filtro é uma função e não vai para os Client Components — os
+ * resultados expõem `publicScope`).
+ */
+export interface CsView extends CsScope {
+  /** Limite da tela (escopo efetivo do usuário, A7). Ausente = sem recorte (empresa). */
+  limit?: DataScope;
+  /** Filtro de donos do limite (ausente = todos). */
+  allows?: (owners: readonly (string | undefined | null)[]) => boolean;
+}
+
+/** Parte serializável da visão (vai para a página e os Client Components). */
+const publicScope = (view: CsView): CsScope => (view.ownerId ? { ownerId: view.ownerId, param: view.param, restricted: view.restricted } : { param: view.param, restricted: view.restricted });
+
+/**
+ * Visão padrão (sem o limite da tela): analista de CS vê a própria carteira; gestores e demais áreas veem a equipe
+ * inteira. Mantida como referência do comportamento anterior (tests/permissions/scope.test.ts); as telas usam
+ * resolveCsView, que parte do escopo efetivo.
+ */
 export function resolveScope(user: Pick<CurrentUser, "id" | "departmentId" | "isManager">, requested?: string): CsScope {
   if (requested === "todos") return { param: "todos" };
   if (requested) return { ownerId: requested, param: requested };
@@ -84,7 +107,29 @@ export function resolveScope(user: Pick<CurrentUser, "id" | "departmentId" | "is
   return { param: "todos" };
 }
 
-function inScope(client: Client, account: CsAccount | undefined, scope: CsScope): boolean {
+/**
+ * Visão da carteira numa tela de CS (A7/A29): limite = escopo efetivo da tela (resolveDataScope; padrão "empresa"
+ * para todos); visão inicial = a do catálogo (própria carteira para analista de CS não gestor, como antes).
+ * `?responsavel=todos` = tudo dentro do limite; `?responsavel=<id>` só vale para quem está dentro do limite.
+ */
+export async function resolveCsView(user: CurrentUser, screen: CsScreen, requested?: string): Promise<CsView> {
+  const limit = await resolveDataScope(user, screen);
+  const restricted = !isUnrestricted(limit);
+  const allows = restricted ? await loadOwnerFilter(limit) : undefined;
+  const base = { limit, restricted, allows };
+  if (requested === "todos") return { param: "todos", ...base };
+  if (requested && (!allows || allows([requested]))) return { ownerId: requested, param: requested, ...base };
+  if (limit.initialKind === "meus") return { ownerId: user.id, param: user.id, ...base };
+  return { param: "todos", ...base };
+}
+
+/** Responsáveis que o usuário pode escolher no seletor de carteira (todos, ou só os do limite). */
+function ownersWithin<T extends { id: string }>(owners: T[], scope: CsView): T[] {
+  return scope.allows ? owners.filter((o) => scope.allows!([o.id])) : owners;
+}
+
+function inScope(client: Client, account: CsAccount | undefined, scope: CsView): boolean {
+  if (scope.allows && !scope.allows(clientOwners(client, account))) return false;
   if (!scope.ownerId) return true;
   return (account?.ownerId ?? client.ownerCsId) === scope.ownerId;
 }
@@ -237,7 +282,7 @@ const normalize = (v: string | undefined) =>
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 
-function buildRows(base: CsBase, scope: CsScope, now: Date): PortfolioRow[] {
+function buildRows(base: CsBase, scope: CsView, now: Date): PortfolioRow[] {
   const nowIso = now.toISOString();
   const since = new Date(now.getTime() - HEALTH_WINDOW_DAYS * DAY_MS).toISOString();
   const today = dateKey(now);
@@ -324,7 +369,7 @@ function applyFilters(rows: PortfolioRow[], filters: PortfolioFilters, now: Date
 /** Carteira de CS: linhas filtradas, indicadores do escopo (sem os filtros) e opções de filtro. */
 export async function getPortfolio(user: CurrentUser, params: SearchParams): Promise<PortfolioResult> {
   const now = new Date();
-  const scope = resolveScope(user, one(params, "responsavel"));
+  const scope = await resolveCsView(user, "cs.carteira", one(params, "responsavel"));
   const filters = parsePortfolioFilters(params);
   const base = await loadBase();
   const scoped = buildRows(base, scope, now);
@@ -333,34 +378,37 @@ export async function getPortfolio(user: CurrentUser, params: SearchParams): Pro
     const rank = (r: PortfolioRow) => (r.healthLevel === "risco" ? 0 : r.healthLevel === "atencao" ? 1 : r.healthLevel ? 2 : 3);
     return rank(a) - rank(b) || (a.healthScore ?? 101) - (b.healthScore ?? 101) || a.tradeName.localeCompare(b.tradeName, "pt-BR");
   });
-  const ownerIds = new Set(buildRows(base, { param: "todos" }, now).map((r) => r.owner?.id).filter(Boolean));
+  const ownerIds = new Set(buildRows(base, { param: "todos", allows: scope.allows }, now).map((r) => r.owner?.id).filter(Boolean));
   const csUsers = Array.from(base.users.values()).filter((u) => u.departmentId === "cs" || ownerIds.has(u.id));
   const productNames = new Map<string, string>();
   for (const r of scoped) for (const p of r.products) productNames.set(p.name, p.name);
   return {
-    scope,
+    scope: publicScope(scope),
     filters: { ...filters, ownerId: scope.ownerId },
     rows,
     stats: computeStats(base, scoped, now),
-    owners: csUsers.sort(byName),
+    owners: ownersWithin(csUsers, scope).sort(byName),
     products: Array.from(productNames.keys())
       .sort((a, b) => a.localeCompare(b, "pt-BR"))
       .map((name) => ({ id: name, name })),
   };
 }
 
-/** Linhas da carteira para um escopo e filtros (reuso por outros módulos). */
-export async function listPortfolio(filters: PortfolioFilters = {}): Promise<PortfolioRow[]> {
+/**
+ * Linhas da carteira para um escopo e filtros (reuso por outros módulos). Com `user`, aplica o limite da Carteira
+ * do usuário (sem ele, a carteira inteira — chamadas de sistema).
+ */
+export async function listPortfolio(filters: PortfolioFilters = {}, user?: CurrentUser): Promise<PortfolioRow[]> {
   const now = new Date();
-  const base = await loadBase();
-  return applyFilters(buildRows(base, { ownerId: filters.ownerId, param: filters.ownerId ?? "todos" }, now), filters, now);
+  const [base, view] = await Promise.all([loadBase(), user ? resolveCsView(user, "cs.carteira", "todos") : Promise.resolve<CsView>({ param: "todos" })]);
+  return applyFilters(buildRows(base, { ...view, ownerId: filters.ownerId, param: filters.ownerId ?? "todos" }, now), filters, now);
 }
 
 /** Indicadores da carteira do usuário (ou do responsável informado / "todos"). */
 export async function getCsOverview(user: CurrentUser, requestedScope?: string): Promise<PortfolioStats> {
   const now = new Date();
-  const base = await loadBase();
-  return computeStats(base, buildRows(base, resolveScope(user, requestedScope), now), now);
+  const [base, scope] = await Promise.all([loadBase(), resolveCsView(user, "cs.carteira", requestedScope)]);
+  return computeStats(base, buildRows(base, scope, now), now);
 }
 
 // ---------------------------------------------------------------------------
@@ -402,7 +450,7 @@ function latestByClient(scores: HealthScore[]): Map<string, HealthScore[]> {
 }
 
 export async function getHealthOverview(user: CurrentUser, params: SearchParams): Promise<HealthOverview> {
-  const scope = resolveScope(user, one(params, "responsavel"));
+  const scope = await resolveCsView(user, "cs.saude", one(params, "responsavel"));
   const levelFilter = one(params, "nivel");
   const [clients, accounts, scores, users, config, lastSweep] = await Promise.all([
     list<Client>(COLLECTIONS.clients),
@@ -448,7 +496,7 @@ export async function getHealthOverview(user: CurrentUser, params: SearchParams)
   }
   const filtered = isLevel(levelFilter) ? rows.filter((r) => r.level === levelFilter) : rows;
   filtered.sort((a, b) => (a.score ?? 101) - (b.score ?? 101) || a.tradeName.localeCompare(b.tradeName, "pt-BR"));
-  return { scope, rows: filtered, distribution, unscored, config, lastSweep, owners: users.filter((u) => u.departmentId === "cs") };
+  return { scope: publicScope(scope), rows: filtered, distribution, unscored, config, lastSweep, owners: ownersWithin(users.filter((u) => u.departmentId === "cs"), scope) };
 }
 
 export interface HealthDetail {
@@ -462,13 +510,23 @@ export interface HealthDetail {
   account: CsAccount | null;
 }
 
-export async function getHealthDetail(clientId: string): Promise<HealthDetail | null> {
+/**
+ * Detalhe do score de um cliente (?cliente=). Com `user`, confere a tela Saúde e o escopo ANTES de montar o
+ * detalhe: fora do escopo = null (o drawer não abre). Sem `user` (assistente, sistema), sem recorte.
+ */
+export async function getHealthDetail(clientId: string, user?: CurrentUser): Promise<HealthDetail | null> {
+  if (user && !can(user, "cs.saude.ver")) return null;
   const client = await getById<Client>(COLLECTIONS.clients, clientId);
   if (!client) return null;
   const [scores, accounts] = await Promise.all([
     list<HealthScore>(COLLECTIONS.healthScores, { where: [["clientId", "==", clientId]] }),
     list<CsAccount>(COLLECTIONS.csAccounts, { where: [["clientId", "==", clientId]] }),
   ]);
+  const account = [...accounts].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0] ?? null;
+  if (user) {
+    const limit = await resolveDataScope(user, "cs.saude");
+    if (!isUnrestricted(limit) && !(await loadOwnerFilter(limit))(clientOwners(client, account))) return null;
+  }
   scores.sort((a, b) => (a.computedAt < b.computedAt ? 1 : -1));
   const latest = scores[0] ?? null;
   return {
@@ -481,7 +539,7 @@ export async function getHealthDetail(clientId: string): Promise<HealthDetail | 
       .reverse()
       .map((s) => ({ computedAt: s.computedAt, score: s.score, level: s.level })),
     explanation: latest ? explainHealth(latest) : [],
-    account: accounts.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0] ?? null,
+    account,
   };
 }
 
@@ -545,7 +603,7 @@ function periodRange(view: "semana" | "mes", offset: number, today: string): { s
 }
 
 export async function getCheckpointAgenda(user: CurrentUser, params: SearchParams): Promise<CheckpointAgenda> {
-  const scope = resolveScope(user, one(params, "responsavel"));
+  const scope = await resolveCsView(user, "cs.checkpoints", one(params, "responsavel"));
   const view = one(params, "visao") === "mes" ? "mes" : "semana";
   const offset = Math.max(-24, Math.min(24, Number(one(params, "ref") ?? 0) || 0));
   const now = new Date();
@@ -605,7 +663,7 @@ export async function getCheckpointAgenda(user: CurrentUser, params: SearchParam
     .slice(0, 20)
     .map((e) => ({ id: e.id, clientId: e.clientId!, tradeName: names.get(e.clientId!) ?? e.clientId!, occurredAt: e.occurredAt, actorName: e.actorName, title: e.title, description: e.description }));
 
-  return { scope, view, offset, start, end, days, overdue: items.filter((i) => i.overdue), withoutSchedule, recent, owners: users.filter((u) => u.departmentId === "cs") };
+  return { scope: publicScope(scope), view, offset, start, end, days, overdue: items.filter((i) => i.overdue), withoutSchedule, recent, owners: ownersWithin(users.filter((u) => u.departmentId === "cs"), scope) };
 }
 
 // ---------------------------------------------------------------------------
@@ -627,18 +685,20 @@ export interface PlansResult {
   rows: PlanRow[];
   counts: Record<SuccessPlan["status"], number>;
   users: UserLite[];
+  /** Responsáveis de CS para o seletor de carteira (só os do limite quando o escopo é restrito). */
+  owners: UserLite[];
   clients: { id: string; tradeName: string }[];
 }
 
 export async function listSuccessPlans(user: CurrentUser, params: SearchParams): Promise<PlansResult> {
-  const scope = resolveScope(user, one(params, "responsavel"));
+  const scope = await resolveCsView(user, "cs.planos", one(params, "responsavel"));
   const statusParam = one(params, "status");
   const status: PlansResult["status"] = statusParam === "concluido" || statusParam === "cancelado" || statusParam === "todos" ? statusParam : "ativo";
   const [plans, clients, users] = await Promise.all([list<SuccessPlan>(COLLECTIONS.successPlans), list<Client>(COLLECTIONS.clients), listActiveUsers()]);
   const clientBy = new Map(clients.map((c) => [c.id, c]));
   const userBy = new Map(users.map((u) => [u.id, u]));
   const nowIso = new Date().toISOString();
-  const scoped = plans.filter((p) => !scope.ownerId || p.ownerId === scope.ownerId);
+  const scoped = plans.filter((p) => (!scope.allows || scope.allows(planOwners(p))) && (!scope.ownerId || p.ownerId === scope.ownerId));
   const counts: PlansResult["counts"] = { ativo: 0, concluido: 0, cancelado: 0 };
   for (const p of scoped) counts[p.status] += 1;
   const rows = scoped
@@ -653,20 +713,32 @@ export async function listSuccessPlans(user: CurrentUser, params: SearchParams):
     }))
     .sort((a, b) => (a.plan.createdAt < b.plan.createdAt ? 1 : -1));
   return {
-    scope,
+    scope: publicScope(scope),
     status,
     rows,
     counts,
     users,
+    owners: ownersWithin(users.filter((u) => u.departmentId === "cs"), scope),
     clients: clients
       .filter((c) => c.status !== "cancelado" && (isPortfolioClient(c) || c.status === "em_implantacao"))
+      // Escopo restrito: só clientes cujo responsável de CS está no limite (o plano gravado é conferido na action).
+      .filter((c) => !scope.allows || scope.allows([c.ownerCsId]))
       .map((c) => ({ id: c.id, tradeName: c.tradeName }))
       .sort((a, b) => a.tradeName.localeCompare(b.tradeName, "pt-BR")),
   };
 }
 
-export async function getSuccessPlan(id: string): Promise<SuccessPlanWithTasks | null> {
-  return getById<SuccessPlan>(COLLECTIONS.successPlans, id);
+/**
+ * Plano por id (?plano=). Com `user`, confere a tela Planos e o escopo (responsável do plano ou das ações) antes de
+ * devolver: fora do escopo = null (o drawer não abre).
+ */
+export async function getSuccessPlan(id: string, user?: CurrentUser): Promise<SuccessPlanWithTasks | null> {
+  if (user && !can(user, "cs.planos.ver")) return null;
+  const plan = await getById<SuccessPlan>(COLLECTIONS.successPlans, id);
+  if (!plan || !user) return plan;
+  const limit = await resolveDataScope(user, "cs.planos");
+  if (isUnrestricted(limit)) return plan;
+  return (await loadOwnerFilter(limit))(planOwners(plan)) ? plan : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -710,13 +782,21 @@ export interface RenewalsResult {
   totals: { openCount: number; openMrr: number; in60: number; negotiating: number; renewedMrr90: number; lostMrr90: number };
 }
 
-export async function listRenewals(): Promise<RenewalsResult> {
-  const [renewals, contracts, clients, users] = await Promise.all([
+/**
+ * Renovações abertas/encerradas e contratos vencendo sem renovação. Com `user`, aplica o escopo de Renovações
+ * (responsável da renovação; nas linhas vindas de contratos, o responsável de CS do cliente). Padrão "empresa".
+ */
+export async function listRenewals(user?: CurrentUser): Promise<RenewalsResult> {
+  const [allRenewals, contracts, clients, users, limit] = await Promise.all([
     list<Renewal>(COLLECTIONS.renewals),
     list<Contract>(COLLECTIONS.contracts),
     list<Client>(COLLECTIONS.clients),
     listActiveUsers(),
+    user ? resolveDataScope(user, "cs.renovacoes") : Promise.resolve(null),
   ]);
+  const departmentOf = new Map(users.map((u) => [u.id, u.departmentId as string]));
+  const allows = limit && !isUnrestricted(limit) ? ownerFilter(limit, (id) => departmentOf.get(id)) : null;
+  const renewals = allows ? allRenewals.filter((r) => allows([r.ownerId])) : allRenewals;
   const now = new Date();
   const nowIso = now.toISOString();
   const contractBy = new Map(contracts.map((c) => [c.id, c]));
@@ -750,11 +830,12 @@ export async function listRenewals(): Promise<RenewalsResult> {
   const since90 = new Date(now.getTime() - 90 * DAY_MS).toISOString();
   const closed = rows.filter((r) => !OPEN_RENEWAL.has(r.status) && r.updatedAt >= since90).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 
-  const openContracts = new Set(open.map((r) => r.contractId));
+  const openContracts = new Set(allRenewals.filter((r) => OPEN_RENEWAL.has(r.status)).map((r) => r.contractId));
   const horizon = new Date(now.getTime() + RENEWAL_LOOKAHEAD_DAYS * DAY_MS).toISOString();
   const unscheduled: UnscheduledRenewal[] = contracts
     .filter((c) => c.status === "liberado" && c.endDate && c.endDate <= horizon && !openContracts.has(c.id))
-    .filter((c) => !renewals.some((r) => r.contractId === c.id && r.dueDate.slice(0, 10) === c.endDate!.slice(0, 10)))
+    .filter((c) => !allows || allows([clientBy.get(c.clientId)?.ownerCsId]))
+    .filter((c) => !allRenewals.some((r) => r.contractId === c.id && r.dueDate.slice(0, 10) === c.endDate!.slice(0, 10)))
     .map((c) => {
       const client = clientBy.get(c.clientId);
       return { contractId: c.id, contractNumber: c.number, clientId: c.clientId, tradeName: client?.tradeName ?? c.clientId, mrr: c.monthlyTotal, endDate: c.endDate!, daysLeft: daysLeft(c.endDate!), healthLevel: client?.healthLevel };
@@ -794,8 +875,7 @@ export interface RisksResult {
 
 export async function listRisks(user: CurrentUser, params: SearchParams): Promise<RisksResult> {
   const now = new Date();
-  const scope = resolveScope(user, one(params, "responsavel"));
-  const base = await loadBase();
+  const [scope, base] = await Promise.all([resolveCsView(user, "cs.riscos", one(params, "responsavel")), loadBase()]);
   const rows: RiskRow[] = buildRows(base, scope, now)
     .filter((r) => r.healthLevel === "risco" || r.healthLevel === "atencao")
     .map((r) => ({ ...r, activePlanObjective: r.activePlanId ? (base.plans.get(r.clientId) ?? []).find((p) => p.id === r.activePlanId)?.objective : undefined }))
@@ -803,7 +883,7 @@ export async function listRisks(user: CurrentUser, params: SearchParams): Promis
   const risk = rows.filter((r) => r.healthLevel === "risco");
   const attention = rows.filter((r) => r.healthLevel === "atencao");
   return {
-    scope,
+    scope: publicScope(scope),
     rows,
     totals: {
       risk: risk.length,
@@ -813,9 +893,10 @@ export async function listRisks(user: CurrentUser, params: SearchParams): Promis
       withoutPlan: rows.filter((r) => !r.activePlanId).length,
       overdueAmount: rows.reduce((s, r) => s + r.overdueAmount, 0),
     },
-    owners: Array.from(base.users.values())
-      .filter((u) => u.departmentId === "cs")
-      .sort(byName),
+    owners: ownersWithin(
+      Array.from(base.users.values()).filter((u) => u.departmentId === "cs"),
+      scope,
+    ).sort(byName),
   };
 }
 
@@ -849,8 +930,7 @@ export interface UpsellMatrix {
 
 export async function getUpsellMatrix(user: CurrentUser, params: SearchParams): Promise<UpsellMatrix> {
   const now = new Date();
-  const scope = resolveScope(user, one(params, "responsavel"));
-  const base = await loadBase();
+  const [scope, base] = await Promise.all([resolveCsView(user, "cs.upsell", one(params, "responsavel")), loadBase()]);
   const rows = buildRows(base, scope, now).sort((a, b) => a.tradeName.localeCompare(b.tradeName, "pt-BR"));
   let available = 0;
   const matrixRows = rows.map((r) => {
@@ -874,12 +954,12 @@ export async function getUpsellMatrix(user: CurrentUser, params: SearchParams): 
   const csOpps = Array.from(base.opportunities.values())
     .flat()
     .filter((o) => (o.kind === "upsell" || o.kind === "cross_sell") && o.originDepartment === "cs" && o.stage !== "perdido")
-    .filter((o) => !scope.ownerId || scopedIds.has(o.clientId))
+    .filter((o) => (!scope.ownerId && !scope.allows) || scopedIds.has(o.clientId))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   const open = csOpps.filter((o) => OPEN_OPPORTUNITY.has(o.stage));
   const won = csOpps.filter((o) => o.stage === "ganho");
   return {
-    scope,
+    scope: publicScope(scope),
     products: base.catalog.map((p) => ({ id: p.id, name: p.name, monthlyPrice: p.monthlyPrice, setupPrice: p.setupPrice })),
     rows: matrixRows,
     opportunities: csOpps.map((o) => ({
@@ -897,9 +977,10 @@ export async function getUpsellMatrix(user: CurrentUser, params: SearchParams): 
       wonAt: o.wonAt,
     })),
     totals: { open: open.length, openMrr: open.reduce((s, o) => s + o.monthlyTotal, 0), won: won.length, wonMrr: won.reduce((s, o) => s + o.monthlyTotal, 0), available },
-    owners: Array.from(base.users.values())
-      .filter((u) => u.departmentId === "cs")
-      .sort(byName),
+    owners: ownersWithin(
+      Array.from(base.users.values()).filter((u) => u.departmentId === "cs"),
+      scope,
+    ).sort(byName),
   };
 }
 
@@ -941,15 +1022,23 @@ function lastMonths(count: number, today: string): string[] {
   });
 }
 
-export async function getChurnMetrics(): Promise<ChurnMetrics> {
-  const [records, clients, products, sources, users, metas] = await Promise.all([
+/**
+ * Painel de churn. Com `user`, aplica o escopo de Churn (A7): registros do responsável ou de clientes do escopo, e a
+ * taxa calculada sobre os clientes do escopo. Padrão "empresa" (a base inteira, como antes).
+ */
+export async function getChurnMetrics(user?: CurrentUser): Promise<ChurnMetrics> {
+  const [allRecords, allClients, products, sources, users, metas, allows] = await Promise.all([
     list<ChurnRecord>(COLLECTIONS.churnRecords),
     list<Client>(COLLECTIONS.clients),
     list<Product>(COLLECTIONS.products),
     list<LeadSource>(COLLECTIONS.leadSources),
     listActiveUsers(),
     getSetting<{ churnMax?: number }>("metas_referencia", {}),
+    churnScopeFilter(user),
   ]);
+  const clients = allows ? allClients.filter((c) => allows([c.ownerCsId])) : allClients;
+  const ownerOf = new Map(allClients.map((c) => [c.id, c.ownerCsId]));
+  const records = allows ? allRecords.filter((r) => allows([r.responsibleId, ownerOf.get(r.clientId)])) : allRecords;
   const clientBy = new Map(clients.map((c) => [c.id, c]));
   const productName = new Map(products.map((p) => [p.id, p.name]));
   const sourceName = new Map(sources.map((s) => [s.key, s.name]));
@@ -1037,6 +1126,13 @@ export async function getChurnMetrics(): Promise<ChurnMetrics> {
   };
 }
 
+/** Filtro de donos do escopo de Churn (null = sem recorte). Dono do cliente = responsável de CS do cliente. */
+async function churnScopeFilter(user?: CurrentUser): Promise<((owners: readonly (string | undefined | null)[]) => boolean) | null> {
+  if (!user) return null;
+  const limit = await resolveDataScope(user, "cs.churn");
+  return isUnrestricted(limit) ? null : loadOwnerFilter(limit);
+}
+
 export interface ChurnFormClient {
   id: string;
   tradeName: string;
@@ -1044,9 +1140,10 @@ export interface ChurnFormClient {
   products: { id: string; name: string; monthlyValue: number; status: ClientProduct["status"] }[];
 }
 
-/** Clientes com produtos vigentes (para o diálogo de cancelamento). */
-export async function getChurnFormOptions(): Promise<{ clients: ChurnFormClient[]; users: UserLite[] }> {
-  const [clients, products, users] = await Promise.all([list<Client>(COLLECTIONS.clients), list<ClientProduct>(COLLECTIONS.clientProducts), listActiveUsers()]);
+/** Clientes com produtos vigentes (para o diálogo de cancelamento). Com `user`, só os clientes do escopo de Churn. */
+export async function getChurnFormOptions(user?: CurrentUser): Promise<{ clients: ChurnFormClient[]; users: UserLite[] }> {
+  const [allClients, products, users, allows] = await Promise.all([list<Client>(COLLECTIONS.clients), list<ClientProduct>(COLLECTIONS.clientProducts), listActiveUsers(), churnScopeFilter(user)]);
+  const clients = allows ? allClients.filter((c) => allows([c.ownerCsId])) : allClients;
   const byClient = groupBy(products.filter((p) => p.status !== "cancelado"));
   return {
     clients: clients
@@ -1078,7 +1175,12 @@ export interface ClientCs {
   users: Record<string, UserLite>;
 }
 
-export async function getClientCs(clientId: string): Promise<ClientCs | null> {
+/**
+ * Dados da aba CS da ficha 360º. Com `user`, aplica a tela dona (Carteira de CS) e o escopo dela (A29): sem a tela
+ * ou fora do escopo = null (o painel não aparece). Sem `user`, sem recorte (compatível).
+ */
+export async function getClientCs(clientId: string, user?: CurrentUser): Promise<ClientCs | null> {
+  if (user && !can(user, "cs.carteira.ver")) return null;
   const client = await getById<Client>(COLLECTIONS.clients, clientId);
   if (!client) return null;
   const byClient = { where: [["clientId", "==", clientId]] as [string, "==", unknown][] };
@@ -1092,6 +1194,10 @@ export async function getClientCs(clientId: string): Promise<ClientCs | null> {
   ]);
   scores.sort((a, b) => (a.computedAt < b.computedAt ? 1 : -1));
   const account = accounts.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0] ?? null;
+  if (user) {
+    const limit = await resolveDataScope(user, "cs.carteira");
+    if (!isUnrestricted(limit) && !(await loadOwnerFilter(limit))(clientOwners(client, account))) return null;
+  }
   const userIds = [account?.ownerId, ...plans.flatMap((p) => [p.ownerId, ...p.actions.map((a) => a.responsibleId)]), ...renewals.map((r) => r.ownerId)].filter((id): id is string => Boolean(id));
   const userMap = await getManyByIds<User>(COLLECTIONS.users, userIds);
   const users: Record<string, UserLite> = {};

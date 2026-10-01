@@ -4,7 +4,7 @@ import { updateGoLiveSettings } from "@/server/implementation/actions";
 import { Switch } from "@/components/ui/switch";
 import { useImplementationAction } from "./use-implementation-action";
 
-/** Regra de aprovação do go-live (setting "go_live"): só gestores podem alterar. */
+/** Regra de aprovação do go-live (setting "go_live"): `canEdit` = implantacao.go-live.configurar (padrão: gestores). */
 export function GoLiveSettingsSwitch({ value, canEdit }: { value: boolean; canEdit: boolean }) {
   const { pending, run } = useImplementationAction();
   return (

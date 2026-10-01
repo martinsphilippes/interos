@@ -14,6 +14,7 @@ import { ScorePill, TemperatureBadge } from "./lead-badges";
 import { DisqualifyDialog, QualifyDialog } from "./lead-dialogs";
 import { LEAD_FUNNEL, LEAD_STATUSES, LEAD_STATUS_LABELS, type LeadListItem, type UserOption } from "./marketing-model";
 import { useMarketingUrl } from "./use-marketing-url";
+import { useMarketingAccess } from "./marketing-access";
 import { RelativeTime } from "@/components/ui/relative-time";
 
 const COLUMN_TONE: Record<LeadStatus, string> = {
@@ -29,6 +30,7 @@ type Pending = { kind: "qualify" | "disqualify"; lead: LeadListItem } | null;
 /**
  * Kanban por status com arrastar-e-soltar. Novo ↔ Em contato e Qualificado → Convertido mudam o
  * status direto; soltar em Qualificado abre o gate de MQL e em Desqualificado pede o motivo.
+ * Cada destino exige a chave própria (editar / qualificar / desqualificar); sem nenhuma o quadro é só leitura.
  */
 export function LeadsKanban({ items, sellers }: { items: LeadListItem[]; sellers: UserOption[] }) {
   const router = useRouter();
@@ -39,6 +41,8 @@ export function LeadsKanban({ items, sellers }: { items: LeadListItem[]; sellers
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [pendingDialog, setPendingDialog] = React.useState<Pending>(null);
   const [, startTransition] = React.useTransition();
+  const caps = useMarketingAccess().leads;
+  const canMove = caps.edit || caps.qualify || caps.disqualify;
 
   if (items !== prevItems) {
     setPrevItems(items);
@@ -56,6 +60,11 @@ export function LeadsKanban({ items, sellers }: { items: LeadListItem[]; sellers
     const lead = items.find((l) => l.id === String(event.active.id));
     const to = event.over ? (String(event.over.id).replace("col:", "") as LeadStatus) : null;
     if (!lead || !to || to === statusOf(lead)) return;
+    const allowed = to === "qualificado" ? caps.qualify : to === "desqualificado" ? caps.disqualify : caps.edit;
+    if (!allowed) {
+      toast.error("Seu perfil não permite mover o lead para esta etapa");
+      return;
+    }
     if (to === "qualificado") {
       setPendingDialog({ kind: "qualify", lead });
       return;
@@ -94,7 +103,7 @@ export function LeadsKanban({ items, sellers }: { items: LeadListItem[]; sellers
       <DndContext id={dndId} sensors={sensors} collisionDetection={closestCorners} onDragStart={(e) => setActiveId(String(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
         <div className="relative -mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 scrollbar-thin md:mx-0 md:grid md:grid-cols-5 md:overflow-visible md:px-0">
           {columns.map((col) => (
-            <Column key={col.status} status={col.status} leads={col.leads} onOpen={(id) => navigate({ lead: id })} />
+            <Column key={col.status} status={col.status} leads={col.leads} onOpen={(id) => navigate({ lead: id })} draggable={canMove} />
           ))}
         </div>
         <DragOverlay dropAnimation={null}>{active ? <LeadCard lead={active} overlay /> : null}</DragOverlay>
@@ -110,7 +119,7 @@ export function LeadsKanban({ items, sellers }: { items: LeadListItem[]; sellers
   );
 }
 
-function Column({ status, leads, onOpen }: { status: LeadStatus; leads: LeadListItem[]; onOpen: (id: string) => void }) {
+function Column({ status, leads, onOpen, draggable }: { status: LeadStatus; leads: LeadListItem[]; onOpen: (id: string) => void; draggable: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id: `col:${status}` });
   const separated = !LEAD_FUNNEL.includes(status);
   return (
@@ -124,10 +133,8 @@ function Column({ status, leads, onOpen }: { status: LeadStatus; leads: LeadList
         <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{leads.length}</span>
       </header>
       <div className="flex min-h-[120px] flex-1 flex-col gap-2 px-2 pb-2 md:max-h-[calc(100dvh-360px)] md:overflow-y-auto md:scrollbar-thin [&>*]:shrink-0">
-        {leads.map((lead) => (
-          <DraggableCard key={lead.id} lead={lead} onOpen={onOpen} />
-        ))}
-        {leads.length === 0 ? <p className="rounded-md border border-dashed border-border-strong px-3 py-6 text-center text-xs text-muted">Solte aqui</p> : null}
+        {leads.map((lead) => (draggable ? <DraggableCard key={lead.id} lead={lead} onOpen={onOpen} /> : <LeadCard key={lead.id} lead={lead} onOpen={onOpen} />))}
+        {leads.length === 0 ? <p className="rounded-md border border-dashed border-border-strong px-3 py-6 text-center text-xs text-muted">{draggable ? "Solte aqui" : "Nenhum lead"}</p> : null}
       </div>
     </section>
   );
@@ -145,15 +152,17 @@ function DraggableCard({ lead, onOpen }: { lead: LeadListItem; onOpen: (id: stri
 function LeadCard({ lead, onOpen, handleRef, handleProps, overlay }: { lead: LeadListItem; onOpen?: (id: string) => void; handleRef?: (el: HTMLElement | null) => void; handleProps?: React.HTMLAttributes<HTMLButtonElement>; overlay?: boolean }) {
   return (
     <article className={cn("flex gap-1 rounded-lg border border-border bg-surface p-2.5 shadow-card", overlay ? "rotate-1 shadow-pop" : "hover:border-border-strong")}>
-      <button
-        type="button"
-        ref={handleRef}
-        {...handleProps}
-        className="-ml-1 flex w-6 shrink-0 cursor-grab touch-none items-start justify-center pt-0.5 text-muted-light hover:text-muted active:cursor-grabbing"
-        aria-label={`Arrastar ${lead.name}`}
-      >
-        <GripVertical className="size-4" />
-      </button>
+      {handleProps || overlay ? (
+        <button
+          type="button"
+          ref={handleRef}
+          {...handleProps}
+          className="-ml-1 flex w-6 shrink-0 cursor-grab touch-none items-start justify-center pt-0.5 text-muted-light hover:text-muted active:cursor-grabbing"
+          aria-label={`Arrastar ${lead.name}`}
+        >
+          <GripVertical className="size-4" />
+        </button>
+      ) : null}
       <button type="button" className="flex min-w-0 flex-1 flex-col gap-1.5 text-left" onClick={() => onOpen?.(lead.id)}>
         <span className="flex items-start justify-between gap-2">
           <span className="min-w-0">
