@@ -407,8 +407,8 @@ catálogo; toda rota de tela tem página; todo guard aponta para função existe
 
 ### Testes
 `npm test` (vitest, puros): catálogo, DSL, precedência, módulos (`inactiveModules`), invariantes, T0 de equivalência,
-escopo contra os resolvedores antigos, navegação, erros, verificador e um arquivo `guards-<módulo>.test.ts` por
-módulo. `npm run test:rules` (regras do Firestore no emulador). E2E `77-acessos.mjs` (T1–T10) na pasta de e2e.
+escopo contra os resolvedores antigos, navegação, erros, verificador, um arquivo `guards-<módulo>.test.ts` por
+módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não podem alcançar `next/navigation`). `npm run test:rules` (regras do Firestore no emulador). E2E `77-acessos.mjs` (T1–T10) na pasta de e2e.
 
 ## Auditoria via eventos
 - Não há coleção de auditoria: cada mudança relevante emite evento com `actorId`, `occurredAt` e
