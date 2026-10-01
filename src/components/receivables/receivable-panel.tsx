@@ -661,6 +661,7 @@ function ReceivableFormDialog({ options, initial, cloneOf, onClose }: { options:
             <Input id={`${id}-comp`} type="month" value={f.competence} onChange={(e) => set("competence", e.target.value)} />
           </FormField>
           <RepeatFields id={id} mode={mode} value={repeatState} onChange={setRepeatState} />
+          <OccurrencePreview className="sm:col-span-2" description={f.description} amount={amount} dueDate={f.dueDate} competence={f.competence} repeat={repeat} verb="receba" />
           <PayerAndClassification id={id} f={f} set={set} options={options} cls={registry ? cls : EMPTY_CLASSIFICATION} setCls={registry ? setCls : undefined} />
           <FormField label="Nº do documento" htmlFor={`${id}-doc`} hint="Documento do cliente/NF (o código REC- é automático)">
             <Input id={`${id}-doc`} value={f.documentNumber} onChange={(e) => set("documentNumber", e.target.value)} maxLength={60} />
@@ -674,7 +675,6 @@ function ReceivableFormDialog({ options, initial, cloneOf, onClose }: { options:
           <FormField label="Observações (opcional)" htmlFor={`${id}-obs`} className="sm:col-span-2">
             <Textarea id={`${id}-obs`} value={f.notes} onChange={(e) => set("notes", e.target.value)} />
           </FormField>
-          <OccurrencePreview className="sm:col-span-2" description={f.description} amount={amount} dueDate={f.dueDate} competence={f.competence} repeat={repeat} verb="receba" />
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={pending}>

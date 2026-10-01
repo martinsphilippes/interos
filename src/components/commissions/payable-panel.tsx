@@ -838,6 +838,7 @@ export function PayableFormDialog({ users, suppliers = [], categories = DEFAULT_
               </FormField>
             </>
           ) : null}
+          {f.mode === "recorrente" ? null : <OccurrencePreview className="sm:col-span-2" description={f.description} amount={f.amount} dueDate={f.dueDate} competence={f.competence} repeat={repeat} verb="aprove e pague" />}
           {hasRegistry && classification ? (
             <ClassificationFields id={id} options={classification} value={f.cls} onChange={(v) => set("cls", v)} />
           ) : (
@@ -866,7 +867,6 @@ export function PayableFormDialog({ users, suppliers = [], categories = DEFAULT_
           <FormField label="Observações (opcional)" htmlFor={`${id}-obs`} className="sm:col-span-2">
             <Textarea id={`${id}-obs`} value={f.notes} onChange={(e) => set("notes", e.target.value)} />
           </FormField>
-          {f.mode === "recorrente" ? null : <OccurrencePreview className="sm:col-span-2" description={f.description} amount={f.amount} dueDate={f.dueDate} competence={f.competence} repeat={repeat} verb="aprove e pague" />}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={pending}>
