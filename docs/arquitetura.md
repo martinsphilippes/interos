@@ -460,8 +460,8 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Página pública** `src/app/portal/[token]/page.tsx`: fora de `(app)` (modelo `/csat`), `/portal` em `PUBLIC_PATHS`
   do proxy, `dynamic = "force-dynamic"`, metadata `robots: noindex/nofollow` e `referrer: no-referrer`; `next.config.ts`
   envia `Cache-Control: no-store, max-age=0`, `X-Robots-Tag: noindex, nofollow, noarchive` e `Referrer-Policy:
-  no-referrer` em `/portal/:path*` (o servidor de páginas dinâmicas reescreve o Cache-Control: em produção sai
-  `private, no-cache, no-store, max-age=0, must-revalidate`; no `next dev` sai `no-cache, must-revalidate`). Isenção
+  no-referrer` em `/portal/:path*` (conferido com `next build && next start`: `Cache-Control: no-store, max-age=0`; só o
+  `next dev` força `no-cache, must-revalidate` em toda página). Isenção
   justificada no catálogo (`EXEMPTIONS`). Fluxo (`loadPortalForToken`): formato → hash → transação que confere o link
   (existe, da organização, não revogado, não expirado) e grava SÓ `lastAccessAt`, `accessCount` e, no 1º acesso do dia
   (São Paulo), `lastAccessEventDay` + evento `portal.accessed` (ator "Cliente (portal)"). Inexistente, revogado,
