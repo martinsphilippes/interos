@@ -1117,6 +1117,139 @@ export const FINANCEIRO = {
       },
     },
     {
+      key: "financeiro.cadastros",
+      module: "financeiro",
+      label: "Cadastros financeiros",
+      description: "Contas financeiras (onde o dinheiro entra e sai), centros de custo e categorias de receita/despesa com subcategoria: cadastro, arquivamento/reativação, manutenção em massa (aplicar centro, mover subcategorias, mesclar) e importação manual da configuração de Contas a Pagar.",
+      routes: ["/financeiro/cadastros"],
+      redirectTo: "/financeiro/comissoes?erro=sem-permissao",
+      // Tela NOVA (etapa CP/CR 1), sem predicado anterior. Padrão = o mesmo público da tela Contas a Pagar
+      // (financeiro.contas-a-pagar.ver: equipe financeira e gestores — gestor fora do Financeiro só consulta), porque os
+      // cadastros classificam os títulos dessa tela. Sem item de menu (o T0 de navegação continua idêntico): entra pelo
+      // cabeçalho de Contas a Pagar e por Configurações › Contas a pagar.
+      rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+      nav: {
+        // Só lookup para canSeeHref/ScreenLink (links do cabeçalho de Contas a Pagar e de Configurações); NÃO gera
+        // item de menu.
+        menu: null,
+        href: "/financeiro/cadastros",
+      },
+      sections: [
+        {
+          key: "financeiro.cadastros.contas.ver",
+          tab: "contas",
+          label: "Contas financeiras",
+          // Onde: /financeiro/cadastros?aba=contas (saldo inicial sob financeiro.valores.ver: "Restrito" sem a chave)
+          rule: "all",
+        },
+        {
+          key: "financeiro.cadastros.centros.ver",
+          tab: "centros",
+          label: "Centros de custo",
+          // Onde: /financeiro/cadastros?aba=centros
+          rule: "all",
+        },
+        {
+          key: "financeiro.cadastros.categorias.ver",
+          tab: "categorias",
+          label: "Categorias e subcategorias",
+          // Onde: /financeiro/cadastros?aba=categorias (uso por categoria, categorias sem centro)
+          rule: "all",
+        },
+      ],
+      actions: [
+        // Padrão das ações = quem opera Contas a Pagar e Fornecedores hoje (canOperatePayables: administrador,
+        // diretoria, papel ou departamento Financeiro) — a regra existente mais próxima (cadastro de apoio aos títulos).
+        {
+          key: "financeiro.cadastros.contas.criar",
+          label: "Cadastrar conta financeira",
+          verb: "criar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#saveFinancialAccountAction?sem id"],
+        },
+        {
+          key: "financeiro.cadastros.contas.editar",
+          label: "Editar conta financeira",
+          verb: "editar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#saveFinancialAccountAction?com id"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.cadastros.contas.arquivar",
+          label: "Arquivar/reativar conta financeira",
+          verb: "arquivar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#setFinancialAccountArchivedAction"],
+        },
+        {
+          key: "financeiro.cadastros.centros.criar",
+          label: "Cadastrar centro de custo",
+          verb: "criar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#saveCostCenterAction?sem id"],
+        },
+        {
+          key: "financeiro.cadastros.centros.editar",
+          label: "Editar centro de custo",
+          verb: "editar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#saveCostCenterAction?com id"],
+        },
+        {
+          key: "financeiro.cadastros.centros.arquivar",
+          label: "Arquivar/reativar centro de custo",
+          verb: "arquivar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#setCostCenterArchivedAction"],
+        },
+        {
+          key: "financeiro.cadastros.categorias.criar",
+          label: "Cadastrar categoria ou subcategoria",
+          verb: "criar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#saveFinanceCategoryAction?sem id"],
+        },
+        {
+          key: "financeiro.cadastros.categorias.editar",
+          label: "Editar categoria ou subcategoria",
+          verb: "editar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#saveFinanceCategoryAction?com id"],
+        },
+        {
+          key: "financeiro.cadastros.categorias.arquivar",
+          label: "Arquivar/reativar categoria (com as subcategorias)",
+          verb: "arquivar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#setFinanceCategoryArchivedAction"],
+        },
+        {
+          key: "financeiro.cadastros.categorias.reorganizar",
+          label: "Manutenção em massa: aplicar centro e mover subcategorias",
+          verb: "reorganizar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#applyCostCenterToCategoriesAction", "src/server/finance-registry/actions.ts#moveSubcategoriesAction"],
+        },
+        {
+          key: "financeiro.cadastros.categorias.mesclar",
+          label: "Mesclar categorias (reatribui subcategorias e títulos)",
+          verb: "mesclar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#mergeFinanceCategoriesAction"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.cadastros.importar",
+          label: "Importar da configuração atual (centros e categorias)",
+          verb: "importar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#importFinanceRegistryAction"],
+        },
+      ],
+      scope: null,
+    },
+    {
       key: "financeiro.configuracoes",
       module: "financeiro",
       label: "Configurações Financeiras",

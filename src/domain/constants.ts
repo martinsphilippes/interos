@@ -446,6 +446,22 @@ export const EVENT_TYPES = [
   "portal.link_created",
   "portal.link_revoked",
   "portal.accessed",
+  // cadastros financeiros (etapa CP/CR 1): contas financeiras, centros de custo e categorias
+  "financial_account.created",
+  "financial_account.updated",
+  "financial_account.archived",
+  "financial_account.reactivated",
+  "cost_center.created",
+  "cost_center.updated",
+  "cost_center.archived",
+  "cost_center.reactivated",
+  "finance_category.created",
+  "finance_category.updated",
+  "finance_category.archived",
+  "finance_category.reactivated",
+  "finance_category.merged",
+  "finance_category.bulk_updated",
+  "finance_registry.imported",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

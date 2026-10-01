@@ -120,6 +120,24 @@ export const CHANGE_FIELD_LABELS: Record<string, string> = {
   extras: "Extras",
   expiresAt: "Expira em",
   lastAccessAt: "Último acesso",
+  // Cadastros financeiros (etapa CP/CR 1).
+  accountType: "Tipo de conta",
+  initialBalance: "Saldo inicial",
+  currency: "Moeda",
+  bankName: "Banco",
+  agency: "Agência",
+  accountNumber: "Número da conta",
+  archived: "Arquivado",
+  categoryType: "Tipo (receita/despesa)",
+  costCenterName: "Centro de custo",
+  parentName: "Categoria-mãe",
+  legacyKey: "Chave antiga (configuração)",
+  mergedInto: "Mesclada em",
+  subcategoriesMoved: "Subcategorias transferidas",
+  recordsReassigned: "Títulos/lançamentos reatribuídos",
+  subcategoriesArchived: "Subcategorias arquivadas junto",
+  centersCreated: "Centros de custo criados",
+  categoriesCreated: "Categorias criadas",
 };
 
 /** Campos que NUNCA aparecem em claro (defesa em profundidade: o serviço já grava mascarado). */
@@ -139,6 +157,7 @@ export const MONEY_CHANGE_FIELDS = new Set([
   "items",
   "value",
   "baseAmount",
+  "initialBalance",
 ]);
 
 /** Rótulos dos valores de situação conhecidos (contrato, cobrança, financeiro, cliente, tarefa, comissão, título). */

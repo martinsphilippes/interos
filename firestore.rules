@@ -60,6 +60,16 @@ service cloud.firestore {
     match /portal_links/{docId} {
       allow read, write: if false;
     }
+    // Cadastros financeiros (contas financeiras com saldo inicial, centros de custo e categorias): só pelo servidor.
+    match /financial_accounts/{docId} {
+      allow read, write: if false;
+    }
+    match /cost_centers/{docId} {
+      allow read, write: if false;
+    }
+    match /finance_categories/{docId} {
+      allow read, write: if false;
+    }
 
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {

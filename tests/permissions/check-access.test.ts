@@ -87,8 +87,9 @@ describe("repositório real", () => {
 
   // 238 = 235 + savePermissionProfile/saveUserPermissionOverrides/saveActiveModules (futureGuards de admin.acessos.gerir).
   // Etapa 6B (D31): + página pública /portal/[token] (isenta) e 3 actions do portal (gerar, enviar, revogar).
-  it("inventário: 89 páginas (8 isentas), 241 funções 'use server' (3 isentas), 9 handlers de API (8 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 89, pagesExempt: 8, serverFunctions: 241, serverFunctionsExempt: 3, apiHandlers: 9, apiExempt: 8 });
+  // Etapa CP/CR 1: + página /financeiro/cadastros e 10 actions dos cadastros financeiros.
+  it("inventário: 90 páginas (8 isentas), 251 funções 'use server' (3 isentas), 9 handlers de API (8 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 90, pagesExempt: 8, serverFunctions: 251, serverFunctionsExempt: 3, apiHandlers: 9, apiExempt: 8 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

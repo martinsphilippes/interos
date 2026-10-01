@@ -48,6 +48,9 @@ async function main(): Promise<void> {
       await setDoc(doc(db, "users/alice"), { name: "Alice", role: "vendas", active: true, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
       await setDoc(doc(db, "users/bob"), { name: "Bob", role: "admin", active: true, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
       await setDoc(doc(db, "permission_profiles/role_vendas"), { grants: {}, scopes: {}, organizationId: "intercert" });
+      await setDoc(doc(db, "financial_accounts/fa_1"), { name: "Conta corrente", type: "corrente", initialBalance: 1000, currency: "BRL", archived: false, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
+      await setDoc(doc(db, "cost_centers/cc_1"), { name: "Comercial", archived: false, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
+      await setDoc(doc(db, "finance_categories/fc_1"), { name: "Aluguel", type: "despesa", parentId: null, costCenterId: "cc_1", archived: false, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
       await setDoc(doc(db, `portal_links/${PORTAL_LINK_ID}`), { clientId: "client_001", origin: "manual", expiresAt: "2099-01-01T00:00:00.000Z", accessCount: 0, createdBy: "bob", organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
     });
 
@@ -85,6 +88,20 @@ async function main(): Promise<void> {
       assertFails(updateDoc(doc(anonymous, `portal_links/${PORTAL_LINK_ID}`), { expiresAt: "2199-01-01T00:00:00.000Z", accessCount: 99 })),
     );
     await runCase(results, "usuário autenticado NÃO revoga nem apaga portal_links", () => assertFails(deleteDoc(doc(alice, `portal_links/${PORTAL_LINK_ID}`))));
+    // Cadastros financeiros (etapa CP/CR 1): saldo inicial e classificação só pelo servidor (Admin SDK).
+    for (const [path, sample] of [
+      ["financial_accounts/fa_1", { name: "Conta X", type: "corrente", initialBalance: 999999, currency: "BRL", archived: false, organizationId: "intercert" }],
+      ["cost_centers/cc_1", { name: "Centro X", archived: false, organizationId: "intercert" }],
+      ["finance_categories/fc_1", { name: "Categoria X", type: "despesa", parentId: null, costCenterId: "cc_1", archived: false, organizationId: "intercert" }],
+    ] as const) {
+      const collectionName = path.split("/")[0];
+      await runCase(results, `usuário autenticado NÃO lê ${path}`, () => assertFails(getDoc(doc(alice, path))));
+      await runCase(results, `visitante sem login NÃO lista ${collectionName}`, () => assertFails(getDocs(collection(anonymous, collectionName))));
+      await runCase(results, `usuário autenticado NÃO lista ${collectionName}`, () => assertFails(getDocs(collection(alice, collectionName))));
+      await runCase(results, `usuário autenticado NÃO cria em ${collectionName}`, () => assertFails(setDoc(doc(alice, `${collectionName}/novo`), sample)));
+      await runCase(results, `usuário autenticado NÃO altera ${path}`, () => assertFails(updateDoc(doc(alice, path), { archived: true })));
+      await runCase(results, `usuário autenticado NÃO apaga ${path}`, () => assertFails(deleteDoc(doc(alice, path))));
+    }
     await runCase(results, "coleção sem regra explícita continua negada (negação padrão)", () => assertFails(getDoc(doc(alice, "settings/qualquer"))));
 
     for (const r of results) console.log(`${r.ok ? "OK  " : "FALHA"} ${r.name}${r.detail ? ` — ${r.detail}` : ""}`);

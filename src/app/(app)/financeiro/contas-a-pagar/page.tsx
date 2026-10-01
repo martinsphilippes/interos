@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock, Truck } from "lucide-react";
-import { requireScreen } from "@/server/auth/session";
+import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock, Tags, Truck } from "lucide-react";
+import { can, requireScreen } from "@/server/auth/session";
 import { getPayablesWorkspace, parsePayableFilters } from "@/server/commissions/queries";
 import { runDueSweeps } from "@/server/automations/lazy";
 import { PAYABLE_ORIGIN_LABELS, PAYABLE_STATUSES, PAYABLE_STATUS_LABELS } from "@/domain/commissions";
@@ -47,6 +47,8 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
   const ws = await getPayablesWorkspace(user, filters, requested);
   const { kpis } = ws;
   const count = (n: number) => `${n} título(s)`;
+  // Cadastros financeiros (etapa CP/CR 1): contas, centros de custo e categorias — tela própria com acesso próprio.
+  const registry = can(user, "financeiro.cadastros.ver");
 
   return (
     <PageContainer size="full" className="max-w-[1680px]">
@@ -55,8 +57,13 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
         description={ws.can.readOnly ? "Títulos da sua equipe (somente leitura)" : "Comissões elegíveis, bônus, fornecedores e lançamentos: aprovação, programação e pagamento"}
         breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contas a Pagar" }]}
         actions={
-          (ws.can.suppliers && ws.can.operate) || ws.can.create ? (
+          (ws.can.suppliers && ws.can.operate) || ws.can.create || registry ? (
             <>
+              {registry ? (
+                <Link href="/financeiro/cadastros" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
+                  <Tags /> Cadastros
+                </Link>
+              ) : null}
               {ws.can.suppliers && ws.can.operate ? (
                 <Link href="/financeiro/contas-a-pagar/fornecedores" className={buttonVariants({ variant: "outline", className: "h-11 md:h-9" })}>
                   <Truck /> Fornecedores
