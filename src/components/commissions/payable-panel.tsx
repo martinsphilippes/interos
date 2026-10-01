@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Repeat, Route, Undo2 } from "lucide-react";
+import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Receipt, Repeat, Route, Scissors, Split, Undo2 } from "lucide-react";
 import type { PayableDetail } from "@/server/commissions/queries";
 import type { PayableCapabilities } from "@/server/commissions/access";
-import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, createManualPayableAction, payPayableAction, schedulePayableAction, undoPayablePaymentAction, updatePayableAction } from "@/server/commissions/actions";
+import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, createManualPayableAction, partialPayPayableAction, payPayableAction, payPayableWithResidualAction, schedulePayableAction, settlePayableByPaidAction, undoPayablePaymentAction, updatePayableAction } from "@/server/commissions/actions";
 import { PAYOUT_METHOD_LABELS, PAYOUT_METHODS } from "@/server/commissions/schemas";
 import { PAYABLE_ORIGIN_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { dateKey, formatCompetence, formatCurrency, formatDate } from "@/lib/format";
@@ -19,13 +19,14 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useFinanceAction } from "@/components/finance/use-finance-action";
 import { CalcMemory, CommissionStatusBadge, HistoryList, PayableStatusBadge, ReasonDialog, TraceChain } from "./commission-ui";
+import { PaymentsHistory, SettleByPaidDialog, SettlementBadge, SettlementSummary } from "@/components/finance/settlement-ui";
 
-type Dialogs = null | "schedule" | "pay" | "cancel" | "edit" | "attach" | "undo";
+type Dialogs = null | "schedule" | "pay" | "pay-partial" | "pay-residual" | "settle-paid" | "cancel" | "edit" | "attach" | "undo";
 
 type Opt = { value: string; label: string };
 
 /** Capacidades calculadas no servidor (payableCapabilities); a interface só esconde — as actions revalidam. */
-export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate"> & Partial<Pick<PayableCapabilities, "undoPayment">>;
+export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate"> & Partial<Pick<PayableCapabilities, "undoPayment" | "payPartial" | "payResidual" | "settleByPaid">>;
 
 const today = () => dateKey(new Date());
 
@@ -33,7 +34,13 @@ const today = () => dateKey(new Date());
 export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: PayableDetail; can: PayableCan; costCenters?: string[]; accounts?: Opt[] }) {
   const { pending, run } = useFinanceAction();
   const [dialog, setDialog] = React.useState<Dialogs>(null);
+  // Baixa específica a desfazer (histórico de baixas, etapa CP/CR 3).
+  const [undoPaymentId, setUndoPaymentId] = React.useState<string | null>(null);
   const open = p.status !== "pago" && p.status !== "cancelado";
+  const payable = (p.status === "aprovado" || p.status === "a_pagar") && p.open > 0;
+  // Baixa parcial/resíduo/quitar pelo já pago: nunca em título de comissão/bônus (pagamento integral).
+  const flexible = payable && !p.integralOnly && p.amount > 0;
+  const undoTarget = undoPaymentId ? p.payments.find((x) => x.id === undoPaymentId) : undefined;
   // Título de comissão/estorno: aprovar exige também "Aprovar comissão".
   const canApprove = can.approve && (!(p.origin === "comissao_automatica" || p.origin === "estorno") || can.approveCommission);
   const supplierHref = p.trace.find((t) => t.key === "fornecedor")?.href;
@@ -50,11 +57,13 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
           <CardTitle className="flex flex-wrap items-center gap-2">
             <span data-testid="payable-code">{p.code}</span>
             <PayableStatusBadge status={p.status} overdue={p.overdue} size="md" />
+            {p.status !== "cancelado" ? <SettlementBadge status={p.settlement} size="md" /> : null}
           </CardTitle>
           <p className="break-words text-sm text-muted">{p.description}</p>
         </CardHeader>
         <CardContent className="pt-0">
-          <p className={`mb-3 text-2xl font-semibold tabular-nums ${p.amount < 0 ? "text-danger-fg" : ""}`}>{formatCurrency(p.amount)}</p>
+          <p className={`mb-1 text-2xl font-semibold tabular-nums ${p.amount < 0 ? "text-danger-fg" : ""}`}>{formatCurrency(p.amount)}</p>
+          <SettlementSummary className="mb-3" paid={p.paid} open={p.open} status={p.settlement} originalAmount={p.originalAmount} amount={p.amount} verb="pago" />
           <DataList
             labelWidth="8rem"
             items={[
@@ -93,6 +102,8 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
                     },
                   ]
                 : []),
+              ...(p.residual ? [{ label: "Resíduo", value: p.residual.code, href: `/financeiro/contas-a-pagar?titulo=${p.residual.id}` }] : []),
+              ...(p.residualOf ? [{ label: "Resíduo de", value: p.residualOf.code, href: `/financeiro/contas-a-pagar?titulo=${p.residualOf.id}` }] : []),
               ...(p.cancelReason ? [{ label: "Motivo do cancelamento", value: p.cancelReason }] : []),
               ...(p.notes ? [{ label: "Observações", value: p.notes }] : []),
             ]}
@@ -109,9 +120,24 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
                   <CalendarCheck /> Programar pagamento
                 </Button>
               ) : null}
-              {(p.status === "aprovado" || p.status === "a_pagar") && can.pay ? (
+              {payable && can.pay ? (
                 <Button variant="success" className="h-11 md:h-9" onClick={() => setDialog("pay")}>
                   <CircleDollarSign /> Pagar
+                </Button>
+              ) : null}
+              {flexible && can.payPartial ? (
+                <Button variant="secondary" className="h-11 md:h-9" onClick={() => setDialog("pay-partial")}>
+                  <Split /> Pagar parcialmente
+                </Button>
+              ) : null}
+              {flexible && can.payResidual ? (
+                <Button variant="secondary" className="h-11 md:h-9" onClick={() => setDialog("pay-residual")}>
+                  <Scissors /> Pagar com resíduo
+                </Button>
+              ) : null}
+              {flexible && p.paid > 0 && can.settleByPaid ? (
+                <Button variant="outline" className="h-11 md:h-9" onClick={() => setDialog("settle-paid")}>
+                  <Receipt /> Quitar pelo já pago
                 </Button>
               ) : null}
               {can.edit ? (
@@ -124,7 +150,7 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
                   <Paperclip /> Anexar
                 </Button>
               ) : null}
-              {can.cancel ? (
+              {can.cancel && p.payments.length === 0 ? (
                 <Button variant="outline" className="h-11 text-danger-fg md:h-9" onClick={() => setDialog("cancel")}>
                   <Ban /> Cancelar título
                 </Button>
@@ -132,6 +158,11 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
             </div>
           ) : null}
           {open && p.status === "previsto" && !canApprove && can.operate ? <p className="mt-3 text-xs text-muted">Aguardando aprovação do gestor do Financeiro.</p> : null}
+          {payable && p.integralOnly && (can.payPartial || can.payResidual) ? (
+            <p className="mt-3 text-xs text-muted" data-testid="payable-integral-only">
+              Título de comissão/bônus: pago só pelo valor integral (sem baixa parcial ou resíduo).
+            </p>
+          ) : null}
           {p.status === "pago" && can.undoPayment ? (
             p.undoBlocked ? (
               <p className="mt-3 text-xs text-muted" data-testid="payable-undo-blocked">
@@ -147,6 +178,19 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
           ) : null}
         </CardContent>
       </Card>
+
+      {p.payments.length > 0 ? (
+        <PaymentsHistory
+          title="Baixas"
+          payments={p.payments}
+          canUndo={Boolean(can.undoPayment) && !p.undoBlocked}
+          undoBlocked={can.undoPayment ? p.undoBlocked : undefined}
+          onUndo={(id) => {
+            setUndoPaymentId(id);
+            setDialog("undo");
+          }}
+        />
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -251,7 +295,10 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
       </Card>
 
       {dialog === "schedule" ? <ScheduleDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => schedulePayableAction({ payableId: p.id, ...v }), "Pagamento programado").then(close)} /> : null}
-      {dialog === "pay" ? <PayDialog p={p} accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => payPayableAction({ payableId: p.id, ...v }), (d) => (d.commissions > 0 ? "Título pago · comissão marcada como paga" : "Título pago")).then(close)} /> : null}
+      {dialog === "pay" ? <PayDialog p={p} mode="total" accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => payPayableAction({ payableId: p.id, ...v }), (d) => (d.commissions > 0 ? "Título pago · comissão marcada como paga" : "Título pago")).then(close)} /> : null}
+      {dialog === "pay-partial" ? <PayDialog p={p} mode="parcial" accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => partialPayPayableAction({ payableId: p.id, ...v }), (d) => (d.settled ? "Baixa registrada · título quitado" : "Baixa parcial registrada")).then(close)} /> : null}
+      {dialog === "pay-residual" ? <PayDialog p={p} mode="residuo" accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => payPayableWithResidualAction({ payableId: p.id, ...v }), (d) => `Título pago com resíduo · ${d.residualCode ?? "resíduo"} criado`).then(close)} /> : null}
+      {dialog === "settle-paid" ? <SettleByPaidDialog code={p.code ?? p.id} amount={p.amount} paid={p.paid} verb="pago" pending={pending} onClose={() => setDialog(null)} onConfirm={(reason) => run(() => settlePayableByPaidAction({ payableId: p.id, reason }), (d) => `Título quitado pelo já pago (${formatCurrency(d.amount)})`).then(close)} /> : null}
       {dialog === "edit" ? <EditDialog p={p} costCenters={costCenters} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updatePayableAction({ payableId: p.id, ...v }), "Título alterado").then(close)} /> : null}
       {dialog === "attach" ? <AttachDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => addPayableAttachmentAction({ payableId: p.id, ...v }), "Anexo adicionado").then(close)} /> : null}
       <ReasonDialog
@@ -266,13 +313,27 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
       />
       <ReasonDialog
         open={dialog === "undo"}
-        onOpenChange={(o) => setDialog(o ? "undo" : null)}
-        title={`Desfazer o pagamento de ${p.code}?`}
-        description={p.payments.length ? `O título volta para "A pagar" e o lançamento de ${formatCurrency(p.payments[p.payments.length - 1].amount)} é apagado da conta ${p.payments[p.payments.length - 1].accountName} (o saldo volta).` : 'O título volta para "A pagar". Este pagamento é anterior às contas financeiras: não há lançamento de caixa a apagar.'}
-        confirmLabel="Desfazer pagamento"
+        onOpenChange={(o) => {
+          setDialog(o ? "undo" : null);
+          if (!o) setUndoPaymentId(null);
+        }}
+        title={undoTarget ? `Desfazer a baixa de ${formatCurrency(undoTarget.amount)} de ${p.code}?` : `Desfazer o pagamento de ${p.code}?`}
+        description={
+          undoTarget
+            ? `A baixa de ${formatDate(`${undoTarget.date}T12:00:00.000Z`)} sai do título e o lançamento de ${formatCurrency(undoTarget.amount)} é apagado da conta ${undoTarget.accountName} (o saldo volta).${p.status === "pago" ? ' O título volta para "A pagar".' : ""}`
+            : p.payments.length
+              ? `O título volta para "A pagar" e o lançamento de ${formatCurrency(p.payments[p.payments.length - 1].amount)} é apagado da conta ${p.payments[p.payments.length - 1].accountName} (o saldo volta).`
+              : 'O título volta para "A pagar". Este pagamento é anterior às contas financeiras: não há lançamento de caixa a apagar.'
+        }
+        confirmLabel={undoTarget ? "Desfazer baixa" : "Desfazer pagamento"}
         destructive
         pending={pending}
-        onConfirm={(reason) => run(() => undoPayablePaymentAction({ payableId: p.id, reason }), (d) => (d.cashEntryRemoved ? "Pagamento desfeito · lançamento de caixa apagado" : "Pagamento desfeito")).then(close)}
+        onConfirm={(reason) =>
+          run(() => undoPayablePaymentAction({ payableId: p.id, reason, ...(undoTarget ? { paymentId: undoTarget.id } : {}) }), (d) => (d.cashEntryRemoved ? "Pagamento desfeito · lançamento de caixa apagado" : "Pagamento desfeito")).then((ok) => {
+            if (ok) setUndoPaymentId(null);
+            return close(ok);
+          })
+        }
       />
     </>
   );
@@ -310,27 +371,61 @@ function ScheduleDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; p
   );
 }
 
-function PayDialog({ p, accounts, pending, onClose, onSubmit }: { p: PayableDetail; accounts: Opt[]; pending: boolean; onClose: () => void; onSubmit: (v: { paidAt: string; paymentMethod: string; receiptUrl?: string; notes?: string; accountId: string }) => Promise<boolean> }) {
+type PayMode = "total" | "parcial" | "residuo";
+
+const PAY_MODE_TEXT: Record<PayMode, { title: string; confirm: string; amountLabel: string; hint: string }> = {
+  total: { title: "Pagar", confirm: "Confirmar pagamento", amountLabel: "Valor pago (R$)", hint: "Padrão = valor em aberto. Valor diferente ajusta o valor do título (desconto ou juros)." },
+  parcial: { title: "Pagar parcialmente", confirm: "Registrar baixa parcial", amountLabel: "Valor desta baixa (R$)", hint: "Até o valor em aberto; o título continua com saldo (fecha sozinho se cobrir o restante)." },
+  residuo: { title: "Pagar com resíduo", confirm: "Pagar e criar resíduo", amountLabel: "Valor pago agora (R$)", hint: "Menor que o em aberto: o título fica pago por este total e o restante vira um novo título “— Resíduo”." },
+};
+
+function PayDialog({ p, mode, accounts, pending, onClose, onSubmit }: { p: PayableDetail; mode: PayMode; accounts: Opt[]; pending: boolean; onClose: () => void; onSubmit: (v: { paidAt: string; paymentMethod: string; receiptUrl?: string; notes?: string; accountId: string; amount?: number; reason?: string }) => Promise<boolean> }) {
   const id = React.useId();
+  const text = PAY_MODE_TEXT[mode];
   // Conta da baixa (etapa CP/CR 2): a prevista no título ou, havendo uma só conta ativa, ela; senão o usuário escolhe.
   const [accountId, setAccountId] = React.useState(() => (p.accountId && accounts.some((a) => a.value === p.accountId) ? p.accountId : accounts.length === 1 ? accounts[0].value : ""));
   const [paidAt, setPaidAt] = React.useState(today());
   const [method, setMethod] = React.useState<string>("pix");
   const [receiptUrl, setReceiptUrl] = React.useState("");
   const [notes, setNotes] = React.useState("");
+  // Valor (etapa CP/CR 3): Quitar já vem com o em aberto; parcial/resíduo o usuário informa.
+  const [amount, setAmount] = React.useState(mode === "total" ? String(p.open) : "");
+  const [reason, setReason] = React.useState("");
+  const value = Number(amount);
+  const cents = (v: number) => Math.round(v * 100);
+  const changed = mode === "total" && amount.trim() !== "" && cents(value) !== cents(p.open);
+  const residual = mode === "residuo" && value > 0 && cents(value) < cents(p.open) ? (cents(p.open) - cents(value)) / 100 : null;
+  const amountLocked = mode === "total" && (p.integralOnly || p.amount < 0);
+  const amountOk = amountLocked || (value > 0 && (mode !== "parcial" || cents(value) <= cents(p.open)) && (mode !== "residuo" || residual !== null));
   return (
     <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
       <DialogContent size="sm">
         <DialogHeader>
-          <DialogTitle>Pagar {p.code}</DialogTitle>
+          <DialogTitle>
+            {text.title} {p.code}
+          </DialogTitle>
           <DialogDescription>
-            {formatCurrency(p.amount)} para {p.creditorName}. {p.origin === "comissao_automatica" ? "A comissão vinculada é marcada como paga junto." : ""}
+            {formatCurrency(p.amount)} para {p.creditorName}
+            {p.paid > 0 ? ` · já pago ${formatCurrency(p.paid)} · em aberto ${formatCurrency(p.open)}` : ""}. {p.origin === "comissao_automatica" ? "A comissão vinculada é marcada como paga junto." : ""}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-4">
           <FormField label="Data do pagamento" htmlFor={`${id}-d`} required>
             <Input id={`${id}-d`} type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
           </FormField>
+          <FormField label={text.amountLabel} htmlFor={`${id}-v`} required={!amountLocked} hint={amountLocked ? "Título de comissão/bônus: valor integral" : text.hint}>
+            <Input id={`${id}-v`} type="number" inputMode="decimal" min={0} step="0.01" value={amountLocked ? String(p.open) : amount} onChange={(e) => setAmount(e.target.value)} disabled={amountLocked} />
+          </FormField>
+          {residual !== null ? (
+            <p className="rounded-md border border-info/35 bg-info-soft px-3 py-2 text-sm text-info-fg" data-testid="residual-preview">
+              O título fica pago por {formatCurrency((cents(p.paid) + cents(value)) / 100)} e nasce “{p.description.replace(/\s*[—–-]\s*Res[íi]duo\s*$/i, "")} — Resíduo” de {formatCurrency(residual)}, mesmo vencimento.
+            </p>
+          ) : null}
+          {changed || mode === "residuo" ? (
+            <FormField label={mode === "residuo" ? "Motivo (opcional)" : "Motivo do ajuste (opcional)"} htmlFor={`${id}-why`} hint={mode === "residuo" ? undefined : value < p.open ? "Desconto: o valor do título passa a ser o total pago" : "Juros/multa: o valor do título passa a ser o total pago"}>
+              <Input id={`${id}-why`} value={reason} onChange={(e) => setReason(e.target.value)} />
+            </FormField>
+          ) : null}
           {accounts.length > 0 ? (
             <FormField label="Conta financeira" htmlFor={`${id}-a`} required hint="De onde o dinheiro saiu: gera o lançamento de despesa no extrato da conta" error={accountId ? undefined : "Escolha a conta"}>
               <Select id={`${id}-a`} value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="Selecione a conta" options={accounts} />
@@ -361,8 +456,13 @@ function PayDialog({ p, accounts, pending, onClose, onSubmit }: { p: PayableDeta
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Voltar
           </Button>
-          <Button variant="success" onClick={() => onSubmit({ paidAt, paymentMethod: method, receiptUrl, notes, accountId })} loading={pending} disabled={!paidAt}>
-            <CircleDollarSign /> Confirmar pagamento
+          <Button
+            variant="success"
+            onClick={() => onSubmit({ paidAt, paymentMethod: method, receiptUrl, notes, accountId, ...(amountLocked ? {} : mode === "total" ? (changed ? { amount: value } : {}) : { amount: value }), ...(reason.trim() ? { reason: reason.trim() } : {}) })}
+            loading={pending}
+            disabled={!paidAt || !amountOk}
+          >
+            <CircleDollarSign /> {text.confirm}
           </Button>
         </DialogFooter>
       </DialogContent>

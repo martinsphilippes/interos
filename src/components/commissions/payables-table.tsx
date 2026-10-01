@@ -11,6 +11,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination, paginate } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PayableStatusBadge } from "./commission-ui";
+import { SettlementBadge } from "@/components/finance/settlement-ui";
+
+/** Tem baixa parcial e ainda há saldo (etapa CP/CR 3): mostra o badge "Parcial" e o valor em aberto. */
+const partial = (r: PayableRow) => r.paid !== 0 && r.open !== 0 && r.status !== "pago" && r.status !== "cancelado";
 
 /** Títulos a pagar: tabela (desktop) ou cards (celular). Selecionar grava ?titulo=<id>. */
 export function PayablesTable({ rows, selectedId }: { rows: PayableRow[]; selectedId?: string }) {
@@ -46,6 +50,12 @@ export function PayablesTable({ rows, selectedId }: { rows: PayableRow[]; select
               </span>
               <span className="flex flex-wrap items-center gap-1.5">
                 <PayableStatusBadge status={r.status} overdue={r.overdue} />
+                {partial(r) ? (
+                  <>
+                    <SettlementBadge status="parcial" />
+                    <span className="text-xs tabular-nums text-muted">em aberto {formatCurrency(r.open)}</span>
+                  </>
+                ) : null}
               </span>
             </button>
           </li>
@@ -93,9 +103,15 @@ export function PayablesTable({ rows, selectedId }: { rows: PayableRow[]; select
                 </TableCell>
                 <TableCell className="hidden whitespace-nowrap text-sm 2xl:table-cell">{formatCompetence(r.competence)}</TableCell>
                 <TableCell className={cn("whitespace-nowrap tabular-nums", r.overdue && "text-danger-fg")}>{formatDate(r.dueDate)}</TableCell>
-                <TableCell className={cn("whitespace-nowrap text-right font-semibold tabular-nums", r.amount < 0 && "text-danger-fg")}>{formatCurrency(r.amount)}</TableCell>
+                <TableCell className={cn("whitespace-nowrap text-right font-semibold tabular-nums", r.amount < 0 && "text-danger-fg")}>
+                  {formatCurrency(r.amount)}
+                  {partial(r) ? <span className="block text-xs font-normal text-muted">em aberto {formatCurrency(r.open)}</span> : null}
+                </TableCell>
                 <TableCell>
-                  <PayableStatusBadge status={r.status} overdue={r.overdue} />
+                  <span className="flex flex-wrap items-center gap-1">
+                    <PayableStatusBadge status={r.status} overdue={r.overdue} />
+                    {partial(r) ? <SettlementBadge status="parcial" /> : null}
+                  </span>
                 </TableCell>
               </TableRow>
             ))}

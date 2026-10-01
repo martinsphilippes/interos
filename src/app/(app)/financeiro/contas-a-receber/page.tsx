@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { AlertTriangle, CalendarClock, UserX, Wallet } from "lucide-react";
+import { redirect } from "next/navigation";
+import { AlertTriangle, CalendarClock, CircleDollarSign, HandCoins, UserX, Wallet } from "lucide-react";
 import { can, requireScreen } from "@/server/auth/session";
 import { resolveDataScope } from "@/server/auth/scope";
 import { runDueSweeps } from "@/server/automations/lazy";
@@ -22,8 +23,19 @@ import { hasBillingActions } from "@/components/finance/access-model";
 import { ScreenLink } from "@/components/auth/access-provider";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { cn } from "@/lib/utils";
+import { KpiStrip } from "@/components/ui/kpi-strip";
+import { SidePanelShell } from "@/components/ui/side-panel-shell";
+import { FinanceFilters } from "@/components/finance/finance-filters";
+import { ReceivablesTabs } from "@/components/receivables/receivables-tabs";
+import { ReceivablesTable } from "@/components/receivables/receivables-table";
+import { NewReceivableButton, ReceivablePanel } from "@/components/receivables/receivable-panel";
+import { getReceivablesWorkspace, parseReceivableFilters, RECEIVABLE_SITUATIONS } from "@/server/receivables/queries";
+import type { CurrentUser } from "@/domain/types";
 
 export const metadata: Metadata = { title: "Contas a Receber" };
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
 
 /**
  * Contas a receber: aging por faixa, por cliente, inadimplentes e faturado x recebido.
@@ -31,8 +43,16 @@ export const metadata: Metadata = { title: "Contas a Receber" };
  * Por cliente (seção negada não é renderizada nem enviada); escopo pelos donos do contrato; valores sob
  * financeiro.valores.ver ("Restrito"); ações de cobrança pelas chaves financeiro.cobrancas.*.
  */
-export default async function ReceivablesPage() {
+export default async function ReceivablesPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireScreen("financeiro.contas-a-receber");
+  const sp = await searchParams;
+  // Etapa CP/CR 3: aba "Títulos avulsos" (seção própria; URL direta sem a seção → sem permissão).
+  const showTabs = can(user, "financeiro.contas-a-receber.avulsos.ver");
+  if (first(sp.aba) === "avulsos") {
+    // Seção negada: mesma negação padrão das telas (aviso no Meu Dia); nada é lido.
+    if (!showTabs) redirect("/meu-dia?erro=sem-permissao");
+    return <AvulsosView user={user} sp={sp} />;
+  }
   const caps = financeCapabilities(user);
   const hidden = !caps.values;
   const show = {
@@ -51,6 +71,7 @@ export default async function ReceivablesPage() {
     <FinanceAccessProvider value={caps}>
       <PageContainer>
         <PageHeader title="Contas a Receber" description="Cobranças em aberto e vencidas, por faixa de vencimento e por cliente." breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contas a Receber" }]} />
+        {showTabs ? <ReceivablesTabs current="cobrancas" /> : null}
 
         {show.aging ? (
           <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -194,5 +215,61 @@ export default async function ReceivablesPage() {
         ) : null}
       </PageContainer>
     </FinanceAccessProvider>
+  );
+}
+
+/**
+ * Aba "Títulos avulsos" (etapa CP/CR 3): receitas fora de contrato — lista simples, "Novo título a receber" e painel
+ * lateral com recebimentos (total, parcial, com resíduo, quitar pelo já recebido), desfazer, anexos e histórico. Os
+ * totais do aging (aba Cobranças de contrato) NÃO incluem os avulsos.
+ */
+async function AvulsosView({ user, sp }: { user: CurrentUser; sp: Record<string, string | string[] | undefined> }) {
+  const requested = first(sp.titulo);
+  const ws = await getReceivablesWorkspace(user, parseReceivableFilters(sp), requested);
+  const hidden = ws ? !ws.can.values : true;
+  return (
+    <PageContainer size="full" className="max-w-[1680px]">
+      <PageHeader
+        title="Contas a Receber"
+        description="Títulos a receber avulsos: receitas fora de contrato, com recebimento parcial, resíduo e lançamento de caixa"
+        breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Contas a Receber", href: "/financeiro/contas-a-receber" }, { label: "Títulos avulsos" }]}
+        actions={ws?.can.create ? <NewReceivableButton options={ws.options} /> : undefined}
+      />
+      <ReceivablesTabs current="avulsos" />
+      {!ws ? (
+        <Card>
+          <EmptyState icon={<HandCoins />} title="Títulos avulsos fora do seu escopo" description="Os títulos a receber avulsos não têm dono (contrato ou vendedor): aparecem só com o escopo Empresa em Contas a Receber." />
+        </Card>
+      ) : (
+        <>
+          <KpiStrip columns={3} mobileColumns={2}>
+            <StatCard label="Em aberto" value={money(ws.summary.open ?? 0, hidden)} icon={<Wallet />} tone="info" hint={`${ws.summary.openCount} título(s)`} href="/financeiro/contas-a-receber?aba=avulsos&situacao=em_aberto" compact />
+            <StatCard label="Vencido" value={money(ws.summary.overdue ?? 0, hidden)} icon={<AlertTriangle />} tone={ws.summary.overdueCount > 0 && !hidden ? "danger" : "success"} hint={`${ws.summary.overdueCount} título(s)`} href="/financeiro/contas-a-receber?aba=avulsos&situacao=vencido" compact />
+            <StatCard label="Recebido no mês" value={money(ws.summary.receivedMonth ?? 0, hidden)} icon={<CircleDollarSign />} tone="success" hint={hidden ? RESTRICTED_HINT : "Recebimentos dos avulsos"} compact />
+          </KpiStrip>
+          <FinanceFilters className="mb-4" fields={[{ param: "situacao", label: "Situação", allLabel: "Todas as situações", options: RECEIVABLE_SITUATIONS }]} />
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
+            <Card className="min-w-0 overflow-hidden">
+              <CardHeader className="flex-row items-center justify-between gap-3">
+                <CardTitle>Títulos avulsos</CardTitle>
+                <span className="text-sm text-muted">
+                  {ws.rows.length} de {ws.total}
+                </span>
+              </CardHeader>
+              <ReceivablesTable key={first(sp.situacao) ?? "todos"} rows={ws.rows} selectedId={ws.selected?.id} />
+            </Card>
+            {ws.selected ? (
+              <SidePanelShell explicit={Boolean(requested)} param="titulo" ariaLabel="Título a receber selecionado" title={`${ws.selected.code} · ${ws.selected.payerName}`}>
+                <ReceivablePanel key={ws.selected.id} r={ws.selected} can={ws.can} options={ws.options} />
+              </SidePanelShell>
+            ) : (
+              <aside className="hidden xl:block">
+                <Card className="p-5 text-sm text-muted">Selecione um título para ver os recebimentos, registrar baixa (total, parcial ou com resíduo), anexos e histórico.</Card>
+              </aside>
+            )}
+          </div>
+        </>
+      )}
+    </PageContainer>
   );
 }
