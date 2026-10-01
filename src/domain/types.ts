@@ -118,6 +118,12 @@ export const COLLECTIONS = {
    * só desfazer a baixa (ou estornar a cobrança) apaga o lançamento.
    */
   cashEntries: "cash_entries",
+  /**
+   * Títulos a receber AVULSOS (etapa CP/CR 3): receitas fora de contrato (consultoria avulsa, reembolso, venda de
+   * equipamento…). NÃO substituem as cobranças de contrato (`billing`), que continuam como estão. Somente servidor (regra
+   * `if false`); cada recebimento grava o lançamento de RECEITA na mesma transação.
+   */
+  receivables: "receivables",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -1661,6 +1667,15 @@ export interface Payable extends BaseEntity {
   payments?: PayablePayment[];
   /** Conta financeira prevista para o pagamento (pré-seleciona a conta na baixa). */
   accountId?: string;
+  /**
+   * Baixa parcial, resíduo e quitação (etapa CP/CR 3) — opcionais. `originalAmount` = valor do título ANTES do primeiro
+   * ajuste de quitação (quitar com desconto/juros, quitar com resíduo, quitar pelo já pago); a série recorrente continua
+   * gerando as próximas ocorrências por ele, e desfazer a baixa que quitou devolve o título a esse valor (exceto quando
+   * houve resíduo: o restante já está no título `residualId`). `residualOf` = título de origem quando este é o resíduo.
+   */
+  originalAmount?: number;
+  residualId?: string;
+  residualOf?: string;
 }
 
 /** Baixa de um título a pagar (etapa CP/CR 2). */
@@ -1693,9 +1708,12 @@ export interface CashEntryContact {
   name: string;
 }
 
-/** Baixa que originou o lançamento: título a pagar (`payments[].id`) ou cobrança (baixa única: `paymentId` = id da cobrança). */
+/**
+ * Baixa que originou o lançamento: título a pagar (`payments[].id`), cobrança (baixa única: `paymentId` = id da cobrança)
+ * ou título a receber avulso (`payments[].id`, etapa CP/CR 3).
+ */
 export interface CashEntryOrigin {
-  kind: "payable" | "billing";
+  kind: "payable" | "billing" | "receivable";
   id: string;
   paymentId: string;
 }
@@ -1721,6 +1739,73 @@ export interface CashEntry extends BaseEntity {
   notes?: string;
   transferDirection?: "entrada" | "saida";
   createdByName?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Títulos a receber avulsos (etapa CP/CR 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Status GRAVADO do título a receber avulso (sem fluxo de aprovação): aberto até quitar, pago ao quitar, cancelado com
+ * motivo. "Parcial", "Vencido" e "Em aberto" são CALCULADOS na leitura (`src/domain/settlements.ts`).
+ */
+export type ReceivableStatus = "aberto" | "pago" | "cancelado";
+
+/** Recebimento (baixa) de um título avulso: mesma forma da baixa do título a pagar. */
+export type ReceivablePayment = PayablePayment;
+
+export interface ReceivableHistoryEntry {
+  at: string;
+  by: string;
+  byName?: string;
+  action: string;
+  from?: ReceivableStatus;
+  to?: ReceivableStatus;
+  reason?: string;
+  changes?: Record<string, { from: unknown; to: unknown }>;
+}
+
+/**
+ * Título a receber AVULSO (receita fora de contrato). Pagador = cliente cadastrado (`clientId`) ou nome livre
+ * (`payerName` sempre gravado, com o nome do cliente quando há `clientId`). Classificação pelos cadastros financeiros:
+ * `categoryId` (só categoria/subcategoria de RECEITA) e `costCenterId` próprio opcional (vazio = herda da categoria).
+ */
+export interface Receivable extends BaseEntity {
+  /** REC-AAAA-NNNNN (numeração transacional própria). */
+  code?: string;
+  description: string;
+  amount: number;
+  /** ISO (meio-dia UTC), como os demais vencimentos. */
+  dueDate: string;
+  /** AAAA-MM; vazio no formulário = mês do vencimento. */
+  competence: string;
+  clientId?: string;
+  payerName: string;
+  categoryId?: string;
+  costCenterId?: string;
+  /** Conta financeira prevista (pré-seleciona a conta no recebimento). */
+  accountId?: string;
+  documentNumber?: string;
+  notes?: string;
+  status: ReceivableStatus;
+  payments?: ReceivablePayment[];
+  /** Data (ISO) do recebimento que quitou o título. */
+  paidAt?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+  /** Anexos em `documents` (entityType "receivable"). */
+  attachmentIds?: string[];
+  /** Parcelamento mensal (n de N) e grupo da série. */
+  installment?: number;
+  installments?: number;
+  seriesId?: string;
+  /** Mesmo significado de `Payable.originalAmount/residualId/residualOf`. */
+  originalAmount?: number;
+  residualId?: string;
+  residualOf?: string;
+  history: ReceivableHistoryEntry[];
+  updatedBy?: string;
 }
 
 // ---------------------------------------------------------------------------

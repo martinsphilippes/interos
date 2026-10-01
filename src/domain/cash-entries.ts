@@ -12,7 +12,7 @@
  * continuam entrando pelo item 2 até alguém, com autorização, criar os lançamentos delas.
  */
 import { roundCents, type AccountMovement } from "./finance-registry";
-import type { Billing, CashEntry, CashEntryContact, CashEntryType, Payable, PayablePayment } from "./types";
+import type { Billing, CashEntry, CashEntryContact, CashEntryType, Payable, PayablePayment, Receivable } from "./types";
 
 export const CASH_ENTRY_TYPES: readonly CashEntryType[] = ["receita", "despesa", "transferencia"];
 export const CASH_ENTRY_TYPE_LABELS: Record<CashEntryType, string> = { receita: "Receita", despesa: "Despesa", transferencia: "Transferência" };
@@ -110,6 +110,30 @@ export function buildBillingCashEntry(billing: Pick<Billing, "id" | "clientId">,
     contact: { type: "cliente", id: billing.clientId, name: label.clientName },
     reconciled: false,
     origin: { kind: "billing", id: billing.id, paymentId: billing.id },
+    notes: BILLING_PAYMENT_NOTE,
+    createdBy: base.actor.id,
+    ...(base.actor.name ? { createdByName: base.actor.name } : {}),
+  };
+}
+
+/**
+ * Lançamento do recebimento de um título a receber AVULSO (etapa CP/CR 3): RECEITA com o valor recebido; contato =
+ * cliente cadastrado ou o nome livre do pagador; classificação = a do título; origem "receivable" com o id da baixa.
+ */
+export function buildReceivableCashEntry(receivable: Pick<Receivable, "id" | "code" | "description" | "clientId" | "payerName" | "categoryId" | "costCenterId">, paymentId: string, base: PaymentBase): CashEntryDraft | null {
+  const amount = roundCents(base.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return {
+    date: base.date.slice(0, 10),
+    amount,
+    type: "receita",
+    description: `${receivable.code ?? receivable.id} · ${receivable.description}`.slice(0, 240),
+    accountId: base.accountId,
+    ...(receivable.categoryId ? { categoryId: receivable.categoryId } : {}),
+    ...(receivable.costCenterId ? { costCenterId: receivable.costCenterId } : {}),
+    contact: { type: "cliente", ...(receivable.clientId ? { id: receivable.clientId } : {}), name: receivable.payerName },
+    reconciled: false,
+    origin: { kind: "receivable", id: receivable.id, paymentId },
     notes: BILLING_PAYMENT_NOTE,
     createdBy: base.actor.id,
     ...(base.actor.name ? { createdByName: base.actor.name } : {}),
@@ -263,11 +287,14 @@ export function cashEntryProblems(input: {
   accountIds: ReadonlySet<string>;
   payables: readonly Pick<Payable, "id" | "status" | "payments">[];
   billings: readonly Pick<Billing, "id" | "status" | "cashEntryId" | "paymentAccountId">[];
+  /** Títulos a receber avulsos (etapa CP/CR 3). */
+  receivables?: readonly Pick<Receivable, "id" | "status" | "payments">[];
 }): string[] {
   const problems: string[] = [];
   const entryIds = new Set(input.entries.map((e) => e.id));
   const payables = new Map(input.payables.map((p) => [p.id, p]));
   const billings = new Map(input.billings.map((b) => [b.id, b]));
+  const receivables = new Map((input.receivables ?? []).map((r) => [r.id, r]));
   for (const e of input.entries) {
     if (!input.accountIds.has(e.accountId)) problems.push(`lançamento ${e.id} aponta para conta inexistente ${e.accountId}`);
     if (!(e.amount > 0)) problems.push(`lançamento ${e.id} com valor não positivo (${e.amount})`);
@@ -278,6 +305,13 @@ export function cashEntryProblems(input: {
       if (!p) problems.push(`lançamento ${e.id} aponta para título inexistente ${e.origin.id}`);
       else if (!pay || pay.transactionId !== e.id) problems.push(`lançamento ${e.id} sem baixa correspondente no título ${p.id}`);
       else if (pay.accountId !== e.accountId) problems.push(`lançamento ${e.id} em conta diferente da baixa do título ${p.id}`);
+    } else if (e.origin.kind === "receivable") {
+      const r = receivables.get(e.origin.id);
+      const pay = r?.payments?.find((x) => x.id === e.origin!.paymentId);
+      if (!r) problems.push(`lançamento ${e.id} aponta para título a receber inexistente ${e.origin.id}`);
+      else if (!pay || pay.transactionId !== e.id) problems.push(`lançamento ${e.id} sem baixa correspondente no título a receber ${r.id}`);
+      else if (pay.accountId !== e.accountId) problems.push(`lançamento ${e.id} em conta diferente da baixa do título a receber ${r.id}`);
+      else if (e.type !== "receita") problems.push(`lançamento ${e.id} do título a receber ${r.id} não é receita`);
     } else {
       const b = billings.get(e.origin.id);
       if (!b) problems.push(`lançamento ${e.id} aponta para cobrança inexistente ${e.origin.id}`);
@@ -286,6 +320,7 @@ export function cashEntryProblems(input: {
     }
   }
   for (const p of input.payables) for (const pay of p.payments ?? []) if (pay.transactionId && !entryIds.has(pay.transactionId)) problems.push(`baixa ${pay.id} do título ${p.id} com transactionId ${pay.transactionId} sem lançamento`);
+  for (const r of input.receivables ?? []) for (const pay of r.payments ?? []) if (pay.transactionId && !entryIds.has(pay.transactionId)) problems.push(`baixa ${pay.id} do título a receber ${r.id} com transactionId ${pay.transactionId} sem lançamento`);
   for (const b of input.billings) if (b.cashEntryId && !entryIds.has(b.cashEntryId)) problems.push(`cobrança ${b.id} com cashEntryId ${b.cashEntryId} sem lançamento`);
   for (const b of input.billings) if (b.cashEntryId && b.status !== "paga") problems.push(`cobrança ${b.id} ${b.status} ainda com lançamento ${b.cashEntryId}`);
   return problems;
