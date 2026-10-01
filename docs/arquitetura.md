@@ -269,8 +269,8 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   (título/lançamento → próprio → categoria → mãe → "Sem centro de custo"; base das etapas 4 e 7), `planArchiveCategory`
   (subcategorias que vão junto + uso), `planApplyCostCenter`, `planMoveSubcategories` (mesma tipo, sem nome repetido na
   destino), `planMergeCategories` (subcategorias e registros da origem vão para a destino; origem arquivada),
-  `planLegacyImport` (idempotente, só cria), `accountBalance` (saldo inicial + entradas − saídas; sem lançamentos = saldo
-  inicial) e `registryProblems` (invariantes do `verify.ts`, item (w)).
+  `planLegacyImport` (idempotente, só cria), `accountBalance` (saldo inicial + entradas − saídas; desde a etapa 2 recebe
+  os lançamentos de caixa) e `registryProblems` (invariantes do `verify.ts`, item (w)).
 - **Títulos**: `Payable.categoryId`/`costCenterId` (opcionais, gravados a partir da etapa 4) são a referência NOVA; a
   contagem de uso e a mesclagem usam só eles. `Payable.category` (chave) e `costCenter` (nome) continuam como estão; a
   tela mostra à parte "títulos antigos pela configuração" (`legacyKey`). Lançamentos de caixa (etapa 2) entram em
@@ -290,6 +290,48 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   entra pelo cabeçalho de Contas a Pagar e por Configurações › Contas a pagar. Saldo sob "Visualizar valores" (editar
   conta exige a chave).
 
+## Baixas com conta e lançamentos de caixa (etapa CP/CR 2, `src/domain/cash-entries.ts`, `src/server/finance-registry/cash-entries.ts`)
+- **Coleção nova** `cash_entries` (regra `if false`, coberta em `scripts/test-rules.ts`): `date` (AAAA-MM-DD, São Paulo),
+  `amount` SEMPRE positivo, `type` receita|despesa|transferencia (transferência sem tela nesta etapa: `transferDirection`
+  em cada lado), `description`, `accountId` (obrigatório), `categoryId?`/`costCenterId?` (herdados do título), `contact`
+  { type fornecedor|cliente|colaborador, id?, name }, `reconciled` (padrão false), `origin` { kind payable|billing, id,
+  paymentId } e `notes` ("Baixa de conta a pagar"/"Baixa de conta a receber"). Sem edição/exclusão direta: o
+  lançamento nasce e morre com a baixa (mesma transação Firestore).
+- **Contas a Pagar** (fluxo de aprovação mantido: só paga título aprovado/a pagar): `Payable.payments?: PayablePayment[]`
+  ({ id, date, amount, accountId, transactionId, method, receiptUrl?, by, at }) e `accountId?` (conta prevista,
+  pré-seleciona a baixa) — opcionais. `payPayable(id, { …, accountId? })`: com conta, a MESMA transação grava o título
+  (paidAt/paidBy/forma/comprovante/status pago e comissões pagas — como antes — + `payments[]`) e o lançamento de
+  DESPESA (valor do título; título negativo de estorno vira receita). Sem conta (seed antigo, chamadores automáticos) segue
+  como antes, sem lançamento. A action manual exige a conta (`requireManualPaymentAccount`: "Escolha a conta financeira da
+  baixa"; sem nenhuma conta ativa, orienta a cadastrar em /financeiro/cadastros).
+- **Desfazer pagamento** (`undoPayablePayment`, `financeiro.contas-a-pagar.desfazer-pagamento`, padrão = o de pagar):
+  motivo obrigatório; remove a baixa (a última ou a indicada), apaga o lançamento NA MESMA transação, título volta a
+  "A pagar" e perde paidAt/paidBy (e forma/comprovante da baixa desfeita); eventos `payable.payment_undone` (changes +
+  motivo) e `cash_entry.deleted`. Pagamento antigo sem `payments[]` também desfaz (nada a apagar). Título de
+  comissão/bônus/estorno (ou com comissões vinculadas) é RECUSADO (`payableUndoBlock`): o caminho é o estorno da comissão.
+- **Cobranças**: `Billing.paymentAccountId?`/`cashEntryId?` (opcionais) e, no estorno, `BillingReversedPayment.accountId?`/
+  `cashEntryId?`. `registerPayment` (caminho único) grava a receita na mesma transação da baixa; a conta vem da tela
+  (obrigatória na action manual; diálogo lê as contas por `listPaymentAccountsAction`, chave `financeiro.cobrancas.baixar`)
+  ou, na baixa AUTOMÁTICA (webhook/conciliação) sem conta informada, do setting `financeiro_baixa.contaRecebimentoPadraoId`
+  (Configurações › Cobrança › Baixa automática; também pré-seleciona o diálogo manual). Sem conta padrão (ou arquivada) a
+  baixa automática segue como antes, SEM lançamento, e a cobrança mostra "Sem conta" (`NoAccountBadge`) para regularizar.
+  `reversePayment` apaga o lançamento da baixa estornada na mesma transação; o resto do estorno (gate, comissões, eventos)
+  não mudou.
+- **Saldo e extrato**: `accountBalance(conta, cashEntryMovements(lançamentos))` = saldo inicial + receitas − despesas. Aba
+  Contas de /financeiro/cadastros mostra o saldo atual e, com `financeiro.cadastros.contas.extrato` (padrão = ações
+  vizinhas da aba), o EXTRATO somente leitura (`?conta=<id>&de=&ate=`, padrão últimos 90 dias): saldo anterior,
+  entradas, saídas, saldo no fim, e cada lançamento com data, descrição, tipo, valor ±, saldo, origem (link para o
+  título/cobrança quando o usuário abre a tela) e conciliado. Quantias sob "Visualizar valores" (Restrito).
+- **Não contar em dobro** (`realizedTotals`): realizado = lançamentos + baixas ANTIGAS sem lançamento (título pago sem
+  `payments[]` ou baixa sem `transactionId`; cobrança paga sem `cashEntryId`). Nenhuma migração automática: baixas
+  antigas continuam entrando pela própria baixa. Base dos relatórios da etapa 7.
+- **Eventos** `cash_entry.created|deleted` (entidade "Lançamento de caixa" na Auditoria, link para o extrato da conta) e
+  `payable.payment_undone`; `payable.paid`/`payment.approved` levam `accountId`/`cashEntryId` no payload.
+- **Seed/verify**: cadastros financeiros rodam antes do motor de comissões; os títulos pagos pelo seed baixam com a
+  conta corrente (lançamentos coerentes) e ela é a conta padrão de recebimento. `verify.ts` (x): todo lançamento aponta
+  para conta existente e para uma baixa existente com o MESMO transactionId; nenhuma baixa com transactionId sem
+  lançamento (`cashEntryProblems`).
+
 ## Numeração transacional (`nextNumber` em `src/server/db.ts`)
 - Coleção `counters` (`counter_<prefixo>_<ano>`), `runTransaction`, inicializada a partir do maior número já gravado
   (`initFrom`). Usada por VEN, CT, PR, COM e PAG; formatos antigos preservados, sem renumerar documentos.
@@ -302,7 +344,7 @@ permissões são uma camada sobre ele; não há segundo sistema de usuários, de
 
 ### Catálogo (`src/domain/permissions/`, puro, um arquivo por módulo)
 - Hierarquia MÓDULO `<m>.acessar` → TELA `<m>.<tela>.ver` → SEÇÃO/ABA `<m>.<tela>.<secao>.ver` → AÇÃO
-  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 66 telas, 133 seções, 250 ações (460 chaves na união
+  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 66 telas, 133 seções, 252 ações (462 chaves na união
   literal `PermissionKey`). Rótulos de negócio em português em cada nó (a interface nunca mostra a chave técnica).
 - Cada nó tem uma **regra padrão** na DSL (`"all"`, `any`, `all`, `role`, `department`, `manager`, `director`,
   `managerOf`, `can`) que reproduz o comportamento anterior à etapa (teste T0 contra a cópia congelada dos predicados
