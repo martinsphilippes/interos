@@ -1,7 +1,7 @@
 /**
  * Modelo de visualização da Central de Tarefas: tipos, views, filtros e ordenação.
  *
- * Módulo puro (sem React, sem firebase): é importado tanto pelas queries no servidor quanto
+ * Módulo puro (sem React, sem acesso ao banco): é importado tanto pelas queries no servidor quanto
  * pelos client components, para que o filtro aplicado na URL produza o mesmo resultado nos dois lados.
  */
 import { PRIORITIES, PRIORITY_WEIGHT, DEPARTMENT_KEYS, TASK_STATUS, type DepartmentKey, type Priority, type TaskStatus } from "@/domain/constants";

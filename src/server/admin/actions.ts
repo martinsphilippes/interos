@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ACCESS_DENIED_MESSAGE, BusinessError, PermissionError, can, failAction, requirePermission, resolvePermissionsForUser } from "@/server/auth/session";
 import { canSeeRecord } from "@/server/auth/scope";
-import { adminAuth } from "@/server/firebase-admin";
+import { authAdmin } from "@/server/auth/auth-admin";
 import { batchSet, create, getById, list, remove, update, nowIso, ORG_ID, type CreateInput } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
@@ -65,7 +65,7 @@ import {
  * Server Actions do módulo de Administração.
  *
  * Padrão (A5): requirePermission("<chave do catálogo>") → validação zod → escopo do registro (canSeeRecord) →
- * invariantes de acesso (A9, no estado resultante) → mutação via db.ts (e Firebase Auth para usuários) → evento com
+ * invariantes de acesso (A9, no estado resultante) → mutação via db.ts (e Supabase Auth para usuários) → evento com
  * auditoria de → para (A16) → revalidatePath. Falhas viram `{ ok: false, error }` por failAction.
  * Perfis, exceções individuais e módulos da empresa (A6/A8) exigem `admin.acessos.gerir`.
  */
@@ -84,18 +84,18 @@ function fail(error: unknown, fallback: string): { ok: false; error: string } {
   return failAction(error, fallback, "admin");
 }
 
-/** Traduz os códigos de erro mais comuns do Firebase Auth. */
+/** Traduz os códigos de erro mais comuns do login (Supabase Auth; os códigos seguem os do antigo Firebase Auth). */
 function authErrorMessage(error: unknown): string | null {
   const code = (error as { code?: string } | null)?.code;
   switch (code) {
     case "auth/email-already-exists":
-      return "Já existe um login com este e-mail no Firebase Auth";
+      return "Já existe um login com este e-mail";
     case "auth/invalid-email":
-      return "E-mail inválido para o Firebase Auth";
+      return "E-mail inválido para o login";
     case "auth/invalid-password":
       return "Senha inválida: use pelo menos 8 caracteres";
     case "auth/user-not-found":
-      return "Login não encontrado no Firebase Auth";
+      return "Login não encontrado";
     case "auth/uid-already-exists":
       return "Já existe um login com este identificador";
     default:
@@ -142,27 +142,27 @@ async function requireUserInScope(user: CurrentUser, target: Pick<User, "id" | "
   }
 }
 
-/** Ativa/desativa o login no Firebase Auth. Usuário sem login (só documento) não bloqueia a operação. */
+/** Ativa/desativa o login (Supabase Auth). Usuário sem login (só documento) não bloqueia a operação. */
 async function syncAuthDisabled(uid: string, active: boolean): Promise<void> {
   try {
-    await adminAuth.updateUser(uid, { disabled: !active });
+    await authAdmin.updateUser(uid, { disabled: !active });
   } catch (error) {
     if (!isAuthNotFound(error)) throw error;
-    console.warn(`[admin] usuário ${uid} sem login no Firebase Auth; só o documento foi atualizado`);
+    console.warn(`[admin] usuário ${uid} sem login no Supabase Auth; só o documento foi atualizado`);
   }
 }
 
 /**
- * Revoga os refresh tokens do usuário no Firebase Auth: sessões abertas deixam de valer na próxima requisição
- * (`verifySessionCookie(token, true)` confere a revogação) e ele precisa entrar de novo com o papel/situação atuais.
+ * Encerra as sessões do usuário: cookies do INTEROS emitidos antes de agora deixam de valer na próxima requisição
+ * (getCurrentUser confere users.sessionsRevokedAt) e ele precisa entrar de novo com o papel/situação atuais.
  * Usuário sem login (só documento) não bloqueia a operação.
  */
 async function revokeSessions(uid: string): Promise<void> {
   try {
-    await adminAuth.revokeRefreshTokens(uid);
+    await authAdmin.revokeRefreshTokens(uid);
   } catch (error) {
     if (!isAuthNotFound(error)) throw error;
-    console.warn(`[admin] usuário ${uid} sem login no Firebase Auth; nada a revogar`);
+    console.warn(`[admin] usuário ${uid} sem login no Supabase Auth; nada a revogar`);
   }
 }
 
@@ -274,8 +274,8 @@ export async function createUser(input: unknown): Promise<ActionResult<{ id: str
     const draft: AccessUser = { id: draftId, name: data.name, role: data.role, departmentId: data.departmentId, active: true, managerId: data.managerId };
     await enforceInvariants(user, loaded, withUser(loaded.state, draft), { kind: "user.create", userId: draftId }, { entity: { type: "user", id: data.email }, label: data.name, kind: "usuario" }, { role: data.role });
 
-    // O documento em `users` usa o uid do Firebase Auth como id.
-    const authUser = await adminAuth.createUser({ email: data.email, password: data.password, displayName: data.name, emailVerified: true });
+    // O documento em `users` usa o interos_uid do login (Supabase Auth) como id.
+    const authUser = await authAdmin.createUser({ email: data.email, password: data.password, displayName: data.name });
     let created: User;
     try {
       created = await create<User>(
@@ -297,7 +297,7 @@ export async function createUser(input: unknown): Promise<ActionResult<{ id: str
       );
     } catch (error) {
       // Sem documento o login não serve para nada: desfaz a criação no Auth.
-      await adminAuth.deleteUser(authUser.uid).catch(() => undefined);
+      await authAdmin.deleteUser(authUser.uid).catch(() => undefined);
       throw error;
     }
 
@@ -360,7 +360,7 @@ export async function updateUser(input: unknown): Promise<ActionResult<{ id: str
     // Desativado ou com papel alterado: derruba as sessões abertas para valer o novo acesso.
     if ((!data.active && current.active !== data.active) || current.role !== data.role) await revokeSessions(data.id);
     if (current.name !== data.name) {
-      await adminAuth.updateUser(data.id, { displayName: data.name }).catch((error: unknown) => {
+      await authAdmin.updateUser(data.id, { displayName: data.name }).catch((error: unknown) => {
         if (!isAuthNotFound(error)) throw error;
       });
     }
@@ -383,7 +383,7 @@ export async function updateUser(input: unknown): Promise<ActionResult<{ id: str
   }
 }
 
-/** Desativar/reativar: bloqueia o login no Firebase Auth e marca `active` no documento. */
+/** Desativar/reativar: bloqueia o login (Supabase Auth) e marca `active` no documento. */
 export async function setUserActive(input: unknown): Promise<ActionResult<{ active: boolean }>> {
   try {
     const user = await requirePermission("admin.usuarios.ativar");
@@ -440,11 +440,11 @@ export async function resetUserPassword(input: unknown): Promise<ActionResult<{ 
     }
 
     try {
-      await adminAuth.updateUser(data.id, { password: data.password });
+      await authAdmin.updateUser(data.id, { password: data.password });
     } catch (error) {
       // Documento sem login (ex.: importado): cria o login com o mesmo uid para a senha valer.
       if (!isAuthNotFound(error)) throw error;
-      await adminAuth.createUser({ uid: data.id, email: current.email, password: data.password, displayName: current.name, emailVerified: true, disabled: current.active === false });
+      await authAdmin.createUser({ uid: data.id, email: current.email, password: data.password, displayName: current.name, disabled: current.active === false });
     }
 
     await emitEvent({
@@ -482,7 +482,7 @@ export async function deleteUser(input: unknown): Promise<ActionResult<{ id: str
     if (reports.length > 0) {
       throw new BusinessError(`${current.name} é gestor de ${reports.length} usuário${reports.length === 1 ? "" : "s"}. Troque o gestor dessas pessoas antes de excluir.`);
     }
-    await adminAuth.deleteUser(data.id).catch((error: unknown) => {
+    await authAdmin.deleteUser(data.id).catch((error: unknown) => {
       if (!isAuthNotFound(error)) throw error;
     });
     await remove(COLLECTIONS.users, data.id);

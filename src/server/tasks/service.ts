@@ -5,7 +5,7 @@ import "server-only";
  *
  * Toda mutação emite evento; nenhuma regra de negócio fica em componentes.
  */
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "@/server/docdb";
 import { addDays, addMonths, addWeeks } from "date-fns";
 import { batchSet, col, create, getById, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";

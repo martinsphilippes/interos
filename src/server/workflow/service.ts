@@ -7,7 +7,7 @@ import "server-only";
  * Regra central: nenhuma etapa avança sem gate concluído; cada passagem grava evento, responsável,
  * prazo (SLA), checklist e tarefas automáticas da próxima etapa.
  */
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "@/server/docdb";
 import { col, create, getById, getManyByIds, list, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { can } from "@/server/auth/permissions";

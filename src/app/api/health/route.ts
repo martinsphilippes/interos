@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isFirebaseConfigured, missingFirebaseEnvVars } from "@/lib/firebase";
+import { isSupabaseConfigured, missingSupabaseEnvVars } from "@/lib/supabase";
 import { isDemoMode } from "@/lib/demo-mode";
 
 /**
@@ -10,7 +10,7 @@ import { isDemoMode } from "@/lib/demo-mode";
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  const firebaseConfigured = isFirebaseConfigured();
+  const supabaseConfigured = isSupabaseConfigured();
   return NextResponse.json(
     {
       status: "ok",
@@ -19,10 +19,11 @@ export function GET() {
       environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown",
       commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
       demoMode: isDemoMode(),
-      firebase: {
-        configured: firebaseConfigured,
-        missing: firebaseConfigured ? [] : missingFirebaseEnvVars(),
+      supabase: {
+        configured: supabaseConfigured,
+        missing: supabaseConfigured ? [] : missingSupabaseEnvVars(),
       },
+      database: { configured: Boolean(process.env.DATABASE_URL) },
     },
     { headers: { "Cache-Control": "no-store" } },
   );

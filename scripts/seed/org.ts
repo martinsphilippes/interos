@@ -1,9 +1,9 @@
 /**
- * Organização, departamentos e usuários (Firestore + Firebase Auth).
+ * Organização, departamentos e usuários (banco + Supabase Auth).
  */
 import { COLLECTIONS, type Department, type Organization, type PermissionProfile, type User } from "../../src/domain/types";
 import { ROLE_KEYS } from "../../src/domain/constants";
-import { adminAuth } from "../../src/server/firebase-admin";
+import { authAdmin } from "../../src/server/auth/auth-admin";
 import { ORG_ID } from "../../src/server/db";
 import { NOW, daysAgo, type SeedDoc } from "./lib";
 import type { SeedContext, UserKey } from "./context";
@@ -12,8 +12,8 @@ import { DEPARTMENTS, USER_SPECS } from "./org-data";
 export { USER_SPECS } from "./org-data";
 
 /**
- * Senha dos usuários de demonstração. Nos emuladores vale a padrão "interos123" (usada pelos testes e2e).
- * Fora dos emuladores é obrigatório informar INTEROS_SEED_PASSWORD: o repositório é público e uma senha
+ * Senha dos usuários de demonstração. Com banco local (DATABASE_URL em localhost) vale a padrão "interos123".
+ * Fora dele é obrigatório informar INTEROS_SEED_PASSWORD: o repositório é público e uma senha
  * conhecida daria acesso de administrador à produção.
  */
 export const SEED_PASSWORD = resolveSeedPassword();
@@ -24,8 +24,8 @@ function resolveSeedPassword(): string {
     if (fromEnv.length < 10) throw new Error("INTEROS_SEED_PASSWORD precisa ter pelo menos 10 caracteres.");
     return fromEnv;
   }
-  if (process.env.FIRESTORE_EMULATOR_HOST) return "interos123";
-  throw new Error("Defina INTEROS_SEED_PASSWORD para rodar o seed fora dos emuladores.");
+  if (/@(localhost|127\.0\.0\.1)[:/]/.test(process.env.DATABASE_URL ?? "")) return "interos123";
+  throw new Error("Defina INTEROS_SEED_PASSWORD para rodar o seed fora do banco local.");
 }
 
 /** Presença inicial dos usuários operacionais (Online/Ausente/Ocupado da top bar). */
@@ -102,29 +102,24 @@ export async function seedOrg(ctx: SeedContext): Promise<void> {
   ctx.users = users;
 }
 
-/** Remove os usuários do seed no Auth e recria com uid = id do documento em users. */
+/** Remove os logins do seed no Supabase Auth e recria com interos_uid = id do documento em users. */
 export async function seedAuthUsers(): Promise<number> {
   const emails = new Set(USER_SPECS.map((u) => u.email.toLowerCase()));
   const uids = new Set(USER_SPECS.map((u) => `user_${u.key}`));
 
-  let pageToken: string | undefined;
-  const toDelete: string[] = [];
-  do {
-    const page = await adminAuth.listUsers(1000, pageToken);
-    for (const u of page.users) {
-      if ((u.email && emails.has(u.email.toLowerCase())) || uids.has(u.uid)) toDelete.push(u.uid);
-    }
-    pageToken = page.pageToken;
-  } while (pageToken);
-  await Promise.all(toDelete.map((uid) => adminAuth.deleteUser(uid)));
+  const existing = await authAdmin.listUsers();
+  const stale = existing.filter((u) => (u.email && emails.has(u.email.toLowerCase())) || (u.uid && uids.has(u.uid)));
+  for (const u of stale) {
+    if (u.uid) await authAdmin.deleteUser(u.uid);
+    else throw new Error(`Login ${u.email} existe no Supabase Auth sem interos_uid; remova-o no painel antes do seed.`);
+  }
 
   for (const spec of USER_SPECS) {
-    await adminAuth.createUser({
+    await authAdmin.createUser({
       uid: `user_${spec.key}`,
       email: spec.email,
       password: SEED_PASSWORD,
       displayName: spec.name,
-      emailVerified: true,
     });
   }
   return USER_SPECS.length;

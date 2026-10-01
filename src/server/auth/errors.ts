@@ -8,7 +8,7 @@ import { AuthenticationError, BusinessError, PermissionError } from "./error-cla
 export { ACCESS_DENIED_MESSAGE, AuthenticationError, BusinessError, PermissionError } from "./error-classes";
 
 /** Mensagens técnicas que nunca chegam ao usuário (ficam no log). */
-const TECHNICAL = /firestore|firebase|ECONN|deadline|permission denied|undefined|null|NEXT_/i;
+const TECHNICAL = /firestore|firebase|postgres|supabase|relation |ECONN|deadline|permission denied|undefined|null|NEXT_/i;
 /** Prefixo de erro gRPC do Firestore/Google Cloud ("5 NOT_FOUND: …", "10 ABORTED: …"). */
 const GRPC_PREFIX = /^\d+ [A-Z_]+:/;
 /** Erros de rede/sistema e trechos de infraestrutura (hosts, caminhos de recurso, URLs). */
@@ -18,8 +18,8 @@ const PROGRAM_ERRORS = [TypeError, RangeError, ReferenceError, SyntaxError, URIE
 
 /**
  * O erro pode ter a mensagem mostrada ao usuário? Lista branca: PermissionError/AuthenticationError/BusinessError
- * sempre; demais Error só quando não há sinal técnico — sem `code`/`errno`/`syscall`/`details` (erros do Firestore,
- * do Firebase Auth e do Node trazem esses campos), fora das classes nativas de defeito e sem texto de infraestrutura.
+ * sempre; demais Error só quando não há sinal técnico — sem `code`/`errno`/`syscall`/`details` (erros do Postgres,
+ * do docdb/authAdmin e do Node trazem esses campos), fora das classes nativas de defeito e sem texto de infraestrutura.
  */
 export function isUserFacingError(error: unknown): error is Error {
   if (error instanceof PermissionError || error instanceof AuthenticationError || error instanceof BusinessError) return true;

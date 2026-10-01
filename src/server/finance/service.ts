@@ -10,8 +10,7 @@ import "server-only";
  * Toda mutação relevante emite evento (timeline do cliente, notificações, KPIs). Erros de regra são lançados
  * como Error com mensagem em português (as actions devolvem a mensagem ao usuário).
  */
-import { FieldValue } from "firebase-admin/firestore";
-import { firestore } from "@/server/firebase-admin";
+import { docdb, FieldValue } from "@/server/docdb";
 import { batchSet, col, create, createIfAbsent, getById, list, newId, nextNumber, nowIso, remove, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { getSetting } from "@/server/admin/queries";
@@ -1130,7 +1129,7 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
   const ref = col(COLLECTIONS.billing).doc(billing.id);
   let outcome: { already: true; current: Billing } | { already: false; before: Billing; after: Billing };
   try {
-    outcome = await firestore.runTransaction(async (tx) => {
+    outcome = await docdb.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) throw new Error("Cobrança não encontrada");
       const current = { ...(snap.data() as Omit<Billing, "id">), id: billing.id } as Billing;
@@ -1299,7 +1298,7 @@ export async function reversePayment(input: { billingId: string; reason: string 
   const ref = col(COLLECTIONS.billing).doc(billing.id);
   const today = todayKey();
   const reversedAt = nowIso();
-  const { before, after } = await firestore.runTransaction(async (tx) => {
+  const { before, after } = await docdb.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new Error("Cobrança não encontrada");
     const current = { ...(snap.data() as Omit<Billing, "id">), id: billing.id } as Billing;

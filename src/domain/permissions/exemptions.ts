@@ -22,7 +22,17 @@ export const EXEMPTIONS = [
     target: "src/app/(auth)/ativar-conta/page.tsx",
     kind: "page",
     // Hoje: P
-    reason: "Pública: só dispara e-mail de definição de senha pelo Firebase Auth no cliente. Sem leitura de dados.",
+    reason: "Pública: só dispara e-mail de definição de senha pelo Supabase Auth no cliente. Sem leitura de dados.",
+  },
+  {
+    target: "src/app/(auth)/redefinir-senha/page.tsx",
+    kind: "page",
+    reason: "Pública: destino do link de definição de senha (Supabase Auth, token no fragmento da URL). Grava a senha no Supabase Auth pelo cliente e cria a sessão por /api/auth/session, que só aceita usuário cadastrado e ativo. Sem leitura de dados.",
+  },
+  {
+    target: "src/app/(auth)/login/microsoft/page.tsx",
+    kind: "page",
+    reason: "Pública: retorno do login com Microsoft (Supabase Auth, provedor azure). Só troca o token por sessão em /api/auth/session (usuário cadastrado e ativo); next restrito a caminhos internos. Sem leitura de dados.",
   },
   {
     target: "src/app/(auth)/termos/page.tsx",

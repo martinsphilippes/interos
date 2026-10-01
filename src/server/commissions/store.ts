@@ -5,8 +5,7 @@ import "server-only";
  * motor, de um handler e da varredura, nunca emitem o mesmo evento nem geram o mesmo título duas vezes).
  */
 import { createHash } from "node:crypto";
-import { FieldValue } from "firebase-admin/firestore";
-import { firestore } from "@/server/firebase-admin";
+import { docdb, FieldValue } from "@/server/docdb";
 import { col, nextNumber, nowIso, stripUndefined, txGetOwn, update } from "@/server/db";
 import { dateKey } from "@/lib/format";
 import { COLLECTIONS, type Commission, type CommissionHistoryEntry, type CommissionStatus, type Payable, type UserRef } from "@/domain/types";
@@ -50,7 +49,7 @@ export async function transitionCommission(
   entry?: CommissionHistoryEntry,
 ): Promise<{ before: Commission; after: Commission } | null> {
   const ref = col(COLLECTIONS.commissions).doc(id);
-  return firestore.runTransaction(async (tx) => {
+  return docdb.runTransaction(async (tx) => {
     // Comissão de outra organização = inexistente (mesmo isolamento de getById).
     const snap = await txGetOwn(tx, ref);
     if (!snap) return null;

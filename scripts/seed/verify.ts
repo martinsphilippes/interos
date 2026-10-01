@@ -1,8 +1,7 @@
 /**
- * Verificação do seed: conta documentos por coleção no Firestore e confere invariantes.
+ * Verificação do seed: conta documentos por coleção no banco e confere invariantes.
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
-import "./quiet";
 import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile, type PortalLink, type CostCenter, type FinanceCategory, type FinancialAccount } from "../../src/domain/types";
 import { ROLE_KEYS } from "../../src/domain/constants";
 import { MODULE_KEYS, PROTECTED_KEYS, SCREEN_BY_KEY, isPermissionKey, type ScopeKind } from "../../src/domain/permissions";

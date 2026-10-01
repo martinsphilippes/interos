@@ -1,9 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { sendPasswordResetEmail } from "firebase/auth";
 import { CheckCircle2, Mail } from "lucide-react";
-import { getFirebaseAuth } from "@/lib/firebase/client";
+import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FormField } from "@/components/ui/form-field";
@@ -12,21 +11,25 @@ import { Input } from "@/components/ui/input";
 const NEUTRAL_MESSAGE = "Se o e-mail existir, enviaremos o link para redefinir a senha.";
 
 /**
- * Envia o e-mail de definição/redefinição de senha pelo Firebase Auth. A resposta é sempre neutra (não revela
- * se o e-mail existe); só erros de formato ou de rede aparecem ao usuário.
+ * Envia o e-mail de definição/redefinição de senha pelo Supabase Auth; o link abre /redefinir-senha. A resposta é
+ * sempre neutra (não revela se o e-mail existe); só erros de formato, limite ou rede aparecem ao usuário.
  */
 export async function requestPasswordEmail(email: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const value = email.trim();
   if (!/^\S+@\S+\.\S+$/.test(value)) return { ok: false, error: "Informe um e-mail válido." };
   try {
-    await sendPasswordResetEmail(getFirebaseAuth(), value);
+    const redirectTo = new URL("/redefinir-senha", window.location.origin).toString();
+    const { error } = await getSupabaseBrowser().auth.resetPasswordForEmail(value, { redirectTo });
+    if (error) throw error;
     return { ok: true };
   } catch (error) {
-    const code = typeof error === "object" && error && "code" in error ? String((error as { code: string }).code) : "";
-    if (code === "auth/invalid-email") return { ok: false, error: "Informe um e-mail válido." };
-    if (code === "auth/network-request-failed") return { ok: false, error: "Sem conexão com o servidor de autenticação." };
-    if (code === "auth/too-many-requests") return { ok: false, error: "Muitas tentativas. Aguarde alguns minutos e tente novamente." };
-    // user-not-found e demais: resposta neutra.
+    const e = (error ?? {}) as { code?: string; status?: number; name?: string };
+    if (e.code === "validation_failed" || e.code === "email_address_invalid") return { ok: false, error: "Informe um e-mail válido." };
+    if (e.name === "AuthRetryableFetchError" || e.status === 0) return { ok: false, error: "Sem conexão com o servidor de autenticação." };
+    if (e.code === "over_email_send_rate_limit" || e.code === "over_request_rate_limit" || e.status === 429) {
+      return { ok: false, error: "Muitas tentativas. Aguarde alguns minutos e tente novamente." };
+    }
+    // Usuário inexistente e demais: resposta neutra.
     return { ok: true };
   }
 }

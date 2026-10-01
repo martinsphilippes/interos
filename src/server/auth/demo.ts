@@ -1,5 +1,4 @@
 import "server-only";
-import { adminAuth } from "../firebase-admin";
 import { getById, list } from "../db";
 import { COLLECTIONS, type User } from "@/domain/types";
 import { ROLE_KEYS, type DepartmentKey, type RoleKey } from "@/domain/constants";
@@ -9,7 +8,7 @@ import { isDemoMode } from "@/lib/demo-mode";
  * Acesso rápido da fase de testes: cards com os usuários na tela de login que entram com um clique.
  * Ligado por NEXT_PUBLIC_DEMO_MODE=true (Vercel: Production e Preview) — ver `isDemoMode` em src/lib/demo-mode.ts.
  * Com a flag desligada, a lista vem vazia e a emissão de token recusa, então desligar a variável e publicar
- * remove o recurso por completo.
+ * remove o recurso por completo. A sessão é criada direto no servidor (cookie do INTEROS), sem senha.
  */
 
 export interface DemoUser {
@@ -31,10 +30,10 @@ export async function listDemoUsers(): Promise<DemoUser[]> {
     .map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, departmentId: u.departmentId, jobTitle: u.jobTitle }));
 }
 
-/** Token customizado do Firebase Auth para entrar como o usuário escolhido (só em modo demonstração). */
-export async function createDemoToken(userId: string): Promise<string> {
+/** Usuário escolhido no acesso rápido, já validado (só em modo demonstração); o chamador cria a sessão. */
+export async function resolveDemoUser(userId: string): Promise<User> {
   if (!isDemoMode()) throw new Error("Acesso rápido desativado neste ambiente.");
   const user = await getById<User>(COLLECTIONS.users, userId);
   if (!user || user.active !== true) throw new Error("Usuário não encontrado ou desativado.");
-  return adminAuth.createCustomToken(user.id);
+  return user;
 }

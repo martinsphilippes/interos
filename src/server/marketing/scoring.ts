@@ -1,5 +1,5 @@
 /**
- * Lead scoring. Módulo PURO (sem firebase, sem React): usado pelo serviço no servidor e pelos
+ * Lead scoring. Módulo PURO (sem acesso ao banco, sem React): usado pelo serviço no servidor e pelos
  * componentes para explicar a pontuação.
  *
  * As regras vêm do setting `lead_scoring` (editável em Administração → Configurações):

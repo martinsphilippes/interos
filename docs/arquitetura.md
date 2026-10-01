@@ -2,29 +2,30 @@
 
 ## Stack (decidida, não rediscutir)
 - Next.js 16 App Router + React 19 + TypeScript estrito. Tailwind v4. Deploy na Vercel com as funções em `gru1`
-  (São Paulo, `regions` no vercel.json), perto do Firestore: cada tela faz várias leituras e a ida e volta até os EUA
-  multiplicava a latência.
-- Banco: Cloud Firestore (projeto `interos-crm`, região southamerica-east1). Acesso **somente pelo servidor** via
-  `firebase-admin` (Server Components, Server Actions, Route Handlers). O SDK cliente do Firebase é usado apenas para
-  **login** (Firebase Auth e-mail/senha). Regras do Firestore negam tudo ao cliente; o Admin SDK ignora regras.
+  (São Paulo, `regions` no vercel.json), perto do banco (Supabase `sa-east-1`): cada tela faz várias leituras e a ida
+  e volta até os EUA multiplicava a latência.
+- Banco: Postgres do Supabase (projeto `interos-prod`, região `sa-east-1`, migrado do Firestore em 10/2026). Acesso
+  **somente pelo servidor** (Server Components, Server Actions, Route Handlers) com o papel `interos_app` pela
+  `DATABASE_URL` (pooler em modo transação). Modelo de documentos: uma tabela por coleção no schema `interos`
+  (`id text`, `data jsonb`), que **não** é exposto pela Data API; RLS ligado com política só para `interos_app`.
+  `src/server/docdb.ts` reproduz a API do Firestore Admin (doc/set/update/where/runTransaction/FieldValue), então os
+  serviços não mudaram. Schema em `supabase/migrations/`.
+- Login: Supabase Auth (e-mail/senha; Microsoft via provedor `azure`). O cliente do Supabase no navegador
+  (`src/lib/supabase/client.ts`) é usado **só** para autenticar; nenhum dado é lido do navegador.
 - Datas: sempre strings ISO 8601 (`new Date().toISOString()`), nunca `Timestamp`. Ordenação lexicográfica funciona.
 - Dinheiro: números em reais com centavos (ex.: `1234.5`). Formatação com `formatCurrency` de `@/lib/format`.
-- Sessão: cookie `interos_session` (session cookie do Firebase Auth) verificado no servidor. `requireUser()` em toda
-  página/ação. Ver `src/server/auth/session.ts`.
+- Sessão: cookie `interos_session` emitido pelo servidor (HMAC com `SESSION_COOKIE_SECRET`, 14 dias) depois que o
+  Supabase Auth confirma a identidade em `/api/auth/session`. `requireUser()` em toda página/ação. Revogação:
+  `users.sessionsRevokedAt`. Logins são vinculados ao usuário por `auth.users.raw_app_meta_data.interos_uid` e
+  geridos por `authAdmin` (`src/server/auth/auth-admin.ts`, funções SQL restritas). Ver `src/server/auth/session.ts`.
 - Multiempresa: todo documento tem `organizationId`. Onda 1 usa a organização única `intercert`
   (`ORG_ID` em `src/server/db.ts`). Toda consulta filtra por `organizationId`.
 
 ## Dependências já instaladas (não rode `npm install`; se faltar algo, registre no relatório)
-firebase-admin, firebase, zod, date-fns, lucide-react, recharts, @dnd-kit/{core,sortable,utilities}, clsx,
+postgres (postgres.js), @supabase/supabase-js (só Auth no navegador), zod, date-fns, lucide-react, recharts, @dnd-kit/{core,sortable,utilities}, clsx,
 tailwind-merge, class-variance-authority, @radix-ui/react-{dialog,dropdown-menu,tabs,popover,select,tooltip,checkbox,
 switch,avatar,scroll-area,separator,label,progress,slot}, cmdk, sonner, server-only. Dev: tsx, dotenv, playwright,
-@firebase/rules-unit-testing (`npm run test:rules`), vitest (`npm test`).
-
-`overrides` no package.json: `jwks-rsa` (usado por `firebase-admin/auth`) fica com `jose` 5, que tem build CommonJS.
-O `jose` 6 é só ESM e o runtime de funções da Vercel não carrega ESM via `require()` (`ERR_REQUIRE_ESM`), o que
-derrubava toda rota que verifica sessão com 500. Reproduzir localmente: `next build` e
-`NODE_OPTIONS=--no-experimental-require-module next start`. Só remova o override quando o `jwks-rsa` voltar a
-funcionar nessa condição.
+vitest (`npm test` puros; `npm run test:db` integração com Postgres).
 
 ## Estrutura de pastas
 ```
@@ -32,8 +33,10 @@ src/domain/types.ts        tipos de TODAS as entidades (fonte da verdade do mode
 src/domain/constants.ts    departamentos, papéis, navegação, rótulos, tipos de evento
 src/lib/utils.ts           cn()
 src/lib/format.ts          formatCurrency, formatDate, formatRelative, initials
-src/server/db.ts           acesso ao Firestore: col, getById, list, create, update, remove, batch
-src/server/firebase-admin.ts
+src/server/db.ts           acesso a dados: col, getById, list, create, update, remove, batch, nextNumber
+src/server/docdb.ts        documentos no Postgres com a API do Firestore Admin (transações, FieldValue)
+src/server/auth/auth-admin.ts logins no Supabase Auth (criar, senha, desativar, encerrar sessões, excluir)
+supabase/migrations/       schema do banco (uma tabela por coleção; funções de patch e de gestão de logins)
 src/server/auth/session.ts requireUser, getCurrentUser, requireScreen/requirePermission (fachada de autorização)
 src/server/auth/permissions.ts resolução das permissões efetivas, can, canSeeHref (sem dependências de servidor)
 src/server/auth/scope.ts   escopo de dados por tela (resolveDataScope)
@@ -50,14 +53,17 @@ src/app/(app)/...          rotas autenticadas (layout aplica requireUser e o App
 scripts/seed.ts            dados demonstrativos (idempotente, IDs determinísticos)
 ```
 
-## Regras de acesso a dados (Firestore sem índices compostos)
-- Use apenas `where` de igualdade (`==`, `in`, `array-contains`) via `list()`. **Nunca** combine `where` com
-  `orderBy`/range em uma mesma consulta (exige índice composto e quebra em produção). Ordene e filtre em memória.
+## Regras de acesso a dados
+- Use `where` de igualdade (`==`, `in`, `array-contains`) via `list()` e ordene/filtre em memória. (A regra nasceu
+  dos índices compostos do Firestore; no Postgres não quebra, mas mantê-la deixa as consultas simples e cobertas pelos
+  índices `organization_id` e GIN de `data`.)
+- Coleção nova: entra em `COLLECTIONS` e numa migration nova com `select interos.create_doc_table('<nome>');`
+  (o teste `tests/docdb/schema.test.ts` falha se faltar). Aplique a migration no Supabase antes do deploy.
 - Volume de uma organização é pequeno (milhares de docs). Ler a coleção filtrada por `organizationId` (+ 1 ou 2
   igualdades) e agregar em memória é a abordagem padrão.
-- IDs: automáticos do Firestore em runtime; no seed use IDs determinísticos (`client_001`).
+- IDs: automáticos (20 caracteres, `autoId` do docdb) em runtime; no seed use IDs determinísticos (`client_001`).
 - Nunca use `Timestamp` ou `FieldValue.serverTimestamp()`; use `nowIso()`.
-- Documentos lidos pelo Admin SDK são objetos simples e podem ser passados a Client Components.
+- Documentos lidos do banco são objetos simples (JSON) e podem ser passados a Client Components.
 
 ## Convenções de Server Actions
 ```ts
@@ -443,7 +449,7 @@ catálogo; toda rota de tela tem página; todo guard aponta para função existe
 ### Testes
 `npm test` (vitest, puros): catálogo, DSL, precedência, módulos (`inactiveModules`), invariantes, T0 de equivalência,
 escopo contra os resolvedores antigos, navegação, erros, verificador, um arquivo `guards-<módulo>.test.ts` por
-módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não podem alcançar `next/navigation`). `npm run test:rules` (regras do Firestore no emulador). E2E `77-acessos.mjs` (T1–T10) na pasta de e2e.
+módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não podem alcançar `next/navigation`). `npm run test:db` (docdb, transações concorrentes e authAdmin num Postgres real; CI sobe o serviço). E2E `77-acessos.mjs` (T1–T10) na pasta de e2e.
 
 ## Auditoria via eventos (D16 + D29, etapa 6B)
 - Não há coleção de auditoria: cada mudança relevante emite evento com `actorId`, `occurredAt` e
@@ -541,5 +547,7 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.
-- Emuladores locais: `FIRESTORE_EMULATOR_HOST` e `FIREBASE_AUTH_EMULATOR_HOST` já estão em `.env.local`.
-  Seed: `npm run seed`. Dev: `npm run dev` (porta 3000). Usuário demo: `hercules@intercert.com.br` / `interos123`.
+- Banco local: Postgres 15+ e `DATABASE_ADMIN_URL=postgres://postgres@127.0.0.1:5432/interos npm run db:local`
+  (aplica o stub do Supabase e as migrations); `.env.local` com `DATABASE_URL=postgres://interos_app:local@127.0.0.1:5432/interos`.
+  Seed: `npm run seed`. Dev: `npm run dev` (porta 3000) com `NEXT_PUBLIC_DEMO_MODE=true` para o acesso rápido (o
+  login por senha exige um projeto Supabase). Usuário demo local: `hercules@intercert.com.br` / `interos123`.

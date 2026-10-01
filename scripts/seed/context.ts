@@ -1,6 +1,6 @@
 /**
  * Contexto compartilhado entre os módulos do seed. Cada módulo preenche a parte que gera e
- * os seguintes leem daqui (nunca do Firestore) o que precisam.
+ * os seguintes leem daqui (nunca do banco) o que precisam.
  */
 import type {
   Client,

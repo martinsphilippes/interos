@@ -3,9 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { OAuthProvider, signInWithCustomToken, signInWithEmailAndPassword, signInWithPopup, signOut, type UserCredential } from "firebase/auth";
 import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react";
-import { getFirebaseAuth } from "@/lib/firebase/client";
+import { getSupabaseBrowser } from "@/lib/supabase/client";
+import { getSupabaseConfig } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -14,50 +14,17 @@ import { AuthCard } from "./auth-card";
 import { demoSignInAction } from "@/server/auth/demo-actions";
 import { ForgotPasswordDialog } from "./forgot-password-dialog";
 import { QuickAccess, type QuickAccessUser } from "./quick-access";
+import { authErrorMessage, establishSession, SessionError } from "./session-client";
 
 const MICROSOFT_DISABLED = "O login com Microsoft ainda não foi habilitado pelo administrador.";
 
-/** Erro com mensagem já pronta para o usuário (resposta do /api/auth/session). */
-class SessionError extends Error {}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof SessionError) return error.message;
-  const code = typeof error === "object" && error && "code" in error ? String((error as { code: string }).code) : "";
-  switch (code) {
-    case "auth/invalid-credential":
-    case "auth/wrong-password":
-    case "auth/invalid-login-credentials":
-      return "E-mail ou senha inválidos.";
-    case "auth/user-not-found":
-      return "Usuário não encontrado.";
-    case "auth/invalid-email":
-      return "Informe um e-mail válido.";
-    case "auth/user-disabled":
-      return "Este usuário está desativado. Fale com o administrador.";
-    case "auth/too-many-requests":
-      return "Muitas tentativas. Aguarde alguns minutos e tente novamente.";
-    case "auth/network-request-failed":
-      return "Sem conexão com o servidor de autenticação.";
-    // Microsoft
-    case "auth/operation-not-allowed":
-    case "auth/configuration-not-found":
-    case "auth/invalid-provider-id":
-    case "auth/unauthorized-domain":
-    case "auth/admin-restricted-operation":
-      return MICROSOFT_DISABLED;
-    case "auth/popup-closed-by-user":
-    case "auth/cancelled-popup-request":
-    case "auth/user-cancelled":
-      return "Login com Microsoft cancelado.";
-    case "auth/popup-blocked":
-      return "O navegador bloqueou a janela de login. Permita pop-ups para este site e tente novamente.";
-    case "auth/account-exists-with-different-credential":
-      return "Este e-mail já entra com outro método. Use e-mail e senha ou fale com o administrador.";
-    default:
-      return error instanceof Error && error.message.includes("Configuração do Firebase")
-        ? "Configuração do Firebase ausente neste ambiente."
-        : "Não foi possível entrar. Tente novamente.";
-  }
+/** O provedor Microsoft (azure) está ligado no Supabase Auth? Evita mandar o usuário para uma página de erro JSON. */
+async function microsoftEnabled(): Promise<boolean> {
+  const { url, publishableKey } = getSupabaseConfig();
+  const response = await fetch(`${url}/auth/v1/settings`, { headers: { apikey: publishableKey } });
+  if (!response.ok) return false;
+  const settings = (await response.json()) as { external?: Record<string, boolean> };
+  return settings.external?.azure === true;
 }
 
 function MicrosoftLogo() {
@@ -92,21 +59,7 @@ export function LoginForm({ next, quickAccessUsers = [] }: LoginFormProps) {
   const [quickId, setQuickId] = React.useState<string | null>(null);
   const [forgotOpen, setForgotOpen] = React.useState(false);
 
-  /** Troca o ID token por cookie de sessão; se o servidor recusar, desfaz o login no Firebase cliente. */
-  const startSession = async (credential: UserCredential) => {
-    const idToken = await credential.user.getIdToken();
-    const response = await fetch("/api/auth/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ idToken, remember }),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
-      await signOut(getFirebaseAuth()).catch(() => undefined);
-      if (response.status === 403 && body.error) throw new SessionError(body.error);
-      throw new Error(body.error ?? "Falha ao criar sessão");
-    }
+  const finish = () => {
     router.replace(next ?? "/meu-dia");
     router.refresh();
   };
@@ -117,15 +70,17 @@ export function LoginForm({ next, quickAccessUsers = [] }: LoginFormProps) {
     setError(null);
     setLoading("password");
     try {
-      const credential = await signInWithEmailAndPassword(getFirebaseAuth(), email.trim(), password);
-      await startSession(credential);
+      const { data, error: authError } = await getSupabaseBrowser().auth.signInWithPassword({ email: email.trim(), password });
+      if (authError || !data.session) throw authError ?? new Error("sem sessão");
+      await establishSession(data.session.access_token, remember);
+      finish();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(authErrorMessage(err));
       setLoading(null);
     }
   };
 
-  /** Acesso rápido: preenche o e-mail e entra com token emitido pelo servidor (dispensa a senha). */
+  /** Acesso rápido: o servidor cria a sessão do usuário escolhido (dispensa a senha). */
   const handleQuickAccess = async (user: QuickAccessUser) => {
     if (loading) return;
     setError(null);
@@ -136,26 +91,31 @@ export function LoginForm({ next, quickAccessUsers = [] }: LoginFormProps) {
     try {
       const result = await demoSignInAction({ userId: user.id });
       if (!result.ok) throw new SessionError(result.error);
-      const credential = await signInWithCustomToken(getFirebaseAuth(), result.data.token);
-      await startSession(credential);
+      finish();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(authErrorMessage(err));
       setLoading(null);
       setQuickId(null);
     }
   };
 
+  /** Microsoft: redireciona para o Supabase Auth (provedor azure); o retorno cai em /login/microsoft. */
   const handleMicrosoft = async () => {
     if (loading) return;
     setError(null);
     setLoading("microsoft");
     try {
-      const provider = new OAuthProvider("microsoft.com");
-      provider.setCustomParameters({ prompt: "select_account" });
-      const credential = await signInWithPopup(getFirebaseAuth(), provider);
-      await startSession(credential);
+      if (!(await microsoftEnabled())) throw new SessionError(MICROSOFT_DISABLED);
+      const back = new URL("/login/microsoft", window.location.origin);
+      if (next) back.searchParams.set("next", next);
+      if (!remember) back.searchParams.set("lembrar", "0");
+      const { error: authError } = await getSupabaseBrowser().auth.signInWithOAuth({
+        provider: "azure",
+        options: { redirectTo: back.toString(), scopes: "email", queryParams: { prompt: "select_account" } },
+      });
+      if (authError) throw authError;
     } catch (err) {
-      setError(errorMessage(err));
+      setError(authErrorMessage(err));
       setLoading(null);
     }
   };

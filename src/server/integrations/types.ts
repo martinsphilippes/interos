@@ -22,7 +22,7 @@ export const INTEGRATION_CATEGORY_LABELS: Record<IntegrationKey, string> = {
 /**
  * - conectado: credenciais presentes E adaptador implementado no INTEROS (o sistema fala com o provedor).
  * - nao_conectado: faltam credenciais; o sistema usa o fallback manual.
- * - verificar: não dá para confirmar pelo servidor (ex.: SSO habilitado no console do Firebase) ou há
+ * - verificar: não dá para confirmar pelo servidor (ex.: SSO habilitado no painel do Supabase) ou há
  *   credenciais mas o adaptador do provedor ainda não foi implementado (o fallback continua em uso).
  */
 export type IntegrationState = "conectado" | "nao_conectado" | "verificar";

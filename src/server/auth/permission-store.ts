@@ -5,9 +5,9 @@
  */
 import { cache } from "react";
 import { COLLECTIONS, type Organization, type PermissionProfile, type User } from "@/domain/types";
-import type { DocumentSnapshot } from "firebase-admin/firestore";
+import type { DocumentSnapshot } from "../docdb";
 import type { EffectivePermissions } from "@/domain/permissions";
-import { firestore } from "../firebase-admin";
+import { docdb } from "../docdb";
 import { col, getById, ORG_ID } from "../db";
 import { activeModulesOfOrganization, resolvePermissions, sanitizeAdjustments, type PermissionAdjustments } from "./permissions";
 
@@ -31,7 +31,7 @@ function ownDoc<T>(snap: DocumentSnapshot): T | null {
 /** Lê os 3 documentos de ajuste do usuário; em erro, loga e devolve a matriz padrão (degraded). */
 export async function loadAccessDocs(user: Pick<User, "id" | "role">): Promise<AccessDocs> {
   try {
-    const [roleSnap, userSnap, orgSnap] = await firestore.getAll(
+    const [roleSnap, userSnap, orgSnap] = await docdb.getAll(
       col(COLLECTIONS.permissionProfiles).doc(roleProfileId(user.role)),
       col(COLLECTIONS.permissionProfiles).doc(userOverrideId(user.id)),
       col(COLLECTIONS.organizations).doc(ORG_ID),

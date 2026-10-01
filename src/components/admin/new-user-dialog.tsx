@@ -107,7 +107,7 @@ function NewUserForm({ users, departments, assignableRoles, onClose, onCreated }
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
       <DialogHeader>
         <DialogTitle>Novo usuário</DialogTitle>
-        <DialogDescription>Cria o login no Firebase Auth e o cadastro no INTEROS. Metas mensais e telefone podem ser preenchidos depois, no drawer do usuário.</DialogDescription>
+        <DialogDescription>Cria o login (Supabase Auth) e o cadastro no INTEROS. Metas mensais e telefone podem ser preenchidos depois, no drawer do usuário.</DialogDescription>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-4 py-3">
         <div className="grid gap-4 sm:grid-cols-2">

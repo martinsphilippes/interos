@@ -14,7 +14,7 @@ import "server-only";
  * - Eventos: `portal.link_created`, `portal.link_revoked` (com `changes` e motivo — entram na auditoria) e
  *   `portal.accessed`.
  */
-import { firestore } from "@/server/firebase-admin";
+import { docdb } from "@/server/docdb";
 import { col, createIfAbsent, getById, getManyByIds, list, nowIso, ORG_ID, txGetOwn, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { BusinessError } from "@/server/auth/error-classes";
@@ -153,7 +153,7 @@ export async function revokePortalLink(linkId: string, reason: string | undefine
   const ref = col(COLLECTIONS.portalLinks).doc(linkId);
   const at = nowIso();
   const why = reason?.trim() || undefined;
-  const before = await firestore.runTransaction(async (tx) => {
+  const before = await docdb.runTransaction(async (tx) => {
     const snap = await txGetOwn(tx, ref);
     if (!snap) throw new BusinessError("Link do portal não encontrado");
     const link = { ...(snap.data() as Omit<PortalLink, "id">), id: linkId } as PortalLink;
@@ -378,7 +378,7 @@ async function registerAccess(token: string, now: Date): Promise<{ link: PortalL
   const ref = col(COLLECTIONS.portalLinks).doc(id);
   const at = now.toISOString();
   const day = dateKey(now);
-  return firestore.runTransaction(async (tx) => {
+  return docdb.runTransaction(async (tx) => {
     const snap = await txGetOwn(tx, ref);
     if (!snap) return null;
     const link = { ...(snap.data() as Omit<PortalLink, "id">), id } as PortalLink;

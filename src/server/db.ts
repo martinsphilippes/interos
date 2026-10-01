@@ -1,11 +1,10 @@
-import type { DocumentData, DocumentReference, DocumentSnapshot, Query, Transaction, WhereFilterOp } from "firebase-admin/firestore";
-import { firestore } from "./firebase-admin";
+import { docdb, type DocumentData, type DocumentReference, type DocumentSnapshot, type Query, type Transaction, type WhereFilterOp } from "./docdb";
 import { COLLECTIONS, type BaseEntity, type CollectionName } from "@/domain/types";
 import { ORGANIZATION_ID } from "@/domain/constants";
 import { dateKey } from "@/lib/format";
 
 /**
- * Camada de acesso ao Firestore.
+ * Camada de acesso a dados (Postgres do Supabase via docdb, com a API de documentos herdada do Firestore).
  *
  * Regras:
  * - Só filtros de igualdade (==, in, array-contains). Ordene e filtre em memória.
@@ -30,7 +29,7 @@ export interface ListOptions {
 export const nowIso = () => new Date().toISOString();
 
 export function col(name: CollectionName) {
-  return firestore.collection(name);
+  return docdb.collection(name);
 }
 
 export function newId(name: CollectionName): string {
@@ -71,7 +70,7 @@ export async function getManyByIds<T extends BaseEntity>(name: CollectionName, i
   const result = new Map<string, T>();
   if (unique.length === 0) return result;
   const refs = unique.map((id) => col(name).doc(id));
-  const snaps = await firestore.getAll(...refs);
+  const snaps = await docdb.getAll(...refs);
   for (const snap of snaps) {
     const entity = toEntity<T>(snap.id, snap.data());
     // Mesma checagem de getById: fora da organização (ou sem organizationId) não entra no mapa.
@@ -82,7 +81,7 @@ export async function getManyByIds<T extends BaseEntity>(name: CollectionName, i
 
 export async function list<T extends BaseEntity>(name: CollectionName, options: ListOptions = {}): Promise<T[]> {
   const where = options.where ?? [];
-  // Firestore limita `in` a 30 valores: divide em lotes e concatena.
+  // Lotes de 30 valores no `in` (limite herdado do Firestore; mantém as consultas pequenas): divide e concatena.
   const big = where.find(([, op, value]) => op === "in" && Array.isArray(value) && value.length > 30);
   if (big) {
     const [field, , value] = big;
@@ -153,7 +152,7 @@ export async function batchSet(
   writes: { collection: CollectionName; id: string; data: Record<string, unknown>; merge?: boolean }[],
 ): Promise<void> {
   for (let i = 0; i < writes.length; i += 450) {
-    const batch = firestore.batch();
+    const batch = docdb.batch();
     for (const w of writes.slice(i, i + 450)) {
       batch.set(col(w.collection).doc(w.id), stripUndefined(w.data), { merge: w.merge ?? false });
     }
@@ -161,7 +160,7 @@ export async function batchSet(
   }
 }
 
-/** Remove chaves com `undefined` (o Firestore rejeita undefined sem ignoreUndefinedProperties em objetos aninhados). */
+/** Remove chaves com `undefined` (o docdb também descarta, mas o seed e os lotes passam por aqui). */
 export function stripUndefined<T>(value: T): T {
   if (Array.isArray(value)) return value.map((v) => stripUndefined(v)) as T;
   if (value && typeof value === "object") {
@@ -179,7 +178,7 @@ export async function clearCollection(name: CollectionName): Promise<number> {
   const snap = await col(name).where("organizationId", "==", ORG_ID).get();
   let count = 0;
   for (let i = 0; i < snap.docs.length; i += 450) {
-    const batch = firestore.batch();
+    const batch = docdb.batch();
     for (const d of snap.docs.slice(i, i + 450)) {
       batch.delete(d.ref);
       count++;
@@ -193,7 +192,7 @@ export async function clearCollection(name: CollectionName): Promise<number> {
 // Criação idempotente e numeração transacional
 // ---------------------------------------------------------------------------
 
-/** true quando o erro do Firestore é ALREADY_EXISTS (gRPC 6). */
+/** true quando o erro é ALREADY_EXISTS (code 6, como no Firestore; ver DocdbError). */
 export function isAlreadyExists(error: unknown): boolean {
   return (error as { code?: number | string }).code === 6 || /already exists/i.test(String((error as Error)?.message));
 }
@@ -266,7 +265,7 @@ export async function nextNumber(prefix: string, options: NextNumberOptions = {}
   // Semente (só lida quando o contador ainda não existe): maior número existente no formato.
   const exists = (await ref.get()).exists;
   const seed = !exists && options.initFrom ? await maxExistingSequence(options.initFrom.collection, options.initFrom.field ?? "number", head) : 0;
-  const value = await firestore.runTransaction(async (tx) => {
+  const value = await docdb.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const current = snap.exists ? Number(snap.get("value")) || 0 : seed;
     const next = current + 1;

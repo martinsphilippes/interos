@@ -1,6 +1,6 @@
 /**
  * Modelo de visualização do Workflow: tipos enriquecidos, filtros da URL e helpers puros.
- * Sem React e sem firebase: importado pelas queries (servidor) e pelos componentes (cliente).
+ * Sem React e sem acesso ao banco: importado pelas queries (servidor) e pelos componentes (cliente).
  */
 import { DEPARTMENT_KEYS, JOURNEY_STAGES, WORKFLOW_STEP_STATUS, type DepartmentKey, type JourneyStage, type WorkflowStepStatus } from "@/domain/constants";
 import type { ChecklistItem, Comment, SlaView, WorkflowInstance, WorkflowStage, WorkflowStep, WorkflowTemplate } from "@/domain/types";

@@ -1,5 +1,5 @@
 /**
- * Implantação: esquemas zod das Server Actions, tipos compartilhados e regras PURAS (sem firebase),
+ * Implantação: esquemas zod das Server Actions, tipos compartilhados e regras PURAS (sem acesso ao banco),
  * usadas pelo serviço no servidor e pelos componentes (progresso, fases, gate de go-live).
  * Predicados de autorização ficam em ./access.ts (server-only), fora do bundle do cliente.
  */

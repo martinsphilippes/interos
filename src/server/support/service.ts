@@ -17,7 +17,7 @@ import "server-only";
  * lançados como `SupportError` com mensagem em português.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "@/server/docdb";
 import { col, create, getById, getManyByIds, list, nowIso, update } from "@/server/db";
 import { emitEvent, writeEventMeta } from "@/server/events";
 import { registerHandler } from "@/server/events/emit";

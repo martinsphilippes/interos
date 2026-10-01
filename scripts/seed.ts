@@ -1,12 +1,11 @@
 /**
  * Seed de dados demonstrativos do INTEROS.
  *
- * Uso: npm run seed (emuladores, via .env.local) ou npm run seed:prod (FIREBASE_SERVICE_ACCOUNT_JSON).
- * Idempotente: limpa todas as coleções da organização e recria os usuários do Auth.
+ * Uso: npm run seed (banco local, via .env.local) ou npm run seed:prod (DATABASE_URL do Supabase).
+ * Idempotente: limpa todas as coleções da organização e recria os usuários do Supabase Auth.
  * Roda com `--conditions=react-server`: o seed usa o registro de fórmulas e os motores de KPIs e bônus
  * (módulos server-only) para gerar definições, snapshots e o fechamento do bônus coerentes com os dados.
  */
-import "./seed/quiet";
 import { COLLECTIONS, type CollectionName, type SlaInstance } from "../src/domain/types";
 import { clearCollection } from "../src/server/db";
 import { computeSlaState } from "../src/server/sla";
@@ -29,7 +28,7 @@ function elapsed(from: number): string {
 
 async function main(): Promise<void> {
   const t0 = Date.now();
-  const target = process.env.FIRESTORE_EMULATOR_HOST ? `emulador ${process.env.FIRESTORE_EMULATOR_HOST}` : "PRODUÇÃO";
+  const target = /@(localhost|127\.0\.0\.1)[:/]/.test(process.env.DATABASE_URL ?? "") ? "banco local" : "PRODUÇÃO";
   console.log(`INTEROS seed — alvo: ${target}`);
 
   // 1. Limpeza de todas as coleções da organização.
@@ -57,13 +56,13 @@ async function main(): Promise<void> {
     console.log(`Gerado: ${label} (${elapsed(t)})`);
   }
 
-  // 3. Usuários no Firebase Auth.
+  // 3. Usuários no Supabase Auth.
   const tAuth = Date.now();
   const authCount = await seedAuthUsers();
   console.log(`Auth: ${authCount} usuários recriados (${elapsed(tAuth)})`);
 
   // 4. Gravação por coleção.
-  console.log("Gravando no Firestore:");
+  console.log("Gravando no banco:");
   let total = 0;
   const summary: [string, number][] = [];
   for (const name of names) {

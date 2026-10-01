@@ -1,7 +1,7 @@
 import { cache } from "react";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { adminAuth } from "../firebase-admin";
 import { getById } from "../db";
 import { COLLECTIONS, type CurrentUser, type User } from "@/domain/types";
 import type { RoleKey } from "@/domain/constants";
@@ -33,25 +33,68 @@ export const ACCESS_DENIED_REDIRECT = "/meu-dia?erro=sem-permissao";
 export interface CreateSessionOptions {
   /**
    * "Lembrar meu acesso" (padrão true): cookie persistente por SESSION_DAYS. Com false o cookie não tem
-   * maxAge e dura só a sessão do navegador (o session cookie do Firebase continua expirando em SESSION_DAYS).
+   * maxAge e dura só a sessão do navegador (a assinatura continua expirando em SESSION_DAYS).
    */
   remember?: boolean;
 }
 
-/** Cria o cookie de sessão a partir do ID token emitido pelo Firebase Auth no navegador. */
-export async function createSession(idToken: string, options: CreateSessionOptions = {}): Promise<{ uid: string }> {
-  const decoded = await adminAuth.verifyIdToken(idToken);
-  const expiresIn = SESSION_DAYS * 24 * 60 * 60 * 1000;
-  const sessionCookie = await adminAuth.createSessionCookie(idToken, { expiresIn });
+/*
+ * Cookie de sessão do INTEROS: "<payload base64url>.<HMAC-SHA256 base64url>", payload { uid, iat, exp } (segundos).
+ * Emitido só pelo servidor depois que o Supabase Auth confirma a identidade (/api/auth/session) ou no acesso rápido
+ * do modo demonstração. Revogação: cookies emitidos antes de users.sessionsRevokedAt são recusados (authAdmin).
+ */
+interface SessionPayload {
+  uid: string;
+  iat: number;
+  exp: number;
+}
+
+function sessionKey(): Buffer {
+  const secret = process.env.SESSION_COOKIE_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") throw new Error("SESSION_COOKIE_SECRET não configurado");
+  // Chave derivada com rótulo próprio: o mesmo segredo assina os tokens do CSAT sem que um sirva para o outro.
+  return createHmac("sha256", secret ?? "dev-only-secret").update("interos-session-v1").digest();
+}
+
+function sign(payload: string): string {
+  return createHmac("sha256", sessionKey()).update(payload).digest("base64url");
+}
+
+export function encodeSession(uid: string, nowMs = Date.now()): string {
+  const iat = Math.floor(nowMs / 1000);
+  const payload = Buffer.from(JSON.stringify({ uid, iat, exp: iat + SESSION_DAYS * 24 * 60 * 60 } satisfies SessionPayload)).toString("base64url");
+  return `${payload}.${sign(payload)}`;
+}
+
+/** Payload de um cookie válido (assinatura e validade), ou null. */
+export function decodeSession(token: string, nowMs = Date.now()): SessionPayload | null {
+  const [payload, mac, extra] = token.split(".");
+  if (!payload || !mac || extra !== undefined) return null;
+  const expected = Buffer.from(sign(payload));
+  const given = Buffer.from(mac);
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Partial<SessionPayload>;
+    if (typeof data.uid !== "string" || typeof data.iat !== "number" || typeof data.exp !== "number") return null;
+    if (data.exp * 1000 <= nowMs) return null;
+    return data as SessionPayload;
+  } catch {
+    return null;
+  }
+}
+
+/** Grava o cookie de sessão do usuário (identidade já verificada pelo chamador). */
+export async function createSession(uid: string, options: CreateSessionOptions = {}): Promise<{ uid: string }> {
+  const maxAge = SESSION_DAYS * 24 * 60 * 60;
   const store = await cookies();
-  store.set(SESSION_COOKIE, sessionCookie, {
+  store.set(SESSION_COOKIE, encodeSession(uid), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    ...(options.remember === false ? {} : { maxAge: expiresIn / 1000 }),
+    ...(options.remember === false ? {} : { maxAge }),
   });
-  return { uid: decoded.uid };
+  return { uid };
 }
 
 export async function clearSession(): Promise<void> {
@@ -86,15 +129,10 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  let uid: string;
-  try {
-    uid = (await adminAuth.verifySessionCookie(token, true)).uid;
-  } catch (error) {
-    // Cookie inválido, expirado ou revogado = sem sessão. Falha de infraestrutura (Auth fora do ar) não é "deslogado".
-    if (!isSessionUnavailable(error)) return null;
-    console.error("[sessao] falha ao validar o cookie de sessão", error);
-    throw new Error(SESSION_UNAVAILABLE_MESSAGE);
-  }
+  // Cookie adulterado ou expirado = sem sessão (validação local, sem ida ao Auth).
+  const session = decodeSession(token);
+  if (!session) return null;
+  const uid = session.uid;
   let user: User | null;
   try {
     user = await getById<User>(COLLECTIONS.users, uid);
@@ -106,6 +144,8 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   }
   // Sessão estrita: só usuário explicitamente ativo (documento sem `active` não entra).
   if (!user || user.active !== true) return null;
+  // Sessões encerradas pelo administrador (troca de papel, senha redefinida, "encerrar sessões").
+  if (user.sessionsRevokedAt && session.iat * 1000 < Date.parse(user.sessionsRevokedAt)) return null;
   // Perfis/exceções/módulos: falha na leitura NÃO desloga (A4.6) — loadAccessDocs já cai na matriz padrão.
   const docs = await loadAccessDocs(user);
   try {
@@ -125,13 +165,6 @@ export async function requireUser(): Promise<CurrentUser> {
 }
 
 const SESSION_UNAVAILABLE_MESSAGE = "Sistema temporariamente indisponível. Tente novamente em alguns minutos.";
-
-/** Erros do Auth que significam "sessão não vale mais" (o resto é indisponibilidade). */
-function isSessionUnavailable(error: unknown): boolean {
-  const code = typeof error === "object" && error && "code" in error ? String((error as { code: unknown }).code) : "";
-  if (!code.startsWith("auth/")) return true;
-  return code === "auth/internal-error";
-}
 
 /**
  * Exige um dos papéis informados (admin sempre passa). Mantido enquanto houver chamadores; as páginas migram para

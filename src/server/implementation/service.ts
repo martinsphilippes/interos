@@ -10,7 +10,7 @@ import "server-only";
  *
  * Erros de regra são lançados como Error com mensagem em português (as actions repassam ao usuário).
  */
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "@/server/docdb";
 import { batchSet, col, create, getById, getManyByIds, list, newId, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { can } from "@/server/auth/permissions";

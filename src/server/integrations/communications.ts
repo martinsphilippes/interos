@@ -173,7 +173,7 @@ export async function sendOrRecord(input: SendOrRecordInput): Promise<SendOrReco
 }
 
 async function clearCommunicationError(id: string): Promise<void> {
-  const { FieldValue } = await import("firebase-admin/firestore");
+  const { FieldValue } = await import("@/server/docdb");
   const { col } = await import("@/server/db");
   await col(COLLECTIONS.communications).doc(id).update({ error: FieldValue.delete() });
 }
