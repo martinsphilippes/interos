@@ -112,6 +112,12 @@ export const COLLECTIONS = {
   financialAccounts: "financial_accounts",
   costCenters: "cost_centers",
   financeCategories: "finance_categories",
+  /**
+   * Lançamentos de caixa (etapa CP/CR 2): cada baixa com conta (título a pagar ou cobrança) grava aqui, NA MESMA
+   * transação, a despesa/receita da conta financeira. Somente servidor (regra `if false`); sem edição/exclusão direta:
+   * só desfazer a baixa (ou estornar a cobrança) apaga o lançamento.
+   */
+  cashEntries: "cash_entries",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -779,6 +785,9 @@ export interface BillingReversedPayment {
   reversedAt: string;
   reversedBy: string;
   reason: string;
+  /** Conta financeira e lançamento de caixa da baixa estornada (etapa CP/CR 2; o lançamento é apagado no estorno). */
+  accountId?: string;
+  cashEntryId?: string;
 }
 
 export interface Billing extends BaseEntity {
@@ -816,6 +825,13 @@ export interface Billing extends BaseEntity {
   cancelledAt?: string;
   cancelledBy?: string;
   cancelReason?: string;
+  /**
+   * Baixa com conta (etapa CP/CR 2) — opcionais: cobranças pagas antes não têm. `paymentAccountId` = conta financeira
+   * onde o dinheiro entrou; `cashEntryId` = lançamento de receita gravado na mesma transação da baixa. Paga SEM
+   * `cashEntryId` = baixa antiga ou automática sem conta padrão (o realizado conta pela própria baixa).
+   */
+  paymentAccountId?: string;
+  cashEntryId?: string;
 }
 
 /**
@@ -1637,6 +1653,74 @@ export interface Payable extends BaseEntity {
    */
   categoryId?: string;
   costCenterId?: string;
+  /**
+   * Baixas com conta (etapa CP/CR 2) — opcionais: títulos pagos antes (e baixas sem conta do seed/automáticas) não
+   * têm. Cada baixa guarda a conta e o `transactionId` do lançamento de caixa gravado na mesma transação. Os campos
+   * antigos (`paidAt`, `paidBy`, `paymentMethod`, `receiptUrl`, status `pago`) continuam gravados como antes.
+   */
+  payments?: PayablePayment[];
+  /** Conta financeira prevista para o pagamento (pré-seleciona a conta na baixa). */
+  accountId?: string;
+}
+
+/** Baixa de um título a pagar (etapa CP/CR 2). */
+export interface PayablePayment {
+  id: string;
+  /** AAAA-MM-DD (São Paulo). */
+  date: string;
+  amount: number;
+  accountId: string;
+  /** Id do lançamento de caixa (`cash_entries`) gravado na mesma transação. */
+  transactionId: string;
+  method: string;
+  receiptUrl?: string;
+  by: string;
+  byName?: string;
+  at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Lançamentos de caixa (etapa CP/CR 2)
+// ---------------------------------------------------------------------------
+
+export type CashEntryType = "receita" | "despesa" | "transferencia";
+export type CashEntryContactType = "fornecedor" | "cliente" | "colaborador";
+
+/** Contato do lançamento: fornecedor/colaborador (títulos a pagar) ou cliente (cobranças). Não há contato genérico. */
+export interface CashEntryContact {
+  type: CashEntryContactType;
+  id?: string;
+  name: string;
+}
+
+/** Baixa que originou o lançamento: título a pagar (`payments[].id`) ou cobrança (baixa única: `paymentId` = id da cobrança). */
+export interface CashEntryOrigin {
+  kind: "payable" | "billing";
+  id: string;
+  paymentId: string;
+}
+
+/**
+ * Lançamento de caixa: dinheiro que entrou (receita) ou saiu (despesa) de uma conta financeira. Valor SEMPRE positivo;
+ * o tipo dá o sinal no saldo. Transferência (sem tela nesta etapa) usa `transferDirection` em cada lado.
+ */
+export interface CashEntry extends BaseEntity {
+  /** AAAA-MM-DD (São Paulo). */
+  date: string;
+  amount: number;
+  type: CashEntryType;
+  description: string;
+  accountId: string;
+  categoryId?: string;
+  costCenterId?: string;
+  contact?: CashEntryContact;
+  /** Conciliado com o extrato bancário (padrão false; conciliação chega em etapa futura). */
+  reconciled: boolean;
+  origin?: CashEntryOrigin;
+  /** "Baixa de conta a pagar" / "Baixa de conta a receber". */
+  notes?: string;
+  transferDirection?: "entrada" | "saida";
+  createdByName?: string;
 }
 
 // ---------------------------------------------------------------------------
