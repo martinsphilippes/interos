@@ -24,6 +24,8 @@ import { getSupportOptions } from "@/server/support/queries";
 import { ClientCsPanel } from "@/components/cs/client-cs-panel";
 import { NewTicketDialog } from "@/components/support/new-ticket-dialog";
 import { AgentSuggestions } from "@/components/automations/agent-suggestions";
+import { PortalLinksCard } from "@/components/portal/portal-links-card";
+import { listPortalLinks } from "@/server/portal/service";
 
 type Params = Promise<{ id: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
@@ -65,6 +67,10 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
   // principal "Novo atendimento" do cabeçalho, então carregam sempre que o usuário pode abrir chamado.
   const canSupport = can(user, "suporte.chamados.criar");
   const [csData, supportOptions] = await Promise.all([tab === "cs" ? getClientCs(id, user) : Promise.resolve(null), canSupport ? getSupportOptions(user) : Promise.resolve(null)]);
+  // Portal do cliente (D31) na aba Financeiro: seção financeiro.contratos.portal.ver; links lidos só nessa aba e só
+  // quando o cliente tem contrato (o portal mostra contratos e cobranças).
+  const showPortal = tab === "financeiro" && can(user, "financeiro.contratos.portal.ver") && data.contracts.length > 0;
+  const portal = showPortal ? await listPortalLinks(id) : null;
   const ticketOptions = supportOptions ? { clients: supportOptions.clients, products: supportOptions.products, team: supportOptions.team, categories: supportOptions.categories, slaRules: supportOptions.slaRules } : null;
   const originName = data.client.origin ? (options.leadSources.find((s) => s.key === data.client.origin)?.name ?? data.client.origin) : undefined;
   const counts: Partial<Record<ClientTab, number>> = {
@@ -84,7 +90,23 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
     timeline: <TabTimeline data={data} canRegister={caps.register} />,
     comercial: <TabComercial data={data} options={options} canCreateOpportunity={caps.createOpportunity} />,
     produtos: <TabProdutos data={data} canCreateOpportunity={caps.createOpportunity} />,
-    financeiro: <TabFinanceiro data={data} />,
+    financeiro: (
+      <TabFinanceiro
+        data={data}
+        portal={
+          portal ? (
+            <PortalLinksCard
+              clientId={data.client.id}
+              clientName={data.client.tradeName}
+              links={portal.active}
+              inactiveCount={portal.inactiveCount}
+              canCreate={can(user, "financeiro.contratos.portal.gerar") && data.contracts.some((c) => c.status !== "cancelado")}
+              canRevoke={can(user, "financeiro.contratos.portal.revogar")}
+            />
+          ) : null
+        }
+      />
+    ),
     implantacao: <TabImplantacao data={data} />,
     cs: (
       <TabCs

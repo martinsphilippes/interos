@@ -293,6 +293,18 @@ export const cobrancaCanaisSchema = z.object({
     .max(120, "Remetente muito longo")
     .optional()
     .transform((v) => (v ? v : undefined)),
+  /**
+   * WhatsApp da cobrança (opcional, etapa 6B): botão "Solicitar 2ª via pelo WhatsApp" do Portal do Cliente. Sem número,
+   * o portal não mostra o botão.
+   */
+  whatsappCobranca: z
+    .string()
+    .trim()
+    .max(25, "Telefone muito longo")
+    .optional()
+    .transform((v) => (v ? v : undefined))
+    .refine((v) => v === undefined || /^[\d\s()+.-]+$/.test(v), { message: "WhatsApp da cobrança: use só números, espaços, parênteses, + ou -" })
+    .refine((v) => v === undefined || (v.replace(/\D/g, "").length >= 10 && v.replace(/\D/g, "").length <= 13), { message: "WhatsApp da cobrança: informe DDD e número (10 a 13 dígitos)" }),
 });
 export type CobrancaCanaisConfig = z.infer<typeof cobrancaCanaisSchema>;
 
@@ -495,7 +507,7 @@ export const SETTING_DEFAULTS: SettingValues = {
   financeiro_alertas: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3, horizonteCobrancasMeses: 3 },
   comissoes_pagamento: { diaPagamento: 10 },
   financeiro_baixa: { toleranciaValor: 1, pagamentoParcialAutomatico: "pendencia" },
-  cobranca_canais: { principal: "whatsapp", complementar: "email", enviarEmailJuntoAoWhatsapp: false, remetenteEmail: undefined },
+  cobranca_canais: { principal: "whatsapp", complementar: "email", enviarEmailJuntoAoWhatsapp: false, remetenteEmail: undefined, whatsappCobranca: undefined },
   regua_cobranca: { ativa: false, diasUteis: false, marcos: REGUA_DEFAULT_MARCOS.map((m) => ({ ...m })), pausarQuando: { pendencia: true, negociacao: true } },
   contas_a_pagar: { categorias: [...PAYABLE_DEFAULT_CATEGORIES], centrosDeCusto: ["Administrativo", "Comercial", "Operações", "Tecnologia"] },
 };
@@ -516,7 +528,7 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   financeiro_alertas: "Alertas de contratos parados (aguardando assinatura, pago sem liberação, liberado sem início) e horizonte da cobrança recorrente.",
   comissoes_pagamento: "Pagamento de comissões: dia do vencimento dos títulos no mês seguinte à competência da elegibilidade.",
   financeiro_baixa: "Baixa automática (provedor/conciliação): tolerância de valor e o que fazer com pagamento parcial.",
-  cobranca_canais: "Canais de cobrança: WhatsApp principal, e-mail complementar e envio conjunto.",
+  cobranca_canais: "Canais de cobrança: WhatsApp principal, e-mail complementar, envio conjunto e WhatsApp da 2ª via (portal do cliente).",
   regua_cobranca: "Régua de cobrança: marcos antes/depois do vencimento, canal e texto de cada um (desligada até ser ativada).",
   contas_a_pagar: "Contas a Pagar: categorias e centros de custo aceitos nos títulos.",
 };

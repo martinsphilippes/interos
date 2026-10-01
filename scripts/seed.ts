@@ -21,7 +21,7 @@ import { seedSupport } from "./seed/journey-support";
 import { seedWorkflowAndTasks } from "./seed/journey-workflow";
 import { seedEventsAndNotifications } from "./seed/journey-events";
 import { seedPerformance } from "./seed/journey-performance";
-import { seedAmendments, seedBoletos, seedCommissionEngine, seedDerived, seedPayablesGeneral } from "./seed/derived";
+import { seedAmendments, seedBoletos, seedCommissionEngine, seedDerived, seedPayablesGeneral, seedPortalLinks } from "./seed/derived";
 
 function elapsed(from: number): string {
   return `${((Date.now() - from) / 1000).toFixed(1)}s`;
@@ -81,6 +81,9 @@ async function main(): Promise<void> {
   console.log(`  ${"payables (motor)".padEnd(26)} ${String(commissions.payables).padStart(5)}  (${commissions.paid} pagos, ${commissions.scheduled - commissions.paid} a pagar, ${commissions.approved} aprovados · ${elapsed(tCommissions)})`);
   const boletos = await seedBoletos();
   console.log(`  ${"boletos (serviço)".padEnd(26)} ${String(boletos.registered.length).padStart(5)}  (registrados manualmente em cobranças abertas: ${boletos.registered.join(", ")})`);
+  const portal = await seedPortalLinks(boletos.registered);
+  total += portal.links;
+  console.log(`  ${"portal_links (serviço)".padEnd(26)} ${String(portal.links).padStart(5)}  (cliente ${portal.clientId ?? "—"}; só o hash do token é gravado)`);
   const amendments = await seedAmendments();
   total += amendments.applied.length;
   console.log(`  ${"aditivos (serviço)".padEnd(26)} ${String(amendments.applied.length).padStart(5)}  (${amendments.applied.join(", ") || "nenhum"} aplicado em ctr_028 → v${amendments.version ?? "?"})`);

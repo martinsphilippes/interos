@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 11 módulos, 65 telas, 129 seções e 236 ações (441 chaves únicas) — etapa 6B: + Relatório de Auditoria (ver e exportar)", () => {
+  it("tem 11 módulos, 65 telas, 130 seções e 238 ações (444 chaves únicas) — etapa 6B: + Relatório de Auditoria (ver e exportar) e Portal do cliente (ver, gerar, revogar)", () => {
     expect(MODULES.length).toBe(11);
     expect(SCREENS.length).toBe(65);
-    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(129);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(236);
-    expect(PERMISSION_KEYS.length).toBe(441);
+    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(130);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(238);
+    expect(PERMISSION_KEYS.length).toBe(444);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -201,8 +201,8 @@ describe("catálogo — cobertura de páginas", () => {
       .filter((s) => s && !/^\(.*\)$/.test(s))
       .join("/");
 
-  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (88 páginas)", () => {
-    expect(pages.length).toBe(88);
+  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (89 páginas — etapa 6B: + /portal/[token], pública isenta)", () => {
+    expect(pages.length).toBe(89);
     const exempt = new Set<string>(EXEMPTIONS.filter((e) => e.kind === "page").map((e) => e.target));
     const routes = new Set(SCREENS.flatMap((s) => [...s.routes, ...s.sections.flatMap((x) => x.routes ?? [])]));
     const missing = pages.filter((p) => !exempt.has(p) && !routes.has(toRoute(p)));

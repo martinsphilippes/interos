@@ -40,6 +40,10 @@ export interface FinanceCapabilities {
     /** Liberar com pendência (exceção ao gate; o setting permiteExcecaoGestor continua valendo). */
     releaseWithPendency: boolean;
     cancel: boolean;
+    /** Portal do cliente (D31): ver os links, gerar/enviar e revogar. */
+    portalView: boolean;
+    portalCreate: boolean;
+    portalRevoke: boolean;
   };
   billings: {
     /** Abrir a tela Cobranças (links "ver cobranças"). */
@@ -86,6 +90,9 @@ export const NO_FINANCE_CAPABILITIES: FinanceCapabilities = {
     release: false,
     releaseWithPendency: false,
     cancel: false,
+    portalView: false,
+    portalCreate: false,
+    portalRevoke: false,
   },
   billings: { view: false, boletoView: false, generate: false, boletoCreate: false, boletoSend: false, collect: false, pay: false, reverse: false, cancel: false },
 };

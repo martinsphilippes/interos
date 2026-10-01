@@ -210,6 +210,11 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     expect(differences(articleOps, legacy)).toEqual(exp);
   });
 
+  it("Portal do cliente (novo, D31: ver, gerar e revogar) ≡ módulo Financeiro ∧ canOperateFinance (quem opera o Financeiro)", () => {
+    const legacy = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") && legacyCanOperateFinance(u);
+    expect(differences(["financeiro.contratos.portal.ver", "financeiro.contratos.portal.gerar", "financeiro.contratos.portal.revogar"], legacy)).toEqual([]);
+  });
+
   it("relatório de Auditoria (novo, D29: ver e exportar) ≡ diretoria/administrador (isDirector)", () => {
     expect(differences(["gestao.relatorios.auditoria.ver", "gestao.relatorios.auditoria.exportar"], (u) => Boolean(u.isDirector))).toEqual([]);
   });

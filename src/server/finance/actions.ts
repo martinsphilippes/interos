@@ -368,9 +368,13 @@ export async function sendBillingMessageAction(input: unknown): Promise<ActionRe
     // Enviar boleto / 2ª via exige também a chave própria (checkedIn do catálogo).
     if (data.includeBoleto || secondCopy) await requirePermission("financeiro.cobrancas.boleto.enviar");
     const billing = await assertBillingAccess(user, data.billingId);
-    const result = await sendBillingMessage(data.billingId, { channel: data.channel, text: data.text, includeBoleto: data.includeBoleto, secondCopy }, actorOf(user));
+    // {linkPortal} no texto gera um link do portal só para quem pode gerar links (checkedIn do catálogo); sem a chave,
+    // o marcador some (a mensagem segue como antes).
+    const portalLink = can(user, "financeiro.contratos.portal.gerar");
+    const result = await sendBillingMessage(data.billingId, { channel: data.channel, text: data.text, includeBoleto: data.includeBoleto, secondCopy }, actorOf(user), { portalLink });
     revalidateFinance(billing.clientId, billing.contractId);
-    return { ok: true, data: result };
+    if (result.portalLinkId) revalidatePath(`/clientes/${billing.clientId}`);
+    return { ok: true, data: { results: result.results, contactName: result.contactName } };
   } catch (error) {
     return fail(error, "Não foi possível enviar a cobrança");
   }

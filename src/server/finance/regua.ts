@@ -249,14 +249,17 @@ export async function runBillingReminders(now: Date = new Date()): Promise<Regua
       continue;
     }
     const ctx = buildBillingMessageContext({ billing: t.billing, contract: t.contract, client, contacts: contacts.filter((c) => c.clientId === client.id), opportunity: t.contract.opportunityId ? (opps.get(t.contract.opportunityId) ?? null) : null });
-    const text = renderBillingTemplate(t.marco.template, ctx);
+    // {linkPortal}: WhatsApp/e-mail preservam o marcador (o envio gera um link novo, 30 dias); tarefa e notificação
+    // são internas (nada chega ao cliente) e ficam sem link.
+    const internalOnly = t.marco.canal === "tarefa" || t.marco.canal === "notificacao";
+    const text = renderBillingTemplate(t.marco.template, ctx, internalOnly ? { linkPortal: "" } : {});
     const assigneeId = t.contract.ownerId ?? financeManager?.id;
     const originLabel = `régua · ${t.marco.nome}`;
     try {
       let outcome: Record<string, unknown> = {};
       if (t.marco.canal === "whatsapp" || t.marco.canal === "email" || t.marco.canal === "whatsapp_email") {
         const channel = t.marco.canal === "whatsapp_email" ? "ambos" : t.marco.canal;
-        const { results } = await sendBillingMessage(t.billing.id, { channel, text }, SYSTEM_ACTOR, { id: reminderCommunicationId(t.billing.id, t.marco.id), whenNotConnected: "nao_enviada", templateKey: "regua", originLabel });
+        const { results, sentText } = await sendBillingMessage(t.billing.id, { channel, text }, SYSTEM_ACTOR, { id: reminderCommunicationId(t.billing.id, t.marco.id), whenNotConnected: "nao_enviada", templateKey: "regua", originLabel });
         const created = results.filter((r) => r.created);
         if (created.length === 0) {
           result.skippedExisting += 1;
@@ -272,7 +275,7 @@ export async function runBillingReminders(now: Date = new Date()): Promise<Regua
               // Canal não conectado (ou falha): o Financeiro envia pelo próprio aparelho — com o texto e o link prontos.
               const made = await ensureReminderTask(executed.tasks, {
                 title: reminderTaskTitle(t.marco, client, t.billing, "enviar"),
-                description: `${r.channel === "whatsapp" ? "WhatsApp" : "E-mail"} ${r.delivery === "falha" ? `com falha no envio (${r.error ?? "provedor"})` : "não conectado"}: envie pelo seu aparelho e registre.\n\nTexto:\n${text}${r.url ? `\n\nLink: ${r.url}` : `\n\nCliente sem ${r.channel === "whatsapp" ? "telefone" : "e-mail"} cadastrado.`}`,
+                description: `${r.channel === "whatsapp" ? "WhatsApp" : "E-mail"} ${r.delivery === "falha" ? `com falha no envio (${r.error ?? "provedor"})` : "não conectado"}: envie pelo seu aparelho e registre.\n\nTexto:\n${sentText}${r.url ? `\n\nLink: ${r.url}` : `\n\nCliente sem ${r.channel === "whatsapp" ? "telefone" : "e-mail"} cadastrado.`}`,
                 clientId: client.id,
                 assigneeId,
                 processId: reminderProcessId(t.billing.id),

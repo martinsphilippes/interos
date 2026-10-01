@@ -100,6 +100,11 @@ export const COLLECTIONS = {
    * servidor (regra `if false`); ausência de documento = regra padrão do catálogo.
    */
   permissionProfiles: "permission_profiles",
+  /**
+   * Links do Portal do Cliente (D31): id = sha256(token) em hex — o token (32 bytes base64url) só existe na criação e
+   * nunca é gravado. Somente servidor (regra `if false`).
+   */
+  portalLinks: "portal_links",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -804,6 +809,33 @@ export interface Billing extends BaseEntity {
   cancelledAt?: string;
   cancelledBy?: string;
   cancelReason?: string;
+}
+
+/**
+ * Link do Portal do Cliente (D31, etapa 6B): acesso somente leitura, sem login, aos contratos e cobranças de UM
+ * cliente. Id = sha256(token) em hex (64 caracteres); o token aparece uma única vez (tela que gerou ou mensagem
+ * enviada) e nunca é gravado, nem em claro nem cifrado. `origin`: "manual" (gerado pela tela, validade padrão 90 dias)
+ * ou "mensagem" (gerado no envio de uma mensagem com `{linkPortal}`, validade 30 dias). Escritas do portal: só
+ * `lastAccessAt`/`accessCount` (transação) e `lastAccessEventDay` (evento `portal.accessed` no máximo 1×/dia).
+ */
+export interface PortalLink extends BaseEntity {
+  clientId: string;
+  /** Contrato de onde o link foi gerado (informativo: o portal mostra todos os contratos do cliente). */
+  contractId?: string | null;
+  label?: string;
+  origin: "manual" | "mensagem";
+  /** Comunicação que levou o link (origem "mensagem"). */
+  communicationId?: string;
+  expiresAt: string;
+  revokedAt?: string;
+  revokedBy?: string;
+  revokeReason?: string;
+  createdBy: string;
+  createdByName?: string;
+  lastAccessAt?: string;
+  accessCount: number;
+  /** Dia (AAAA-MM-DD, São Paulo) do último evento `portal.accessed` — no máximo um por dia por link. */
+  lastAccessEventDay?: string;
 }
 
 /**

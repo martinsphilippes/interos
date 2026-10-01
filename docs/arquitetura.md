@@ -267,7 +267,7 @@ permissões são uma camada sobre ele; não há segundo sistema de usuários, de
 
 ### Catálogo (`src/domain/permissions/`, puro, um arquivo por módulo)
 - Hierarquia MÓDULO `<m>.acessar` → TELA `<m>.<tela>.ver` → SEÇÃO/ABA `<m>.<tela>.<secao>.ver` → AÇÃO
-  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 65 telas, 129 seções, 236 ações (441 chaves na união
+  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 65 telas, 130 seções, 238 ações (444 chaves na união
   literal `PermissionKey`). Rótulos de negócio em português em cada nó (a interface nunca mostra a chave técnica).
 - Cada nó tem uma **regra padrão** na DSL (`"all"`, `any`, `all`, `role`, `department`, `manager`, `director`,
   `managerOf`, `can`) que reproduz o comportamento anterior à etapa (teste T0 contra a cópia congelada dos predicados
@@ -447,6 +447,62 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   pela rota existente (PDF troca "→" por "->", fonte padrão). Acesso: seção `gestao.relatorios.auditoria.ver` e
   exportação `gestao.relatorios.auditoria.exportar` (padrão diretoria e administrador; ajustável por perfil/exceção);
   escopo da tela Relatórios aplicado pelo ator; quantias só com "Visualizar valores". Sem hash chain.
+
+## Portal do Cliente (D31, etapa 6B, `src/server/portal/*`, `src/app/portal/[token]`)
+- **Modelo**: coleção `portal_links` (regra `if false`, coberta em `scripts/test-rules.ts`). Id = **sha256 do token** em
+  hex (64); o token são 32 bytes aleatórios (`randomBytes`) em base64url (43 caracteres), devolvido **uma vez** por
+  `createPortalLink` e **nunca gravado** (nem em claro, nem cifrado). Campos: `clientId`, `contractId?` (de onde foi
+  gerado; o portal mostra o CLIENTE inteiro), `label?`, `origin` ("manual" | "mensagem"), `communicationId?`,
+  `expiresAt`, `revokedAt/revokedBy/revokeReason?`, `createdBy/createdByName`, `lastAccessAt?`, `accessCount`,
+  `lastAccessEventDay?`. Regras puras em `src/domain/portal.ts` (formato, validade 1–365 dias — padrão 90 na tela,
+  30 nas mensagens —, estado ativo/revogado/expirado, 1 evento de acesso por dia, `{linkPortal}`, máscara);
+  token/hash em `src/server/portal/token.ts`.
+- **Página pública** `src/app/portal/[token]/page.tsx`: fora de `(app)` (modelo `/csat`), `/portal` em `PUBLIC_PATHS`
+  do proxy, `dynamic = "force-dynamic"`, metadata `robots: noindex/nofollow` e `referrer: no-referrer`; `next.config.ts`
+  envia `Cache-Control: no-store, max-age=0`, `X-Robots-Tag: noindex, nofollow, noarchive` e `Referrer-Policy:
+  no-referrer` em `/portal/:path*` (conferido com `next build && next start`: `Cache-Control: no-store, max-age=0`; só o
+  `next dev` força `no-cache, must-revalidate` em toda página). Isenção
+  justificada no catálogo (`EXEMPTIONS`). Fluxo (`loadPortalForToken`): formato → hash → transação que confere o link
+  (existe, da organização, não revogado, não expirado) e grava SÓ `lastAccessAt`, `accessCount` e, no 1º acesso do dia
+  (São Paulo), `lastAccessEventDay` + evento `portal.accessed` (ator "Cliente (portal)"). Inexistente, revogado,
+  expirado, malformado ou falha técnica → a MESMA resposta "Link inválido ou expirado" (200, sem dados).
+- **Conteúdo** (`buildPortalContent`, puro, `src/server/portal/content.ts`): contratos do cliente não cancelados, não
+  vencidos e com documento gerado (ou liberados) — Resumo do contratado com `rows="client"` (sem venda, vendedor,
+  situação financeira interna, contato, observações) e, só se assinado por todos, o documento
+  (`components/finance/contract-document.tsx`, `audience="cliente"`: sem avisos internos, e-mails dos signatários, id do
+  envelope e motivo dos aditivos); cobranças não canceladas (em aberto/vencidas todas; pagas, as 12 mais recentes) com
+  tipo, parcela, competência, valor, vencimento, situação (aberta vencida = vencida, sem gravar) e pago em; linha
+  digitável/PDF/link de pagamento/PIX **só quando existem** na cobrança. Nenhum id interno sai (chaves posicionais
+  `c1`/`b1`). Sem boleto: botão "Solicitar 2ª via pelo WhatsApp" (wa.me do setting opcional
+  `cobranca_canais.whatsappCobranca`); sem número configurado, só um texto (nenhum botão sem ação). A página só lê com
+  `list/getById` (não usa `listBillingsSwept`, que grava vencidas).
+- **Ações internas** (`src/server/portal/actions.ts`): `createPortalLinkAction` e `sendPortalLinkAction`
+  (`financeiro.contratos.portal.gerar`), `revokePortalLinkAction` (`financeiro.contratos.portal.revogar`); escopo:
+  contrato informado → `assertContractAccess`; senão `assertClientContractsAccess` (o cliente precisa de ao menos um
+  contrato visível na tela Contratos). Seção `financeiro.contratos.portal.ver` (card) — as três com a regra de quem
+  opera o Financeiro (= `financeiro.contratos.editar`), ajustáveis por perfil/exceção. Card `PortalLinksCard` na página
+  do contrato e na aba Financeiro do Cliente 360: gerar (validade/rótulo; link exibido uma vez com Copiar/Abrir/Enviar
+  por WhatsApp ou e-mail via `sendOrRecord`, templateKey `portal_link`, entidade `portal_link`) e lista dos ativos
+  (rótulo, origem, criado por/em, expira, último acesso, nº de acessos) com "Revogar" (confirmação + motivo opcional).
+- **`{linkPortal}` nas mensagens — decisão**: como o token só existe na criação e não pode ser guardado (nem cifrado),
+  NÃO há "link ativo mais recente" reaproveitável. Cada envio cujo texto contém `{linkPortal}` gera um link NOVO
+  (`createMessagePortalLink`: origem "mensagem", **30 dias**, rótulo "Cobrança · Mensalidade 3" / "Régua · 7 dias antes
+  · …", `communicationId` da comunicação que o levou), listado na ficha com a origem e revogável. Motivos: o token nunca
+  persiste; cada link tem dono/rastro próprio (qual mensagem o levou) e validade curta; revogar um não derruba os
+  outros. Regras: `renderBillingTemplate` preserva o marcador (ou remove, com `linkPortal: ""` — tarefa/notificação da
+  régua, que não chegam ao cliente); `sendBillingMessage` só cria o link se algum canal pode entregar (conectado, ou
+  envio manual pela tela; régua sem canal conectado → sem link) e, na cobrança manual, só com
+  `financeiro.contratos.portal.gerar` (`checkedIn` em `sendBillingMessageAction`); falha ao gerar → a mensagem segue
+  sem o link (como antes); nenhum canal entregou → o link é revogado pelo sistema. Comunicação (`recordText` em
+  `sendOrRecord`), evento e tarefa gravam o texto com o link **mascarado** (`redactPortalUrl`); o wa.me/mailto com o
+  link real só volta à tela que enviou. verify.ts (v) acusa token em claro em qualquer texto gravado.
+- **URL absoluta**: `NEXT_PUBLIC_APP_URL` (configure em produção) → `VERCEL_PROJECT_PRODUCTION_URL` → cabeçalhos da
+  requisição (ação, página, cron). Fora de requisição e sem env, nenhum link de mensagem é gerado.
+- **Eventos**: `portal.link_created` (`changes` status → ativo e validade), `portal.link_revoked` (`changes` ativo →
+  revogado + `reason`), `portal.accessed` (1×/dia por link, `changes.lastAccessAt`) — rótulos, ícones, timeline do
+  cliente e relatório de Auditoria (entidade "Link do portal do cliente").
+- **Rate limit**: fica na infraestrutura (Vercel Firewall/WAF para `/portal/*`); o token de 256 bits torna adivinhação
+  inviável e cada acesso válido é contado.
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.

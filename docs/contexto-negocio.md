@@ -254,6 +254,24 @@ restringir quem registra churn.
   perfil em Administração › Usuários › Perfis e acessos (seção "Relatório de Auditoria" e "Exportar relatório de
   Auditoria"). Valores em dinheiro aparecem só para quem tem "Visualizar valores"; salário nunca aparece.
 
+## Portal do Cliente: como usar (etapa 6B)
+- **O que o cliente vê**: um endereço pessoal (sem login, somente leitura) com os contratos vigentes (resumo do
+  contratado e o contrato assinado), as cobranças em aberto, vencidas e as últimas pagas, e — quando registrados — a
+  linha digitável com botão Copiar, o PDF do boleto ou link de pagamento e o PIX copia-e-cola. Sem boleto registrado,
+  aparece "Solicitar 2ª via pelo WhatsApp" se o número estiver configurado em Configurações › Cobrança › "WhatsApp da
+  cobrança (2ª via no portal)". Nada interno aparece (vendedor, comissão, observações, responsável).
+- **Gerar e enviar** (Financeiro, gestores, diretoria e admin por padrão): na página do contrato ou na ficha do cliente
+  (aba Financeiro) › "Portal do cliente" › "Gerar link". Escolha a validade (padrão 90 dias) e um rótulo. O link aparece
+  **uma única vez**: copie ou envie na hora por WhatsApp ou e-mail (sem integração, abre o app com o texto pronto e
+  registra o envio). Depois disso só fica registrado que o link existe — perdeu, gere outro.
+- **Nas mensagens de cobrança e na régua**: use `{linkPortal}` no texto (na cobrança manual, botão "Incluir link do
+  portal"). Cada mensagem enviada leva um link novo, válido por 30 dias, que aparece na lista como "Enviado em
+  mensagem". Tarefas e notificações internas da régua não geram link.
+- **Acompanhar e revogar**: a lista mostra os links ativos com quem criou, quando expira, último acesso e quantos
+  acessos. "Revogar" (com motivo opcional) derruba o acesso na hora; link revogado, expirado ou errado mostra só "Link
+  inválido ou expirado". Geração, revogação e acessos (um registro por dia por link) entram na linha do tempo do cliente
+  e no relatório de Auditoria.
+
 ## Roadmap sugerido nos documentos (há duas versões, precisam ser conciliadas)
 Espec. Funcional: 1 Fundação (login, usuários, Meu Dia, tarefas, workflow, Cliente 360) ·
 2 Receita e atendimento · 3 Gestão e performance · 4 Escala e mobilidade.

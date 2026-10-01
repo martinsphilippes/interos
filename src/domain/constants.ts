@@ -442,6 +442,10 @@ export const EVENT_TYPES = [
   "permissions.blocked",
   // auditoria transversal (etapa 6B, D29)
   "contract.pendency_resolved",
+  // portal do cliente (etapa 6B, D31)
+  "portal.link_created",
+  "portal.link_revoked",
+  "portal.accessed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Ban, CircleDollarSign, FileText, Mail, MessageCircle, MoreHorizontal, Phone, Receipt, Send, Undo2 } from "lucide-react";
+import { Ban, CircleDollarSign, FileText, Link2, Mail, MessageCircle, MoreHorizontal, Phone, Receipt, Send, Undo2 } from "lucide-react";
 import type { Billing } from "@/domain/types";
 import { cancelBillingAction, getBillingContactAction, registerBillingCallAction, registerBoletoAction, registerPaymentAction, reversePaymentAction, sendBillingMessageAction } from "@/server/finance/actions";
 import type { BillingChannelResult, BillingContactInfo } from "@/server/finance/service";
@@ -261,6 +261,25 @@ export function BillingActions({ billing, compact, hideValues }: { billing: Bill
     );
     if (ok) close();
   };
+  // {linkPortal} (D31): o link do portal é gerado no servidor, no envio — o texto do wa.me/mailto manual só existe
+  // depois da action. Abre-se a janela no clique (bloqueio de pop-up) e ela recebe o endereço devolvido.
+  const withPortal = text.includes("{linkPortal}");
+  const sendWithPortal = async (ch: "whatsapp" | "email") => {
+    const win = ch === "whatsapp" ? window.open("about:blank", "_blank") : null;
+    let target: string | null = null;
+    const ok = await run(
+      () => sendBillingMessageAction({ billingId: billing.id, channel: ch, text, includeBoleto, secondCopy: mode === "segunda_via" }),
+      (d) => describeResults(d.results),
+      (d) => {
+        target = d.results.find((r) => r.channel === ch)?.url ?? null;
+      },
+    );
+    if (ok && target) {
+      if (win) win.location.replace(target);
+      else window.location.assign(target);
+    } else win?.close();
+    if (ok) close();
+  };
 
   const subject = contact?.emailSubject ?? "Cobrança — Intercert";
   const waLink = contact?.whatsappUrl ? whatsappWithText(contact.whatsappUrl, text) : null;
@@ -290,6 +309,12 @@ export function BillingActions({ billing, compact, hideValues }: { billing: Bill
       return (
         <Button key={ch} onClick={() => send(ch)} loading={pending} disabled={loadingContact || !text.trim()} className="h-11 md:h-9">
           <Icon /> Enviar por {label}
+        </Button>
+      );
+    if (withPortal)
+      return (
+        <Button key={ch} onClick={() => void sendWithPortal(ch)} loading={pending} disabled={loadingContact || !text.trim()} className="h-11 md:h-9">
+          <Icon /> Abrir {ch === "whatsapp" ? "WhatsApp" : "e-mail"} e registrar
         </Button>
       );
     const href = ch === "whatsapp" ? waLink : mailLink;
@@ -422,6 +447,17 @@ export function BillingActions({ billing, compact, hideValues }: { billing: Bill
             <FormField label={textLabel} htmlFor={`${id}-t`} required={mode === "cancelar" || mode === "estornar"}>
               <Textarea id={`${id}-t`} value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} rows={isMessage(mode) ? (includeBoleto ? 7 : 5) : 3} />
             </FormField>
+            {isMessage(mode) && contact && access.contracts.portalCreate ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                {withPortal ? (
+                  <span data-testid="portal-placeholder-hint">{"{linkPortal}"} vira um link novo do portal do cliente (válido por 30 dias), gerado no envio; o registro guarda o link mascarado.</span>
+                ) : (
+                  <Button type="button" variant="ghost" size="sm" className="h-10 md:h-8" onClick={() => setText((t) => `${t.trim()}\n{linkPortal}`)}>
+                    <Link2 /> Incluir link do portal
+                  </Button>
+                )}
+              </div>
+            ) : null}
             {mode === "ligar" && contact?.telUrl ? (
               <Button asChild variant="outline" className="h-11 md:h-9">
                 <a href={contact.telUrl}>

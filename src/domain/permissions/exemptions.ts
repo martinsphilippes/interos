@@ -49,6 +49,12 @@ export const EXEMPTIONS = [
     reason: "Pesquisa CSAT do cliente, protegida por token HMAC ?t= (csat/[ticketId]/page.tsx:39-59; support/service.ts:194-204). Recomendação: segredo dedicado obrigatório em produção (hoje cai em 'dev-only-secret' sem SESSION_COOKIE_SECRET, service.ts:195) e token mais longo.",
   },
   {
+    target: "src/app/portal/[token]/page.tsx",
+    kind: "page",
+    // Etapa 6B (D31): token do portal (32 bytes base64url; id = sha256)
+    reason: "Portal do Cliente (público, sem login): protegido pelo token de 256 bits da URL (só o hash é gravado em portal_links), revogável e com validade; somente leitura (as únicas escritas são lastAccessAt/accessCount e o evento portal.accessed 1×/dia). Inexistente, revogado e expirado têm a mesma resposta genérica; no-store e noindex. Rate limit na infraestrutura (Vercel).",
+  },
+  {
     target: "src/server/search/actions.ts#searchGlobal",
     kind: "action",
     // Hoje: requireUser (search/actions.ts:13); 'automacao' só role admin (l.16)

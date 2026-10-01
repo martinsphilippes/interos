@@ -10,9 +10,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { deleteDoc, doc, getDoc, setDoc, setLogLevel, updateDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, setLogLevel, updateDoc } from "firebase/firestore";
 
 const PROJECT_ID = "interos-rules-test";
+/** Id de um link do portal: sha256 do token em hex (64 caracteres). */
+const PORTAL_LINK_ID = "a".repeat(64);
 const [host, portText] = (process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080").split(":");
 const port = Number(portText);
 
@@ -46,6 +48,7 @@ async function main(): Promise<void> {
       await setDoc(doc(db, "users/alice"), { name: "Alice", role: "vendas", active: true, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
       await setDoc(doc(db, "users/bob"), { name: "Bob", role: "admin", active: true, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
       await setDoc(doc(db, "permission_profiles/role_vendas"), { grants: {}, scopes: {}, organizationId: "intercert" });
+      await setDoc(doc(db, `portal_links/${PORTAL_LINK_ID}`), { clientId: "client_001", origin: "manual", expiresAt: "2099-01-01T00:00:00.000Z", accessCount: 0, createdBy: "bob", organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
     });
 
     const alice = env.authenticatedContext("alice").firestore();
@@ -70,6 +73,18 @@ async function main(): Promise<void> {
     await runCase(results, "usuário autenticado NÃO grava permission_profiles", () =>
       assertFails(setDoc(doc(alice, "permission_profiles/user_alice"), { grants: { "financeiro.acessar": true } })),
     );
+    // Portal do Cliente (D31): nem o visitante sem login (o portal é público) nem um usuário do sistema leem, listam,
+    // criam, renovam ou revogam links pelo SDK cliente — tudo passa pelo servidor.
+    await runCase(results, "visitante sem login NÃO lê portal_links/{hash}", () => assertFails(getDoc(doc(anonymous, `portal_links/${PORTAL_LINK_ID}`))));
+    await runCase(results, "visitante sem login NÃO lista portal_links", () => assertFails(getDocs(collection(anonymous, "portal_links"))));
+    await runCase(results, "usuário autenticado NÃO lê portal_links/{hash}", () => assertFails(getDoc(doc(alice, `portal_links/${PORTAL_LINK_ID}`))));
+    await runCase(results, "usuário autenticado NÃO cria portal_links", () =>
+      assertFails(setDoc(doc(alice, `portal_links/${"b".repeat(64)}`), { clientId: "client_001", origin: "manual", expiresAt: "2099-01-01T00:00:00.000Z", accessCount: 0, organizationId: "intercert" })),
+    );
+    await runCase(results, "visitante sem login NÃO estende a validade nem conta acessos (update)", () =>
+      assertFails(updateDoc(doc(anonymous, `portal_links/${PORTAL_LINK_ID}`), { expiresAt: "2199-01-01T00:00:00.000Z", accessCount: 99 })),
+    );
+    await runCase(results, "usuário autenticado NÃO revoga nem apaga portal_links", () => assertFails(deleteDoc(doc(alice, `portal_links/${PORTAL_LINK_ID}`))));
     await runCase(results, "coleção sem regra explícita continua negada (negação padrão)", () => assertFails(getDoc(doc(alice, "settings/qualquer"))));
 
     for (const r of results) console.log(`${r.ok ? "OK  " : "FALHA"} ${r.name}${r.detail ? ` — ${r.detail}` : ""}`);

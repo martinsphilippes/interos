@@ -55,6 +55,11 @@ service cloud.firestore {
     match /permission_profiles/{docId} {
       allow read, write: if false;
     }
+    // Links do Portal do Cliente (hash do token, cliente, validade, revogação, acessos): só pelo servidor. O portal
+    // público (/portal/[token]) lê pelo Admin SDK; nenhum cliente do Firebase lê, lista ou grava esta coleção.
+    match /portal_links/{docId} {
+      allow read, write: if false;
+    }
 
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {

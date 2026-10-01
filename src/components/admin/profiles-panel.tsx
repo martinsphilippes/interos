@@ -103,10 +103,12 @@ function ProfileEditor({ profile, catalog, canManage, denyLocked }: { profile: R
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [confirmReset, setConfirmReset] = React.useState(false);
+  const [confirmSave, setConfirmSave] = React.useState(false);
   const readOnly = !canManage;
 
   const adjustments = Object.keys(grants).length + Object.keys(scopes).length;
   const dirty = !sameAdjustments(grants, profile.grants) || !sameAdjustments(scopes, profile.scopes);
+  const pendingChanges = countChanges(grants, profile.grants) + countChanges(scopes, profile.scopes);
 
   const onGrantChange = React.useCallback((key: string, value: boolean | undefined) => {
     setGrants((prev) => {
@@ -125,20 +127,22 @@ function ProfileEditor({ profile, catalog, canManage, denyLocked }: { profile: R
     });
   }, []);
 
-  const save = () => {
-    setError(null);
-    startTransition(async () => {
-      const result = await savePermissionProfile({ role: profile.role, grants, scopes, reason: reason || undefined });
-      if (!result.ok) {
-        setError(result.error);
-        toast.error(result.error);
-        return;
-      }
-      toast.success(result.data.changes ? `Perfil ${profile.label} salvo (${result.data.changes} alteração(ões))` : "Nada mudou");
-      setReason("");
-      router.refresh();
+  const save = () =>
+    new Promise<void>((resolve) => {
+      setError(null);
+      startTransition(async () => {
+        const result = await savePermissionProfile({ role: profile.role, grants, scopes, reason: reason || undefined });
+        resolve();
+        if (!result.ok) {
+          setError(result.error);
+          toast.error(result.error);
+          return;
+        }
+        toast.success(result.data.changes ? `Perfil ${profile.label} salvo (${result.data.changes} alteração(ões))` : "Nada mudou");
+        setReason("");
+        router.refresh();
+      });
     });
-  };
 
   return (
     <Card>
@@ -189,13 +193,19 @@ function ProfileEditor({ profile, catalog, canManage, denyLocked }: { profile: R
           denyLocked={denyLocked}
         />
         {!readOnly ? (
-          <div className="flex flex-col gap-3 border-t border-border pt-4 md:flex-row md:items-end">
-            <FormField label="Motivo (opcional)" htmlFor={`pf-reason-${profile.role}`} hint="Fica registrado no histórico de acesso." className="md:flex-1">
-              <Input id={`pf-reason-${profile.role}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Ex.: financeiro passa a aprovar títulos" />
-            </FormField>
-            <Button type="button" onClick={save} loading={pending} disabled={!dirty}>
-              <Save /> Salvar perfil
-            </Button>
+          <div className="flex flex-col gap-3 border-t border-border pt-4">
+            {/* O perfil editado fica explícito junto ao botão: a tela abre em Vendas e salvar no perfil errado muda o acesso de outra equipe. */}
+            <p data-testid="pf-editing" className="rounded-lg border border-brand/40 bg-brand-soft px-3 py-2 text-sm">
+              Você está editando o perfil <strong>{profile.label}</strong> · vale para {usersLabel(profile.users)}
+            </p>
+            <div className="flex flex-col gap-3 md:flex-row md:items-end">
+              <FormField label="Motivo (opcional)" htmlFor={`pf-reason-${profile.role}`} hint="Fica registrado no histórico de acesso." className="md:flex-1">
+                <Input id={`pf-reason-${profile.role}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Ex.: financeiro passa a aprovar títulos" />
+              </FormField>
+              <Button type="button" onClick={() => setConfirmSave(true)} loading={pending} disabled={!dirty}>
+                <Save /> Salvar perfil
+              </Button>
+            </div>
           </div>
         ) : null}
         <FormError message={error} />
@@ -211,6 +221,31 @@ function ProfileEditor({ profile, catalog, canManage, denyLocked }: { profile: R
           setScopes({});
         }}
       />
+      <ConfirmDialog
+        open={confirmSave}
+        onOpenChange={setConfirmSave}
+        title={`Salvar alterações no perfil ${profile.label}?`}
+        description={
+          <>
+            {pendingChanges} alteração(ões) passam a valer agora para {usersLabel(profile.users)} com o papel <strong>{profile.label}</strong>, salvo exceções individuais. Confira se este é o perfil certo antes de
+            salvar.
+          </>
+        }
+        confirmLabel={`Salvar no perfil ${profile.label}`}
+        onConfirm={save}
+      />
     </Card>
   );
+}
+
+function usersLabel(count: number): string {
+  return count === 1 ? "1 usuário ativo" : `${count} usuários ativos`;
+}
+
+/** Quantas chaves mudam entre o rascunho e o perfil gravado (incluídas, alteradas e removidas). */
+function countChanges<T>(draft: Record<string, T>, saved: Record<string, T>): number {
+  const keys = new Set([...Object.keys(draft), ...Object.keys(saved)]);
+  let changes = 0;
+  for (const key of keys) if (draft[key] !== saved[key]) changes += 1;
+  return changes;
 }

@@ -65,6 +65,11 @@ export interface SendOrRecordInput {
   /** Assunto do e-mail (padrão "Intercert"). */
   subject?: string;
   text: string;
+  /**
+   * Texto GRAVADO na comunicação quando difere do enviado (ex.: o link do portal do cliente, que contém o token, sai
+   * mascarado do registro). Padrão: o próprio `text`.
+   */
+  recordText?: string;
   clientId?: string;
   contactId?: string;
   templateKey?: string;
@@ -126,7 +131,7 @@ export async function sendOrRecord(input: SendOrRecordInput): Promise<SendOrReco
     userId: input.actor.id,
     entityType: input.entity?.type,
     entityId: input.entity?.id,
-    body: input.text,
+    body: input.recordText ?? input.text,
     templateKey: input.templateKey,
     createdBy: input.actor.id,
     ...(input.extra ?? {}),
