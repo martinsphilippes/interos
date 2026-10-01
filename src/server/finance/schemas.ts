@@ -252,6 +252,8 @@ export const registerPaymentSchema = z.object({
   amount: z.number("Valor pago inválido").positive("Valor pago deve ser maior que zero").max(10_000_000, "Valor muito alto"),
   method: z.enum(PAYMENT_METHODS, { message: "Selecione a forma de pagamento" }),
   receiptUrl: z.union([z.literal(""), url]).optional(),
+  /** Conta financeira da baixa (etapa CP/CR 2): obrigatória na action manual (mensagem própria quando falta). */
+  accountId: z.string().trim().max(60, "Conta inválida").optional(),
 });
 /**
  * Entrada da baixa. `source`/`externalPaymentId`/`providerEventId`/`provider` NÃO vêm da tela (a action força

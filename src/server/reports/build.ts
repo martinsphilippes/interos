@@ -747,6 +747,8 @@ function auditHref(e: DomainEvent): string | undefined {
       return `/financeiro/cadastros?aba=categorias&item=${id}`;
     case "finance_registry":
       return "/financeiro/cadastros?aba=categorias";
+    case "cash_entry":
+      return typeof e.payload?.accountId === "string" ? `/financeiro/cadastros?aba=contas&conta=${e.payload.accountId}` : "/financeiro/cadastros?aba=contas";
     default:
       return e.clientId ? `/clientes/${e.clientId}?aba=timeline` : undefined;
   }

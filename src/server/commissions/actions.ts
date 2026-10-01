@@ -11,7 +11,8 @@ import { z } from "zod";
 import { PermissionError, can, failAction, requirePermission } from "@/server/auth/session";
 import { getById } from "@/server/db";
 import { COLLECTIONS, type ActionResult, type CommissionRule, type CurrentUser, type UserRef } from "@/domain/types";
-import { addPayableAttachment, approvePayable, cancelPayable, createManualPayable, payPayable, schedulePayable, updatePayable } from "./payables";
+import { addPayableAttachment, approvePayable, cancelPayable, createManualPayable, payPayable, schedulePayable, undoPayablePayment, updatePayable } from "./payables";
+import { requireManualPaymentAccount } from "@/server/finance-registry/cash-entries";
 import { getSupplier, saveSupplier, setSupplierActive } from "./suppliers";
 import { assertCommissionAccess, assertCreditorInScope, assertPayableAccess, isCommissionPayable } from "./access";
 import { ruleScope } from "./rules";
@@ -29,6 +30,7 @@ import {
   ruleActiveSchema,
   ruleInputSchema,
   schedulePayableSchema,
+  undoPayablePaymentSchema,
   updatePayableSchema,
   zodMessage,
 } from "./schemas";
@@ -201,11 +203,29 @@ export async function payPayableAction(input: unknown): Promise<ActionResult<{ c
     const user = await requirePermission("financeiro.contas-a-pagar.pagar");
     const data = payPayableSchema.parse(input);
     await assertPayableAccess(user, data.payableId);
-    const r = await payPayable(data.payableId, { paidAt: data.paidAt, paymentMethod: data.paymentMethod, receiptUrl: data.receiptUrl, notes: data.notes }, actorOf(user));
+    // Baixa manual: a conta financeira é obrigatória (vira o lançamento de despesa na mesma transação).
+    const accountId = await requireManualPaymentAccount(data.accountId);
+    const r = await payPayable(data.payableId, { paidAt: data.paidAt, paymentMethod: data.paymentMethod, receiptUrl: data.receiptUrl, notes: data.notes, accountId }, actorOf(user));
     revalidateCommissions();
+    revalidatePath("/financeiro/cadastros");
     return { ok: true, data: { commissions: r.commissionIds.length } };
   } catch (error) {
     return fail(error, "Não foi possível registrar o pagamento");
+  }
+}
+
+/** Desfazer pagamento (etapa CP/CR 2): título volta a "A pagar" e o lançamento de caixa é apagado junto. */
+export async function undoPayablePaymentAction(input: unknown): Promise<ActionResult<{ cashEntryRemoved: boolean }>> {
+  try {
+    const user = await requirePermission("financeiro.contas-a-pagar.desfazer-pagamento");
+    const data = undoPayablePaymentSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
+    const r = await undoPayablePayment(data.payableId, { reason: data.reason, paymentId: data.paymentId }, actorOf(user));
+    revalidateCommissions();
+    revalidatePath("/financeiro/cadastros");
+    return { ok: true, data: { cashEntryRemoved: Boolean(r.cashEntryId) } };
+  } catch (error) {
+    return fail(error, "Não foi possível desfazer o pagamento");
   }
 }
 

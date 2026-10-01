@@ -277,6 +277,17 @@ export const financeiroBaixaSchema = z.object({
   toleranciaValor: z.number("Tolerância inválida").min(0, "Tolerância não pode ser negativa").max(1000, "Tolerância muito alta"),
   /** Recebido abaixo da tolerância: registrar pendência (padrão) ou baixar mesmo assim com o valor recebido. */
   pagamentoParcialAutomatico: z.enum(["pendencia", "baixar"], { message: "Opção de pagamento parcial inválida" }),
+  /**
+   * Conta financeira (etapa CP/CR 2) onde entram as baixas AUTOMÁTICAS (provedor/conciliação): gera o lançamento de
+   * receita na mesma transação. Opcional: sem conta (ou conta arquivada) a baixa segue como antes, SEM lançamento, e a
+   * cobrança fica marcada "sem conta" para regularizar. A baixa manual sempre pede a conta na tela.
+   */
+  contaRecebimentoPadraoId: z
+    .string()
+    .trim()
+    .max(60, "Conta inválida")
+    .optional()
+    .transform((v) => (v ? v : undefined)),
 });
 export type FinanceiroBaixaConfig = z.infer<typeof financeiroBaixaSchema>;
 
@@ -506,7 +517,7 @@ export const SETTING_DEFAULTS: SettingValues = {
   "gamificacao.sequencia": { ...DEFAULT_STREAK },
   financeiro_alertas: { diasSemAssinatura: 3, horasPagoSemLiberacao: 24, diasLiberadoSemInicio: 3, horizonteCobrancasMeses: 3 },
   comissoes_pagamento: { diaPagamento: 10 },
-  financeiro_baixa: { toleranciaValor: 1, pagamentoParcialAutomatico: "pendencia" },
+  financeiro_baixa: { toleranciaValor: 1, pagamentoParcialAutomatico: "pendencia", contaRecebimentoPadraoId: undefined },
   cobranca_canais: { principal: "whatsapp", complementar: "email", enviarEmailJuntoAoWhatsapp: false, remetenteEmail: undefined, whatsappCobranca: undefined },
   regua_cobranca: { ativa: false, diasUteis: false, marcos: REGUA_DEFAULT_MARCOS.map((m) => ({ ...m })), pausarQuando: { pendencia: true, negociacao: true } },
   contas_a_pagar: { categorias: [...PAYABLE_DEFAULT_CATEGORIES], centrosDeCusto: ["Administrativo", "Comercial", "Operações", "Tecnologia"] },

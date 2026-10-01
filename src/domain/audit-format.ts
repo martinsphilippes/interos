@@ -138,6 +138,13 @@ export const CHANGE_FIELD_LABELS: Record<string, string> = {
   subcategoriesArchived: "Subcategorias arquivadas junto",
   centersCreated: "Centros de custo criados",
   categoriesCreated: "Categorias criadas",
+  // Baixas com conta e lançamentos de caixa (etapa CP/CR 2).
+  accountName: "Conta financeira",
+  entryType: "Tipo do lançamento",
+  paidBy: "Pago por",
+  paymentMethod: "Forma de pagamento",
+  receiptUrl: "Comprovante",
+  contaRecebimentoPadraoId: "Conta padrão de recebimento",
 };
 
 /** Campos que NUNCA aparecem em claro (defesa em profundidade: o serviço já grava mascarado). */

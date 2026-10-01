@@ -175,6 +175,8 @@ export interface PayableCapabilities {
   approveCommission: boolean;
   schedule: boolean;
   pay: boolean;
+  /** Desfazer pagamento (etapa CP/CR 2): título volta a "A pagar" e o lançamento de caixa é apagado. */
+  undoPayment: boolean;
   edit: boolean;
   attach: boolean;
   cancel: boolean;
@@ -200,6 +202,7 @@ export function payableCapabilities(user: CurrentUser): PayableCapabilities {
     approveCommission: can(user, "financeiro.comissoes.aprovar"),
     schedule,
     pay: can(user, "financeiro.contas-a-pagar.pagar"),
+    undoPayment: can(user, "financeiro.contas-a-pagar.desfazer-pagamento"),
     edit,
     attach,
     cancel,

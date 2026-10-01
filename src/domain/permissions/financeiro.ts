@@ -549,7 +549,9 @@ export const FINANCEIRO = {
           // canAccessModule(financeiro) && canOperateFinance (finance/schemas.ts:45-47); baixas por
           // webhook/conciliação são ator de sistema (finance/webhook.ts:24-44, finance/alerts.ts:82)
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
-          guards: ["src/server/finance/actions.ts#registerPaymentAction"],
+          // Etapa CP/CR 2: a baixa manual exige a conta financeira; listPaymentAccountsAction é a leitura das contas
+          // ativas do diálogo "Registrar pagamento" (billing-actions.tsx).
+          guards: ["src/server/finance/actions.ts#registerPaymentAction", "src/server/finance/actions.ts#listPaymentAccountsAction"],
           sensitive: true,
         },
         {
@@ -1038,6 +1040,18 @@ export const FINANCEIRO = {
           sensitive: true,
         },
         {
+          key: "financeiro.contas-a-pagar.desfazer-pagamento",
+          label: "Desfazer pagamento (volta a \"A pagar\" e apaga o lançamento de caixa)",
+          verb: "desfazer-pagamento",
+          // Ação NOVA (etapa CP/CR 2). Padrão = o mesmo de "Registrar pagamento" (pagar: diretoria ou gestor do
+          // Financeiro), porque desfaz exatamente o que ela grava. Título de comissão/bônus/estorno é recusado no serviço
+          // (estorno de comissão é o caminho).
+          rule: { any: [{ director: true }, { managerOf: "financeiro" }] },
+          guards: ["src/server/commissions/actions.ts#undoPayablePaymentAction"],
+          recordCondition: "título pago que não seja de comissão/bônus/estorno (payableUndoBlock)",
+          sensitive: true,
+        },
+        {
           key: "financeiro.contas-a-pagar.cancelar",
           label: "Cancelar título",
           verb: "cancelar",
@@ -1181,6 +1195,15 @@ export const FINANCEIRO = {
           verb: "arquivar",
           rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
           guards: ["src/server/finance-registry/actions.ts#setFinancialAccountArchivedAction"],
+        },
+        {
+          key: "financeiro.cadastros.contas.extrato",
+          label: "Ver extrato da conta (lançamentos de caixa, somente leitura)",
+          verb: "extrato",
+          // Ação NOVA (etapa CP/CR 2): leitura do extrato na aba Contas (?conta=<id>, getRegistryWorkspace). Padrão =
+          // a mesma regra das ações vizinhas da aba Contas; quantias sob "Visualizar valores" (Restrito).
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: [],
         },
         {
           key: "financeiro.cadastros.centros.criar",

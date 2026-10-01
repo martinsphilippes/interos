@@ -447,6 +447,7 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   cost_center: "Centro de custo",
   finance_category: "Categoria financeira",
   finance_registry: "Cadastros financeiros",
+  cash_entry: "Lançamento de caixa",
 };
 
 export const REPORT_GROUP_LABELS: Record<ReportDefinition["group"], string> = { departamental: "Relatórios departamentais", operacional: "Relatórios operacionais" };

@@ -462,6 +462,10 @@ export const EVENT_TYPES = [
   "finance_category.merged",
   "finance_category.bulk_updated",
   "finance_registry.imported",
+  // baixas com conta e lançamentos de caixa (etapa CP/CR 2)
+  "cash_entry.created",
+  "cash_entry.deleted",
+  "payable.payment_undone",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

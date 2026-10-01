@@ -12,6 +12,7 @@ import { getById } from "@/server/db";
 import { COLLECTIONS, type ActionResult, type CurrentUser, type UserRef } from "@/domain/types";
 import type { BillingContactInfo } from "./service";
 import { applyAmendment, cancelAmendment, createAmendment, registerAmendmentSignature, sendAmendmentForSignature } from "./amendments";
+import { listPaymentAccountOptions, requireManualPaymentAccount } from "@/server/finance-registry/cash-entries";
 import {
   addContractDocument,
   addSigner,
@@ -26,6 +27,7 @@ import {
   registerBillingCall,
   registerBoleto,
   registerPayment,
+  getPaymentSettings,
   registerPendency,
   releaseContract,
   removeSigner,
@@ -335,13 +337,32 @@ export async function registerPaymentAction(input: unknown): Promise<ActionResul
     const user = await requirePermission("financeiro.cobrancas.baixar");
     const data = registerPaymentSchema.parse(input);
     await assertBillingAccess(user, data.billingId);
+    // Baixa manual: a conta financeira é obrigatória (vira o lançamento de receita na mesma transação).
+    const accountId = await requireManualPaymentAccount(data.accountId);
     // Pela tela a origem é SEMPRE manual: provedor/conciliação só entram pelo webhook e pela varredura.
-    const paid = await registerPayment({ ...data, source: "manual" }, actorOf(user));
+    const paid = await registerPayment({ ...data, accountId, source: "manual" }, actorOf(user));
     revalidateFinance(paid.clientId, paid.contractId);
     revalidatePath("/vendas", "layout");
+    revalidatePath("/financeiro/cadastros");
     return { ok: true, data: undefined };
   } catch (error) {
     return fail(error, "Não foi possível registrar o pagamento");
+  }
+}
+
+/**
+ * Contas financeiras ativas para o diálogo "Registrar pagamento" (etapa CP/CR 2) + a conta padrão de recebimento
+ * (pré-selecionada quando configurada e ativa). Leitura da mesma chave da baixa.
+ */
+export async function listPaymentAccountsAction(input?: unknown): Promise<ActionResult<{ accounts: { value: string; label: string }[]; defaultAccountId?: string }>> {
+  try {
+    await requirePermission("financeiro.cobrancas.baixar");
+    z.object({}).optional().parse(input);
+    const [accounts, settings] = await Promise.all([listPaymentAccountOptions(), getPaymentSettings()]);
+    const defaultAccountId = settings.contaRecebimentoPadraoId && accounts.some((a) => a.value === settings.contaRecebimentoPadraoId) ? settings.contaRecebimentoPadraoId : undefined;
+    return { ok: true, data: { accounts, ...(defaultAccountId ? { defaultAccountId } : {}) } };
+  } catch (error) {
+    return fail(error, "Não foi possível carregar as contas financeiras");
   }
 }
 

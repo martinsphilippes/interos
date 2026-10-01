@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Archive,
+  ArrowLeftRight,
   ArchiveRestore,
   Download,
   Landmark,
@@ -150,6 +151,7 @@ const PREFIX_CATEGORY: Record<string, EventCategory> = {
   cost_center: "financeiro",
   finance_category: "financeiro",
   finance_registry: "financeiro",
+  cash_entry: "financeiro",
 };
 
 export function eventCategory(type: EventType | string): EventCategory {
@@ -250,6 +252,9 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "finance_category.merged": Merge,
   "finance_category.bulk_updated": Tags,
   "finance_registry.imported": Download,
+  "cash_entry.created": ArrowLeftRight,
+  "cash_entry.deleted": ArrowLeftRight,
+  "payable.payment_undone": Undo2,
 };
 
 export type EventTone = "success" | "warning" | "danger" | "info" | "brand" | "muted";
@@ -267,6 +272,8 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "commission.cancelled": "muted",
   "commission.reversed": "danger",
   "payable.cancelled": "muted",
+  "payable.payment_undone": "warning",
+  "cash_entry.deleted": "muted",
   "contract.sent_for_signature": "brand",
   "implementation.go_live": "success",
   "customer.activated": "success",

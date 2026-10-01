@@ -150,6 +150,8 @@ describe("T0 — ações e seções com predicado equivalente", () => {
   const financeManagerKeys = [
     "financeiro.contas-a-pagar.aprovar",
     "financeiro.contas-a-pagar.pagar",
+    // Etapa CP/CR 2 (nova): desfazer pagamento = mesma regra de pagar.
+    "financeiro.contas-a-pagar.desfazer-pagamento",
     "financeiro.comissoes.estornar",
     "financeiro.comissoes.bloquear",
     "financeiro.comissoes.desbloquear",
@@ -215,9 +217,10 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     expect(differences(["financeiro.contratos.portal.ver", "financeiro.contratos.portal.gerar", "financeiro.contratos.portal.revogar"], legacy)).toEqual([]);
   });
 
-  it("Cadastros financeiros (novo, etapa CP/CR 1: 12 ações) ≡ módulo Financeiro ∧ canOperatePayables (quem opera Contas a Pagar e Fornecedores)", () => {
+  it("Cadastros financeiros (novo, etapa CP/CR 1: 12 ações + etapa CP/CR 2: ver extrato) ≡ módulo Financeiro ∧ canOperatePayables (quem opera Contas a Pagar e Fornecedores)", () => {
     const keys = actionKeys("financeiro.cadastros");
-    expect(keys.length).toBe(12);
+    expect(keys.length).toBe(13);
+    expect(keys).toContain("financeiro.cadastros.contas.extrato");
     const legacy = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") && legacyCanOperatePayables(u);
     expect(differences(keys, legacy)).toEqual([]);
   });

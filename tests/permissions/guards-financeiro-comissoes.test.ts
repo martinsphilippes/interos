@@ -112,8 +112,9 @@ describe("actions de Comissões e Contas a Pagar: a primeira chave exigida é a 
   }
   const body = (name: string) => functions.find((f) => f.name === name)!.body;
 
-  it("todas as 16 funções exportadas têm dono e o exigem antes da validação, do escopo e do serviço", () => {
-    expect(functions.length).toBe(16);
+  // Etapa CP/CR 2: + undoPayablePaymentAction (desfazer pagamento).
+  it("todas as 17 funções exportadas têm dono e o exigem antes da validação, do escopo e do serviço", () => {
+    expect(functions.length).toBe(17);
     for (const fn of functions) {
       const keys = [...fn.body.matchAll(/requirePermission\("([^"]+)"\)/g)].map((m) => m[1]);
       expect(keys.length, fn.name).toBeGreaterThan(0);

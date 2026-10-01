@@ -171,6 +171,9 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "finance_category.merged": "Categorias financeiras mescladas",
   "finance_category.bulk_updated": "Categorias financeiras reorganizadas (em massa)",
   "finance_registry.imported": "Cadastros financeiros importados da configuração",
+  "cash_entry.created": "Lançamento de caixa registrado",
+  "cash_entry.deleted": "Lançamento de caixa apagado",
+  "payable.payment_undone": "Pagamento de título desfeito",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -225,6 +228,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   cost_center: "Financeiro",
   finance_category: "Financeiro",
   finance_registry: "Financeiro",
+  cash_entry: "Financeiro",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",

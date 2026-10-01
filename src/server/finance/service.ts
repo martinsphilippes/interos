@@ -32,6 +32,7 @@ import {
   COLLECTIONS,
   type Address,
   type Billing,
+  type CashEntry,
   type BillingBoleto,
   type BillingReversedPayment,
   type Client,
@@ -62,6 +63,8 @@ import { sendEmail } from "@/server/integrations/providers";
 import { isConnected } from "@/server/integrations/status";
 import { billingProviderConnected, getBillingProvider } from "@/server/integrations/billing-provider";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
+import { buildBillingCashEntry } from "@/domain/cash-entries";
+import { emitCashEntryEvent, newCashEntryId, txCreateCashEntry, txDeleteCashEntry, txReadCashEntry, txReadPaymentAccount } from "@/server/finance-registry/cash-entries";
 import { billingEmailSubject, billingLabel, boletoLines, defaultBillingMessage, hasBoletoData, loadBillingMessageContext } from "./billing-message";
 import { fillPortalLink, templateUsesPortalLink } from "@/domain/portal";
 import { attachPortalLinkCommunication, createMessagePortalLink, redactPortalUrl, revokePortalLink } from "@/server/portal/service";
@@ -1055,6 +1058,7 @@ export async function getPaymentSettings(): Promise<FinanceiroBaixaConfig> {
   return {
     toleranciaValor: Number.isFinite(tol) && tol >= 0 ? tol : SETTING_DEFAULTS.financeiro_baixa.toleranciaValor,
     pagamentoParcialAutomatico: value.pagamentoParcialAutomatico === "baixar" ? "baixar" : "pendencia",
+    contaRecebimentoPadraoId: typeof value.contaRecebimentoPadraoId === "string" && value.contaRecebimentoPadraoId.trim() ? value.contaRecebimentoPadraoId.trim() : undefined,
   };
 }
 
@@ -1080,6 +1084,10 @@ function paymentEventDocId(provider: string, eventId: string): string {
  * - valor recebido abaixo de (valor da cobrança − tolerância do setting `financeiro_baixa`) NÃO baixa: grava
  *   `partialPaidAmount/partialPaidAt`, registra pendência no contrato (ou avisa o Financeiro quando o contrato já
  *   foi liberado) e devolve `partial: true` — salvo se o setting mandar "baixar".
+ * Conta e lançamento de caixa (etapa CP/CR 2): com conta (`accountId`; na baixa automática sem conta informada, a conta
+ * padrão `financeiro_baixa.contaRecebimentoPadraoId`), a MESMA transação grava `paymentAccountId`/`cashEntryId` na
+ * cobrança e o lançamento de RECEITA. Baixa automática sem conta padrão (ou com a padrão arquivada) segue como antes,
+ * SEM lançamento — não bloqueia o recebimento — e fica "sem conta" para regularizar. A action manual exige a conta.
  */
 export async function registerPayment(input: RegisterPaymentInput, actor: UserRef): Promise<PaidBillingResult> {
   const source: PaymentSource = input.source ?? "manual";
@@ -1126,9 +1134,15 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
     }
   }
 
+  // Conta da baixa: a informada; na automática sem conta, a padrão do setting (pode não haver).
+  const accountId = input.accountId?.trim() || (automatic ? (await getPaymentSettings()).contaRecebimentoPadraoId : undefined);
+  const cashEntryId = accountId ? newCashEntryId() : undefined;
+  const client = accountId ? await loadClient(billing.clientId) : null;
+  const label = `${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""}`;
+
   // 3. Baixa em transação: o status é conferido dentro dela.
   const ref = col(COLLECTIONS.billing).doc(billing.id);
-  let outcome: { already: true; current: Billing } | { already: false; before: Billing; after: Billing };
+  let outcome: { already: true; current: Billing } | { already: false; before: Billing; after: Billing; cashEntry?: CashEntry; accountName?: string };
   try {
     outcome = await firestore.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
@@ -1139,6 +1153,9 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
         throw new Error("Esta cobrança já está paga");
       }
       if (current.status === "cancelada") throw new Error("Cobrança cancelada não recebe pagamento");
+      // Conta lida na transação (antes das escritas). Automática: conta padrão inválida = sem lançamento (não bloqueia).
+      const account = accountId ? await txReadPaymentAccount(tx, accountId, { optional: automatic }) : null;
+      const draft = account && client ? buildBillingCashEntry(current, { description: `${label} · contrato ${contract.number} · ${client.tradeName}`, clientName: client.tradeName }, { date: paidAt.slice(0, 10), amount, accountId: account.id, actor }) : null;
       const patch: Record<string, unknown> = stripUndefined({
         status: "paga",
         paidAt,
@@ -1147,6 +1164,8 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
         paymentSource: source,
         externalPaymentId: automatic ? input.externalPaymentId : undefined,
         chargeStatus: current.chargeStatus ? "pago" : undefined,
+        paymentAccountId: draft ? account!.id : undefined,
+        cashEntryId: draft ? cashEntryId : undefined,
         updatedAt: nowIso(),
       });
       if (current.partialPaidAmount !== undefined) {
@@ -1154,12 +1173,13 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
         patch.partialPaidAt = FieldValue.delete();
       }
       tx.update(ref, patch);
+      const cashEntry = draft && cashEntryId ? txCreateCashEntry(tx, cashEntryId, draft) : undefined;
       const after = { ...current } as Record<string, unknown>;
       for (const [k, v] of Object.entries(patch)) {
         if (v instanceof FieldValue) delete after[k];
         else after[k] = v;
       }
-      return { already: false as const, before: current, after: after as unknown as Billing };
+      return { already: false as const, before: current, after: after as unknown as Billing, cashEntry, accountName: account?.name };
     });
   } catch (error) {
     await finishEvent("erro", error instanceof Error ? error.message : String(error), billing.id);
@@ -1169,7 +1189,7 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
     await finishEvent("ja_processado", "Cobrança já paga com o mesmo pagamento do provedor", billing.id);
     return { ...outcome.current, alreadyProcessed: true };
   }
-  const { before, after } = outcome;
+  const { before, after, cashEntry, accountName } = outcome;
 
   // 4. Comprovante (fora da transação: nunca fica órfão de uma baixa que falhou).
   let receiptDocumentId: string | undefined;
@@ -1199,10 +1219,11 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
     clientId: billing.clientId,
     entity: { type: "billing", id: billing.id },
     title: `Pagamento registrado: ${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(amount)}`,
-    description: `Contrato ${contract.number} · ${input.method.toUpperCase()} · pago em ${formatDate(paidAt)}${amount !== billing.amount ? ` (valor da cobrança ${formatCurrency(billing.amount)})` : ""} · ${sourceLabel}`,
+    description: `Contrato ${contract.number} · ${input.method.toUpperCase()} · pago em ${formatDate(paidAt)}${amount !== billing.amount ? ` (valor da cobrança ${formatCurrency(billing.amount)})` : ""} · ${sourceLabel}${cashEntry ? ` · conta ${accountName ?? cashEntry.accountId}` : automatic ? " · sem conta financeira (sem lançamento de caixa)" : ""}`,
     department: "financeiro",
-    payload: { billingId: billing.id, contractId: contract.id, clientId: billing.clientId, type: billing.type, installment: billing.installment ?? null, amount, source, externalPaymentId: input.externalPaymentId ?? null, providerEventId: input.providerEventId ?? null, ...audit },
+    payload: { billingId: billing.id, contractId: contract.id, clientId: billing.clientId, type: billing.type, installment: billing.installment ?? null, amount, source, externalPaymentId: input.externalPaymentId ?? null, providerEventId: input.providerEventId ?? null, accountId: cashEntry?.accountId ?? null, cashEntryId: cashEntry?.id ?? null, ...audit },
   });
+  if (cashEntry) await emitCashEntryEvent("cash_entry.created", actor, cashEntry, { accountName });
   await finishEvent("processado", undefined, billing.id);
 
   // Atualiza o status do contrato (ex.: aguardando pagamento → pago).
@@ -1299,11 +1320,13 @@ export async function reversePayment(input: { billingId: string; reason: string 
   const ref = col(COLLECTIONS.billing).doc(billing.id);
   const today = todayKey();
   const reversedAt = nowIso();
-  const { before, after } = await firestore.runTransaction(async (tx) => {
+  const { before, after, cashEntry } = await firestore.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new Error("Cobrança não encontrada");
     const current = { ...(snap.data() as Omit<Billing, "id">), id: billing.id } as Billing;
     if (current.status !== "paga") throw new Error("Só cobrança paga pode ter o pagamento estornado");
+    // Lançamento de caixa da baixa (etapa CP/CR 2): lido antes das escritas e apagado na mesma transação.
+    const cashEntry = current.cashEntryId ? await txReadCashEntry(tx, current.cashEntryId) : null;
     const status: Billing["status"] = dateKey(current.dueDate) < today ? "vencida" : "aberta";
     const entry: BillingReversedPayment = stripUndefined({
       paidAt: current.paidAt ?? reversedAt,
@@ -1315,6 +1338,8 @@ export async function reversePayment(input: { billingId: string; reason: string 
       reversedAt,
       reversedBy: actor.id,
       reason,
+      accountId: current.paymentAccountId,
+      cashEntryId: current.cashEntryId,
     });
     const patch: Record<string, unknown> = {
       status,
@@ -1326,14 +1351,17 @@ export async function reversePayment(input: { billingId: string; reason: string 
       externalPaymentId: FieldValue.delete(),
       updatedAt: reversedAt,
     };
+    if (current.paymentAccountId !== undefined) patch.paymentAccountId = FieldValue.delete();
+    if (current.cashEntryId !== undefined) patch.cashEntryId = FieldValue.delete();
     if (current.chargeStatus === "pago") patch.chargeStatus = status === "vencida" ? "vencido" : "pendente";
     tx.update(ref, patch);
+    if (cashEntry) txDeleteCashEntry(tx, cashEntry.id);
     const next = { ...current } as Record<string, unknown>;
     for (const [k, v] of Object.entries(patch)) {
       if (v instanceof FieldValue) delete next[k];
       else next[k] = v;
     }
-    return { before: current, after: next as unknown as Billing };
+    return { before: current, after: next as unknown as Billing, cashEntry };
   });
   const label = `${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""}`;
   const audit = auditChanges<Billing>(before, after, ["status", "paidAt", "paidAmount"], reason);
@@ -1345,8 +1373,9 @@ export async function reversePayment(input: { billingId: string; reason: string 
     title: `Pagamento estornado: ${label} de ${formatCurrency(before.paidAmount ?? before.amount)}`,
     description: `${reason} · contrato ${contract.number} · cobrança volta a ${after.status === "vencida" ? "vencida" : "em aberto"} (pago em ${formatDate(before.paidAt)})`,
     department: "financeiro",
-    payload: { billingId: billing.id, contractId: contract.id, clientId: billing.clientId, type: billing.type, installment: billing.installment ?? null, amount: before.paidAmount ?? before.amount, previousPaidAt: before.paidAt ?? null, source: before.paymentSource ?? "manual", contractStatus: contract.status, ...audit },
+    payload: { billingId: billing.id, contractId: contract.id, clientId: billing.clientId, type: billing.type, installment: billing.installment ?? null, amount: before.paidAmount ?? before.amount, previousPaidAt: before.paidAt ?? null, source: before.paymentSource ?? "manual", contractStatus: contract.status, cashEntryId: cashEntry?.id ?? null, ...audit },
   });
+  if (cashEntry) await emitCashEntryEvent("cash_entry.deleted", actor, cashEntry, { reason: `Pagamento estornado (${label}): ${reason}` });
 
   if (contract.status === "liberado") {
     const [client, financeManager] = await Promise.all([loadClient(contract.clientId), getDepartmentManager("financeiro")]);

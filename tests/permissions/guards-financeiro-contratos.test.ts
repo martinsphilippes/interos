@@ -75,8 +75,9 @@ describe("actions do Financeiro: a primeira chave exigida é a dona no catálogo
   const owners = new Map<string, string>();
   for (const s of SCREENS) for (const a of s.actions) for (const g of a.guards) if (g.startsWith(`${ACTIONS_FILE}#`)) owners.set(g.split("#")[1].split("?")[0], a.key);
 
-  it("todas as 30 funções exportadas têm dono e o exigem antes de qualquer leitura", () => {
-    expect(functions.length).toBe(30);
+  // Etapa CP/CR 2: + listPaymentAccountsAction (leitura das contas do diálogo de baixa, dona = financeiro.cobrancas.baixar).
+  it("todas as 31 funções exportadas têm dono e o exigem antes de qualquer leitura", () => {
+    expect(functions.length).toBe(31);
     for (const fn of functions) {
       const first = fn.body.match(/requirePermission\("([^"]+)"\)/);
       expect(first?.[1], fn.name).toBe(owners.get(fn.name));
@@ -98,7 +99,8 @@ describe("actions do Financeiro: a primeira chave exigida é a dona no catálogo
   });
 
   it("actions sobre um registro conferem o escopo (contrato, aditivo ou cobrança)", () => {
-    const unscoped = ["createManualContractAction"];
+    // listPaymentAccountsAction não é sobre um registro (lista as contas financeiras ativas para escolher na baixa).
+    const unscoped = ["createManualContractAction", "listPaymentAccountsAction"];
     for (const fn of functions) {
       if (unscoped.includes(fn.name)) continue;
       expect(/assert(Contract|Amendment|Billing|OpportunityContract)Access\(user/.test(fn.body), fn.name).toBe(true);

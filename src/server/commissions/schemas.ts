@@ -70,7 +70,11 @@ export const payPayableSchema = z.object({
   paymentMethod: z.enum(["pix", "transferencia", "boleto", "dinheiro", "folha"], { message: "Forma de pagamento inválida" }),
   receiptUrl: z.string().trim().url("Link do comprovante inválido").max(500).optional().or(z.literal("").transform(() => undefined)),
   notes: optionalText(500),
+  /** Conta financeira da baixa (etapa CP/CR 2): obrigatória na action manual (mensagem própria quando falta). */
+  accountId: optionalText(60),
 });
+/** Desfazer pagamento (etapa CP/CR 2): motivo obrigatório; sem `paymentId` desfaz a última baixa. */
+export const undoPayablePaymentSchema = z.object({ payableId: z.string().trim().min(1, "Título inválido"), reason, paymentId: optionalText(80) });
 export const cancelPayableSchema = z.object({ payableId: z.string().trim().min(1, "Título inválido"), reason });
 export const updatePayableSchema = z.object({
   payableId: z.string().trim().min(1, "Título inválido"),

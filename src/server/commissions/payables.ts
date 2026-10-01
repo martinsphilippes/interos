@@ -17,7 +17,10 @@ import { auditChanges, describeChanges } from "@/server/audit";
 import { dayInMonth } from "@/server/finance/billing";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import { COMMISSION_REVENUE_LABELS, PAYABLE_CATEGORIES, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
-import { COLLECTIONS, type Client, type Commission, type Document, type Payable, type PayableHistoryEntry, type PayableRecurrence, type PayableStatus, type Supplier, type User, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type CashEntry, type Client, type Commission, type Document, type FinancialAccount, type Payable, type PayableHistoryEntry, type PayablePayment, type PayableRecurrence, type PayableStatus, type Supplier, type User, type UserRef } from "@/domain/types";
+import { buildPayableCashEntry, payableUndoBlock, paymentToUndo } from "@/domain/cash-entries";
+import { BusinessError } from "@/server/auth/error-classes";
+import { emitCashEntryEvent, newCashEntryId, txCreateCashEntry, txDeleteCashEntry, txReadCashEntry, txReadPaymentAccount } from "@/server/finance-registry/cash-entries";
 import { assignPayableCode, cleanPatch, deleteField, historyEntry, SYSTEM_ACTOR, transitionCommission } from "./store";
 
 export async function getCommissionPaymentSettings(): Promise<ComissoesPagamentoConfig> {
@@ -126,7 +129,7 @@ async function transitionPayable(id: string, allowed: readonly PayableStatus[], 
   });
 }
 
-async function emitPayable(type: "payable.created" | "payable.approved" | "payable.scheduled" | "payable.paid" | "payable.cancelled" | "payable.updated", actor: UserRef, p: Payable, title: string, payload: Record<string, unknown>, description?: string) {
+async function emitPayable(type: "payable.created" | "payable.approved" | "payable.scheduled" | "payable.paid" | "payable.cancelled" | "payable.updated" | "payable.payment_undone", actor: UserRef, p: Payable, title: string, payload: Record<string, unknown>, description?: string) {
   await emitEvent({
     type,
     actor,
@@ -162,13 +165,26 @@ export interface PayPayableInput {
   paymentMethod: string;
   receiptUrl?: string;
   notes?: string;
+  /**
+   * Conta financeira da baixa (etapa CP/CR 2). Com conta: a baixa entra em `payments[]` e o lançamento de DESPESA é
+   * gravado na mesma transação. Opcional no serviço (seed e chamadores automáticos antigos seguem como antes, sem
+   * lançamento); a action manual exige (`requireManualPaymentAccount`).
+   */
+  accountId?: string;
 }
 
-/** Baixa do título + comissões pagas na mesma transação (commission.paid e payable.paid uma única vez). */
-export async function payPayable(id: string, input: PayPayableInput, actor: UserRef, options: { emit?: boolean; at?: string } = {}): Promise<{ payable: Payable; commissionIds: string[] }> {
+/**
+ * Baixa do título + comissões pagas na mesma transação (commission.paid e payable.paid uma única vez). Com conta, a
+ * mesma transação grava a baixa em `payments[]` (com o `transactionId`) e o lançamento de caixa (despesa = valor do
+ * título; baixa parcial chega na etapa 3). O que já era gravado (paidAt, paidBy, paymentMethod, receiptUrl, status
+ * pago, comissões pagas) continua igual.
+ */
+export async function payPayable(id: string, input: PayPayableInput, actor: UserRef, options: { emit?: boolean; at?: string } = {}): Promise<{ payable: Payable; commissionIds: string[]; cashEntry?: CashEntry }> {
   const paidAt = `${input.paidAt.slice(0, 10)}T12:00:00.000Z`;
   const at = options.at ?? nowIso();
   const ref = col(COLLECTIONS.payables).doc(id);
+  const accountId = input.accountId?.trim() || undefined;
+  const cashEntryId = accountId ? newCashEntryId() : undefined;
   const result = await firestore.runTransaction(async (tx) => {
     // Título de outra organização = inexistente (mesmo isolamento de getById).
     const snap = await txGetOwn(tx, ref);
@@ -177,9 +193,16 @@ export async function payPayable(id: string, input: PayPayableInput, actor: User
     if (before.status !== "aprovado" && before.status !== "a_pagar") throw new Error(before.status === "pago" ? "Este título já está pago" : "Aprove o título antes de pagar");
     const commissionRefs = (before.sourceIds.commissionIds ?? []).map((cid) => col(COLLECTIONS.commissions).doc(cid));
     const commissionSnaps = commissionRefs.length > 0 ? await tx.getAll(...commissionRefs) : [];
-    const entry = payableHistory(actor, `Pago (${input.paymentMethod})`, { from: before.status, to: "pago", reason: input.notes }, at);
-    const patch = cleanPatch({ status: "pago", paidAt, paidBy: actor.id, paymentMethod: input.paymentMethod, receiptUrl: input.receiptUrl, notes: input.notes ?? before.notes, updatedAt: nowIso(), history: [...(before.history ?? []), entry] });
+    // Conta lida na transação (antes das escritas): existe na organização e está ativa.
+    const account: FinancialAccount | null = accountId ? await txReadPaymentAccount(tx, accountId) : null;
+    const paymentId = cashEntryId ? `bx_${cashEntryId}` : undefined;
+    const draft = account && paymentId ? buildPayableCashEntry(before, paymentId, { date: paidAt.slice(0, 10), amount: before.amount, accountId: account.id, actor }) : null;
+    const payment: PayablePayment | undefined =
+      draft && paymentId && cashEntryId ? cleanPatch({ id: paymentId, date: paidAt.slice(0, 10), amount: before.amount, accountId: account!.id, transactionId: cashEntryId, method: input.paymentMethod, receiptUrl: input.receiptUrl, by: actor.id, byName: actor.name, at }) as unknown as PayablePayment : undefined;
+    const entry = payableHistory(actor, `Pago (${input.paymentMethod})${account ? ` · conta ${account.name}` : ""}`, { from: before.status, to: "pago", reason: input.notes }, at);
+    const patch = cleanPatch({ status: "pago", paidAt, paidBy: actor.id, paymentMethod: input.paymentMethod, receiptUrl: input.receiptUrl, notes: input.notes ?? before.notes, ...(payment ? { payments: [...(before.payments ?? []), payment] } : {}), updatedAt: nowIso(), history: [...(before.history ?? []), entry] });
     tx.update(ref, patch);
+    const cashEntry = draft && cashEntryId ? txCreateCashEntry(tx, cashEntryId, draft) : undefined;
     const paidCommissions: string[] = [];
     for (const cs of commissionSnaps) {
       const c = cs.data() as Commission | undefined;
@@ -187,12 +210,13 @@ export async function payPayable(id: string, input: PayPayableInput, actor: User
       tx.update(cs.ref, cleanPatch({ status: "paga", paidAt, updatedAt: nowIso(), history: [...(c.history ?? []), historyEntry(actor, "paga", "titulo_gerado", `Título ${code(before)} pago em ${formatDate(paidAt)}`, at)] }));
       paidCommissions.push(cs.id);
     }
-    return { before, after: { ...before, ...(patch as Partial<Payable>) }, paidCommissions };
+    return { before, after: { ...before, ...(patch as Partial<Payable>) }, paidCommissions, cashEntry, accountName: account?.name };
   });
-  const { before, after, paidCommissions } = result;
+  const { before, after, paidCommissions, cashEntry, accountName } = result;
   if (options.emit !== false) {
     const audit = auditChanges<Payable>(before, after, ["status", "paidAt", "paymentMethod", "receiptUrl"], input.notes);
-    await emitPayable("payable.paid", actor, after, `Título ${code(after)} pago: ${formatCurrency(after.amount)} para ${after.creditorName}`, { ...audit, paidCommissionIds: paidCommissions }, `${formatDate(paidAt)} · ${input.paymentMethod}${input.receiptUrl ? " · com comprovante" : ""}`);
+    await emitPayable("payable.paid", actor, after, `Título ${code(after)} pago: ${formatCurrency(after.amount)} para ${after.creditorName}`, { ...audit, paidCommissionIds: paidCommissions, accountId: cashEntry?.accountId ?? null, cashEntryId: cashEntry?.id ?? null }, `${formatDate(paidAt)} · ${input.paymentMethod}${accountName ? ` · conta ${accountName}` : ""}${input.receiptUrl ? " · com comprovante" : ""}`);
+    if (cashEntry) await emitCashEntryEvent("cash_entry.created", actor, cashEntry, { accountName });
     for (const cid of paidCommissions) {
       const c = await getById<Commission>(COLLECTIONS.commissions, cid);
       if (!c) continue;
@@ -209,7 +233,59 @@ export async function payPayable(id: string, input: PayPayableInput, actor: User
       });
     }
   }
-  return { payable: after, commissionIds: paidCommissions };
+  return { payable: after, commissionIds: paidCommissions, cashEntry };
+}
+
+/**
+ * Desfazer pagamento (etapa CP/CR 2): remove a baixa (a indicada ou a última), apaga o lançamento de caixa dela NA MESMA
+ * transação, volta o título para "A pagar" e limpa paidAt/paidBy (e a forma/comprovante da baixa desfeita), com motivo
+ * e auditoria. Título antigo sem `payments[]` também desfaz (não há lançamento a apagar). Título de comissão/bônus/
+ * estorno NÃO desfaz por aqui: o estorno da comissão é o caminho (não mexe no circuito de comissões).
+ */
+export async function undoPayablePayment(id: string, input: { reason: string; paymentId?: string }, actor: UserRef, options: { emit?: boolean } = {}): Promise<{ payable: Payable; cashEntryId?: string }> {
+  const reason = input.reason.trim();
+  if (reason.length < 5) throw new BusinessError("Descreva o motivo para desfazer o pagamento (mín. 5 caracteres)");
+  const ref = col(COLLECTIONS.payables).doc(id);
+  const result = await firestore.runTransaction(async (tx) => {
+    const snap = await txGetOwn(tx, ref);
+    if (!snap) throw new Error("Título não encontrado");
+    const before = { ...(snap.data() as Omit<Payable, "id">), id } as Payable;
+    const blocked = payableUndoBlock(before);
+    if (blocked) throw new BusinessError(blocked);
+    const payment = paymentToUndo(before.payments, input.paymentId);
+    if (input.paymentId && !payment) throw new BusinessError("Baixa não encontrada neste título");
+    const cashEntry = payment?.transactionId ? await txReadCashEntry(tx, payment.transactionId) : null;
+    const now = nowIso();
+    const remaining = (before.payments ?? []).filter((x) => x.id !== payment?.id);
+    const patch: Record<string, unknown> = {
+      status: "a_pagar",
+      paidAt: deleteField(),
+      paidBy: deleteField(),
+      paymentMethod: deleteField(),
+      receiptUrl: deleteField(),
+      ...(payment ? { payments: remaining.length ? remaining : deleteField() } : {}),
+      updatedAt: now,
+      history: [...(before.history ?? []), payableHistory(actor, `Pagamento desfeito${cashEntry ? " · lançamento de caixa apagado" : ""}`, { from: "pago", to: "a_pagar", reason }, now)],
+    };
+    tx.update(ref, patch);
+    if (cashEntry) txDeleteCashEntry(tx, cashEntry.id);
+    const after = { ...before, status: "a_pagar" } as Payable;
+    for (const k of ["paidAt", "paidBy", "paymentMethod", "receiptUrl"] as const) delete after[k];
+    if (payment) {
+      if (remaining.length) after.payments = remaining;
+      else delete after.payments;
+    }
+    after.history = patch.history as PayableHistoryEntry[];
+    return { before, after, cashEntry, payment };
+  });
+  const { before, after, cashEntry, payment } = result;
+  if (options.emit !== false) {
+    const audit = auditChanges<Payable>(before, after, ["status", "paidAt", "paymentMethod", "receiptUrl"], reason);
+    const account = cashEntry ? await getById<FinancialAccount>(COLLECTIONS.financialAccounts, cashEntry.accountId) : null;
+    await emitPayable("payable.payment_undone", actor, after, `Pagamento do título ${code(after)} desfeito (${formatCurrency(after.amount)})`, { ...audit, paymentId: payment?.id ?? null, cashEntryId: cashEntry?.id ?? null, accountId: cashEntry?.accountId ?? null }, `${reason}${cashEntry ? ` · lançamento de ${formatCurrency(cashEntry.amount)} apagado${account ? ` da conta ${account.name}` : ""}` : " · baixa antiga sem lançamento de caixa"}`);
+    if (cashEntry) await emitCashEntryEvent("cash_entry.deleted", actor, cashEntry, { accountName: account?.name, reason: `Pagamento do título ${code(after)} desfeito: ${reason}` });
+  }
+  return { payable: after, cashEntryId: cashEntry?.id };
 }
 
 /** Cancela o título (antes de pago). Comissões ligadas voltam para "Elegível" com o motivo (novo título sob demanda). */

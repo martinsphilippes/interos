@@ -70,6 +70,10 @@ service cloud.firestore {
     match /finance_categories/{docId} {
       allow read, write: if false;
     }
+    // Lançamentos de caixa (baixas com conta): só pelo servidor; nem leitura, nem criação/alteração/exclusão direta.
+    match /cash_entries/{docId} {
+      allow read, write: if false;
+    }
 
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {

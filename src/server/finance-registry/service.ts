@@ -30,7 +30,7 @@ import {
   type Check,
   type LegacyImportPlan,
 } from "@/domain/finance-registry";
-import { COLLECTIONS, type CostCenter, type FinanceCategory, type FinancialAccount, type Payable, type PayableHistoryEntry, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type CashEntry, type CostCenter, type FinanceCategory, type FinancialAccount, type Payable, type PayableHistoryEntry, type UserRef } from "@/domain/types";
 import type { CostCenterInput, FinanceCategoryInput, FinancialAccountInput } from "./schemas";
 
 type EmitOptions = { emit?: boolean };
@@ -59,12 +59,15 @@ export async function listFinanceCategories(): Promise<FinanceCategory[]> {
 }
 
 /**
- * Registros que usam categorias/centros pelos campos NOVOS. Hoje: títulos a pagar com `categoryId`/`costCenterId`
- * (gravados a partir da etapa 4). Lançamentos de caixa (etapa 2) entram aqui quando existirem.
+ * Registros que usam categorias/centros pelos campos NOVOS: títulos a pagar com `categoryId`/`costCenterId` (gravados
+ * a partir da etapa 4) e lançamentos de caixa (etapa 2, herdam a classificação do título na baixa).
  */
-export async function listCategoryReferences(): Promise<(CategoryReference & { kind: "payable"; id: string })[]> {
-  const payables = await list<Payable>(COLLECTIONS.payables);
-  return payables.filter((p) => p.categoryId || p.costCenterId).map((p) => ({ kind: "payable" as const, id: p.id, categoryId: p.categoryId, costCenterId: p.costCenterId }));
+export async function listCategoryReferences(): Promise<(CategoryReference & { kind: "payable" | "cash_entry"; id: string })[]> {
+  const [payables, entries] = await Promise.all([list<Payable>(COLLECTIONS.payables), list<CashEntry>(COLLECTIONS.cashEntries)]);
+  return [
+    ...payables.filter((p) => p.categoryId || p.costCenterId).map((p) => ({ kind: "payable" as const, id: p.id, categoryId: p.categoryId, costCenterId: p.costCenterId })),
+    ...entries.filter((e) => e.categoryId || e.costCenterId).map((e) => ({ kind: "cash_entry" as const, id: e.id, categoryId: e.categoryId, costCenterId: e.costCenterId })),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -355,12 +358,14 @@ export async function moveSubcategories(subcategoryIds: readonly string[], targe
 }
 
 /**
- * Mesclar `sourceId` em `targetId`: subcategorias da origem passam para a destino; títulos com `categoryId` da origem
- * passam para a destino (com linha no histórico do título); a origem é arquivada com `mergedIntoId`.
+ * Mesclar `sourceId` em `targetId`: subcategorias da origem passam para a destino; títulos e lançamentos de caixa com
+ * `categoryId` da origem passam para a destino (com linha no histórico do título); a origem é arquivada com `mergedIntoId`.
  */
 export async function mergeFinanceCategories(sourceId: string, targetId: string, reason: string, actor: UserRef): Promise<{ subcategories: number; records: number }> {
-  const [categories, payables] = await Promise.all([listFinanceCategories(), list<Payable>(COLLECTIONS.payables)]);
-  const refs = payables.map((p) => ({ categoryId: p.categoryId, costCenterId: p.costCenterId }));
+  const [categories, payables, entries] = await Promise.all([listFinanceCategories(), list<Payable>(COLLECTIONS.payables), list<CashEntry>(COLLECTIONS.cashEntries)]);
+  // Índices < payables.length = títulos; os seguintes = lançamentos de caixa.
+  const refs = [...payables.map((p) => ({ categoryId: p.categoryId, costCenterId: p.costCenterId })), ...entries.map((e) => ({ categoryId: e.categoryId, costCenterId: e.costCenterId }))];
+  const recordId = (i: number) => (i < payables.length ? payables[i].id : entries[i - payables.length].id);
   const plan = must(planMergeCategories(sourceId, targetId, categories, refs));
   const at = nowIso();
   const trimmed = reason.trim();
@@ -368,7 +373,11 @@ export async function mergeFinanceCategories(sourceId: string, targetId: string,
   await batchSet([
     { collection: COLLECTIONS.financeCategories, id: plan.source.id, data: { archived: true, archivedAt: at, archivedBy: actor.id, archiveReason: `Mesclada em ${plan.target.name}: ${trimmed}`, mergedIntoId: plan.target.id, updatedBy: actor.id, updatedAt: at }, merge: true },
     ...plan.movedSubcategories.map((m) => ({ collection: COLLECTIONS.financeCategories, id: m.id, data: { parentId: plan.target.id, updatedBy: actor.id, updatedAt: at }, merge: true })),
-    ...plan.reassignedRecords.map((i) => ({ collection: COLLECTIONS.payables, id: payables[i].id, data: { categoryId: plan.target.id, history: history(payables[i]), updatedAt: at }, merge: true })),
+    ...plan.reassignedRecords.map((i) =>
+      i < payables.length
+        ? { collection: COLLECTIONS.payables, id: payables[i].id, data: { categoryId: plan.target.id, history: history(payables[i]), updatedAt: at }, merge: true }
+        : { collection: COLLECTIONS.cashEntries, id: entries[i - payables.length].id, data: { categoryId: plan.target.id, updatedAt: at }, merge: true },
+    ),
   ]);
   const changes: AuditPayload["changes"] = { mergedInto: { from: null, to: plan.target.name }, archived: { from: false, to: true } };
   if (plan.movedSubcategories.length) changes.subcategoriesMoved = { from: null, to: plan.movedSubcategories.map((m) => m.name).join(", ") };
@@ -380,7 +389,7 @@ export async function mergeFinanceCategories(sourceId: string, targetId: string,
     title: `Categoria ${plan.source.name} mesclada em ${plan.target.name}`,
     description: [`${plan.movedSubcategories.length} subcategoria(s) e ${plan.reassignedRecords.length} título(s)/lançamento(s) transferidos`, trimmed].join(" · "),
     department: "financeiro",
-    payload: { sourceId: plan.source.id, targetId: plan.target.id, subcategoryIds: plan.movedSubcategories.map((m) => m.id), recordIds: plan.reassignedRecords.map((i) => payables[i].id), changes, reason: trimmed },
+    payload: { sourceId: plan.source.id, targetId: plan.target.id, subcategoryIds: plan.movedSubcategories.map((m) => m.id), recordIds: plan.reassignedRecords.map(recordId), changes, reason: trimmed },
     timeline: false,
   });
   return { subcategories: plan.movedSubcategories.length, records: plan.reassignedRecords.length };

@@ -28,6 +28,7 @@ import {
   type Contract,
   type CurrentUser,
   type DomainEvent,
+  type FinancialAccount,
   type Payable,
   type PayableHistoryEntry,
   type PayableStatus,
@@ -36,6 +37,8 @@ import {
 } from "@/domain/types";
 import { getCommissionPaymentSettings, getPayablesSettings, listPayableAttachments } from "./payables";
 import { listSuppliers } from "./suppliers";
+import { listPaymentAccountOptions } from "@/server/finance-registry/cash-entries";
+import { payableUndoBlock } from "@/domain/cash-entries";
 import { can } from "@/server/auth/permissions";
 import type { CommissionScope } from "./permissions";
 import {
@@ -661,6 +664,12 @@ export interface PayableDetail extends PayableRow {
   receiptUrl?: string;
   notes?: string;
   cancelReason?: string;
+  /** Baixas com conta (etapa CP/CR 2) com o nome da conta; vazio = baixa antiga sem conta/lançamento. */
+  payments: { id: string; date: string; amount: number; accountId: string; accountName: string; transactionId: string; method: string }[];
+  /** Conta prevista do título (pré-seleciona a conta na baixa). */
+  accountId?: string;
+  /** Desfazer pagamento bloqueado (título de comissão/bônus/estorno): a mensagem mostrada no lugar do botão. */
+  undoBlocked?: string;
   approvedBy?: string;
   approvedAt?: string;
   scheduledAt?: string;
@@ -690,6 +699,8 @@ export interface PayablesWorkspace {
   can: PayableCapabilities;
   users: Opt[];
   suppliers: Opt[];
+  /** Contas financeiras ativas para a baixa (etapa CP/CR 2; só para quem paga). */
+  accounts: Opt[];
   settings: { categorias: Opt[]; centrosDeCusto: string[] };
   cashFlow: { overdue: CashFlowMonth; months: CashFlowMonth[] };
 }
@@ -776,12 +787,13 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
   const links: TraceAccess = { suppliers: caps.suppliers, rules: can(viewer, "financeiro.comissoes.regras.ver"), commissions: can(viewer, "financeiro.comissoes.ver") };
   const selected = chosen ? await payableDetail(chosen, toRow(chosen), all, links) : null;
   // Lançamento manual: credores colaboradores dentro do escopo (empresa = todos os ativos).
-  const [users, suppliers, settings, cashFlow] = await Promise.all([
+  const [users, suppliers, settings, cashFlow, accounts] = await Promise.all([
     caps.create ? list<User>(COLLECTIONS.users).then((us) => us.filter((u) => u.active !== false && (full || vis.creditorIds!.has(u.id))).map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"))) : Promise.resolve([] as Opt[]),
     caps.create && full ? listSuppliers({ activeOnly: true }).then((ss) => ss.map((s) => ({ value: s.id, label: s.name }))) : Promise.resolve([] as Opt[]),
     getPayablesSettings(),
     // Fluxo de caixa: seção própria e só com escopo empresa (soma cobranças e títulos da empresa inteira).
     caps.cashFlow && full ? buildCashFlow(all, today) : Promise.resolve({ overdue: emptyCashMonth("atraso", "Em atraso"), months: [] }),
+    caps.pay ? listPaymentAccountOptions() : Promise.resolve([] as Opt[]),
   ]);
   const categories = Array.from(new Set([...settings.categorias, ...rowsAll.map((r) => r.category)])).map((c) => ({ value: c, label: payableCategoryLabel(c) })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   const costCenters = Array.from(new Set([...settings.centrosDeCusto, ...rowsAll.map((r) => r.costCenter).filter((c): c is string => Boolean(c))])).map((c) => ({ value: c, label: c })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
@@ -794,6 +806,7 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
     can: { ...caps, cashFlow: caps.cashFlow && full },
     users,
     suppliers,
+    accounts,
     settings: { categorias: settings.categoriasComRotulo.filter((c) => c.value !== "comissao_comercial" && c.value !== "estorno_comissao"), centrosDeCusto: settings.centrosDeCusto },
     cashFlow,
   };
@@ -837,13 +850,14 @@ interface TraceAccess {
 
 async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links: TraceAccess): Promise<PayableDetail> {
   const commissionId = p.sourceIds.commissionIds?.[0];
-  const [commission, contract, billing, events, approver, attachments] = await Promise.all([
+  const [commission, contract, billing, events, approver, attachments, paymentAccounts] = await Promise.all([
     commissionId ? getById<Commission>(COLLECTIONS.commissions, commissionId) : Promise.resolve(null),
     p.sourceIds.contractId ? getById<Contract>(COLLECTIONS.contracts, p.sourceIds.contractId) : Promise.resolve(null),
     p.sourceIds.billingId ? getById<Billing>(COLLECTIONS.billing, p.sourceIds.billingId) : Promise.resolve(null),
     list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", p.id]] }),
     p.approvedBy ? getById<User>(COLLECTIONS.users, p.approvedBy) : Promise.resolve(null),
     listPayableAttachments(p),
+    p.payments?.length ? getManyByIds<FinancialAccount>(COLLECTIONS.financialAccounts, p.payments.map((x) => x.accountId)) : Promise.resolve(new Map<string, FinancialAccount>()),
   ]);
   const trace: TraceLink[] = [];
   if (p.supplierId) trace.push({ key: "fornecedor", label: "Fornecedor", value: p.creditorName, href: links.suppliers ? `/financeiro/contas-a-pagar/fornecedores?fornecedor=${p.supplierId}` : undefined });
@@ -872,6 +886,9 @@ async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links:
     receiptUrl: p.receiptUrl,
     notes: p.notes,
     cancelReason: p.cancelReason,
+    payments: (p.payments ?? []).map((x) => ({ id: x.id, date: x.date, amount: x.amount, accountId: x.accountId, accountName: paymentAccounts.get(x.accountId)?.name ?? "Conta removida", transactionId: x.transactionId, method: x.method })),
+    accountId: p.accountId,
+    undoBlocked: p.status === "pago" ? (payableUndoBlock(p) ?? undefined) : undefined,
     approvedBy: approver?.name,
     approvedAt: p.approvedAt,
     scheduledAt: p.scheduledAt,
