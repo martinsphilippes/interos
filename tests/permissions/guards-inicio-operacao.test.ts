@@ -10,7 +10,7 @@ import { NODE_BY_KEY, type PermissionKey } from "@/domain/permissions";
 import { TASK_STATUS, type TaskStatus } from "@/domain/constants";
 import { computeDataScope, defaultScopeKind } from "@/server/auth/scope";
 import { asCurrentUser, ALL_USERS, SEED_DEPARTMENTS, SEED_USERS, SYNTHETIC_USERS, label, type FixtureUser } from "./fixtures";
-import { legacyIsFinanceTeam, legacyUser } from "./legacy";
+import { legacyCanAccessModule, legacyIsFinanceTeam, legacyUser } from "./legacy";
 
 // ---------------------------------------------------------------------------
 // Banco em memória (mesmo padrão de scope.test.ts)
@@ -119,16 +119,31 @@ describe("permissões padrão ≡ comportamento anterior", () => {
     }
   });
 
-  it("Meu Dia: financeiro ≡ isFinanceTeam; equipe e insights ≡ isManager; demais seções para todos", () => {
+  it("Meu Dia: financeiro ≡ isFinanceTeam; equipe e insights ≡ isManager; blocos exigem o módulo de origem; demais para todos", () => {
     for (const u of ALL_USERS) {
       const cu = asCurrentUser(u);
-      const { financeiro, equipe, insights, cobrancasVendas, ...rest } = meuDiaSections(cu);
-      expect(financeiro, label(u)).toBe(legacyIsFinanceTeam(legacyUser(u)));
+      const legacy = legacyUser(u);
+      const { financeiro, equipe, insights, cobrancasVendas, contratos, followups, visitas, ...rest } = meuDiaSections(cu);
+      // Bloco Financeiro: equipe financeira E acesso ao módulo (papel cs/marketing lotado no Financeiro não abre o módulo).
+      expect(financeiro, label(u)).toBe(legacyIsFinanceTeam(legacy) && legacyCanAccessModule(legacy, "financeiro"));
       expect(equipe, label(u)).toBe(cu.isManager);
       expect(insights, label(u)).toBe(cu.isManager);
-      expect(cobrancasVendas, label(u)).toBe(u.role === "vendas" || u.departmentId === "vendas" || cu.isManager);
+      // Cobranças dos clientes do vendedor: só para quem abre Contas a Receber (módulo Financeiro).
+      expect(cobrancasVendas, label(u)).toBe((u.role === "vendas" || u.departmentId === "vendas" || cu.isManager) && legacyCanAccessModule(legacy, "financeiro"));
+      // Correção deliberada: o bloco só aparece para quem abre a tela de onde o dado vem (antes aparecia para todos,
+      // vazio ou com links para telas negadas — ex.: Contratos para Marketing/Implantação/CS/Suporte).
+      expect(contratos, label(u)).toBe(legacyCanAccessModule(legacy, "financeiro"));
+      expect(followups, label(u)).toBe(legacyCanAccessModule(legacy, "vendas"));
+      expect(visitas, label(u)).toBe(legacyCanAccessModule(legacy, "vendas"));
       expect(Object.values(rest).every(Boolean), label(u)).toBe(true);
     }
+  });
+
+  it("Meu Dia: negar o módulo de origem no perfil tira os cards e blocos dele (ex.: Performance para o Financeiro)", () => {
+    const analyst = ALL_USERS.find((u) => u.id === "user_anapaula")!;
+    const denied = asCurrentUser(analyst, { roleProfile: { grants: { "performance.acessar": false }, scopes: {} } });
+    expect(meuDiaSections(asCurrentUser(analyst)).metas).toBe(true);
+    expect(meuDiaSections(denied).metas).toBe(false);
   });
 
   it("escopos padrão: Clientes e Workflow = empresa; SLA = empresa para gestores e departamento para os demais", () => {

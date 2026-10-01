@@ -274,6 +274,11 @@ export interface MeuDiaSections {
   clientesAtencao: boolean;
   metas: boolean;
   notificacoes: boolean;
+  /** Visitas na agenda (vem de Vendas › Visitas). */
+  visitas: boolean;
+  /** Cards do cabeçalho que levam a outras telas (só aparecem para quem abre a tela de destino). */
+  tarefas: boolean;
+  sla: boolean;
 }
 
 export interface MeuDiaData {

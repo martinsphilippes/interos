@@ -13,6 +13,7 @@ import { listNotifications } from "@/server/notifications";
 import { sweepOverdue } from "@/server/finance/billing";
 import { getDueSoonDays } from "@/server/finance/regua";
 import { can } from "@/server/auth/permissions";
+import type { PermissionKey } from "@/domain/permissions";
 import { resolveDataScope } from "@/server/auth/scope";
 import { toNotificationItem } from "@/components/notifications/model";
 import {
@@ -257,22 +258,31 @@ export async function resolveScope(user: CurrentUser, requested: MeuDiaScope): P
   return { members: team, allUsers, canToggle, scope: "equipe" };
 }
 
-/** Seções visíveis do Meu Dia (catálogo inicio.meu-dia.<secao>.ver). */
+/**
+ * Seções visíveis do Meu Dia: a chave da própria seção (inicio.meu-dia.<secao>.ver) E o acesso à tela de onde o
+ * dado vem. Assim, negar um módulo ou tela no perfil (ex.: Performance para o Financeiro) também tira do Meu Dia os
+ * cards e blocos com dados dele — antes eles continuavam aparecendo com link para uma tela negada. No padrão nada
+ * muda: quem vê a seção hoje já tem acesso à tela de origem.
+ */
 export function meuDiaSections(user: CurrentUser): MeuDiaSections {
+  const both = (section: PermissionKey, source: PermissionKey) => can(user, section) && can(user, source);
   return {
     prioridades: can(user, "inicio.meu-dia.prioridades.ver"),
     equipe: can(user, "inicio.meu-dia.equipe.ver"),
     insights: can(user, "inicio.meu-dia.insights.ver"),
-    financeiro: can(user, "inicio.meu-dia.financeiro.ver"),
-    cobrancasVendas: can(user, "inicio.meu-dia.cobrancas-vendas.ver"),
-    contratos: can(user, "inicio.meu-dia.contratos.ver"),
+    financeiro: both("inicio.meu-dia.financeiro.ver", "financeiro.acessar"),
+    cobrancasVendas: both("inicio.meu-dia.cobrancas-vendas.ver", "financeiro.contas-a-receber.ver"),
+    contratos: both("inicio.meu-dia.contratos.ver", "financeiro.contratos.ver"),
     agenda: can(user, "inicio.meu-dia.agenda.ver"),
     aguardando: can(user, "inicio.meu-dia.aguardando.ver"),
-    followups: can(user, "inicio.meu-dia.followups.ver"),
-    etapas: can(user, "inicio.meu-dia.etapas.ver"),
-    clientesAtencao: can(user, "inicio.meu-dia.clientes-atencao.ver"),
-    metas: can(user, "inicio.meu-dia.metas.ver"),
-    notificacoes: can(user, "inicio.meu-dia.notificacoes.ver"),
+    followups: both("inicio.meu-dia.followups.ver", "vendas.oportunidades.ver"),
+    etapas: both("inicio.meu-dia.etapas.ver", "operacao.workflow.ver"),
+    clientesAtencao: both("inicio.meu-dia.clientes-atencao.ver", "operacao.clientes.ver"),
+    metas: both("inicio.meu-dia.metas.ver", "performance.meu-desempenho.ver"),
+    notificacoes: both("inicio.meu-dia.notificacoes.ver", "inicio.notificacoes.ver"),
+    visitas: can(user, "vendas.visitas.ver"),
+    tarefas: can(user, "operacao.tarefas.ver"),
+    sla: can(user, "operacao.sla.ver"),
   };
 }
 
@@ -1201,7 +1211,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     stats,
     priorities: sections.prioridades ? cappedPriorities : [],
     agenda: sections.agenda ? agenda : [],
-    upcomingVisits: sections.agenda ? upcomingVisits : [],
+    upcomingVisits: sections.agenda && sections.visitas ? upcomingVisits : [],
     followups: sections.followups ? followups : [],
     steps: sections.etapas ? stepItems : [],
     attentionClients: sections.clientesAtencao ? attentionClients.slice(0, 8) : [],
