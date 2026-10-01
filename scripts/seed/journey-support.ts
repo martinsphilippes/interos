@@ -4,7 +4,7 @@
  */
 import { COLLECTIONS, type CsatResponse, type SupportTicket, type TicketInteraction } from "../../src/domain/types";
 import { addBusinessHours } from "../../src/server/sla";
-import { NOW, addDays, addHours, businessTime, daysAgo, hoursAgo, id, minIso, pad, pastOnly, rng, type SeedDoc } from "./lib";
+import { NOW, NOW_LOCAL, addDays, addHours, businessTime, daysAgo, hoursAgo, id, minIso, pad, pastOnly, rng, type SeedDoc } from "./lib";
 import type { SeedContext, SeededClient } from "./context";
 import { PRODUCT_IDS } from "./catalog";
 
@@ -96,7 +96,7 @@ export async function seedSupport(ctx: SeedContext): Promise<void> {
   const tickets: SupportTicket[] = [];
   let interactionSeq = 0;
   let csatSeq = 0;
-  const year = NOW.getUTCFullYear();
+  const year = NOW_LOCAL.getUTCFullYear();
 
   specs.forEach((spec, i) => {
     const n = i + 1;

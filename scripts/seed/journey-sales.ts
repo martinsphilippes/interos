@@ -18,7 +18,7 @@ import {
   type ProspectList,
   type Visit,
 } from "../../src/domain/types";
-import { CITIES, NOW, addDays, businessTime, cnpj, competence, dayInCompetence, daysAgo, daysFromNow, emailFor, hoursAgo, id, isPast, minIso, pad, pastOnly, personName, phone, pickCity, rng, type SeedDoc } from "./lib";
+import { CITIES, NOW, NOW_LOCAL, addDays, businessTime, cnpj, competence, dayInCompetence, daysAgo, daysFromNow, emailFor, hoursAgo, id, isPast, minIso, pad, pastOnly, personName, phone, pickCity, rng, type SeedDoc } from "./lib";
 import { clientById, type SeedContext, type SeededClient } from "./context";
 import { counterId } from "../../src/server/db";
 import { closingPaymentConditionText } from "../../src/domain/sale-closing";
@@ -359,7 +359,7 @@ function seedOpportunities(ctx: SeedContext): void {
 /** Próximo aniversário do contrato depois de hoje. */
 function nextAnniversary(startIso: string): string {
   const start = new Date(startIso);
-  const d = new Date(Date.UTC(NOW.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 12));
+  const d = new Date(Date.UTC(NOW_LOCAL.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 12));
   if (d.getTime() <= NOW.getTime()) d.setUTCFullYear(d.getUTCFullYear() + 1);
   return d.toISOString();
 }

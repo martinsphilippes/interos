@@ -58,10 +58,16 @@ export const rng = new Rng(20260924);
 
 export const NOW = new Date();
 const TZ_OFFSET_HOURS = 3;
+/**
+ * Relógio de parede de São Paulo: os campos UTC deste Date (getUTCFullYear/Month/Date) são a data LOCAL de agora.
+ * "Hoje" e a competência do seed saem daqui, e não da data UTC: entre 21h e 24h em Brasília a data UTC já é o dia
+ * seguinte (e, no último dia do mês, o mês seguinte), enquanto o produto (todayKey/dateKey) ainda está no dia local.
+ */
+export const NOW_LOCAL = new Date(NOW.getTime() - TZ_OFFSET_HOURS * 3_600_000);
 
 /** Data em um dia relativo a hoje, em uma hora local (São Paulo). */
 export function at(dayOffset: number, hour = 9, minute = 0): Date {
-  const d = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate() + dayOffset, hour + TZ_OFFSET_HOURS, minute));
+  const d = new Date(Date.UTC(NOW_LOCAL.getUTCFullYear(), NOW_LOCAL.getUTCMonth(), NOW_LOCAL.getUTCDate() + dayOffset, hour + TZ_OFFSET_HOURS, minute));
   return d;
 }
 export function iso(d: Date): string {
@@ -98,9 +104,10 @@ export function businessTime(isoDate: string): string {
   const r = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), rng.int(8, 17) + TZ_OFFSET_HOURS, rng.int(0, 59)));
   return pastOnly(r.toISOString());
 }
-/** Competência AAAA-MM de uma data (ou de hoje com deslocamento em meses). */
+/** Competência AAAA-MM (no fuso de São Paulo) de um instante (ou de agora) com deslocamento em meses. */
 export function competence(monthOffset = 0, from: Date = NOW): string {
-  const d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + monthOffset, 1));
+  const local = new Date(from.getTime() - TZ_OFFSET_HOURS * 3_600_000);
+  const d = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + monthOffset, 1));
   return d.toISOString().slice(0, 7);
 }
 /** Data ISO de um dia dentro de uma competência AAAA-MM. */

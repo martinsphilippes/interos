@@ -13,7 +13,7 @@ import { listRecentMonths, previousPeriod, currentMonthKey, monthPeriod } from "
 import { COLLECTIONS, type Billing, type Contract, type Payable } from "../../src/domain/types";
 import { getById, getManyByIds, list } from "../../src/server/db";
 import { dateKey } from "../../src/lib/format";
-import { NOW, addDays, daysAgo, daysFromNow } from "./lib";
+import { NOW, addDays, competence, daysAgo, daysFromNow } from "./lib";
 import { PRODUCT_IDS } from "./catalog";
 
 /**
@@ -58,7 +58,7 @@ export async function seedAmendments(): Promise<{ applied: string[]; version: nu
   if (!contract || contract.status !== "liberado") return { applied: [], version: null };
   const ponto = contract.items.some((i) => i.productId === PRODUCT_IDS.ponto);
   const items = [...contract.items.map((i) => ({ ...i })), ...(ponto ? [] : [{ productId: PRODUCT_IDS.ponto, productName: "Intercert Ponto", quantity: 1, setupValue: 300, monthlyValue: 79, hardwareValue: 0, discountPct: 0 }])];
-  const nextMonth = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+  const nextMonth = `${competence(1)}-01`;
   const amendment = await createAmendment(
     { contractId: contract.id, effectiveFrom: nextMonth, reason: "Inclusão do controle de ponto a pedido do cliente (ajuste interno acordado por e-mail)", requiresSignature: false, items },
     karem,
