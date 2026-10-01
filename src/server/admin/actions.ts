@@ -724,6 +724,38 @@ function revalidateProducts() {
   revalidatePath("/admin/produtos");
 }
 
+/** Campos do produto auditados (preços e comissão entram nas propostas e no motor de comissões). */
+const PRODUCT_AUDIT_FIELDS = ["name", "category", "description", "setupPrice", "monthlyPrice", "hardwarePrice", "billingType", "commission", "implementationTemplateId", "implementationDays", "active"] as const;
+
+/** Auditoria do catálogo (D29): `product.updated` com o valor anterior → novo (criação = tudo a partir de vazio). */
+async function emitProductAudit(user: CurrentUser, before: Product | null, after: Product, action: "criado" | "alterado" | "ativado" | "desativado"): Promise<void> {
+  const audit = auditChanges<Product>(before, after, PRODUCT_AUDIT_FIELDS);
+  if (!hasChanges(audit)) return;
+  await emitEvent({
+    type: "product.updated",
+    actor: actor(user),
+    entity: { type: "product", id: after.id },
+    title: `Produto ${action}: ${after.name}`,
+    description: before ? describeChanges(audit, PRODUCT_FIELD_LABELS) : undefined,
+    payload: { productId: after.id, action, created: !before, labels: PRODUCT_FIELD_LABELS, ...audit },
+    timeline: false,
+  });
+}
+
+const PRODUCT_FIELD_LABELS: Record<string, string> = {
+  name: "nome",
+  category: "categoria",
+  description: "descrição",
+  setupPrice: "preço de adesão",
+  monthlyPrice: "preço da mensalidade",
+  hardwarePrice: "preço do hardware",
+  billingType: "tipo de cobrança",
+  commission: "comissão do produto",
+  implementationTemplateId: "modelo de implantação",
+  implementationDays: "prazo de implantação (dias)",
+  active: "ativo",
+};
+
 async function loadProduct(id: string): Promise<Product> {
   const product = await getById<Product>(COLLECTIONS.products, id);
   if (!product) throw new BusinessError("Produto não encontrado");
@@ -753,6 +785,7 @@ export async function createProduct(input: unknown): Promise<ActionResult<{ id: 
       order,
       createdBy: user.id,
     });
+    await emitProductAudit(user, null, product, "criado");
 
     revalidateProducts();
     return { ok: true, data: { id: product.id } };
@@ -763,13 +796,13 @@ export async function createProduct(input: unknown): Promise<ActionResult<{ id: 
 
 export async function updateProduct(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    await requirePermission("admin.produtos.editar");
+    const user = await requirePermission("admin.produtos.editar");
     const data = updateProductSchema.parse(input);
     const current = await loadProduct(data.id);
     const others = (await list<Product>(COLLECTIONS.products)).filter((p) => p.id !== data.id);
     if (others.some((p) => p.name.trim().toLowerCase() === data.name.toLowerCase())) throw new BusinessError(`Já existe outro produto chamado "${data.name}"`);
 
-    await replaceDoc<Product>(COLLECTIONS.products, current, {
+    const next = {
       name: data.name,
       category: data.category,
       description: data.description,
@@ -782,7 +815,9 @@ export async function updateProduct(input: unknown): Promise<ActionResult<{ id: 
       implementationDays: data.implementationDays,
       active: data.active,
       order: data.order ?? current.order,
-    });
+    };
+    await replaceDoc<Product>(COLLECTIONS.products, current, next);
+    await emitProductAudit(user, current, { ...current, ...next }, "alterado");
 
     revalidateProducts();
     return { ok: true, data: { id: data.id } };
@@ -817,10 +852,11 @@ export async function moveProduct(input: unknown): Promise<ActionResult<{ order:
 
 export async function setProductActive(input: unknown): Promise<ActionResult<{ active: boolean }>> {
   try {
-    await requirePermission("admin.produtos.ativar");
+    const user = await requirePermission("admin.produtos.ativar");
     const data = setProductActiveSchema.parse(input);
-    await loadProduct(data.id);
+    const current = await loadProduct(data.id);
     await update<Product>(COLLECTIONS.products, data.id, { active: data.active });
+    await emitProductAudit(user, current, { ...current, active: data.active }, data.active ? "ativado" : "desativado");
     revalidateProducts();
     return { ok: true, data: { active: data.active } };
   } catch (error) {
@@ -882,6 +918,23 @@ export async function upsertSetting(input: unknown): Promise<ActionResult<{ key:
 }
 
 /** Cria (sem id) ou atualiza (com id) uma regra de SLA. A chave é única. */
+const SLA_RULE_AUDIT_FIELDS = ["key", "name", "appliesTo", "department", "responseHours", "resolutionHours", "businessHoursOnly", "attentionPct", "riskPct", "active"] as const;
+
+/** Regras de SLA (coleção própria, fora de settings) auditadas como configuração (D29): settings.updated kind "sla_rule". */
+async function emitSlaRuleAudit(user: CurrentUser, id: string, name: string, before: Partial<SlaRule> | null, after: Partial<SlaRule> | null, action: "criada" | "alterada" | "excluída"): Promise<void> {
+  const audit = after ? auditChanges<SlaRule>(before, after, SLA_RULE_AUDIT_FIELDS) : { changes: Object.fromEntries(SLA_RULE_AUDIT_FIELDS.filter((f) => before?.[f] !== undefined).map((f) => [f, { from: before?.[f] ?? null, to: null }])) };
+  if (!hasChanges(audit)) return;
+  await emitEvent({
+    type: "settings.updated",
+    actor: actor(user),
+    entity: { type: "sla_rule", id },
+    title: `Regra de SLA ${action}: ${name}`,
+    description: action === "alterada" ? describeChanges(audit) : undefined,
+    payload: { kind: "sla_rule", ruleId: id, action, ...audit },
+    timeline: false,
+  });
+}
+
 export async function upsertSlaRule(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
     const user = await requirePermission("admin.configuracoes.sla.editar");
@@ -904,9 +957,11 @@ export async function upsertSlaRule(input: unknown): Promise<ActionResult<{ id: 
     };
 
     let id: string;
+    let before: SlaRule | null = null;
     if (data.id) {
       const current = rules.find((r) => r.id === data.id);
       if (!current) throw new BusinessError("Regra de SLA não encontrada");
+      before = current;
       await replaceDoc<SlaRule>(COLLECTIONS.slaRules, current, fields);
       id = current.id;
     } else {
@@ -914,6 +969,7 @@ export async function upsertSlaRule(input: unknown): Promise<ActionResult<{ id: 
       const created = await create<SlaRule>(COLLECTIONS.slaRules, { ...fields, createdBy: user.id }, rules.some((r) => r.id === preferredId) ? undefined : preferredId);
       id = created.id;
     }
+    await emitSlaRuleAudit(user, id, fields.name, before, fields, before ? "alterada" : "criada");
 
     revalidateSettings();
     return { ok: true, data: { id } };
@@ -924,11 +980,12 @@ export async function upsertSlaRule(input: unknown): Promise<ActionResult<{ id: 
 
 export async function deleteSlaRule(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
-    await requirePermission("admin.configuracoes.sla.excluir");
+    const user = await requirePermission("admin.configuracoes.sla.excluir");
     const data = slaRuleIdSchema.parse(input);
     const current = await getById<SlaRule>(COLLECTIONS.slaRules, data.id);
     if (!current) throw new BusinessError("Regra de SLA não encontrada");
     await remove(COLLECTIONS.slaRules, data.id);
+    await emitSlaRuleAudit(user, current.id, current.name, current, null, "excluída");
     revalidateSettings();
     return { ok: true, data: { id: data.id } };
   } catch (error) {

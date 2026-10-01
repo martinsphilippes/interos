@@ -201,7 +201,15 @@ export function formatChangeValue(field: string, value: unknown, options: Format
   if (Array.isArray(value)) {
     if (value.length === 0) return "nenhum";
     // Signatários e listas de pessoas: os nomes.
-    const names = value.map((v) => (v && typeof v === "object" ? String((v as Record<string, unknown>).name ?? (v as Record<string, unknown>).email ?? (v as Record<string, unknown>).label ?? "item") : String(v)));
+    const names = value.map((v) => {
+      if (!v || typeof v !== "object") return String(v);
+      const o = v as Record<string, unknown>;
+      const named = o.name ?? o.productName ?? o.email ?? o.label;
+      if (named !== undefined && named !== null) return String(named);
+      // Estruturas sem nome (condições, ações, faixas): forma compacta, limitada.
+      const compact = JSON.stringify(o);
+      return compact.length > 80 ? `${compact.slice(0, 77)}…` : compact;
+    });
     return names.join(", ");
   }
   if (typeof value === "object") {

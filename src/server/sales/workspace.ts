@@ -206,7 +206,7 @@ export async function transferOpportunity(input: { opportunityId: string; ownerI
     title: `Oportunidade transferida: ${previous?.name ?? "—"} → ${newOwner.name}`,
     description: [input.reason, moved ? `Repassadas ${moved}` : null].filter(Boolean).join(" · ") || undefined,
     department: "vendas",
-    payload: { opportunityId: opp.id, transfer: true, from: opp.ownerId, to: newOwner.id, ownerId: newOwner.id, reason: input.reason, taskIds: movedTasks.map((t) => t.id), visitIds: movedVisits.map((v) => v.id) },
+    payload: { opportunityId: opp.id, transfer: true, from: opp.ownerId, to: newOwner.id, ownerId: newOwner.id, reason: input.reason, taskIds: movedTasks.map((t) => t.id), visitIds: movedVisits.map((v) => v.id), changes: { ownerId: { from: previous?.name ?? opp.ownerId ?? null, to: newOwner.name } } },
   });
 
   const clientName = client?.tradeName ?? opp.title;
