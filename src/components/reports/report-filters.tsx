@@ -16,13 +16,15 @@ export interface ReportFiltersFormProps {
   filters: FilterKey[];
   /** Filtros efetivos (já com os padrões de período aplicados pelo servidor). */
   values: ReportFilters;
-  options: { users: Option[]; clients: Option[]; products: Option[]; departments: Option[]; status: Option[] };
+  options: { users: Option[]; clients: Option[]; products: Option[]; departments: Option[]; status: Option[]; entities?: Option[]; events?: Option[] };
+  /** Rótulo do filtro de colaborador (Auditoria: "Usuário (quem fez)"). */
+  collaboratorLabel?: string;
   /** Filtros travados pelo perfil do usuário (não editáveis). */
   locked: (keyof ReportFilters)[];
 }
 
 /** Filtros do relatório: atualizam a URL (?tipo=&de=&ate=&...) e a prévia é recalculada no servidor. */
-export function ReportFiltersForm({ reportKey, filters, values, options, locked }: ReportFiltersFormProps) {
+export function ReportFiltersForm({ reportKey, filters, values, options, locked, collaboratorLabel }: ReportFiltersFormProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [pending, startTransition] = React.useTransition();
@@ -80,7 +82,22 @@ export function ReportFiltersForm({ reportKey, filters, values, options, locked 
         </>
       ) : null}
       {filters.includes("departamento") ? select("departamento", "Departamento", options.departments, "Todos os departamentos") : null}
-      {filters.includes("colaborador") ? select("colaborador", "Colaborador", options.users, "Todos os colaboradores") : null}
+      {filters.includes("colaborador") ? select("colaborador", collaboratorLabel ?? "Colaborador", options.users, collaboratorLabel ? "Todos os usuários" : "Todos os colaboradores") : null}
+      {filters.includes("entidade") ? select("entidade", "Tipo de entidade", options.entities ?? [], "Todas as entidades") : null}
+      {filters.includes("evento") ? select("evento", "Tipo de evento", options.events ?? [], "Todos os eventos") : null}
+      {filters.includes("texto") ? (
+        <FormField label="Texto" htmlFor="f-texto">
+          <input
+            id="f-texto"
+            type="search"
+            value={state.texto ?? ""}
+            onChange={set("texto")}
+            placeholder="Título, alteração, motivo…"
+            maxLength={120}
+            className="h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm shadow-xs focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/25 md:h-9"
+          />
+        </FormField>
+      ) : null}
       {filters.includes("cliente") ? select("cliente", "Cliente", options.clients, "Todos os clientes") : null}
       {filters.includes("produto") ? select("produto", "Produto", options.products, "Todos os produtos") : null}
       {filters.includes("status") ? select("status", "Status", options.status, "Todos") : null}

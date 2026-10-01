@@ -75,7 +75,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
                 filters={def.filters}
                 values={data.effective}
                 locked={locked}
-                options={{ users, clients: options.clients, products: options.products, departments: options.departments, status: def.statusOptions ?? [] }}
+                options={{ users, clients: options.clients, products: options.products, departments: options.departments, status: def.statusOptions ?? [], entities: options.entities, events: options.events }}
+                collaboratorLabel={def.collaboratorLabel}
               />
             </CardContent>
           </Card>

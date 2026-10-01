@@ -115,3 +115,11 @@ describe("histórico do contrato não mistura contratos do mesmo cliente", () =>
     expect(belongs({ type: "payable.created", entityId: "pag_1", payload: { contractId: "ct1" } })).toBe(false);
   });
 });
+
+describe("exportação PDF (fonte padrão sem '→')", () => {
+  it("troca símbolos fora do WinAnsi e corta células longas", async () => {
+    const { pdfSafe } = await import("@/server/reports/export-pdf");
+    expect(pdfSafe("Situação: Em aberto → Cancelada · ≥ 3 · −2")).toBe("Situação: Em aberto -> Cancelada · >= 3 · -2");
+    expect(pdfSafe("x".repeat(10), 5)).toBe("xxxx…");
+  });
+});

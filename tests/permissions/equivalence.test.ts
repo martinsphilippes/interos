@@ -210,8 +210,13 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     expect(differences(articleOps, legacy)).toEqual(exp);
   });
 
+  it("relatório de Auditoria (novo, D29: ver e exportar) ≡ diretoria/administrador (isDirector)", () => {
+    expect(differences(["gestao.relatorios.auditoria.ver", "gestao.relatorios.auditoria.exportar"], (u) => Boolean(u.isDirector))).toEqual([]);
+  });
+
   it("relatórios (ver e exportar) ≡ canAccessReport", () => {
-    const keys = REPORT_KEYS.flatMap((r) => [`gestao.relatorios.${r.replace(/_/g, "-")}.ver`, `gestao.relatorios.${r.replace(/_/g, "-")}.exportar`]);
+    // Auditoria (etapa 6B) é relatório NOVO, sem predicado anterior: coberto no teste de guards de Gestão.
+    const keys = REPORT_KEYS.filter((r) => r !== "auditoria").flatMap((r) => [`gestao.relatorios.${r.replace(/_/g, "-")}.ver`, `gestao.relatorios.${r.replace(/_/g, "-")}.exportar`]);
     const legacy = (u: LegacyUser, k: string) => legacyCanAccessReport(u, k.split(".")[2].replace(/-/g, "_") as (typeof REPORT_KEYS)[number]);
     expect(differences(keys, legacy)).toEqual([]);
   });
