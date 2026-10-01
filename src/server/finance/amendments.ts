@@ -35,7 +35,7 @@ import {
 import { COLLECTIONS, type Billing, type Client, type Contract, type ContractAmendment, type ContractReadjustment, type ContractSignerEntry, type ContractSnapshot, type Document, type ItemSince, type Product, type ProposalItem, type UserRef } from "@/domain/types";
 import { billingDocId, dayInMonth, dueIso, lastRecurringBilling, recurringStep, round2, todayKey } from "./billing";
 import type { AmendmentInput, AmendmentSignatureInput } from "./schemas";
-import { addContractDocument, cancelChargeAtProvider, createBillingWithDeterministicId, generateNextBillings, loadContract, providerChargeFields, syncClientProductsFromContract } from "./service";
+import { addContractDocument, billingCancellationPatch, cancelChargeAtProvider, createBillingWithDeterministicId, generateNextBillings, loadContract, providerChargeFields, syncClientProductsFromContract } from "./service";
 
 const APPLICABLE_STATUSES: readonly Contract["status"][] = ["assinado", "aguardando_pagamento", "pago", "liberado", "pendencia"];
 
@@ -525,7 +525,7 @@ export async function rebuildFutureBillings(contract: Contract, previous: Contra
     for (const b of targets) {
       const note = await cancelChargeAtProvider(b);
       if (note) providerNotes.push(`${b.installment}: ${note}`);
-      await update<Billing>(COLLECTIONS.billing, b.id, { status: "cancelada", ...(b.chargeStatus ? { chargeStatus: "cancelado" } : {}) });
+      await update<Billing>(COLLECTIONS.billing, b.id, billingCancellationPatch(b, actor, `Refeita pelo aditivo ${amendment.number} (novo valor a partir de ${fromComp})`, stamp));
       cancelled.push(b.id);
       if (monthlyAmount <= 0 || contract.recurrence === "unico") continue;
       const draft = { clientId: contract.clientId, contractId: contract.id, type: "mensalidade" as const, competence: b.competence, installment: b.installment, amount: monthlyAmount, dueDate: b.dueDate, status: "aberta" as const, method: contract.paymentMethod ?? b.method ?? "boleto" };

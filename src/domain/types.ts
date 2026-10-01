@@ -800,6 +800,10 @@ export interface Billing extends BaseEntity {
   partialPaidAmount?: number;
   partialPaidAt?: string;
   reversedPayments?: BillingReversedPayment[];
+  // Cancelamento (etapa 6B, D29) — opcionais: cobranças canceladas antes não têm.
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
 }
 
 /**
@@ -1158,9 +1162,23 @@ export interface DomainEvent extends BaseEntity {
   entityId?: string;
   title: string;
   description?: string;
+  /** Dados do fato no momento da gravação. IMUTÁVEL depois de gravado (D29): nada reescreve o payload. */
   payload: Record<string, unknown>;
   department?: DepartmentKey;
+  /** @deprecated formato antigo (antes da etapa 6B); erros novos ficam em `meta.handlerErrors`. */
   handlerErrors?: string[];
+  /** Metadados de execução (erros de handlers, cadeia de automação, anotações de módulos) — o único trecho do evento escrito depois da criação. */
+  meta?: DomainEventMeta;
+}
+
+/** Metadados de execução do evento (D29): fora do `payload`, que é imutável. */
+export interface DomainEventMeta {
+  /** Handlers que falharam ao processar o evento. */
+  handlerErrors?: string[];
+  /** Evento gerado dentro de uma automação: regra de origem e profundidade da cadeia (proteção contra laço). */
+  automation?: { ruleId: string; depth: number };
+  /** Anotações do Suporte (chamado nos 30 dias após o go-live). */
+  support?: { postGoLive?: boolean; goLiveAt?: string; daysSinceGoLive?: number; suggestTrainingRelated?: boolean };
 }
 
 export interface TimelineEvent extends BaseEntity {
@@ -1176,6 +1194,10 @@ export interface TimelineEvent extends BaseEntity {
   entityId?: string;
   department?: DepartmentKey;
   icon?: string;
+  /** Alterações "campo: de → para" do evento de origem (copiadas de `payload.changes` na gravação, D29). */
+  changes?: Record<string, { from: unknown; to: unknown }>;
+  /** Motivo informado na alteração (copiado de `payload.reason`). */
+  reason?: string;
 }
 
 export interface Notification extends BaseEntity {

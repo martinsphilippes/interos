@@ -156,12 +156,30 @@ describe("permissões padrão ≡ predicados anteriores", () => {
   it("relatórios: prévia (canAccessReport) ≡ predicado anterior; exportação do tipo ≡ prévia", () => {
     for (const u of ALL_USERS) {
       const cu = asCurrentUser(u);
-      for (const key of REPORT_KEYS) {
+      // Auditoria (etapa 6B) não tem predicado anterior: teste próprio abaixo.
+      for (const key of REPORT_KEYS.filter((k) => k !== "auditoria")) {
         const legacy = legacyCanAccessReport(legacyUser(u), key);
         expect(canAccessReport(cu, key), `${label(u)} ${key}`).toBe(legacy);
         expect(cu.permissions.has(reportExportKey(key)), `${label(u)} exportar ${key}`).toBe(legacy);
       }
     }
+  });
+
+  it("relatório de Auditoria (D29): prévia e exportação só para diretoria e administrador (chaves próprias)", () => {
+    for (const u of ALL_USERS) {
+      const cu = asCurrentUser(u);
+      const expected = cu.role === "admin" || cu.role === "diretoria";
+      expect(canAccessReport(cu, "auditoria"), `${label(u)} auditoria`).toBe(expected);
+      expect(cu.permissions.has("gestao.relatorios.auditoria.exportar"), `${label(u)} exportar auditoria`).toBe(expected);
+    }
+    // Sem papel informado (chamadores antigos): mesma regra, por isAdmin/isDirector.
+    expect(canAccessReport({ isManager: true, departmentId: "vendas" }, "auditoria")).toBe(false);
+    expect(canAccessReport({ isManager: true, departmentId: "diretoria", isDirector: true }, "auditoria")).toBe(true);
+    // Um gestor só acessa se o perfil conceder a seção (sem a exportação, a API continua negando).
+    const gestor = ALL_USERS.find((u) => asCurrentUser(u).role === "gestor")!;
+    const granted = asCurrentUser(gestor, { roleProfile: { grants: { "gestao.relatorios.auditoria.ver": true } } });
+    expect(canAccessReport(granted, "auditoria")).toBe(true);
+    expect(granted.permissions.has("gestao.relatorios.auditoria.exportar")).toBe(false);
   });
 
   it("chaves de prévia e exportação existem para todos os tipos (contas_a_pagar → contas-a-pagar)", () => {

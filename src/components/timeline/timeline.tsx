@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { EVENT_CATEGORY_LABELS, EventIcon, eventCategory, type EventCategory } from "./event-icon";
+import { ChangeList } from "./change-list";
 
 export { EventIcon, eventCategory, EVENT_CATEGORY_LABELS } from "./event-icon";
 
@@ -85,6 +86,7 @@ export interface TimelineProps {
 /**
  * Linha do tempo única do cliente: eventos mais recentes primeiro, agrupados por dia, com ícone por
  * tipo, ator, departamento e descrição. Reutilizável em qualquer lugar que tenha TimelineEvent[].
+ * Eventos com alterações (D29) mostram "Ver alterações" com as linhas "campo: antes → depois" e o motivo.
  */
 export function Timeline({ events, showFilters, pageSize = 40, emptyTitle = "Nenhum evento registrado", emptyDescription, className }: TimelineProps) {
   const [department, setDepartment] = React.useState<string>("");
@@ -200,6 +202,7 @@ export function Timeline({ events, showFilters, pageSize = 40, emptyTitle = "Nen
                           </time>
                         </div>
                         {event.description ? <p className="whitespace-pre-line text-sm text-muted">{event.description}</p> : null}
+                        {event.changes ? <ChangeList changes={event.changes} reason={event.reason} /> : null}
                         <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-light">
                           <span className="text-muted">{event.actorName}</span>
                           {event.department ? (

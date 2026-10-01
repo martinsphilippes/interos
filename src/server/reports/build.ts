@@ -12,11 +12,16 @@ import { loadDataBundle, type DataBundle } from "@/server/kpis/formulas";
 import { getCompanyScorecard } from "@/server/kpis/queries";
 import { currentMonthKey, inPeriod, localDayKey, monthPeriod, periodFromKey, periodReference, type Period } from "@/server/kpis/period";
 import { STATUS_LABELS, formatKpiValue, type KpiScope, type KpiStatus } from "@/server/kpis/schemas";
-import { COLLECTIONS, type Client, type ClientProduct, type Commission, type CurrentUser, type KpiSnapshot, type Payable, type Product, type Proposal, type User } from "@/domain/types";
-import { CLIENT_STATUS_LABELS, DEPARTMENT_KEYS, DEPARTMENT_LABELS, PRIORITY_LABELS, TASK_STATUS_LABELS, type DepartmentKey } from "@/domain/constants";
+import { COLLECTIONS, type Client, type ClientProduct, type Commission, type CurrentUser, type DomainEvent, type KpiSnapshot, type Payable, type Product, type Proposal, type User } from "@/domain/types";
+import { CLIENT_STATUS_LABELS, DEPARTMENT_KEYS, DEPARTMENT_LABELS, EVENT_TYPES, PRIORITY_LABELS, TASK_STATUS_LABELS, type DepartmentKey, type EventType } from "@/domain/constants";
 import { formatCompetence } from "@/lib/format";
 import { ORIGIN_LABELS } from "@/components/tasks/task-model";
-import { REPORT_DEFINITIONS, type ReportDefinition, type ReportFilters, type ReportKey, type ReportValue } from "./definitions";
+import { AUDIT_ENTITY_LABELS, REPORT_DEFINITIONS, type ReportDefinition, type ReportFilters, type ReportKey, type ReportValue } from "./definitions";
+import { EVENT_TYPE_LABELS, eventTypeGroups } from "@/domain/event-labels";
+import { eventChanges, summarizeChanges } from "@/domain/audit-format";
+import { canSeeFinanceValues } from "@/server/finance/access";
+import { maskMoneyText } from "@/server/finance/redact";
+import { formatDateTime } from "@/lib/format";
 import { COMMISSION_STATUS_LABELS, PAYABLE_ORIGIN_LABELS, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { can } from "@/server/auth/permissions";
 import { resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
@@ -81,6 +86,8 @@ export function reportPermissionKey(key: ReportKey): PermissionKey {
 export function canAccessReport(user: ReportUser, key: ReportKey): boolean {
   // Fachada do catálogo: gestao.relatorios.<tipo>.ver (mesma regra padrão). Sem papel informado, a regra antiga.
   if (user.role) return can({ role: user.role, departmentId: user.departmentId, permissions: user.permissions }, reportPermissionKey(key));
+  // Auditoria (D29): sem papel informado, só diretoria/admin (mesma regra padrão da chave do catálogo).
+  if (key === "auditoria") return Boolean(user.isAdmin || user.isDirector);
   if (user.isManager) return true;
   const def = REPORT_DEFINITIONS[key];
   if (key === "tarefas") return true;
@@ -706,6 +713,90 @@ async function buildPayables(months: Period[], filters: ReportFilters, inScope: 
 }
 
 // ---------------------------------------------------------------------------
+// Auditoria (D29): eventos com alterações "de → para" e motivo
+// ---------------------------------------------------------------------------
+
+/** Texto sem acento e em minúsculas (busca do filtro "texto"). */
+function fold(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/** Rota da entidade do evento na prévia (a exportação leva só o texto). */
+function auditHref(e: DomainEvent): string | undefined {
+  const id = e.entityId;
+  if (!id) return undefined;
+  switch (e.entityType) {
+    case "contract":
+      return `/financeiro/contratos/${id}`;
+    case "billing":
+    case "contract_amendment":
+      return typeof e.payload?.contractId === "string" ? `/financeiro/contratos/${e.payload.contractId}` : undefined;
+    case "client":
+      return `/clientes/${id}`;
+    case "payable":
+      return `/financeiro/contas-a-pagar?titulo=${id}`;
+    case "opportunity":
+      return `/vendas/oportunidades?oportunidade=${id}`;
+    case "project":
+      return `/implantacao/${id}`;
+    default:
+      return e.clientId ? `/clientes/${e.clientId}?aba=timeline` : undefined;
+  }
+}
+
+/** Referência legível da entidade: rótulo do tipo + número do contrato / nome do cliente ou usuário. */
+function auditEntity(e: DomainEvent, bundle: DataBundle): string {
+  const label = e.entityType ? (AUDIT_ENTITY_LABELS[e.entityType] ?? e.entityType) : "—";
+  const contractId = typeof e.payload?.contractId === "string" ? e.payload.contractId : e.entityType === "contract" ? e.entityId : undefined;
+  const ref =
+    (contractId && bundle.contractById.get(contractId)?.number) ||
+    (e.entityType === "user" && e.entityId && userName(bundle, e.entityId)) ||
+    (e.entityType === "setting" && e.entityId) ||
+    clientName(bundle, e.clientId) ||
+    null;
+  return ref ? `${label} · ${ref}` : label;
+}
+
+/**
+ * Relatório de Auditoria: eventos do período com `payload.changes` (ou from/to de situação) ou motivo. Filtros:
+ * período, quem fez (colaborador), tipo de entidade, tipo de evento e texto livre. Escopo da tela Relatórios aplicado
+ * pelo ator; sem "Visualizar valores" as quantias saem como "Restrito" (e "R$ …" mascarado nos textos).
+ */
+async function buildAudit(op: OperationalInput, user: CurrentUser): Promise<ReportRow[]> {
+  const { filters, bundle, period } = op;
+  const where: [string, "==", unknown][] = [];
+  if (filters.evento) where.push(["type", "==", filters.evento]);
+  else if (filters.entidade) where.push(["entityType", "==", filters.entidade]);
+  if (filters.colaborador) where.push(["actorId", "==", filters.colaborador]);
+  const events = await list<DomainEvent>(COLLECTIONS.events, where.length ? { where } : undefined);
+  const hideValues = !canSeeFinanceValues(user);
+  const text = filters.texto ? fold(filters.texto) : "";
+  const mask = (v: string | undefined) => (hideValues ? maskMoneyText(v) : v);
+  const rows: { at: string; row: ReportRow }[] = [];
+  for (const e of events) {
+    if (!inPeriod(e.occurredAt, period)) continue;
+    if (filters.entidade && e.entityType !== filters.entidade) continue;
+    if (!op.inScope([e.actorId])) continue;
+    const changes = eventChanges(e.type, e.payload);
+    const reason = typeof e.payload?.reason === "string" && e.payload.reason.trim() ? e.payload.reason.trim() : null;
+    if (!changes && !reason) continue;
+    const labels = e.payload?.labels && typeof e.payload.labels === "object" ? (e.payload.labels as Record<string, string>) : undefined;
+    const cells = {
+      quando: formatDateTime(e.occurredAt),
+      quem: e.actorName || userName(bundle, e.actorId) || e.actorId,
+      evento: EVENT_TYPE_LABELS[e.type] ?? e.type,
+      entidade: auditEntity(e, bundle),
+      titulo: mask(e.title) ?? "",
+      alteracoes: changes ? summarizeChanges(changes, { labels, hideValues, max: 20 }) : null,
+      motivo: mask(reason ?? undefined) ?? null,
+    };
+    if (text && !fold([cells.quem, cells.evento, cells.entidade, cells.titulo, cells.alteracoes ?? "", cells.motivo ?? "", e.description ?? ""].join(" ")).includes(text)) continue;
+    rows.push({ at: e.occurredAt, row: { cells, href: auditHref(e) } });
+  }
+  return rows.sort((a, b) => b.at.localeCompare(a.at)).map((r) => r.row);
+}
+
+// ---------------------------------------------------------------------------
 // Totais e filtros aplicados
 // ---------------------------------------------------------------------------
 
@@ -732,7 +823,10 @@ async function describeFilters(def: ReportDefinition, filters: ReportFilters, pe
   const out: AppliedFilter[] = [];
   if (def.filters.includes("periodo_mes") || def.filters.includes("periodo_data")) out.push({ label: "Período", value: periodLabel });
   if (filters.departamento) out.push({ label: "Departamento", value: DEPARTMENT_LABELS[filters.departamento as DepartmentKey] ?? filters.departamento });
-  if (filters.colaborador) out.push({ label: "Colaborador", value: userName(bundle, filters.colaborador) ?? filters.colaborador });
+  if (filters.colaborador) out.push({ label: def.collaboratorLabel ?? "Colaborador", value: userName(bundle, filters.colaborador) ?? filters.colaborador });
+  if (filters.entidade) out.push({ label: "Entidade", value: AUDIT_ENTITY_LABELS[filters.entidade] ?? filters.entidade });
+  if (filters.evento) out.push({ label: "Evento", value: EVENT_TYPE_LABELS[filters.evento as EventType] ?? filters.evento });
+  if (filters.texto) out.push({ label: "Texto", value: `"${filters.texto}"` });
   if (filters.cliente) out.push({ label: "Cliente", value: clientName(bundle, filters.cliente) ?? filters.cliente });
   if (filters.produto) out.push({ label: "Produto", value: products.get(filters.produto)?.name ?? filters.produto });
   if (filters.status) out.push({ label: "Status", value: def.statusOptions?.find((o) => o.value === filters.status)?.label ?? filters.status });
@@ -748,6 +842,9 @@ function sanitize(def: ReportDefinition, filters: ReportFilters, users: Map<stri
   if (def.filters.includes("cliente") && filters.cliente) out.cliente = filters.cliente;
   if (def.filters.includes("produto") && filters.produto) out.produto = filters.produto;
   if (def.filters.includes("status") && filters.status && def.statusOptions?.some((o) => o.value === filters.status)) out.status = filters.status;
+  if (def.filters.includes("entidade") && filters.entidade && /^[a-z_]{2,40}$/.test(filters.entidade)) out.entidade = filters.entidade;
+  if (def.filters.includes("evento") && filters.evento && (EVENT_TYPES as readonly string[]).includes(filters.evento)) out.evento = filters.evento;
+  if (def.filters.includes("texto") && filters.texto) out.texto = filters.texto.slice(0, 120);
   return out;
 }
 
@@ -881,6 +978,10 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
       if (scope.kind === "team") notes.push("Gestor: comissões da sua equipe.");
       break;
     }
+    case "auditoria":
+      rows = await buildAudit(op, user);
+      notes.push("Eventos com alterações registradas (de → para) ou motivo, do mais recente ao mais antigo. Quantias só com \"Visualizar valores\"; salário nunca aparece.");
+      break;
     case "contas_a_pagar":
       rows = await buildPayables(range!.months, filters, inScope);
       notes.push("Situação \"Vencido\" = título em aberto (previsto, aprovado ou a pagar) com vencimento anterior a hoje.");
@@ -913,6 +1014,9 @@ export interface ReportFilterOptions {
   clients: { value: string; label: string }[];
   products: { value: string; label: string }[];
   departments: { value: string; label: string }[];
+  /** Auditoria: tipos de entidade e de evento. */
+  entities: { value: string; label: string }[];
+  events: { value: string; label: string }[];
 }
 
 /** Opções dos filtros; `allowedUserIds` (escopo da tela Relatórios) limita os colaboradores oferecidos. */
@@ -926,6 +1030,13 @@ export async function getReportFilterOptions(allowedUserIds?: ReadonlySet<string
     clients: clients.map((c) => ({ value: c.id, label: c.tradeName })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
     products: products.map((p) => ({ value: p.id, label: p.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
     departments: DEPARTMENT_KEYS.filter((d) => d !== "diretoria").map((d) => ({ value: d, label: DEPARTMENT_LABELS[d] })),
+    entities: Object.entries(AUDIT_ENTITY_LABELS)
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
+    // Rótulo de negócio + área (a interface não mostra a chave técnica).
+    events: eventTypeGroups()
+      .flatMap((g) => g.types.map((t) => ({ value: t.value, label: `${t.label} · ${g.label}` })))
+      .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
   };
 }
 

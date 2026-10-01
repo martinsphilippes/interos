@@ -8,7 +8,7 @@
 import type { DepartmentKey } from "@/domain/constants";
 import { CLIENT_STATUS_LABELS, TASK_STATUS_LABELS } from "@/domain/constants";
 
-export const REPORT_KEYS = ["marketing", "vendas", "financeiro", "implantacao", "cs", "suporte", "diretoria", "tarefas", "oportunidades", "contratos", "chamados", "clientes", "comissoes", "contas_a_pagar"] as const;
+export const REPORT_KEYS = ["marketing", "vendas", "financeiro", "implantacao", "cs", "suporte", "diretoria", "tarefas", "oportunidades", "contratos", "chamados", "clientes", "comissoes", "contas_a_pagar", "auditoria"] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 export type ColumnType = "texto" | "numero" | "moeda" | "percentual" | "dias" | "horas" | "minutos" | "nota" | "data" | "status";
@@ -21,9 +21,11 @@ export interface ReportColumn {
   total?: "soma" | "media";
   /** Largura sugerida (caracteres) para XLSX/PDF. */
   width?: number;
+  /** Texto longo: quebra linha na prévia em vez de truncar (ex.: alterações da Auditoria). */
+  wrap?: boolean;
 }
 
-export type FilterKey = "periodo_mes" | "periodo_data" | "departamento" | "colaborador" | "cliente" | "produto" | "status";
+export type FilterKey = "periodo_mes" | "periodo_data" | "departamento" | "colaborador" | "cliente" | "produto" | "status" | "entidade" | "evento" | "texto";
 
 export interface ReportDefinition {
   key: ReportKey;
@@ -37,6 +39,8 @@ export interface ReportDefinition {
   columns: ReportColumn[];
   /** Regra do status (texto exibido na página e na aba de filtros do XLSX). */
   statusRule?: string;
+  /** Rótulo do filtro "colaborador" quando significa outra coisa (Auditoria: quem fez a alteração). */
+  collaboratorLabel?: string;
 }
 
 const competencia: ReportColumn = { key: "competencia", label: "Competência", type: "texto", width: 12 };
@@ -368,6 +372,23 @@ export const REPORT_DEFINITIONS: Record<ReportKey, ReportDefinition> = {
       { key: "liberacao", label: "Elegível em", type: "data" },
     ],
   },
+  auditoria: {
+    key: "auditoria",
+    title: "Auditoria",
+    description: "Histórico auditável: quem fez, o quê, quando, valor anterior → novo e motivo, a partir dos eventos de cada alteração.",
+    group: "operacional",
+    filters: ["periodo_data", "colaborador", "entidade", "evento", "texto"],
+    collaboratorLabel: "Usuário (quem fez)",
+    columns: [
+      { key: "quando", label: "Quando", type: "texto", width: 16 },
+      { key: "quem", label: "Quem", type: "texto", width: 18 },
+      { key: "evento", label: "Evento", type: "texto", width: 22 },
+      { key: "entidade", label: "Entidade", type: "texto", width: 16 },
+      { key: "titulo", label: "Título", type: "texto", width: 34, wrap: true },
+      { key: "alteracoes", label: "Alterações (de → para)", type: "texto", width: 48, wrap: true },
+      { key: "motivo", label: "Motivo", type: "texto", width: 26, wrap: true },
+    ],
+  },
   contas_a_pagar: {
     key: "contas_a_pagar",
     title: "Contas a pagar",
@@ -398,6 +419,31 @@ export const REPORT_DEFINITIONS: Record<ReportKey, ReportDefinition> = {
   },
 };
 
+/** Tipos de entidade dos eventos (filtro do relatório de Auditoria). */
+export const AUDIT_ENTITY_LABELS: Record<string, string> = {
+  contract: "Contrato",
+  billing: "Cobrança",
+  contract_amendment: "Aditivo",
+  payable: "Título a pagar",
+  commission: "Comissão",
+  commission_rule: "Regra de comissão",
+  supplier: "Fornecedor",
+  client: "Cliente",
+  opportunity: "Oportunidade",
+  user: "Usuário",
+  department: "Departamento",
+  permission_profile: "Perfil de acesso",
+  setting: "Configuração",
+  sla_rule: "Regra de SLA",
+  product: "Produto",
+  automation_rule: "Automação",
+  goal: "Meta",
+  bonus_rule: "Regra de bônus",
+  renewal: "Renovação",
+  project: "Projeto de implantação",
+  ticket: "Chamado",
+};
+
 export const REPORT_GROUP_LABELS: Record<ReportDefinition["group"], string> = { departamental: "Relatórios departamentais", operacional: "Relatórios operacionais" };
 
 export function isReportKey(value: string | undefined | null): value is ReportKey {
@@ -408,7 +454,7 @@ export const EXPORT_FORMATS = ["csv", "xlsx", "pdf"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 /** Parâmetros de filtro na URL (página e rota de exportação usam os mesmos). */
-export const FILTER_PARAMS = ["de", "ate", "departamento", "colaborador", "cliente", "produto", "status"] as const;
+export const FILTER_PARAMS = ["de", "ate", "departamento", "colaborador", "cliente", "produto", "status", "entidade", "evento", "texto"] as const;
 export type FilterParam = (typeof FILTER_PARAMS)[number];
 export type ReportFilters = Partial<Record<FilterParam, string>>;
 

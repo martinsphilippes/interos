@@ -277,6 +277,14 @@ export const GESTAO = {
           // para gestor de outra área). Candidato A14: aplicar o escopo de financeiro.contas-a-pagar.
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
         },
+        {
+          key: "gestao.relatorios.auditoria.ver",
+          label: "Relatório de Auditoria",
+          // Onde: /gestao/relatorios?tipo=auditoria (prévia) · Etapa 6B (D29): relatório NOVO sobre os eventos com
+          // alterações "de → para" (quem, o quê, quando, antes → depois, motivo). Padrão = diretoria e administrador,
+          // como os demais relatórios sensíveis; o conteúdo segue o escopo da tela (pelo ator) e "Visualizar valores".
+          rule: { director: true },
+        },
       ],
       actions: [
         {
@@ -420,6 +428,16 @@ export const GESTAO = {
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
           guards: [],
           checkedIn: ["src/app/api/relatorios/[tipo]/route.ts#GET?tipo=contas_a_pagar"],
+          sensitive: true,
+        },
+        {
+          key: "gestao.relatorios.auditoria.exportar",
+          label: "Exportar relatório de Auditoria",
+          verb: "exportar",
+          // Etapa 6B (D29): chave própria de exportação (CSV/XLSX/PDF); a API exige também a prévia do tipo.
+          rule: { director: true },
+          guards: [],
+          checkedIn: ["src/app/api/relatorios/[tipo]/route.ts#GET?tipo=auditoria"],
           sensitive: true,
         },
       ],

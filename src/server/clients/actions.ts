@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { BusinessError, PermissionError, failAction, requirePermission } from "@/server/auth/session";
-import { create, getById, list, remove, update, nowIso, type CreateInput } from "@/server/db";
+import { create, getById, getManyByIds, list, remove, update, nowIso, type CreateInput } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { auditChanges } from "@/server/audit";
 import { formatCurrency, formatPhone } from "@/lib/format";
 import { CLIENT_STATUS_LABELS } from "@/domain/constants";
 import {
@@ -19,6 +20,7 @@ import {
   type Document,
   type Opportunity,
   type Product,
+  type User,
   type UserRef,
 } from "@/domain/types";
 import {
@@ -223,6 +225,13 @@ export async function updateClient(input: unknown): Promise<ActionResult<{ id: s
 
     await replaceDoc<Client>(COLLECTIONS.clients, current, patch);
 
+    // Auditoria (D29): valor anterior → novo; responsáveis gravados pelo NOME (legível no relatório e na timeline).
+    const ownerIds = [current.ownerSalesId, current.ownerCsId, patch.ownerSalesId, patch.ownerCsId].filter((x): x is string => Boolean(x));
+    const owners = await getManyByIds<User>(COLLECTIONS.users, ownerIds);
+    const ownerName = (id: string | undefined): string | undefined => (id ? (owners.get(id)?.name ?? id) : undefined);
+    const view = (c: Partial<Client>): Partial<Client> => ({ ...c, ownerSalesId: ownerName(c.ownerSalesId), ownerCsId: ownerName(c.ownerCsId), tags: c.tags && c.tags.length ? [...c.tags].sort() : undefined });
+    const audit = auditChanges<Client>(view(current), view({ ...current, ...patch }), [...TRACKED_FIELDS.map((f) => f.key), "address", "tags", "communicationOptOut"]);
+
     await emitEvent({
       type: "client.updated",
       actor: actor(user),
@@ -231,7 +240,7 @@ export async function updateClient(input: unknown): Promise<ActionResult<{ id: s
       title: "Cadastro do cliente atualizado",
       description: changed.length > 0 ? `Campos alterados: ${changed.join(", ")}` : "Sem alterações relevantes",
       department: user.departmentId,
-      payload: { changed },
+      payload: { changed, labels: Object.fromEntries(TRACKED_FIELDS.map((f) => [f.key, f.label])), ...audit },
     });
 
     revalidateClient(data.id);

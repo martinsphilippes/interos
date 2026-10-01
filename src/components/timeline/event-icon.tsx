@@ -22,6 +22,7 @@ import {
   MapPin,
   MessageCircle,
   MessageSquare,
+  Package,
   Paperclip,
   Phone,
   Receipt,
@@ -29,6 +30,7 @@ import {
   Rocket,
   Route,
   Send,
+  Settings2,
   ShieldAlert,
   ShieldCheck,
   StickyNote,
@@ -212,6 +214,10 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "user.updated": Users,
   "permissions.updated": ShieldCheck,
   "permissions.blocked": ShieldAlert,
+  "billing.cancelled": Receipt,
+  "contract.pendency_resolved": BadgeCheck,
+  "product.updated": Package,
+  "settings.updated": Settings2,
 };
 
 export type EventTone = "success" | "warning" | "danger" | "info" | "brand" | "muted";
@@ -263,6 +269,9 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "bonus.blocked": "danger",
   "permissions.blocked": "danger",
   "permissions.updated": "brand",
+  "billing.cancelled": "muted",
+  "contract.pendency_resolved": "success",
+  "contract.updated": "brand",
   "lead.disqualified": "muted",
   "note.added": "brand",
   "comment.added": "brand",

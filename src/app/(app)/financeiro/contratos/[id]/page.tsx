@@ -202,7 +202,7 @@ export default async function ContractPage({ params }: { params: Params }) {
                   <CardTitle className="flex items-center gap-2">
                     <History className="size-4 text-muted" /> Histórico
                   </CardTitle>
-                  <CardDescription>Eventos do contrato, das cobranças e do Financeiro na linha do tempo do cliente.</CardDescription>
+                  <CardDescription>Eventos deste contrato, das suas cobranças, aditivos e renovações — com quem fez, quando e o que mudou (de → para).</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0">
                   <Timeline events={detail.history} pageSize={25} emptyTitle="Sem eventos ainda" />

@@ -7,6 +7,18 @@ import PDFDocument from "pdfkit";
 import type { ReportData } from "./build";
 import { formatReportDate, formatReportValue, type ColumnType, type ReportColumn } from "./definitions";
 
+/** Célula muito longa (ex.: alterações da Auditoria) é cortada para a linha caber na página. */
+const MAX_CELL_CHARS = 700;
+
+/**
+ * As fontes padrão do PDF (Helvetica, WinAnsi) não têm alguns símbolos usados nos textos ("→" da auditoria, "≥",
+ * "−"): troca por equivalentes ASCII em vez de deixar o PDF com caracteres trocados.
+ */
+export function pdfSafe(text: string, max?: number): string {
+  const out = text.replace(/→/g, "->").replace(/←/g, "<-").replace(/≥/g, ">=").replace(/≤/g, "<=").replace(/−/g, "-").replace(/∅/g, "-");
+  return max && out.length > max ? `${out.slice(0, max - 1)}…` : out;
+}
+
 const MARGIN = 32;
 const FONT_SIZE = 7.5;
 const CELL_PAD = 3;
@@ -43,9 +55,9 @@ export function reportToPdf(data: ReportData): Promise<Buffer> {
 
     // Cabeçalho do documento.
     doc.font("Helvetica-Bold").fontSize(15).fillColor(NAVY).text(`Relatório de ${data.definition.title}`, MARGIN, MARGIN);
-    doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text(data.definition.description, { width: pageWidth });
+    doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text(pdfSafe(data.definition.description), { width: pageWidth });
     doc.moveDown(0.3);
-    const filterText = data.filters.map((f) => `${f.label}: ${f.value}`).join("   ·   ");
+    const filterText = pdfSafe(data.filters.map((f) => `${f.label}: ${f.value}`).join("   ·   "));
     doc.fillColor("#0F172A").text(filterText || "Sem filtros", { width: pageWidth });
     doc.fillColor(MUTED).text(`Gerado em ${generatedLabel(data.generatedAt)} · ${data.rows.length} linha(s)`, { width: pageWidth });
     doc.moveDown(0.6);
@@ -69,13 +81,13 @@ export function reportToPdf(data: ReportData): Promise<Buffer> {
       return h;
     };
 
-    const headerTexts = columns.map((c) => c.label);
+    const headerTexts = columns.map((c) => pdfSafe(c.label));
     const drawHeader = (y: number) => drawRow(headerTexts, y, { header: true, fill: NAVY });
 
     let y = doc.y;
     y += drawHeader(y);
 
-    const body = data.rows.map((r) => columns.map((c) => formatReportValue(r.cells[c.key] ?? null, c.type)));
+    const body = data.rows.map((r) => columns.map((c) => pdfSafe(formatReportValue(r.cells[c.key] ?? null, c.type), MAX_CELL_CHARS)));
     if (body.length === 0) {
       doc.font("Helvetica").fontSize(9).fillColor(MUTED).text("Nenhum registro para os filtros aplicados.", MARGIN, y + 8);
     }

@@ -6,6 +6,7 @@ import { BusinessError, canSeeHref, failAction, requirePermission } from "@/serv
 import type { PermissionKey } from "@/domain/permissions";
 import { col, create, getById, nowIso, remove, stripUndefined } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { auditChanges } from "@/server/audit";
 import { COLLECTIONS, type ActionResult, type AutomationRule } from "@/domain/types";
 import { AGENT_KINDS, type AgentRun } from "@/server/ai/types";
 import { runAgent } from "@/server/ai/agents";
@@ -87,15 +88,20 @@ function parseRule(input: unknown) {
   return { id: data.id, name: data.name, description: data.description || undefined, active: data.active, trigger, conditions, actions };
 }
 
+/** Campos da regra auditados (D29): gatilho, condições e ações são gravados inteiros (antes → depois). */
+const RULE_AUDIT_FIELDS = ["name", "description", "active", "trigger", "conditions", "actions"] as const;
+
 export async function saveAutomationRule(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
     const user = ruleIdOf(input) ? await requirePermission("admin.automacoes.editar") : await requirePermission("admin.automacoes.criar");
     const rule = parseRule(input);
     const actor = { id: user.id, name: user.name };
     let id = rule.id;
+    let before: AutomationRule | null = null;
     if (id) {
       const existing = await getById<AutomationRule>(COLLECTIONS.automationRules, id);
       if (!existing) throw new BusinessError("Regra não encontrada");
+      before = existing;
       // update() substitui os campos inteiros (trigger/conditions/actions), sem mesclar chaves antigas.
       await col(COLLECTIONS.automationRules)
         .doc(id)
@@ -120,7 +126,7 @@ export async function saveAutomationRule(input: unknown): Promise<ActionResult<{
       entity: { type: "automation_rule", id },
       title: `${rule.id ? "Automação alterada" : "Automação criada"}: ${rule.name}`,
       description: `${rule.active ? "Ativa" : "Inativa"} · ${rule.conditions.length} condição(ões) · ${rule.actions.length} ação(ões)`,
-      payload: { ruleId: id, created: !rule.id, active: rule.active, trigger: rule.trigger },
+      payload: { ruleId: id, created: !rule.id, active: rule.active, trigger: rule.trigger, ...auditChanges<AutomationRule>(before, { ...rule, id } as unknown as AutomationRule, RULE_AUDIT_FIELDS) },
     });
     revalidate(id);
     return { ok: true, data: { id } };
@@ -142,7 +148,7 @@ export async function setAutomationRuleActive(input: unknown): Promise<ActionRes
       actor: { id: user.id, name: user.name },
       entity: { type: "automation_rule", id },
       title: `Automação ${active ? "ativada" : "desativada"}: ${rule.name}`,
-      payload: { ruleId: id, active },
+      payload: { ruleId: id, active, changes: { active: { from: rule.active, to: active } } },
     });
     revalidate(id);
     return { ok: true, data: { active } };
@@ -164,7 +170,7 @@ export async function deleteAutomationRule(input: unknown): Promise<ActionResult
       actor: { id: user.id, name: user.name },
       entity: { type: "automation_rule", id },
       title: `Automação excluída: ${rule.name}`,
-      payload: { ruleId: id, deleted: true },
+      payload: { ruleId: id, deleted: true, changes: { name: { from: rule.name, to: null }, active: { from: rule.active, to: null } } },
     });
     revalidate();
     return { ok: true, data: undefined };

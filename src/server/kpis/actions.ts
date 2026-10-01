@@ -5,6 +5,7 @@ import { z } from "zod";
 import { BusinessError, failAction, requirePermission } from "@/server/auth/session";
 import { batchSet, col, create, getById, list, nowIso, remove, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { COLLECTIONS, type ActionResult, type CurrentUser, type Goal, type Kpi, type Settings, type UserRef } from "@/domain/types";
 import { getFormula, invalidateDataBundle } from "./formulas";
 import { storeSnapshots } from "./engine";
@@ -186,9 +187,11 @@ export async function upsertGoal(input: GoalInput): Promise<ActionResult<{ id: s
     if (sameSlot.some((g) => g.id !== data.id)) throw new ActionError("Já existe meta deste indicador para este escopo no período");
 
     let id = data.id;
+    let previous: Goal | null = null;
     if (id) {
       const current = await getById<Goal>(COLLECTIONS.goals, id);
       if (!current) throw new ActionError("Meta não encontrada");
+      previous = current;
       if (!canManageGoal(perms, current.scope, current.scopeId)) throw new ActionError("Você não pode alterar esta meta");
       await update<Goal>(COLLECTIONS.goals, id, { kpiKey: data.kpiKey, scope: data.scope, scopeId, period: data.period, target: data.target, weight: data.weight });
     } else {
@@ -201,7 +204,16 @@ export async function upsertGoal(input: GoalInput): Promise<ActionResult<{ id: s
       actor: actor(user),
       entity: { type: "goal", id },
       title: `${data.id ? "Meta atualizada" : "Meta criada"}: ${data.kpiKey} (${data.period})`,
-      payload: { kpiKey: data.kpiKey, scope: data.scope, scopeId: scopeId ?? null, period: data.period, target: data.target, weight: data.weight },
+      payload: {
+        kpiKey: data.kpiKey,
+        scope: data.scope,
+        scopeId: scopeId ?? null,
+        period: data.period,
+        target: data.target,
+        weight: data.weight,
+        // Auditoria (D29): meta e peso anteriores → novos (metas são a base do bônus).
+        ...auditChanges<Goal>(previous, { kpiKey: data.kpiKey, scope: data.scope, scopeId, period: data.period, target: data.target, weight: data.weight }, ["kpiKey", "scope", "scopeId", "period", "target", "weight"]),
+      },
       timeline: false,
     });
     revalidateKpiPages();
@@ -225,7 +237,7 @@ export async function deleteGoal(input: { id: string }): Promise<ActionResult> {
       actor: actor(user),
       entity: { type: "goal", id },
       title: `Meta removida: ${goal.kpiKey} (${goal.period})`,
-      payload: { kind: "removida", kpiKey: goal.kpiKey, scope: goal.scope, scopeId: goal.scopeId ?? null, period: goal.period, target: goal.target },
+      payload: { kind: "removida", kpiKey: goal.kpiKey, scope: goal.scope, scopeId: goal.scopeId ?? null, period: goal.period, target: goal.target, changes: { target: { from: goal.target, to: null }, weight: { from: goal.weight ?? null, to: null } } },
       timeline: false,
     });
     revalidateKpiPages();
@@ -274,20 +286,26 @@ export async function copyGoalsFromPreviousMonth(input: { period: string }): Pro
 
 async function saveIndexSetting(key: string, value: Record<string, unknown>, description: string, user: CurrentUser, title: string): Promise<void> {
   const existing = await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", key]] });
+  const before = (existing[0]?.value as Record<string, unknown> | undefined) ?? null;
   if (existing[0]) {
     // Substitui o valor inteiro (componentes/indicadores removidos somem de fato).
     await col(COLLECTIONS.settings).doc(existing[0].id).set(stripUndefined({ ...existing[0], id: undefined, value, updatedAt: nowIso() }));
   } else {
     await create<Settings>(COLLECTIONS.settings, { key, value, description, createdBy: user.id }, `setting_${key}`);
   }
-  await emitEvent({
-    type: "settings.updated",
-    actor: actor(user),
-    entity: { type: "setting", id: key },
-    title,
-    payload: { kind: "config", setting: key },
-    timeline: false,
-  });
+  // Auditoria (D29): valor anterior → novo de cada bloco da configuração.
+  const audit = auditChanges<Record<string, unknown>>(before, value, Array.from(new Set([...Object.keys(before ?? {}), ...Object.keys(value)])));
+  if (hasChanges(audit)) {
+    await emitEvent({
+      type: "settings.updated",
+      actor: actor(user),
+      entity: { type: "setting", id: key },
+      title,
+      description: describeChanges(audit),
+      payload: { kind: "config", setting: key, created: !before, ...audit },
+      timeline: false,
+    });
+  }
   revalidatePath("/gestao", "layout");
   revalidatePath("/performance", "layout");
   revalidatePath("/admin/configuracoes");

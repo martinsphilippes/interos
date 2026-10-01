@@ -87,6 +87,7 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                     <p className="text-xs text-muted">
                       Vence {formatDate(b.dueDate)}
                       {b.paidAt ? ` · pago ${formatDate(b.paidAt)} (${paymentMethodLabel(b.method)})` : ""}
+                      {b.status === "cancelada" && b.cancelledAt ? ` · cancelada ${formatDate(b.cancelledAt)}${b.cancelReason ? `: ${b.cancelReason}` : ""}` : ""}
                     </p>
                     <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
                       <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
@@ -132,7 +133,7 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                         </span>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted">
-                        {b.paidAt ? `${formatDate(b.paidAt)} · ${paymentMethodLabel(b.method)}${!hideValues && b.paidAmount !== undefined && b.paidAmount !== b.amount ? ` · ${formatCurrency(b.paidAmount)}` : ""}` : "—"}
+                        {b.paidAt ? `${formatDate(b.paidAt)} · ${paymentMethodLabel(b.method)}${!hideValues && b.paidAmount !== undefined && b.paidAmount !== b.amount ? ` · ${formatCurrency(b.paidAmount)}` : ""}` : b.status === "cancelada" && b.cancelledAt ? <span title={b.cancelReason}>cancelada {formatDate(b.cancelledAt)}</span> : "—"}
                       </TableCell>
                       {canOperate ? (
                         <TableCell className="text-right">

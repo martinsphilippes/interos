@@ -71,7 +71,7 @@ export function ReportPreview({ data }: { data: ReportData }) {
             {rows.map((row, i) => (
               <TableRow key={i}>
                 {columns.map((c, j) => (
-                  <TableCell key={c.key} className={cn("tabular-nums", NUMERIC.includes(c.type) && "text-right", c.type === "texto" && "max-w-[260px] truncate")}>
+                  <TableCell key={c.key} className={cn("tabular-nums", NUMERIC.includes(c.type) && "text-right", c.type === "texto" && (c.wrap ? "min-w-[170px] max-w-[380px] whitespace-normal break-words align-top" : "max-w-[260px] truncate"))}>
                     {j === 0 && row.href ? (
                       <Link href={row.href} className="font-medium text-foreground hover:underline">
                         <Cell col={c} value={row.cells[c.key]} />
@@ -112,9 +112,9 @@ export function ReportPreview({ data }: { data: ReportData }) {
             )}
             <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
               {rest.map((c) => (
-                <div key={c.key} className="min-w-0">
+                <div key={c.key} className={cn("min-w-0", c.wrap && "col-span-2")}>
                   <dt className="truncate text-muted">{c.label}</dt>
-                  <dd className="truncate tabular-nums text-foreground">
+                  <dd className={cn("tabular-nums text-foreground", c.wrap ? "break-words" : "truncate")}>
                     <Cell col={c} value={row.cells[c.key]} />
                   </dd>
                 </div>

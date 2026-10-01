@@ -35,6 +35,7 @@ import { buildContractSummary, redactContractSummary, type ContractSummaryData }
 import type { DataScope } from "@/server/auth/scope";
 import { canSeeFinanceValues, filterBillingsByContracts, filterContractsByScope, isCompanyScope, ownersPredicate, visibleContractIds } from "./access";
 import { maskMoneyText, redactAmendment, redactBilling, redactContract } from "./redact";
+import { belongsToContractHistory, eventChanges, redactChanges } from "@/domain/audit-format";
 import { BILLING_STATUSES, BILLING_TYPES, BOLETO_FILTERS, boletoState, CONTRACT_QUEUE_GROUPS, PERIOD_OPTIONS, type BoletoFilter, type ContractQueueGroup, type PeriodKey, type ReleaseGate } from "./schemas";
 
 // ---------------------------------------------------------------------------
@@ -397,9 +398,34 @@ export function redactContractDetail(detail: ContractDetail): ContractDetail {
     amendments: detail.amendments.map(redactAmendment),
     summary: redactContractSummary(detail.summary),
     products: detail.products.map((p) => ({ ...p, setupPrice: 0, monthlyPrice: 0, hardwarePrice: 0 })),
-    history: detail.history.map((e) => ({ ...e, title: maskMoneyText(e.title), description: maskMoneyText(e.description) })),
+    history: detail.history.map((e) => ({ ...e, title: maskMoneyText(e.title), description: maskMoneyText(e.description), reason: maskMoneyText(e.reason), changes: redactChanges(e.changes, { hideValues: true }) })),
     gate: { ...detail.gate, checks: detail.gate.checks.map((c) => ({ ...c, detail: maskMoneyText(c.detail) })) },
     valuesHidden: true,
+  };
+}
+
+/** Evento do motor → item da linha do tempo (mesmo formato de timeline_events, com as alterações e o motivo). */
+function eventToTimeline(e: DomainEvent): TimelineEvent {
+  const changes = eventChanges(e.type, e.payload);
+  const reason = typeof e.payload?.reason === "string" && e.payload.reason.trim() ? e.payload.reason.trim() : undefined;
+  return {
+    id: e.id,
+    organizationId: e.organizationId,
+    createdAt: e.createdAt,
+    updatedAt: e.updatedAt,
+    clientId: e.clientId ?? "",
+    eventId: e.id,
+    type: e.type,
+    occurredAt: e.occurredAt,
+    actorId: e.actorId,
+    actorName: e.actorName,
+    title: e.title,
+    description: e.description,
+    entityType: e.entityType,
+    entityId: e.entityId,
+    department: e.department,
+    ...(changes ? { changes } : {}),
+    ...(reason ? { reason } : {}),
   };
 }
 
@@ -407,13 +433,13 @@ export function redactContractDetail(detail: ContractDetail): ContractDetail {
 export const getContract = cache(async (id: string): Promise<ContractDetail | null> => {
   const contract = await getById<Contract>(COLLECTIONS.contracts, id);
   if (!contract) return null;
-  const [client, opportunity, billings, settings, clientDocs, timeline, steps, projects, contractEvents, catalog, amendments, alertSettings] = await Promise.all([
+  const [client, opportunity, billings, settings, clientDocs, clientEvents, steps, projects, contractEvents, catalog, amendments, alertSettings] = await Promise.all([
     getById<Client>(COLLECTIONS.clients, contract.clientId),
     contract.opportunityId ? getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : Promise.resolve(null),
     listBillingsSwept({ where: [["contractId", "==", contract.id]] }),
     getGateSettings(),
     list<Document>(COLLECTIONS.documents, { where: [["clientId", "==", contract.clientId]] }),
-    list<TimelineEvent>(COLLECTIONS.timelineEvents, { where: [["clientId", "==", contract.clientId]] }),
+    list<DomainEvent>(COLLECTIONS.events, { where: [["clientId", "==", contract.clientId]] }),
     list<WorkflowStep>(COLLECTIONS.workflowSteps, { where: [["clientId", "==", contract.clientId]] }),
     list<ImplementationProject>(COLLECTIONS.implementationProjects, { where: [["contractId", "==", contract.id]] }),
     list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", contract.id]] }),
@@ -431,9 +457,13 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
 
   const project = projects.find((p) => p.status !== "cancelada") ?? null;
   amendments.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // Histórico (D29): só eventos DESTE contrato — payload.contractId igual ou registro dele (cobranças, aditivos, projeto,
+  // oportunidade de origem); nunca eventos financeiros de outros contratos do mesmo cliente. Inclui renovações e
+  // aditivos (payload.contractId) e alterações fora da timeline do cliente (signatários, status derivado).
   const related = new Set([contract.id, ...billingIds, ...(project ? [project.id] : []), ...(contract.opportunityId ? [contract.opportunityId] : []), ...amendments.map((a) => a.id)]);
-  const history = timeline
-    .filter((e) => (e.entityId && related.has(e.entityId)) || e.department === "financeiro")
+  const history = clientEvents
+    .filter((e) => belongsToContractHistory(e, contract.id, related))
+    .map(eventToTimeline)
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 
   const financeStep = steps.filter((s) => s.stageKey === "financeiro").sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
@@ -964,7 +994,7 @@ export async function getClientFinancialSummary(clientId: string, preloaded?: { 
 }
 
 /** O usuário da requisição NÃO tem "Visualizar valores"? Sem sessão (ou fora de requisição) → oculta (falha fechada). */
-async function viewerHidesValues(): Promise<boolean> {
+export async function viewerHidesValues(): Promise<boolean> {
   try {
     // Import dinâmico: mantém este módulo utilizável fora de requisição (scripts), onde a sessão não existe.
     const { getCurrentUser } = await import("@/server/auth/session");

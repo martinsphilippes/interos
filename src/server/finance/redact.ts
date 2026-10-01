@@ -70,6 +70,7 @@ export function redactBilling<T extends Partial<Billing> & Pick<Billing, "amount
     ...(b.paidAmount !== undefined ? { paidAmount: 0 } : {}),
     ...(b.partialPaidAmount !== undefined ? { partialPaidAmount: 0 } : {}),
     ...(b.reversedPayments ? { reversedPayments: b.reversedPayments.map((r) => ({ ...r, paidAmount: 0 })) } : {}),
+    ...(b.cancelReason ? { cancelReason: maskMoneyText(b.cancelReason) } : {}),
     ...(b.boleto ? { boleto: { ...b.boleto, linhaDigitavel: restricted(b.boleto.linhaDigitavel), codigoBarras: restricted(b.boleto.codigoBarras) } } : {}),
     ...(b.pix ? { pix: { ...b.pix, copiaECola: restricted(b.pix.copiaECola) } } : {}),
   };

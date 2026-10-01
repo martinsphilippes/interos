@@ -11,6 +11,7 @@ import type { VisitRow } from "@/server/sales/queries";
 import { filterByScope, resolveDataScope, type DataScope } from "@/server/auth/scope";
 import { filterBillingsByContracts, filterContractsByScope } from "@/server/finance/access";
 import { redactBilling, redactContract } from "@/server/finance/redact";
+import { redactChanges } from "@/domain/audit-format";
 import { ALL_CLIENT_SECTIONS, type ClientSectionAccess } from "@/components/clients/access-model";
 import {
   COLLECTIONS,
@@ -685,7 +686,8 @@ export async function getClient360(id: string, access: Client360Access = {}): Pr
     availableProducts: access.withAvailableProducts === false ? [] : availableProducts,
     catalog: sec.produtos ? activeCatalog : [],
     ownedCategories: access.withAvailableProducts === false ? [] : ownedCategories,
-    timeline,
+    // D29/A13: alterações "de → para" com quantias só para quem vê valores; sensíveis (salário) sempre mascarados.
+    timeline: timeline.map((e) => (e.changes ? { ...e, changes: redactChanges(e.changes, { hideValues: Boolean(financeSummary.valuesHidden) }) } : e)),
     lead,
     campaign,
     opportunities,

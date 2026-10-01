@@ -27,10 +27,12 @@ export interface DrawerContentProps extends React.ComponentPropsWithoutRef<typeo
   /** Lado no desktop (padrão: direita). */
   side?: "right" | "left";
   hideClose?: boolean;
+  /** Fecha ao tocar/clicar fora do painel. Padrão: não (mesmo motivo do Dialog: seletores nativos do iPad). */
+  dismissOnOutsideClick?: boolean;
 }
 
 export const DrawerContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Content>, DrawerContentProps>(
-  ({ className, children, size = "md", side = "right", hideClose, ...props }, ref) => (
+  ({ className, children, size = "md", side = "right", hideClose, dismissOnOutsideClick = false, onInteractOutside, ...props }, ref) => (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay backdrop-blur-[3px] animate-fade-in" />
       <DialogPrimitive.Content
@@ -46,6 +48,10 @@ export const DrawerContent = React.forwardRef<React.ComponentRef<typeof DialogPr
           sizeClass[size],
           className,
         )}
+        onInteractOutside={(event) => {
+          onInteractOutside?.(event);
+          if (!dismissOnOutsideClick) event.preventDefault();
+        }}
         {...props}
       >
         <div className="mx-auto mt-2 h-1.5 w-10 shrink-0 rounded-full bg-border-strong md:hidden" aria-hidden />

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { BusinessError, PermissionError, failAction, requirePermission } from "@/server/auth/session";
 import { create, getById, getManyByIds, list, remove, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
+import { auditChanges } from "@/server/audit";
 import { notify } from "@/server/notifications";
 import { COLLECTIONS, type ActionResult, type BonusRule, type CurrentUser, type GamificationCampaign, type User, type UserRef } from "@/domain/types";
 import { DEPARTMENT_LABELS, type EventType } from "@/domain/constants";
@@ -216,7 +217,19 @@ export async function saveBonusRule(input: BonusRuleInput): Promise<ActionResult
       title: `Regra de bônus de ${DEPARTMENT_LABELS[data.department]} publicada (versão ${version})`,
       description: `${data.name} · até ${data.maxPctOfSalary}% do salário · individual ${data.individualWeight} / coletivo ${data.collectiveWeight}`,
       department: data.department,
-      payload: { kind: "regra", ruleId: rule.id, version, baseRuleId: data.baseRuleId, deactivated: existing.filter((r) => r.active).map((r) => r.id) },
+      payload: {
+        kind: "regra",
+        ruleId: rule.id,
+        version,
+        baseRuleId: data.baseRuleId,
+        deactivated: existing.filter((r) => r.active).map((r) => r.id),
+        // Auditoria (D29): o que mudou em relação à versão que estava ativa (as versões antigas ficam gravadas).
+        ...auditChanges<BonusRule>(
+          existing.filter((r) => r.active).sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0] ?? null,
+          rule,
+          ["name", "maxPctOfSalary", "individualWeight", "collectiveWeight", "individualKpis", "collectiveKpis", "tiers", "blockers", "extras"],
+        ),
+      },
       timeline: false,
     });
     revalidatePerformance();

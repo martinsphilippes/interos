@@ -68,16 +68,19 @@ export function MeuDiaHeader({ data, filter }: { data: MeuDiaData; filter: Prior
         }
         actions={data.canToggleScope ? <ScopeToggle scope={scope} teamSize={data.teamSize} /> : undefined}
       />
-      <KpiStrip columns={4} mobileColumns={2} className="mb-6">
-        <StatCard
-          label="Tarefas"
-          value={stats.tasksInProgress}
-          icon={<ClipboardCheck />}
-          tone="info"
-          href={team ? "/tarefas?view=equipe" : "/tarefas?view=minha"}
-          hint={stats.overdueTasks > 0 ? `${stats.overdueTasks} atrasada${stats.overdueTasks === 1 ? "" : "s"}` : "Em andamento"}
-          compact
-        />
+      <KpiStrip columns={(2 + (data.sections.tarefas ? 1 : 0) + (data.sections.metas ? 1 : 0)) as 2 | 3 | 4} mobileColumns={2} className="mb-6">
+        {/* Tarefas e Meta levam a outras telas: só aparecem para quem tem acesso a elas (perfil/exceção). */}
+        {data.sections.tarefas ? (
+          <StatCard
+            label="Tarefas"
+            value={stats.tasksInProgress}
+            icon={<ClipboardCheck />}
+            tone="info"
+            href={team ? "/tarefas?view=equipe" : "/tarefas?view=minha"}
+            hint={stats.overdueTasks > 0 ? `${stats.overdueTasks} atrasada${stats.overdueTasks === 1 ? "" : "s"}` : "Em andamento"}
+            compact
+          />
+        ) : null}
         <StatCard
           label="Pendências"
           value={stats.pendingOnYou}
@@ -89,16 +92,18 @@ export function MeuDiaHeader({ data, filter }: { data: MeuDiaData; filter: Prior
           className={cn(filter === "pendencias" && "border-brand")}
         />
         <StatCard label="SLA em risco" value={stats.slaAtRisk} icon={<AlertTriangle />} tone={stats.slaAtRisk > 0 ? "danger" : "success"} href={meuDiaHref(scope, "sla")} hint="Exigem atenção" compact className={cn(filter === "sla" && "border-brand")} />
-        <StatCard
-          label="Meta"
-          value={stats.goalAttainment === null ? "—" : formatPercent(stats.goalAttainment)}
-          icon={<Target />}
-          tone={stats.goalAttainment === null ? "neutral" : stats.goalAttainment >= 0.9 ? "success" : stats.goalAttainment >= 0.7 ? "warning" : "danger"}
-          href="/performance"
-          hint={stats.goalAttainment === null ? "Sem metas no mês" : "do objetivo"}
-          progress={stats.goalAttainment === null ? undefined : Math.min(100, stats.goalAttainment * 100)}
-          compact
-        />
+        {data.sections.metas ? (
+          <StatCard
+            label="Meta"
+            value={stats.goalAttainment === null ? "—" : formatPercent(stats.goalAttainment)}
+            icon={<Target />}
+            tone={stats.goalAttainment === null ? "neutral" : stats.goalAttainment >= 0.9 ? "success" : stats.goalAttainment >= 0.7 ? "warning" : "danger"}
+            href="/performance"
+            hint={stats.goalAttainment === null ? "Sem metas no mês" : "do objetivo"}
+            progress={stats.goalAttainment === null ? undefined : Math.min(100, stats.goalAttainment * 100)}
+            compact
+          />
+        ) : null}
       </KpiStrip>
     </>
   );

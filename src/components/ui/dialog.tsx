@@ -30,10 +30,16 @@ export interface DialogContentProps extends React.ComponentPropsWithoutRef<typeo
   size?: DialogSize;
   /** Oculta o botão X. */
   hideClose?: boolean;
+  /**
+   * Fecha ao tocar/clicar fora da janela. Padrão: não — a janela só fecha pelo X, por um botão (Cancelar) ou
+   * pela tecla Esc. No Safari do iPad os seletores nativos (lista, data, mês) disparam um toque "fora" ao abrir e
+   * fechar, e a janela fechava sozinha perdendo o preenchimento.
+   */
+  dismissOnOutsideClick?: boolean;
 }
 
 export const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Content>, DialogContentProps>(
-  ({ className, children, size = "md", hideClose, ...props }, ref) => (
+  ({ className, children, size = "md", hideClose, dismissOnOutsideClick = false, onInteractOutside, ...props }, ref) => (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
@@ -44,6 +50,10 @@ export const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPr
           sizeClass[size],
           className,
         )}
+        onInteractOutside={(event) => {
+          onInteractOutside?.(event);
+          if (!dismissOnOutsideClick) event.preventDefault();
+        }}
         {...props}
       >
         {children}

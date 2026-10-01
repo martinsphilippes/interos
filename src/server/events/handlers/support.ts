@@ -5,7 +5,7 @@ import type { DomainEvent } from "@/domain/types";
  * Handlers do módulo de Suporte:
  *
  * - support.ticket.created   → notifica a fila (toda a equipe de suporte; "ação" para crítico/alto) e,
- *                              quando o cliente está nos 30 dias após o go-live, anota no payload do
+ *                              quando o cliente está nos 30 dias após o go-live, anota em meta.support do
  *                              evento (postGoLive, suggestTrainingRelated) — o chamado não é alterado.
  * - sla.at_risk, sla.breached → para chamados (payload.entityType = "chamado"): avisa o gestor de suporte
  *                              (violação) e a fila quando não há atendente. O responsável é avisado pelo

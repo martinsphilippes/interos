@@ -23,6 +23,7 @@ import { addBusinessHours, businessDaysToHours, completeSla, getHolidays, pauseS
 import { completeTaskInternal, createTaskInternal } from "@/server/tasks/service";
 import { getDepartmentManager, reassignStep, resumeStep, setStepWaitingClient, updateStepChecklist } from "@/server/workflow/service";
 import { getSetting } from "@/server/admin/queries";
+import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { formatDate } from "@/lib/format";
 import { shortId } from "@/lib/utils";
 import {
@@ -186,10 +187,27 @@ export async function getGoLiveSettings(): Promise<GoLiveSettings> {
   return getSetting<GoLiveSettings>(GO_LIVE_SETTING_KEY, DEFAULT_GO_LIVE_SETTINGS);
 }
 
+/**
+ * Grava a regra do go-live (setting `go_live`). Writer próprio do módulo (fora de `upsertSetting`), auditado do mesmo
+ * jeito (D29): `settings.updated` com o valor anterior → novo.
+ */
 export async function saveGoLiveSettings(value: GoLiveSettings, actor: UserRef): Promise<void> {
   const existing = await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", GO_LIVE_SETTING_KEY]] });
+  const before = (existing[0]?.value as Partial<GoLiveSettings> | undefined) ?? null;
   if (existing[0]) await update<Settings>(COLLECTIONS.settings, existing[0].id, { value: { ...value } });
   else await create<Settings>(COLLECTIONS.settings, { key: GO_LIVE_SETTING_KEY, value: { ...value }, description: "Regras de aprovação do go-live da implantação.", createdBy: actor.id }, `setting_${GO_LIVE_SETTING_KEY}`);
+  const audit = auditChanges<GoLiveSettings>(before ?? (existing[0] ? null : DEFAULT_GO_LIVE_SETTINGS), value, ["exigeAprovacaoGestor"]);
+  if (!hasChanges(audit)) return;
+  await emitEvent({
+    type: "settings.updated",
+    actor,
+    entity: { type: "setting", id: GO_LIVE_SETTING_KEY },
+    title: `Configuração do go-live alterada: ${value.exigeAprovacaoGestor ? "só gestores aprovam" : "o responsável do projeto também aprova"}`,
+    description: describeChanges(audit, { exigeAprovacaoGestor: "Exige aprovação do gestor" }),
+    department: "implantacao",
+    payload: { kind: "setting", setting: GO_LIVE_SETTING_KEY, created: !existing[0], ...audit },
+    timeline: false,
+  });
 }
 
 /**

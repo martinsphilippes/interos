@@ -152,6 +152,7 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "supplier.updated": "Fornecedor alterado",
   "permissions.updated": "Acessos alterados",
   "permissions.blocked": "Alteração de acesso bloqueada",
+  "contract.pendency_resolved": "Pendência do contrato resolvida",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {

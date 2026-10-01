@@ -207,6 +207,20 @@
     cursor: pointer;
     filter: invert(0.85);
   }
+  /* Safari do iPad/iPhone: campos de data/mês/hora têm largura mínima própria e vazavam da coluna (e da janela).
+     Sem a aparência nativa eles respeitam a largura do formulário; o seletor nativo continua abrindo ao tocar. */
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"],
+  input[type="month"] {
+    min-width: 0;
+    max-width: 100%;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input::-webkit-date-and-time-value {
+    text-align: left;
+  }
   /* Autofill do navegador sem fundo amarelo/branco. */
   input:-webkit-autofill,
   input:-webkit-autofill:hover,
