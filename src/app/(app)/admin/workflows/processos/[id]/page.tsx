@@ -18,13 +18,18 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 /** Construtor visual de um processo (uma versão). */
 export default async function ProcessBuilderPage({ params }: { params: Params }) {
-  await requireScreen("admin.workflows.processos.ver");
+  const user = await requireScreen("admin.workflows.processos.ver");
   const { id } = await params;
   const data = await getBuilderData(id);
   if (!data) notFound();
   return (
     <PageContainer size="full">
-      <ProcessBuilder key={data.definition.id} data={data} webhooksEnabled={process.env.AUTOMATION_WEBHOOKS_ENABLED === "true"} />
+      <ProcessBuilder
+        key={data.definition.id}
+        data={data}
+        webhooksEnabled={process.env.AUTOMATION_WEBHOOKS_ENABLED === "true"}
+        access={{ save: can(user, "admin.workflows.processos.editar"), publish: can(user, "admin.workflows.processos.publicar"), test: can(user, "admin.workflows.processos.testar") }}
+      />
     </PageContainer>
   );
 }

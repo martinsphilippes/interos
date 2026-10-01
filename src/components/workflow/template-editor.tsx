@@ -24,6 +24,9 @@ export interface TemplateEditorProps {
   versions: { id: string; version: number; published: boolean }[];
   instances: number;
   slaRuleKeys: string[];
+  /** Calculados no servidor (só escondem; as actions revalidam): admin.workflows.jornada.editar / .publicar. */
+  canSave?: boolean;
+  canPublish?: boolean;
 }
 
 type StageDraft = WorkflowStage;
@@ -64,7 +67,7 @@ function emptyStage(order: number): StageDraft {
  * Editor simples do template (sem editor visual): lista reordenável de etapas com formulário por etapa.
  * Salvar em uma versão publicada cria a versão seguinte como rascunho; "Publicar" ativa a versão.
  */
-export function TemplateEditor({ template, versions, instances, slaRuleKeys }: TemplateEditorProps) {
+export function TemplateEditor({ template, versions, instances, slaRuleKeys, canSave = true, canPublish = true }: TemplateEditorProps) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [name, setName] = React.useState(template.name);
@@ -348,14 +351,16 @@ export function TemplateEditor({ template, versions, instances, slaRuleKeys }: T
           {template.published ? "Versão publicada: salvar cria uma nova versão em rascunho." : "Rascunho: salvar atualiza esta versão. Publique para usar em novas jornadas."}
         </p>
         <div className="flex gap-2">
-          {!template.published ? (
+          {!template.published && canPublish ? (
             <Button variant="secondary" disabled={pending || dirty} title={dirty ? "Salve antes de publicar" : undefined} onClick={() => setConfirmPublish(true)}>
               <Rocket /> Publicar v{template.version}
             </Button>
           ) : null}
-          <Button loading={pending} disabled={!dirty} onClick={save}>
-            <Save /> {template.published ? `Salvar como v${Math.max(...versions.map((v) => v.version)) + 1}` : "Salvar rascunho"}
-          </Button>
+          {canSave ? (
+            <Button loading={pending} disabled={!dirty} onClick={save}>
+              <Save /> {template.published ? `Salvar como v${Math.max(...versions.map((v) => v.version)) + 1}` : "Salvar rascunho"}
+            </Button>
+          ) : null}
         </div>
       </div>
 

@@ -35,7 +35,10 @@ export default async function ProcessRunsPage({ params, searchParams }: { params
           ) : null
         }
       />
-      <RunViewer data={data} />
+      <RunViewer
+        data={data}
+        access={{ sweep: can(user, "admin.workflows.execucoes.executar-varredura"), start: can(user, "admin.workflows.execucoes.iniciar"), cancel: can(user, "admin.workflows.execucoes.cancelar") }}
+      />
     </PageContainer>
   );
 }

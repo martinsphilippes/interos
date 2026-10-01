@@ -19,14 +19,14 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 /** Editor de uma versão do template (etapas, gates, SLA e tarefas automáticas). */
 export default async function AdminWorkflowTemplatePage({ params }: { params: Params }) {
-  await requireScreen("admin.workflows.jornada.ver");
+  const user = await requireScreen("admin.workflows.jornada.ver");
   const { id } = await params;
   const detail = await getWorkflowTemplateDetail(id);
   if (!detail) notFound();
   return (
     <PageContainer>
       <PageHeader title={detail.template.name} description={detail.template.description} breadcrumbs={[{ label: "Administração" }, { label: "Workflows", href: "/admin/workflows" }, { label: `v${detail.template.version}` }]} />
-      <TemplateEditor key={detail.template.id} template={detail.template} versions={detail.versions} instances={detail.instances} slaRuleKeys={detail.slaRuleKeys} />
+      <TemplateEditor key={detail.template.id} template={detail.template} versions={detail.versions} instances={detail.instances} slaRuleKeys={detail.slaRuleKeys} canSave={can(user, "admin.workflows.jornada.editar")} canPublish={can(user, "admin.workflows.jornada.publicar")} />
     </PageContainer>
   );
 }

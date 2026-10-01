@@ -61,7 +61,19 @@ function currentLabel(run: ProcessRun): string {
   return labels.join(", ");
 }
 
-export function RunViewer({ data }: { data: RunsPageData }) {
+/** Capacidades calculadas no servidor (só escondem; as actions revalidam). Ausentes = tudo liberado. */
+export interface RunViewerAccess {
+  /** admin.workflows.execucoes.executar-varredura */
+  sweep: boolean;
+  /** admin.workflows.execucoes.iniciar */
+  start: boolean;
+  /** admin.workflows.execucoes.cancelar */
+  cancel: boolean;
+}
+
+const ALL_RUN_ACCESS: RunViewerAccess = { sweep: true, start: true, cancel: true };
+
+export function RunViewer({ data, access = ALL_RUN_ACCESS }: { data: RunsPageData; access?: RunViewerAccess }) {
   const router = useRouter();
   const [filter, setFilter] = React.useState<"em_andamento" | "encerradas" | "todas">("todas");
   const [startOpen, setStartOpen] = React.useState(false);
@@ -81,13 +93,17 @@ export function RunViewer({ data }: { data: RunsPageData }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button variant="outline" onClick={sweep} loading={sweeping} title="Libera as esperas por horas úteis já vencidas (a varredura periódica faz o mesmo)">
-          {sweeping ? null : <RefreshCw />} Verificar esperas
-        </Button>
-        {data.publishedId ? (
-          <Button onClick={() => setStartOpen(true)}>
-            <Play /> Iniciar execução
+        {access.sweep ? (
+          <Button variant="outline" onClick={sweep} loading={sweeping} title="Libera as esperas por horas úteis já vencidas (a varredura periódica faz o mesmo)">
+            {sweeping ? null : <RefreshCw />} Verificar esperas
           </Button>
+        ) : null}
+        {data.publishedId ? (
+          access.start ? (
+            <Button onClick={() => setStartOpen(true)}>
+              <Play /> Iniciar execução
+            </Button>
+          ) : null
         ) : (
           <Badge variant="warning">Publique o processo para executá-lo</Badge>
         )}
@@ -149,7 +165,7 @@ export function RunViewer({ data }: { data: RunsPageData }) {
           </CardContent>
         </Card>
 
-        {data.selected ? <RunDetail key={data.selected.run.id + data.selected.run.updatedAt} run={data.selected.run} definition={data.selected.definition} tasks={data.selected.tasks} /> : (
+        {data.selected ? <RunDetail key={data.selected.run.id + data.selected.run.updatedAt} run={data.selected.run} definition={data.selected.definition} tasks={data.selected.tasks} canCancel={access.cancel} /> : (
           <Card>
             <CardContent>
               <EmptyState icon={<Workflow />} title="Selecione uma execução" description="O caminho percorrido aparece desenhado sobre o grafo da versão em que a execução começou." />
@@ -190,7 +206,7 @@ function RunGraph({ run, definition }: { run: ProcessRun; definition: ProcessDef
   );
 }
 
-function RunDetail({ run, definition, tasks }: { run: ProcessRun; definition: ProcessDefinition; tasks: Record<string, RunTaskInfo> }) {
+function RunDetail({ run, definition, tasks, canCancel }: { run: ProcessRun; definition: ProcessDefinition; tasks: Record<string, RunTaskInfo>; canCancel: boolean }) {
   const router = useRouter();
   const [confirmCancel, setConfirmCancel] = React.useState(false);
   const nodes = new Map(definition.nodes.map((n) => [n.id, n]));
@@ -239,7 +255,7 @@ function RunDetail({ run, definition, tasks }: { run: ProcessRun; definition: Pr
             </p>
             {run.error ? <p className="mt-1 text-sm text-danger-fg">Erro: {run.error}</p> : null}
           </div>
-          {run.status === "em_andamento" ? (
+          {run.status === "em_andamento" && canCancel ? (
             <Button variant="outline" size="sm" className="text-danger-fg" onClick={() => setConfirmCancel(true)}>
               <Ban /> Cancelar execução
             </Button>

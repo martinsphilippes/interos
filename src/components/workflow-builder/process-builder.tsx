@@ -53,7 +53,19 @@ import { TestFlowDialog } from "./test-flow-dialog";
 const DND_TYPE = "application/x-interos-node";
 
 
-export function ProcessBuilder(props: { data: BuilderData; webhooksEnabled: boolean }) {
+/** Capacidades do construtor calculadas no servidor (só escondem; as actions revalidam). Ausentes = tudo liberado. */
+export interface ProcessBuilderAccess {
+  /** admin.workflows.processos.editar */
+  save: boolean;
+  /** admin.workflows.processos.publicar */
+  publish: boolean;
+  /** admin.workflows.processos.testar */
+  test: boolean;
+}
+
+const ALL_BUILDER_ACCESS: ProcessBuilderAccess = { save: true, publish: true, test: true };
+
+export function ProcessBuilder(props: { data: BuilderData; webhooksEnabled: boolean; access?: ProcessBuilderAccess }) {
   return (
     <ReactFlowProvider>
       <Builder {...props} />
@@ -70,7 +82,7 @@ function statusBadge(status: keyof typeof PROCESS_STATUS_LABELS) {
   );
 }
 
-function Builder({ data, webhooksEnabled }: { data: BuilderData; webhooksEnabled: boolean }) {
+function Builder({ data, webhooksEnabled, access = ALL_BUILDER_ACCESS }: { data: BuilderData; webhooksEnabled: boolean; access?: ProcessBuilderAccess }) {
   const router = useRouter();
   const def = data.definition;
   const initial = React.useMemo(() => toFlow(def.nodes, def.edges), [def]);
@@ -337,15 +349,21 @@ function Builder({ data, webhooksEnabled }: { data: BuilderData; webhooksEnabled
               </PopoverContent>
             </Popover>
           ) : null}
-          <Button variant="outline" onClick={() => save()} loading={saving && !publishing}>
-            {saving ? null : <Save />} {def.status === "rascunho" ? "Salvar" : "Salvar nova versão"}
-          </Button>
-          <Button variant="outline" onClick={() => setTestOpen(true)}>
-            <Play /> Testar fluxo
-          </Button>
-          <Button onClick={publish} loading={publishing} disabled={!canPublish} title={canPublish ? undefined : "Esta versão já está publicada"}>
-            {publishing ? null : <Rocket />} Publicar
-          </Button>
+          {access.save ? (
+            <Button variant="outline" onClick={() => save()} loading={saving && !publishing}>
+              {saving ? null : <Save />} {def.status === "rascunho" ? "Salvar" : "Salvar nova versão"}
+            </Button>
+          ) : null}
+          {access.test ? (
+            <Button variant="outline" onClick={() => setTestOpen(true)}>
+              <Play /> Testar fluxo
+            </Button>
+          ) : null}
+          {access.publish ? (
+            <Button onClick={publish} loading={publishing} disabled={!canPublish} title={canPublish ? undefined : "Esta versão já está publicada"}>
+              {publishing ? null : <Rocket />} Publicar
+            </Button>
+          ) : null}
         </div>
       </div>
 
