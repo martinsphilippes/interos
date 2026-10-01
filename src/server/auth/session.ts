@@ -86,12 +86,23 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
+  let uid: string;
+  try {
+    uid = (await adminAuth.verifySessionCookie(token, true)).uid;
+  } catch (error) {
+    // Cookie inválido, expirado ou revogado = sem sessão. Falha de infraestrutura (Auth fora do ar) não é "deslogado".
+    if (!isSessionUnavailable(error)) return null;
+    console.error("[sessao] falha ao validar o cookie de sessão", error);
+    throw new Error(SESSION_UNAVAILABLE_MESSAGE);
+  }
   let user: User | null;
   try {
-    const decoded = await adminAuth.verifySessionCookie(token, true);
-    user = await getById<User>(COLLECTIONS.users, decoded.uid);
-  } catch {
-    return null;
+    user = await getById<User>(COLLECTIONS.users, uid);
+  } catch (error) {
+    // Banco indisponível (ex.: cota do Firestore esgotada) não pode virar "sem sessão": /login com cookie volta para
+    // /meu-dia e o navegador entra em laço de redirecionamento. Lança para a tela de erro mostrar o aviso.
+    console.error("[sessao] falha ao ler o usuário da sessão", error);
+    throw new Error(SESSION_UNAVAILABLE_MESSAGE);
   }
   // Sessão estrita: só usuário explicitamente ativo (documento sem `active` não entra).
   if (!user || user.active !== true) return null;
@@ -108,8 +119,18 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
 /** Exige usuário autenticado; redireciona para /login quando não há sessão. */
 export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
-  if (!user) redirect("/login");
+  // ?sessao=expirada: o proxy apaga o cookie inválido e deixa o /login abrir (sem isso, cookie inválido = laço).
+  if (!user) redirect("/login?sessao=expirada");
   return user;
+}
+
+const SESSION_UNAVAILABLE_MESSAGE = "Sistema temporariamente indisponível. Tente novamente em alguns minutos.";
+
+/** Erros do Auth que significam "sessão não vale mais" (o resto é indisponibilidade). */
+function isSessionUnavailable(error: unknown): boolean {
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code: unknown }).code) : "";
+  if (!code.startsWith("auth/")) return true;
+  return code === "auth/internal-error";
 }
 
 /**
