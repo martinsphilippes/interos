@@ -69,6 +69,23 @@ export async function seedAmendments(): Promise<{ applied: string[]; version: nu
 }
 
 /**
+ * Portal do Cliente (D32/D31): 1 link ativo (90 dias, origem "manual") para o cliente da 1ª cobrança com boleto
+ * registrado (contrato liberado), pelo serviço real e sem eventos. O token é descartado aqui (só o hash é gravado): o
+ * e2e gera o próprio link pela tela.
+ */
+export async function seedPortalLinks(billingIds: string[]): Promise<{ clientId: string | null; links: number }> {
+  const { createPortalLink } = await import("../../src/server/portal/service");
+  const billings = await getManyByIds<Billing>(COLLECTIONS.billing, billingIds);
+  const first = billingIds.map((id) => billings.get(id)).find((b): b is Billing => Boolean(b));
+  if (!first) return { clientId: null, links: 0 };
+  const contract = await getById<Contract>(COLLECTIONS.contracts, first.contractId);
+  if (!contract || contract.status !== "liberado") return { clientId: null, links: 0 };
+  const karem = { id: "user_karem", name: "Karem Feitosa" };
+  await createPortalLink({ clientId: contract.clientId, contractId: contract.id, days: 90, label: "Financeiro do cliente (demonstração)", origin: "manual" }, karem, { emit: false, now: new Date(daysAgo(3)) });
+  return { clientId: contract.clientId, links: 1 };
+}
+
+/**
  * Contas a Pagar geral (D32): 2 fornecedores, 1 título parcelado (3x) e 1 recorrente mensal, pelos serviços reais
  * (sem eventos). Os títulos nascem "previstos": aprovar/pagar é exercício das telas/e2e.
  */

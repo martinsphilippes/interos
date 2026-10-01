@@ -3,7 +3,7 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile } from "../../src/domain/types";
+import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile, type PortalLink } from "../../src/domain/types";
 import { ROLE_KEYS } from "../../src/domain/constants";
 import { MODULE_KEYS, PROTECTED_KEYS, SCREEN_BY_KEY, isPermissionKey, type ScopeKind } from "../../src/domain/permissions";
 import { sanitizeAdjustments, type PermissionAdjustments } from "../../src/server/auth/permissions";
@@ -254,6 +254,27 @@ async function main(): Promise<void> {
   if (inactiveField && org?.activeModules && inactiveField.some((m) => org.activeModules!.includes(m as never))) problems.push(`(u) organização: inactiveModules e activeModules divergentes`);
   if (inactiveField && !org?.activeModules) problems.push(`(u) organização: inactiveModules sem activeModules (o núcleo lê activeModules)`);
 
+  // (v) portal_links (D31): id = sha256 do token (64 hex), nenhum campo com o token/URL, cliente existente, origem e
+  //     contagem válidas, validade ISO; link "mensagem" com validade de no máximo 30 dias.
+  const portalLinks = cache.get(COLLECTIONS.portalLinks) as PortalLink[];
+  for (const l of portalLinks) {
+    if (!/^[0-9a-f]{64}$/.test(l.id)) problems.push(`(v) portal_links/${l.id}: id fora do padrão sha256 hex`);
+    const raw = l as unknown as Record<string, unknown>;
+    for (const field of Object.keys(raw)) if (/token|url|secret/i.test(field)) problems.push(`(v) portal_links/${l.id}: campo proibido ${field}`);
+    if (Object.values(raw).some((v) => typeof v === "string" && /\/portal\/[A-Za-z0-9_-]{43}/.test(v))) problems.push(`(v) portal_links/${l.id}: valor com link do portal`);
+    if (!clientIds.has(l.clientId)) problems.push(`(v) portal_links/${l.id}: cliente inexistente ${l.clientId}`);
+    if (l.origin !== "manual" && l.origin !== "mensagem") problems.push(`(v) portal_links/${l.id}: origem inválida ${String(l.origin)}`);
+    if (typeof l.accessCount !== "number" || l.accessCount < 0) problems.push(`(v) portal_links/${l.id}: accessCount inválido`);
+    if (!/^\d{4}-\d{2}-\d{2}T/.test(l.expiresAt ?? "")) problems.push(`(v) portal_links/${l.id}: expiresAt inválido`);
+  }
+  // Nenhum texto gravado leva o token do portal (comunicações, eventos, timeline, tarefas, notificações).
+  const TOKEN_IN_TEXT = /\/portal\/[A-Za-z0-9_-]{43}/;
+  for (const name of [COLLECTIONS.communications, COLLECTIONS.events, COLLECTIONS.timelineEvents, COLLECTIONS.tasks, COLLECTIONS.notifications] as CollectionName[]) {
+    const leaked = (cache.get(name) ?? []).filter((d) => TOKEN_IN_TEXT.test(JSON.stringify(d))).map((d) => d.id);
+    if (leaked.length > 0) problems.push(`(v) ${name}: ${leaked.length} documento(s) com o token do portal em claro (${leaked.slice(0, 3).join(", ")})`);
+  }
+  console.log(`Portal do cliente: ${portalLinks.length} link(s) (${portalLinks.filter((l) => !l.revokedAt && l.expiresAt > new Date().toISOString()).length} ativo(s))`);
+
   console.log(`Perfis de acesso: ${profiles.length} (${profiles.filter((p) => Object.keys(p.grants ?? {}).length || Object.keys(p.scopes ?? {}).length).length} com ajustes); módulos ativos: ${orgs.map((o) => (o.activeModules ? o.activeModules.length : "todos")).join(", ")}`);
 
   const activeSlas = slas.filter((s) => s.status !== "concluido");
@@ -261,7 +282,7 @@ async function main(): Promise<void> {
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(u): OK");
+    console.log("\nInvariantes (a)-(v): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);
