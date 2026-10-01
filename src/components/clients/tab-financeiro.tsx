@@ -1,3 +1,4 @@
+import type * as React from "react";
 import { AlertTriangle, ArrowRight, CalendarClock, CircleDollarSign, FileSignature, Receipt, Wallet } from "lucide-react";
 import type { Client360 } from "@/server/clients/queries";
 import { formatCompetence, formatCurrency, formatDate, formatRelative } from "@/lib/format";
@@ -23,7 +24,7 @@ const RECENT_BILLS = 12;
  * servidor sem números (getClientFinancialSummary → valuesHidden) e todos os valores aparecem como "Restrito".
  * Links para o contrato só para quem abre a tela Contratos.
  */
-export function TabFinanceiro({ data }: { data: Client360 }) {
+export function TabFinanceiro({ data, portal }: { data: Client360; /** Card "Portal do cliente" (D31), montado pela página quando a seção é visível. */ portal?: React.ReactNode }) {
   const { client, contracts, billing, financial, users } = data;
   const hidden = Boolean(financial.valuesHidden);
   const recent = billing.slice(0, RECENT_BILLS);
@@ -78,6 +79,8 @@ export function TabFinanceiro({ data }: { data: Client360 }) {
           />
         </div>
       ) : null}
+
+      {portal}
 
       {financial.pendingContract ? (
         <Card className="flex flex-wrap items-center gap-3 border-warning/40 bg-warning-soft/40 p-4">

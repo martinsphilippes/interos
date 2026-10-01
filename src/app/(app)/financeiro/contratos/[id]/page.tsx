@@ -34,6 +34,8 @@ import { ReleaseCard } from "@/components/finance/release-card";
 import { SignatureCard } from "@/components/finance/signature-card";
 import { FinanceAccessProvider } from "@/components/finance/finance-access";
 import { money, RESTRICTED_HINT } from "@/components/finance/values";
+import { PortalLinksCard } from "@/components/portal/portal-links-card";
+import { listPortalLinks } from "@/server/portal/service";
 
 type Params = Promise<{ id: string }>;
 
@@ -49,7 +51,8 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
  * Página do contrato: cabeçalho, fluxo visual, dados herdados da venda, itens, condições, signatários e
  * assinatura, cobrança, pendências, documentos, gate de liberação e histórico.
  * Acesso (catálogo): tela financeiro.contratos + escopo do contrato (fora do escopo → aviso de acesso negado);
- * seções Assinatura, Aditivos, Pendências, Documentos e Histórico (seção negada não é renderizada nem enviada);
+ * seções Assinatura, Aditivos, Pendências, Documentos, Portal do cliente e Histórico (seção negada não é renderizada nem
+ * enviada);
  * valores sob financeiro.valores.ver ∧ financeiro.contratos.valores.ver (sem eles, "Restrito" e números zerados);
  * cada botão pela chave da ação (financeCapabilities; as actions revalidam).
  */
@@ -75,6 +78,8 @@ export default async function ContractPage({ params }: { params: Params }) {
   const hasBillings = billings.some((b) => b.status !== "cancelada");
   const paymentCheck = gate.checks.find((c) => c.key === "pagamento");
   const owner = contract.ownerId ? users[contract.ownerId] : undefined;
+  // Portal do cliente (D31): seção própria; links lidos só para quem a vê.
+  const portal = sections.portalView ? await listPortalLinks(client.id) : null;
 
   return (
     <FinanceAccessProvider value={caps}>
@@ -196,6 +201,7 @@ export default async function ContractPage({ params }: { params: Params }) {
                 hideValues={hidden}
               />
             ) : null}
+            {portal ? <PortalLinksCard clientId={client.id} contractId={contract.id} clientName={client.tradeName} links={portal.active} inactiveCount={portal.inactiveCount} canCreate={sections.portalCreate && contract.status !== "cancelado"} canRevoke={sections.portalRevoke} /> : null}
             {sections.historyView ? (
               <Card>
                 <CardHeader>

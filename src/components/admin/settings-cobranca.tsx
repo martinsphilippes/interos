@@ -148,7 +148,7 @@ export function SettingsRegua({ value, stored, preview }: { value: ReguaCobranca
                 <FormField label="Canal" htmlFor={`${m.key}-canal`} required>
                   <Select id={`${m.key}-canal`} value={m.canal} onChange={(e) => setMarco(m.key, { canal: e.target.value as ReguaMarco["canal"] })} options={REGUA_CANAIS.map((c) => ({ value: c, label: REGUA_CANAL_LABELS[c] }))} />
                 </FormField>
-                <FormField label="Texto" htmlFor={`${m.key}-template`} required className="sm:col-span-2 lg:col-span-4" hint={`Variáveis: ${REGUA_TEMPLATE_VARS.join(" ")} ({linkPortal} fica vazio até existir o portal do cliente)`}>
+                <FormField label="Texto" htmlFor={`${m.key}-template`} required className="sm:col-span-2 lg:col-span-4" hint={`Variáveis: ${REGUA_TEMPLATE_VARS.join(" ")} ({linkPortal} gera um link novo do portal do cliente, válido por 30 dias, em cada envio por WhatsApp/e-mail; em tarefa/notificação fica vazio)`}>
                   <Textarea id={`${m.key}-template`} value={m.template} onChange={(e) => setMarco(m.key, { template: e.target.value })} rows={3} />
                 </FormField>
               </div>
@@ -182,11 +182,14 @@ export function SettingsRegua({ value, stored, preview }: { value: ReguaCobranca
 
 export function SettingsCobrancaCanais({ value, stored }: { value: CobrancaCanaisConfig; stored: boolean }) {
   const { pending, error, save } = useSaveSetting("cobranca_canais");
-  const [form, setForm] = React.useState({ principal: value.principal, complementar: value.complementar, enviarEmailJuntoAoWhatsapp: value.enviarEmailJuntoAoWhatsapp, remetenteEmail: value.remetenteEmail ?? "" });
+  const [form, setForm] = React.useState({ principal: value.principal, complementar: value.complementar, enviarEmailJuntoAoWhatsapp: value.enviarEmailJuntoAoWhatsapp, remetenteEmail: value.remetenteEmail ?? "", whatsappCobranca: value.whatsappCobranca ?? "" });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    save({ principal: form.principal, complementar: form.complementar, enviarEmailJuntoAoWhatsapp: form.enviarEmailJuntoAoWhatsapp, remetenteEmail: form.remetenteEmail.trim() || undefined }, "Canais de cobrança salvos");
+    save(
+      { principal: form.principal, complementar: form.complementar, enviarEmailJuntoAoWhatsapp: form.enviarEmailJuntoAoWhatsapp, remetenteEmail: form.remetenteEmail.trim() || undefined, whatsappCobranca: form.whatsappCobranca.trim() || undefined },
+      "Canais de cobrança salvos",
+    );
   };
 
   return (
@@ -208,6 +211,9 @@ export function SettingsCobrancaCanais({ value, stored }: { value: CobrancaCanai
         <Switch label="Enviar e-mail junto ao WhatsApp" description="Ao cobrar por WhatsApp, o e-mail complementar vai automaticamente (quando o cliente tem e-mail)." checked={form.enviarEmailJuntoAoWhatsapp} onCheckedChange={(v) => setForm((f) => ({ ...f, enviarEmailJuntoAoWhatsapp: v }))} className="w-full rounded-lg border border-border px-3 py-2" />
         <FormField label="Remetente exibido" htmlFor="cc-remetente" hint="Opcional (o remetente técnico é EMAIL_FROM)">
           <Input id="cc-remetente" value={form.remetenteEmail} onChange={(e) => setForm((f) => ({ ...f, remetenteEmail: e.target.value }))} placeholder="Financeiro Intercert" />
+        </FormField>
+        <FormField label="WhatsApp da cobrança (2ª via no portal)" htmlFor="cc-whatsapp" hint="Opcional. Aparece no Portal do Cliente como “Solicitar 2ª via pelo WhatsApp”; sem número, o botão não aparece.">
+          <Input id="cc-whatsapp" type="tel" inputMode="tel" value={form.whatsappCobranca} onChange={(e) => setForm((f) => ({ ...f, whatsappCobranca: e.target.value }))} placeholder="(11) 98888-7777" />
         </FormField>
       </div>
     </SettingsSection>

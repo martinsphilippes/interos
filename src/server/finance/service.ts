@@ -62,7 +62,9 @@ import { sendEmail } from "@/server/integrations/providers";
 import { isConnected } from "@/server/integrations/status";
 import { billingProviderConnected, getBillingProvider } from "@/server/integrations/billing-provider";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
-import { billingEmailSubject, boletoLines, defaultBillingMessage, hasBoletoData, loadBillingMessageContext } from "./billing-message";
+import { billingEmailSubject, billingLabel, boletoLines, defaultBillingMessage, hasBoletoData, loadBillingMessageContext } from "./billing-message";
+import { fillPortalLink, templateUsesPortalLink } from "@/domain/portal";
+import { attachPortalLinkCommunication, createMessagePortalLink, redactPortalUrl, revokePortalLink } from "@/server/portal/service";
 import { DEFAULT_GATE_SETTINGS, GATE_SETTING_KEY, PAYMENT_REQUIREMENTS, type BillingDataInput, type BillingMessageChannel, type ContractItemInput, type FinanceGateSettings, type ManualSignatureInput, type RegisterBoletoInput, type RegisterPaymentInput, type UpdateConditionsInput } from "./schemas";
 
 // Registro idempotente dos handlers do Financeiro (ver src/server/events/handlers/finance.ts).
@@ -1495,6 +1497,11 @@ export interface SendBillingMessageOptions {
   templateKey?: string;
   /** Rótulo da origem no título do evento (ex.: "régua · 7 dias antes"). */
   originLabel?: string;
+  /**
+   * Texto com `{linkPortal}`: gerar um link NOVO do portal do cliente (30 dias, origem "mensagem") para este envio
+   * (padrão true; a action passa a permissão financeiro.contratos.portal.gerar). false → o marcador some.
+   */
+  portalLink?: boolean;
 }
 
 /**
@@ -1509,7 +1516,7 @@ export async function sendBillingMessage(
   input: { channel: BillingMessageChannel; text?: string; includeBoleto?: boolean; secondCopy?: boolean },
   actor: UserRef,
   options: SendBillingMessageOptions = {},
-): Promise<{ results: BillingChannelResult[]; contactName: string }> {
+): Promise<{ results: BillingChannelResult[]; contactName: string; sentText: string; portalLinkId?: string }> {
   const ctx = await loadBillingMessageContext(billingId);
   const { billing, client, contract } = ctx;
   if (billing.status === "cancelada") throw new Error("Cobrança cancelada não é enviada ao cliente");
@@ -1518,8 +1525,18 @@ export async function sendBillingMessage(
   const settings = await getBillingChannelSettings();
   const channels: SendChannel[] = input.channel === "ambos" ? ["whatsapp", "email"] : [input.channel];
   if (input.channel === "whatsapp" && settings.enviarEmailJuntoAoWhatsapp && settings.complementar === "email" && ctx.email) channels.push("email");
-  const text = input.text?.trim() || defaultBillingMessage(ctx, { includeBoleto, secondCopy: input.secondCopy });
+  let text = input.text?.trim() || defaultBillingMessage(ctx, { includeBoleto, secondCopy: input.secondCopy });
+  // Portal do cliente (D31): `{linkPortal}` gera um link NOVO por envio (30 dias, origem "mensagem"), só quando algum
+  // canal pode de fato entregar a mensagem; o token nunca é gravado (comunicação e evento levam o link mascarado).
+  let portal: { url: string; linkId: string } | null = null;
+  if (templateUsesPortalLink(text)) {
+    const whenNotConnected = options.whenNotConnected ?? "manual";
+    const canDeliver = channels.some((ch) => Boolean(ch === "whatsapp" ? ctx.phone : ctx.email) && !client.communicationOptOut?.[ch] && (isConnected(ch) || whenNotConnected === "manual"));
+    if (options.portalLink !== false && canDeliver) portal = await createMessagePortalLink({ clientId: client.id, contractId: contract.id, label: `${options.originLabel ? options.originLabel.charAt(0).toUpperCase() + options.originLabel.slice(1) : "Cobrança"} · ${billingLabel(billing)}` }, actor);
+    text = fillPortalLink(text, portal?.url);
+  }
   const body = includeBoleto && input.text?.trim() && !boletoLines(billing).some((l) => text.includes(l)) ? `${text}\n${boletoLines(billing).join("\n")}` : text;
+  const recorded = redactPortalUrl(body, portal?.url);
   const subject = billingEmailSubject(ctx, { includeBoleto });
   const results: BillingChannelResult[] = [];
   for (const channel of channels) {
@@ -1529,6 +1546,7 @@ export async function sendBillingMessage(
       to,
       subject,
       text: body,
+      recordText: recorded,
       clientId: client.id,
       contactId: ctx.contact?.id ?? ctx.primary?.id,
       templateKey: options.templateKey ?? "cobranca",
@@ -1539,7 +1557,9 @@ export async function sendBillingMessage(
     });
     const manual = sent.delivery === "manual";
     const delivered = sent.delivery === "enviada";
-    results.push({ channel, delivery: sent.delivery, manual, delivered, communicationId: sent.communication.id, url: sent.manualUrl, to, error: sent.error, created: sent.created });
+    // Automação (régua): o link de envio manual vai para tarefa/registro, então sai com o portal mascarado.
+    const url = portal && options.whenNotConnected === "nao_enviada" ? manualSendUrl(channel, to, subject, recorded) : sent.manualUrl;
+    results.push({ channel, delivery: sent.delivery, manual, delivered, communicationId: sent.communication.id, url, to, error: sent.error, created: sent.created });
     if (options.emit === false || !sent.created) continue;
     const what = includeBoleto ? (input.secondCopy ? "2ª via do boleto" : "Boleto") : "Cobrança";
     const via = channel === "whatsapp" ? "WhatsApp" : "e-mail";
@@ -1558,12 +1578,18 @@ export async function sendBillingMessage(
       clientId: client.id,
       entity: { type: "billing", id: billing.id },
       title: title.replace("Cobrança enviada", "Cobrança enviada").replace("Boleto enviada", "Boleto enviado").replace("2ª via do boleto enviada", "2ª via do boleto enviada"),
-      description: body,
+      description: recorded,
       department: "financeiro",
-      payload: { billingId: billing.id, contractId: contract.id, to, channel, communicationId: sent.communication.id, manual, delivered, delivery: sent.delivery, includeBoleto, secondCopy: Boolean(input.secondCopy), optedOut: sent.optedOut, templateKey: options.templateKey ?? "cobranca", marco: options.originLabel ?? null },
+      payload: { billingId: billing.id, contractId: contract.id, to, channel, communicationId: sent.communication.id, manual, delivered, delivery: sent.delivery, includeBoleto, secondCopy: Boolean(input.secondCopy), optedOut: sent.optedOut, templateKey: options.templateKey ?? "cobranca", marco: options.originLabel ?? null, ...(portal ? { portalLinkId: portal.linkId } : {}) },
     });
   }
-  return { results, contactName: ctx.contactName };
+  if (portal) {
+    const reached = results.filter((r) => r.created && (r.delivery === "enviada" || r.delivery === "manual"));
+    if (reached.length > 0) await attachPortalLinkCommunication(portal.linkId, reached[0].communicationId);
+    // Nenhum canal levou a mensagem (falha, opt-out, já enviada antes): o link nunca chegou ao cliente → revogado.
+    else await revokePortalLink(portal.linkId, "Mensagem não enviada: o link não chegou ao cliente", SYSTEM_ACTOR).catch((error) => console.error("[portal] revogar link não enviado", error));
+  }
+  return { results, contactName: ctx.contactName, sentText: recorded, portalLinkId: portal?.linkId };
 }
 
 /**
