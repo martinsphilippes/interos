@@ -383,6 +383,67 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   (conta corrente). `verify.ts` (y): soma das baixas ≤ valor + 0,005, quitado com baixas ≈ valor, baixa com conta e
   lançamento, REC único, categoria de receita, resíduo ↔ original.
 
+## Formulário de títulos (etapa CP/CR 4, `src/domain/title-repeat.ts`, `src/domain/title-classification.ts`, `src/lib/money-mask.ts`)
+- **Máscara de dinheiro** (`MoneyInput` em `src/components/ui/money-input.tsx`, regras puras em `src/lib/money-mask.ts`):
+  o usuário digita só números e a vírgula entra sozinha ("1250" → "12,50", milhar com ponto); valor real em número
+  (`onValueChange`), vazio = null; `inputMode="numeric"` (iPad/celular), cursor sempre no fim, prefixo "R$" fora do texto
+  lido; `allowNegative` aceita "-" (saldo inicial de cartão; nesse caso o teclado é o de texto, que tem o sinal). Usado no
+  "Lançar título" (a pagar), no "Novo título a receber", nos diálogos de baixa (pagar, parcial, resíduo, receber) e de
+  alteração do título, e no saldo inicial da conta financeira. **Pendente (outros módulos, não trocados nesta etapa)**:
+  baixa de cobrança (`finance/billing-actions.tsx`), itens do contrato (`finance/contract-items-card.tsx`), produtos
+  (`admin/product-drawer.tsx`, `sales/products-editor.tsx`), regras de comissão (`commissions/rules-workspace.tsx`),
+  simulador de comissão, salário (`admin/user-drawer.tsx`, `admin/settings-performance.tsx`), tolerância de valor
+  (`admin/settings-cobranca.tsx`), metas/campanhas/bônus (`kpis/*`, `performance/*`, `marketing/campaigns-view.tsx`).
+- **Competência** vazia = mês do vencimento (a pagar: deixou de ser obrigatória no formulário; o valor gravado continua
+  AAAA-MM). Na repetição, a competência anda o mesmo número de meses que o vencimento.
+- **Nº do documento**: `Payable.documentNumber` (novo, opcional) e `Receivable.documentNumber` (etapa 3) — texto livre
+  (NF/boleto do fornecedor, documento do cliente). **Decisão**: a numeração automática do sistema continua sendo o código
+  PAG-/REC- (contador transacional); o nº do documento NÃO é pré-preenchido com um sequencial e o "Clonar" o deixa em
+  branco (o clone é outro documento).
+- **Repetição** (`planOccurrences`, a MESMA função na prévia e na gravação): Único / Fixo (mesmo valor N vezes,
+  descrição como digitada) / Parcelado (total ÷ N, centavos exatos com a sobra na ÚLTIMA parcela, sufixo " (i/N)"), a cada
+  N dias, semanas ou meses (padrão 1 mês; N 1–365; 2–120 ocorrências). Meses: sempre a partir do dia ORIGINAL, limitado
+  ao fim do mês (31/01 → 28/02 → 31/03); dias/semanas: soma de calendário. Gravação numa transação só
+  (`txNextNumbers` em `db.ts` reserva os N números PAG/REC no mesmo contador): `pag_<base>_p<i>` / `rec_<base>_p<i>`,
+  mesmo `seriesId`; só o parcelado grava `installment/installments`. O parcelamento ANTIGO (`installments`, sufixo
+  "(parcela i/N)", só mensal) continua aceito pelos serviços (seed e chamadores existentes) e os títulos já gravados
+  mantêm a descrição que têm; "Clonar" tira os dois sufixos (`stripInstallmentSuffix`). A **série recorrente** de
+  Contas a Pagar (título-modelo + varredura `contas_recorrentes`) continua no formulário como "Recorrente (série)", sem
+  mudança; repetição e série recorrente/parcelamento antigo juntos são recusados. Painel: série sem título-modelo
+  ("Fixo") aparece como "Títulos da série" / "repetição de N títulos".
+- **Centro → Categoria → Subcategoria** (`ClassificationFields` em `src/components/finance/classification-fields.tsx`,
+  opções por `classificationOptions`): a pagar lista só categorias de DESPESA ativas (sem as chaves do motor
+  `comissao_comercial`/`estorno_comissao`), a receber só de RECEITA; escolher o centro limita as categorias (a já
+  escolhida continua na lista), escolher a categoria preenche o centro (editável), subcategoria lista só as filhas
+  ativas; grava `categoryId` = subcategoria ou categoria e `costCenterId` (o do select); ao editar, separa de volta
+  (`splitCategoryOption`). Validação no servidor (`resolveClassification` via `src/server/finance-registry/classification.ts`).
+  Sem nenhuma categoria ativa do tipo, o formulário volta aos selects anteriores (configuração `contas_a_pagar` no a
+  pagar; lista "Mãe › Filha" no a receber) com aviso e link para /financeiro/cadastros.
+- **Compatibilidade dos campos antigos (Contas a Pagar)**: `Payable.category` (chave) e `Payable.costCenter` (nome)
+  continuam gravados — listas, filtros (`?categoria=`/`?centro=`), relatório `contas_a_pagar`, KPIs e fluxo de caixa leem
+  só eles. Derivação (`legacyPayableFields`): categoria = `legacyKey` da (sub)categoria ou da mãe, senão "outros";
+  centro = `legacyKey` do centro EFETIVO (o do título ou o da categoria/mãe), senão o NOME do centro. Com cadastros a
+  categoria antiga não é mais validada contra a configuração (vem do cadastro). Na edição, a categoria antiga acompanha
+  a nova categoria do cadastro e o centro antigo o novo centro; limpar a classificação não apaga os campos antigos.
+  Título de comissão/bônus/estorno: a categoria segue o motor (não muda; o centro, a conta prevista e o nº do documento
+  podem ser alterados como antes era o centro).
+- **Conta prevista** (`accountId`, já existente): select das contas ativas no formulário e na edição (pré-seleciona a
+  conta na baixa); conta nova validada como ativa.
+- **Clonar** (botão nos painéis do a pagar e do avulso a receber, ação de criar `…criar`): abre o formulário com os dados
+  copiados (credor/pagador, descrição sem sufixo de parcela, valor do título, vencimento, competência, classificação,
+  conta prevista, observações), sem baixas, sem anexos, sem nº do documento e com repetição "Único". Título de
+  comissão/bônus/estorno não tem "Clonar" (nasce do motor).
+- **Edição de título único** (`updatePayable`/`updateReceivable`): aceita nº do documento, classificação e conta prevista
+  (ausente = mantém; "" = limpa), com as regras de quem edita o quê de antes (valor só em título manual previsto no a
+  pagar; sem recebimentos no a receber). Edição em SÉRIE é a etapa 5.
+- **Auditoria**: `payable.created`/`payable.updated` com `changes` de → para de nº do documento, categoria, subcategoria,
+  centro de custo (nomes, nunca ids) e conta prevista (`payload.labels`: os campos antigos aparecem como "Categoria
+  (configuração)"/"Centro de custo (configuração)"); `receivable.created`/`updated` como na etapa 3; série com `seriesId`,
+  `repeat` e posição no payload. Rótulos novos em `audit-format.ts` (Subcategoria, Credor, Centro de custo, Recorrência).
+- **Verify** (z): título a pagar com categoria do cadastro aponta para DESPESA e mantém a categoria antiga; conta prevista
+  existente; parcela n de N coerente e sem repetição na série. Testes: `tests/finance/title-form.test.ts`; e2e
+  `83-formulario-titulos.mjs`.
+
 ## Numeração transacional (`nextNumber` em `src/server/db.ts`)
 - Coleção `counters` (`counter_<prefixo>_<ano>`), `runTransaction`, inicializada a partir do maior número já gravado
   (`initFrom`). Usada por VEN, CT, PR, COM, PAG e REC; formatos antigos preservados, sem renumerar documentos. `prepareNextNumber` +

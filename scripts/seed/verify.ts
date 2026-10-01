@@ -249,6 +249,25 @@ async function main(): Promise<void> {
     if (r.status === "cancelado" && (r.payments?.length ?? 0) > 0) problems.push(`(y) título a receber ${r.id} cancelado com recebimento`);
   }
   for (const p of payables) if (p.residualOf && payableById.get(p.residualOf)?.residualId !== p.id) problems.push(`(y) resíduo ${p.id} sem o original ${p.residualOf} apontando de volta`);
+  // (z) formulário de títulos (etapa CP/CR 4): título a pagar com categoria do cadastro aponta para DESPESA e mantém a
+  //     categoria antiga preenchida (listas/filtros/relatório); conta prevista existente; parcela n de N coerente (os dois
+  //     ou nenhum, 1 ≤ n ≤ N) e, na mesma série parcelada, números de parcela sem repetição.
+  for (const p of payables) {
+    if (p.categoryId && categoryById.get(p.categoryId) && categoryById.get(p.categoryId)!.type !== "despesa") problems.push(`(z) ${p.id} com categoria que não é de despesa (${p.categoryId})`);
+    if (p.categoryId && !p.category) problems.push(`(z) ${p.id} com categoria do cadastro e sem a categoria antiga`);
+    if (p.accountId && !accountIds.has(p.accountId)) problems.push(`(z) ${p.id} aponta para conta prevista inexistente ${p.accountId}`);
+  }
+  for (const t of [...payables, ...receivables] as { id: string; installment?: number; installments?: number; seriesId?: string }[]) {
+    if ((t.installment === undefined) !== (t.installments === undefined)) problems.push(`(z) ${t.id} com parcela incompleta (${t.installment}/${t.installments})`);
+    else if (t.installment !== undefined && (t.installment < 1 || t.installment > t.installments!)) problems.push(`(z) ${t.id} com parcela fora do total (${t.installment}/${t.installments})`);
+  }
+  const installmentKeys = new Map<string, string>();
+  for (const t of [...payables.map((p) => ({ ...p, kind: "pag" })), ...receivables.map((r) => ({ ...r, kind: "rec" }))] as { id: string; kind: string; installment?: number; seriesId?: string; residualOf?: string }[]) {
+    if (!t.seriesId || t.installment === undefined || t.residualOf) continue;
+    const key = `${t.kind}:${t.seriesId}:${t.installment}`;
+    if (installmentKeys.has(key)) problems.push(`(z) parcela ${t.installment} repetida na série ${t.seriesId}: ${installmentKeys.get(key)} e ${t.id}`);
+    installmentKeys.set(key, t.id);
+  }
   console.log(`Baixas parciais: ${payables.filter((p) => p.status !== "pago" && (p.payments?.length ?? 0) > 0).length} título(s) a pagar com baixa parcial; títulos a receber avulsos: ${receivables.length} (${receivables.filter((r) => r.status === "pago").length} recebidos, ${receivables.filter((r) => r.status === "aberto" && (r.payments?.length ?? 0) > 0).length} parciais)`);
   const realized = realizedTotals({ entries: cashEntries, payables, billings: allBillings });
   console.log(`Lançamentos de caixa: ${cashEntries.length} (${cashEntries.filter((e) => e.type === "despesa").length} despesas, ${cashEntries.filter((e) => e.type === "receita").length} receitas); realizado: lançamentos ${realized.fromEntries.receitas.toFixed(2)}/${realized.fromEntries.despesas.toFixed(2)} + baixas antigas ${realized.fromLegacy.receitas.toFixed(2)}/${realized.fromLegacy.despesas.toFixed(2)} (receitas/despesas)`);
@@ -345,7 +364,7 @@ async function main(): Promise<void> {
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(y): OK");
+    console.log("\nInvariantes (a)-(z): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);
