@@ -438,8 +438,8 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
   const registry = hasClassification(options.classification);
   const [cls, setCls] = React.useState<ClassificationValue>(() => {
     const start = initialClassification(options, r.categoryId, r.costCenterId);
-    // Categoria gravada fora das opções (arquivada): mantém o id para não limpar sem querer.
-    return r.categoryId && !start.categoryId ? { ...start, categoryId: r.categoryId } : start;
+    // Categoria/centro gravados fora das opções (arquivados): mantém os ids para não limpar sem querer.
+    return { ...start, ...(r.categoryId && !start.categoryId ? { categoryId: r.categoryId } : {}), ...(r.costCenterId && !start.costCenterId ? { costCenterId: r.costCenterId } : {}) };
   });
   const submit = () =>
     onSubmit({
