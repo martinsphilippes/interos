@@ -3,7 +3,7 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile, type PortalLink, type CostCenter, type FinanceCategory, type FinancialAccount } from "../../src/domain/types";
+import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile, type PortalLink, type CostCenter, type FinanceCategory, type FinancialAccount, type CashEntry } from "../../src/domain/types";
 import { ROLE_KEYS } from "../../src/domain/constants";
 import { MODULE_KEYS, PROTECTED_KEYS, SCREEN_BY_KEY, isPermissionKey, type ScopeKind } from "../../src/domain/permissions";
 import { sanitizeAdjustments, type PermissionAdjustments } from "../../src/server/auth/permissions";
@@ -11,6 +11,7 @@ import { ADMIN_CORE_KEYS, hasAccessAdministrator, type AccessState } from "../..
 import { col, counterId, list, ORG_ID } from "../../src/server/db";
 import { commissionIdFor } from "../../src/server/commissions/store";
 import { FINANCIAL_ACCOUNT_TYPES, registryProblems } from "../../src/domain/finance-registry";
+import { cashEntryProblems, realizedTotals } from "../../src/domain/cash-entries";
 
 const ENTITY_COLLECTION: Record<SlaInstance["entityType"], CollectionName> = {
   tarefa: COLLECTIONS.tasks,
@@ -211,6 +212,19 @@ async function main(): Promise<void> {
   }
   console.log(`Cadastros financeiros: ${financialAccounts.length} conta(s), ${costCenters.length} centro(s), ${financeCategories.filter((c) => !c.parentId).length} categoria(s) e ${financeCategories.filter((c) => c.parentId).length} subcategoria(s)`);
 
+  // (x) lançamentos de caixa (etapa CP/CR 2): todo lançamento aponta para conta existente e para uma baixa existente com
+  //     o MESMO transactionId (título: payments[].transactionId; cobrança paga: cashEntryId); nenhuma baixa com
+  //     transactionId fica sem lançamento; classificação nova aponta para cadastros existentes.
+  const cashEntries = cache.get(COLLECTIONS.cashEntries) as CashEntry[];
+  const allBillings = cache.get(COLLECTIONS.billing) as Billing[];
+  for (const problem of cashEntryProblems({ entries: cashEntries, accountIds: new Set(financialAccounts.map((a) => a.id)), payables, billings: allBillings })) problems.push(`(x) ${problem}`);
+  for (const e of cashEntries) {
+    if (e.categoryId && !financeCategoryIds.has(e.categoryId)) problems.push(`(x) lançamento ${e.id} aponta para categoria inexistente ${e.categoryId}`);
+    if (e.costCenterId && !costCenterIds.has(e.costCenterId)) problems.push(`(x) lançamento ${e.id} aponta para centro inexistente ${e.costCenterId}`);
+  }
+  const realized = realizedTotals({ entries: cashEntries, payables, billings: allBillings });
+  console.log(`Lançamentos de caixa: ${cashEntries.length} (${cashEntries.filter((e) => e.type === "despesa").length} despesas, ${cashEntries.filter((e) => e.type === "receita").length} receitas); realizado: lançamentos ${realized.fromEntries.receitas.toFixed(2)}/${realized.fromEntries.despesas.toFixed(2)} + baixas antigas ${realized.fromLegacy.receitas.toFixed(2)}/${realized.fromLegacy.despesas.toFixed(2)} (receitas/despesas)`);
+
   // (q) todo documento de toda coleção tem organizationId: getById/getManyByIds negam documento sem ele (hardening A0).
   //     Varre sem o filtro de organização (list() o aplicaria e esconderia justamente os documentos sem o campo).
   for (const name of names) {
@@ -303,7 +317,7 @@ async function main(): Promise<void> {
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(w): OK");
+    console.log("\nInvariantes (a)-(x): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);

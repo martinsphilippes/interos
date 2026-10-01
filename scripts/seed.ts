@@ -7,8 +7,8 @@
  * (módulos server-only) para gerar definições, snapshots e o fechamento do bônus coerentes com os dados.
  */
 import "./seed/quiet";
-import { COLLECTIONS, type CollectionName, type SlaInstance } from "../src/domain/types";
-import { clearCollection } from "../src/server/db";
+import { COLLECTIONS, type CashEntry, type CollectionName, type SlaInstance } from "../src/domain/types";
+import { clearCollection, list } from "../src/server/db";
 import { computeSlaState } from "../src/server/sla";
 import { Store } from "./seed/lib";
 import type { SeedContext } from "./seed/context";
@@ -74,11 +74,18 @@ async function main(): Promise<void> {
     console.log(`  ${name.padEnd(26)} ${String(count).padStart(5)}`);
   }
   // 5. Derivados calculados pelos motores sobre os dados gravados.
+  // Cadastros financeiros primeiro (etapa CP/CR 2): os títulos pagos pelo motor baixam com a conta corrente.
+  const registry = await seedFinanceRegistry();
+  total += registry.accounts + registry.centers + registry.categories + registry.subcategories;
+  console.log(`  ${"cadastros financeiros".padEnd(26)} ${String(registry.accounts + registry.centers + registry.categories + registry.subcategories).padStart(5)}  (${registry.accounts} contas, ${registry.centers} centros, ${registry.categories} categorias, ${registry.subcategories} subcategorias)`);
   const tCommissions = Date.now();
-  const commissions = await seedCommissionEngine();
+  const commissions = await seedCommissionEngine(registry.bankAccountId);
   total += commissions.commissions + commissions.payables;
   console.log(`  ${"commissions (motor)".padEnd(26)} ${String(commissions.commissions).padStart(5)}`);
   console.log(`  ${"payables (motor)".padEnd(26)} ${String(commissions.payables).padStart(5)}  (${commissions.paid} pagos, ${commissions.scheduled - commissions.paid} a pagar, ${commissions.approved} aprovados · ${elapsed(tCommissions)})`);
+  const cashEntries = (await list<CashEntry>(COLLECTIONS.cashEntries)).length;
+  total += cashEntries;
+  console.log(`  ${"cash_entries (baixas)".padEnd(26)} ${String(cashEntries).padStart(5)}  (despesas dos ${commissions.paid} títulos pagos, conta corrente)`);
   const boletos = await seedBoletos();
   console.log(`  ${"boletos (serviço)".padEnd(26)} ${String(boletos.registered.length).padStart(5)}  (registrados manualmente em cobranças abertas: ${boletos.registered.join(", ")})`);
   const portal = await seedPortalLinks(boletos.registered);
@@ -90,9 +97,6 @@ async function main(): Promise<void> {
   const cap = await seedPayablesGeneral();
   total += cap.suppliers + cap.parcels + cap.recurring;
   console.log(`  ${"contas a pagar (serviço)".padEnd(26)} ${String(cap.suppliers + cap.parcels + cap.recurring).padStart(5)}  (${cap.suppliers} fornecedores, ${cap.parcels} parcelas, ${cap.recurring} série recorrente)`);
-  const registry = await seedFinanceRegistry();
-  total += registry.accounts + registry.centers + registry.categories + registry.subcategories;
-  console.log(`  ${"cadastros financeiros".padEnd(26)} ${String(registry.accounts + registry.centers + registry.categories + registry.subcategories).padStart(5)}  (${registry.accounts} contas, ${registry.centers} centros, ${registry.categories} categorias, ${registry.subcategories} subcategorias)`);
   const tDerived = Date.now();
   const derived = await seedDerived();
   total += derived.snapshots + derived.bonus;

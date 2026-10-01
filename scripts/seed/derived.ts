@@ -10,8 +10,8 @@
  * Requer o seed rodando com `--conditions=react-server` (os motores são server-only).
  */
 import { listRecentMonths, previousPeriod, currentMonthKey, monthPeriod } from "../../src/server/kpis/period";
-import { COLLECTIONS, type Billing, type Contract, type Payable } from "../../src/domain/types";
-import { getById, getManyByIds, list } from "../../src/server/db";
+import { COLLECTIONS, type Billing, type Contract, type Payable, type Settings } from "../../src/domain/types";
+import { getById, getManyByIds, list, update } from "../../src/server/db";
 import { dateKey } from "../../src/lib/format";
 import { NOW, addDays, competence, daysAgo, daysFromNow } from "./lib";
 import { PRODUCT_IDS } from "./catalog";
@@ -115,13 +115,17 @@ export async function seedPayablesGeneral(): Promise<{ suppliers: number; parcel
  * centros de custo padrão de Contas a Pagar (com a chave antiga) e categorias de receita e despesa com algumas
  * subcategorias. Parte das categorias da configuração fica de fora de propósito: "Importar da configuração" ainda tem
  * o que criar (exercitado pelo e2e 80).
+ * Etapa CP/CR 2: roda ANTES do motor de comissões (os títulos pagos pelo seed já baixam com a conta corrente e geram
+ * lançamento de caixa) e grava a conta corrente como conta padrão de recebimento (`financeiro_baixa`).
  */
-export async function seedFinanceRegistry(): Promise<{ accounts: number; centers: number; categories: number; subcategories: number }> {
+export async function seedFinanceRegistry(): Promise<{ accounts: number; centers: number; categories: number; subcategories: number; bankAccountId: string }> {
   const { saveCostCenter, saveFinanceCategory, saveFinancialAccount } = await import("../../src/server/finance-registry/service");
   const { SETTING_DEFAULTS } = await import("../../src/server/admin/schemas");
   const karem = { id: "user_karem", name: "Karem Feitosa" };
   const quiet = { emit: false } as const;
-  await saveFinancialAccount({ name: "Banco do Brasil — conta movimento", type: "corrente", initialBalance: 48250.35, bankName: "Banco do Brasil", agency: "1234-5", accountNumber: "67890-1", notes: "Conta principal: recebimentos de boletos e PIX." }, karem, quiet);
+  const bank = (await saveFinancialAccount({ name: "Banco do Brasil — conta movimento", type: "corrente", initialBalance: 48250.35, bankName: "Banco do Brasil", agency: "1234-5", accountNumber: "67890-1", notes: "Conta principal: recebimentos de boletos e PIX." }, karem, quiet)).account;
+  // Conta padrão das baixas automáticas (provedor/conciliação) e pré-seleção do "Registrar pagamento".
+  await update<Settings>(COLLECTIONS.settings, "setting_financeiro_baixa", { value: { ...SETTING_DEFAULTS.financeiro_baixa, contaRecebimentoPadraoId: bank.id } });
   await saveFinancialAccount({ name: "Caixa da empresa", type: "dinheiro", initialBalance: 650, notes: "Dinheiro em espécie para pequenas despesas." }, karem, quiet);
   const centers = new Map<string, string>();
   for (const name of SETTING_DEFAULTS.contas_a_pagar.centrosDeCusto) centers.set(name, (await saveCostCenter({ name, legacyKey: name }, karem, quiet)).center.id);
@@ -144,7 +148,7 @@ export async function seedFinanceRegistry(): Promise<{ accounts: number; centers
       subcategories++;
     }
   }
-  return { accounts: 2, centers: centers.size, categories, subcategories };
+  return { accounts: 2, centers: centers.size, categories, subcategories, bankAccountId: bank.id };
 }
 
 export interface CommissionSeedResult {
@@ -158,9 +162,10 @@ export interface CommissionSeedResult {
 /**
  * Comissões pelo motor (data de referência = NOW do seed) e títulos em estados variados pelo fluxo real:
  * elegíveis de meses anteriores → pagos no vencimento (menos os 2 mais recentes, que ficam vencidos a pagar);
- * elegíveis do mês → metade aprovada, metade prevista.
+ * elegíveis do mês → metade aprovada, metade prevista. Com `accountId` (etapa CP/CR 2), cada pagamento baixa com a conta e
+ * grava o lançamento de despesa na mesma transação (como a tela).
  */
-export async function seedCommissionEngine(): Promise<CommissionSeedResult> {
+export async function seedCommissionEngine(accountId?: string): Promise<CommissionSeedResult> {
   const { reconcileCommissions } = await import("../../src/server/commissions/engine");
   const { approvePayable, schedulePayable, payPayable } = await import("../../src/server/commissions/payables");
   const r = await reconcileCommissions({ now: NOW, emit: false, backfill: true });
@@ -180,7 +185,7 @@ export async function seedCommissionEngine(): Promise<CommissionSeedResult> {
     await schedulePayable(p.id, {}, karem, { emit: false, at: approvedAt });
     out.scheduled++;
     if (dateKey(p.dueDate) <= today && !unpaid.has(p.id)) {
-      await payPayable(p.id, { paidAt: dateKey(p.dueDate), paymentMethod: "folha" }, karem, { emit: false, at: p.dueDate });
+      await payPayable(p.id, { paidAt: dateKey(p.dueDate), paymentMethod: "folha", accountId }, karem, { emit: false, at: p.dueDate });
       out.paid++;
     }
   }
