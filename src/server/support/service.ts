@@ -19,7 +19,7 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { col, create, getById, getManyByIds, list, nowIso, update } from "@/server/db";
-import { emitEvent } from "@/server/events";
+import { emitEvent, writeEventMeta } from "@/server/events";
 import { registerHandler } from "@/server/events/emit";
 import { registerSupportHandlers } from "@/server/events/handlers/support";
 import { notify } from "@/server/notifications";
@@ -1236,7 +1236,8 @@ export async function onTicketCreated(event: DomainEvent): Promise<void> {
   if (reference) {
     const days = (new Date(ticket.openedAt).getTime() - new Date(reference).getTime()) / 86_400_000;
     if (days >= 0 && days <= 30) {
-      await update<DomainEvent>(COLLECTIONS.events, event.id, { payload: { ...event.payload, postGoLive: true, goLiveAt: reference, daysSinceGoLive: Math.floor(days), suggestTrainingRelated: true } });
+      // Anotação em meta (D29): o payload do evento é imutável depois de gravado.
+      await writeEventMeta(event.id, { support: { postGoLive: true, goLiveAt: reference, daysSinceGoLive: Math.floor(days), suggestTrainingRelated: true } });
     }
   }
 }

@@ -12,3 +12,6 @@ export async function emitEvent(input: EmitEventInput): Promise<DomainEvent> {
   ensureHandlersRegistered();
   return rawEmit(input);
 }
+
+/** Metadados de execução do evento (D29): o único trecho gravado depois da criação — o payload é imutável. */
+export { writeEventMeta } from "./emit";

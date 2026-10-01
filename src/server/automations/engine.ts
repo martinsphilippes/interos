@@ -14,13 +14,12 @@ import "server-only";
  * cliente quando a ação o afeta).
  *
  * Proteção contra laço: as ações rodam dentro de um AsyncLocalStorage com a cadeia de regras e a
- * profundidade. Eventos gerados nesse escopo recebem payload.__automation = ruleId (e
- * __automationDepth); a mesma regra nunca dispara de novo na própria cadeia e a profundidade máxima
- * de automações encadeadas é 3.
+ * profundidade. Eventos gerados nesse escopo recebem, NA CRIAÇÃO, `meta.automation = { ruleId, depth }`
+ * (emitEvent lê o escopo; o payload é imutável — D29; eventos antigos têm payload.__automation, ainda aceito);
+ * a mesma regra nunca dispara de novo na própria cadeia e a profundidade máxima de automações encadeadas é 3.
  */
-import { AsyncLocalStorage } from "node:async_hooks";
 import { FieldValue } from "firebase-admin/firestore";
-import { col, create, getById, getManyByIds, list, nowIso, update } from "@/server/db";
+import { col, create, getById, getManyByIds, list, nowIso } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { COLLECTIONS, type AutomationRule, type Client, type CsAccount, type DomainEvent, type SlaInstance } from "@/domain/types";
 import { DEPARTMENT_KEYS, type DepartmentKey } from "@/domain/constants";
@@ -52,12 +51,9 @@ import {
 export const MAX_AUTOMATION_DEPTH = 3;
 const RULE_CACHE_MS = 30_000;
 
-interface AutomationScope {
-  chain: string[];
-  depth: number;
-}
-
-export const automationScope = new AsyncLocalStorage<AutomationScope>();
+// Escopo das automações em módulo próprio (lido também por emitEvent para gravar meta.automation na criação).
+import { automationScope, type AutomationScope } from "./scope";
+export { automationScope };
 
 // ---------------------------------------------------------------------------
 // Leitura e normalização das regras
@@ -283,7 +279,8 @@ async function emitExecuted(rule: AutomationRuleRecord, exec: RuleExecution, ctx
     title: `Automação ${rule.name}: ${summary}`,
     description: exec.detail.slice(0, 500),
     department: ctx.department?.key,
-    payload: { ruleId: rule.id, runId, status: exec.status, eventId: eventId ?? null, entityType: exec.entityType ?? null, entityId: exec.entityId ?? null, __automation: rule.id, __automationDepth: depth },
+    payload: { ruleId: rule.id, runId, status: exec.status, eventId: eventId ?? null, entityType: exec.entityType ?? null, entityId: exec.entityId ?? null },
+    meta: { automation: { ruleId: rule.id, depth } },
     timeline: affectsClient,
   });
 }
@@ -343,25 +340,27 @@ export async function executeRule(rule: AutomationRuleRecord, input: ExecuteInpu
 // Handler de eventos
 // ---------------------------------------------------------------------------
 
-/** Marca no evento persistido que ele foi gerado por uma automação (auditoria da cadeia). */
-async function markEvent(event: DomainEvent, scope: AutomationScope): Promise<void> {
-  if (typeof event.payload?.__automation === "string") return;
-  const marker = { __automation: scope.chain[scope.chain.length - 1], __automationDepth: scope.depth };
-  event.payload = { ...(event.payload ?? {}), ...marker };
-  await update<DomainEvent>(COLLECTIONS.events, event.id, { payload: event.payload });
+/**
+ * Marcador de automação do evento: `meta.automation` (gravado na criação por emitEvent) ou, em eventos antigos,
+ * `payload.__automation/__automationDepth`.
+ */
+export function automationMarkerOf(event: Pick<DomainEvent, "payload" | "meta">): { ruleId: string; depth: number } | undefined {
+  if (event.meta?.automation?.ruleId) return { ruleId: event.meta.automation.ruleId, depth: Number(event.meta.automation.depth) || 1 };
+  const legacy = event.payload?.__automation;
+  if (typeof legacy === "string") return { ruleId: legacy, depth: Number(event.payload.__automationDepth ?? 1) || 1 };
+  return undefined;
 }
 
 /** Handler "*": dispara as regras de evento ativas cujo eventType é o tipo do evento. */
 export async function handleAutomationEvent(event: DomainEvent): Promise<void> {
-  const scope = automationScope.getStore();
-  if (scope) await markEvent(event, scope);
+  const scope: AutomationScope | undefined = automationScope.getStore();
 
   const rules = (await loadActiveRules()).filter((r) => r.trigger.type === "evento" && r.trigger.eventType === event.type);
   if (rules.length === 0) return;
 
-  const marker = typeof event.payload?.__automation === "string" ? (event.payload.__automation as string) : undefined;
-  const chain = scope?.chain ?? (marker ? [marker] : []);
-  const depth = scope?.depth ?? (marker ? Number(event.payload.__automationDepth ?? 1) || 1 : 0);
+  const marker = automationMarkerOf(event);
+  const chain = scope?.chain ?? (marker ? [marker.ruleId] : []);
+  const depth = scope?.depth ?? (marker ? marker.depth : 0);
 
   for (const rule of rules) {
     // Evento gerado pela própria regra (direta ou indiretamente): ignora para não entrar em laço.

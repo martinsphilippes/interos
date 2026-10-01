@@ -479,7 +479,7 @@ const iniciarSla: ActionHandler = async (raw, ctx, rt) => {
     title: `SLA iniciado por automação: ${slaRule.name}`,
     description: `Prazo ${formatDateTime(sla.dueAt)}`,
     department: sla.department,
-    payload: { slaInstanceId: sla.id, ruleKey: p.ruleKey, ownerId, dueAt: sla.dueAt, __automation: rt.rule.id },
+    payload: { slaInstanceId: sla.id, ruleKey: p.ruleKey, ownerId, dueAt: sla.dueAt },
     timeline: false,
   });
   return { type: "iniciar_sla", status: "sucesso", effect: "SLA iniciado", detail: `SLA "${slaRule.name}" iniciado (prazo ${formatDateTime(sla.dueAt)})`, clientId: ctx.client?.id };
