@@ -4,9 +4,12 @@
  */
 import { z } from "zod";
 import { PRODUCT_CATEGORIES } from "@/domain/constants";
+import { REPEAT_MAX_EVERY, REPEAT_MAX_OCCURRENCES, REPEAT_MIN_OCCURRENCES } from "@/domain/title-repeat";
 
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}/, "Data inválida");
 const optionalText = (max: number) => z.string().trim().max(max, `Máximo de ${max} caracteres`).optional().or(z.literal("").transform(() => undefined));
+/** Campo que pode ser LIMPO na edição: "" = remover; ausente = manter (etapa CP/CR 4). */
+const clearable = (max: number) => z.string().trim().max(max, `Máximo de ${max} caracteres`).optional();
 
 export const COMMISSION_TRIGGERS = ["venda", "contrato_assinado", "primeiro_pagamento", "pagamento", "permanencia", "pagamento_e_permanencia", "mensalidade_n"] as const;
 /** Recorrência: cada competência depende do recebimento da mensalidade correspondente (a partir da N-ésima). */
@@ -97,6 +100,11 @@ export const updatePayableSchema = z.object({
   /** Série recorrente: nova data limite (AAAA-MM-DD) para encerrar a série. */
   recurrenceUntil: isoDay.optional().or(z.literal("").transform(() => undefined)),
   reason,
+  // Etapa CP/CR 4 — "" = limpar; ausente = manter.
+  documentNumber: clearable(60),
+  categoryId: clearable(80),
+  costCenterId: clearable(80),
+  accountId: clearable(80),
 });
 const categoryKey = z.string().trim().min(2, "Categoria inválida").max(40, "Categoria muito longa").regex(/^[a-z0-9][a-z0-9_]*$/, "Categoria inválida");
 const attachmentUrl = z.string().trim().url("Link do anexo inválido").max(500).optional().or(z.literal("").transform(() => undefined));
@@ -108,6 +116,18 @@ export const payableRecurrenceSchema = z.object({
   until: isoDay.optional().or(z.literal("").transform(() => undefined)),
 });
 
+/** Repetição do formulário de títulos (etapa CP/CR 4): Único / Fixo / Parcelado, a cada N dias, semanas ou meses. */
+export const titleRepeatSchema = z
+  .object({
+    mode: z.enum(["unico", "fixo", "parcelado"], { message: "Repetição inválida" }),
+    count: z.number("Informe o número de ocorrências").int("Ocorrências devem ser inteiras").min(REPEAT_MIN_OCCURRENCES, `Mínimo de ${REPEAT_MIN_OCCURRENCES} ocorrências`).max(REPEAT_MAX_OCCURRENCES, `Máximo de ${REPEAT_MAX_OCCURRENCES} ocorrências`).optional(),
+    every: z.number("Intervalo inválido").int("Intervalo deve ser inteiro").min(1, "Intervalo mínimo: a cada 1").max(REPEAT_MAX_EVERY, `Intervalo máximo: a cada ${REPEAT_MAX_EVERY}`).optional(),
+    unit: z.enum(["dias", "semanas", "meses"], { message: "Intervalo inválido (dias, semanas ou meses)" }).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.mode !== "unico" && v.count === undefined) ctx.addIssue({ code: "custom", path: ["count"], message: `Informe quantas vezes (mínimo ${REPEAT_MIN_OCCURRENCES})` });
+  });
+
 /**
  * Título manual (D28): credor colaborador ou fornecedor (cadastrado ou nome livre), categoria do setting `contas_a_pagar`
  * (as fixas continuam válidas), centro de custo, parcelamento (N títulos), recorrência (série) e anexo por link.
@@ -118,11 +138,17 @@ export const manualPayableSchema = z
     creditorId: optionalText(60),
     creditorName: optionalText(120),
     supplierId: optionalText(60),
-    category: categoryKey,
+    /** Chave antiga do setting (formulário sem cadastros); com `categoryId`, derivada do cadastro. */
+    category: categoryKey.optional(),
     costCenter: optionalText(60),
     description: z.string().trim().min(3, "Descreva o título").max(200, "Descrição muito longa"),
     amount: z.number("Informe o valor").positive("Valor deve ser maior que zero").max(10_000_000, "Valor muito alto"),
-    competence: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Competência inválida (AAAA-MM)"),
+    /** Vazia = mês do vencimento (etapa CP/CR 4). */
+    competence: z
+      .string()
+      .regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Competência inválida (AAAA-MM)")
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
     dueDate: isoDay,
     notes: optionalText(500),
     /** Parcelas (1 = à vista; N títulos `pag_<base>_p<n>`, vencimentos mensais). */
@@ -130,8 +156,15 @@ export const manualPayableSchema = z
     recurrence: payableRecurrenceSchema.optional(),
     attachmentUrl,
     attachmentName: optionalText(120),
+    // Formulário de títulos (etapa CP/CR 4).
+    categoryId: optionalText(80),
+    costCenterId: optionalText(80),
+    accountId: optionalText(80),
+    documentNumber: optionalText(60),
+    repeat: titleRepeatSchema.optional(),
   })
   .superRefine((v, ctx) => {
+    if (v.repeat && v.repeat.mode !== "unico" && ((v.installments ?? 1) > 1 || v.recurrence)) ctx.addIssue({ code: "custom", path: ["repeat"], message: "Use a repetição OU o parcelamento antigo/série recorrente, não os dois" });
     if (v.creditorType === "colaborador" && !v.creditorId) ctx.addIssue({ code: "custom", path: ["creditorId"], message: "Escolha o colaborador" });
     if (v.creditorType === "fornecedor" && !v.creditorName && !v.supplierId) ctx.addIssue({ code: "custom", path: ["creditorName"], message: "Informe ou escolha o fornecedor" });
     if ((v.installments ?? 1) > 1 && v.recurrence) ctx.addIssue({ code: "custom", path: ["recurrence"], message: "Use parcelamento OU recorrência, não os dois" });

@@ -8,6 +8,7 @@ import "server-only";
 import { list } from "@/server/db";
 import { dateKey } from "@/lib/format";
 import { resolveEffectiveCostCenter } from "@/domain/finance-registry";
+import { classificationOptions, hasClassification, type ClassificationOptions } from "@/domain/title-classification";
 import { receivableSettlement, type SettlementStatus } from "@/domain/settlements";
 import { COLLECTIONS, type Client, type CostCenter, type DomainEvent, type FinanceCategory, type FinancialAccount, type Receivable, type ReceivableStatus, type CurrentUser } from "@/domain/types";
 import { listPaymentAccountOptions } from "@/server/finance-registry/cash-entries";
@@ -84,7 +85,7 @@ export interface ReceivablesWorkspace {
   summary: { open: number | null; overdue: number | null; receivedMonth: number | null; openCount: number; overdueCount: number };
   selected: ReceivableDetail | null;
   can: ReceivableCapabilities;
-  options: { clients: Opt[]; categories: Opt[]; centers: Opt[]; accounts: Opt[]; categoryCenters: Record<string, string> };
+  options: { clients: Opt[]; categories: Opt[]; centers: Opt[]; accounts: Opt[]; categoryCenters: Record<string, string>; classification: ClassificationOptions | null };
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -166,6 +167,7 @@ export async function getReceivablesWorkspace(user: CurrentUser, filters: Receiv
     .filter((c) => c.type === "receita" && !c.archived)
     .map((c) => ({ value: c.id, label: categoryName(c.id)! }))
     .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  const classification = classificationOptions(Array.from(categoryById.values()), centers, "receita");
   const categoryCenters: Record<string, string> = {};
   for (const c of revenue) {
     const eff = resolveEffectiveCostCenter({ categoryId: c.value }, Array.from(categoryById.values()), centers);
@@ -183,6 +185,8 @@ export async function getReceivablesWorkspace(user: CurrentUser, filters: Receiv
       centers: centers.filter((c) => !c.archived).map((c) => ({ value: c.id, label: c.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       accounts: accountOptions,
       categoryCenters,
+      // Etapa CP/CR 4: selects Centro → Categoria → Subcategoria de RECEITA (null = sem categoria de receita ativa).
+      classification: hasClassification(classification) ? classification : null,
     },
   };
 }

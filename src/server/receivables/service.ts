@@ -12,7 +12,8 @@ import "server-only";
  */
 import { FieldValue } from "firebase-admin/firestore";
 import { firestore } from "@/server/firebase-admin";
-import { col, create, getById, getManyByIds, newId, nextNumber, nowIso, ORG_ID, prepareNextNumber, stripUndefined, txGetOwn, txNextNumber, update } from "@/server/db";
+import { col, create, getById, getManyByIds, newId, nextNumber, nowIso, ORG_ID, prepareNextNumber, stripUndefined, txGetOwn, txNextNumber, txNextNumbers, update } from "@/server/db";
+import { describeRepeat, planOccurrences } from "@/domain/title-repeat";
 import { emitEvent } from "@/server/events";
 import { auditChanges } from "@/server/audit";
 import { BusinessError } from "@/server/auth/error-classes";
@@ -111,6 +112,11 @@ async function resolveClassification(input: { clientId?: string; payerName?: str
  */
 export async function createReceivables(input: ReceivableCreateInput, actor: UserRef, options: { emit?: boolean; createdAt?: string } = {}): Promise<Receivable[]> {
   const cls = await resolveClassification(input);
+  // Repetição Fixo/Parcelado com intervalo (etapa CP/CR 4): caminho próprio, numa transação só.
+  if (input.repeat && input.repeat.mode !== "unico") {
+    if ((input.installments ?? 1) > 1) throw new BusinessError("Use a repetição OU o parcelamento, não os dois");
+    return createReceivableSeries(input, cls, actor, options);
+  }
   const n = Math.max(1, Math.min(48, Math.floor(input.installments ?? 1)));
   const now = options.createdAt ?? nowIso();
   const parts = splitInstallments(roundCents(input.amount), n);
@@ -150,6 +156,67 @@ export async function createReceivables(input: ReceivableCreateInput, actor: Use
     }
   }
   if (input.attachmentUrl) await addReceivableAttachment(created[0].id, { name: input.attachmentName?.trim() || `Anexo · ${input.description.trim()}`, url: input.attachmentUrl }, actor, { emit: false });
+  return created;
+}
+
+/**
+ * Repetição do formulário de títulos (etapa CP/CR 4): Fixo (mesmo valor N vezes, descrição como digitada) ou Parcelado
+ * (total ÷ N, sobra na última, sufixo " (i/N)", parcela gravada), a cada N dias/semanas/meses (meses a partir do dia
+ * original, limitado ao fim do mês; competência acompanha). N títulos `rec_<base>_p<i>` na MESMA transação, com os
+ * números REC reservados no contador; mesma série (`seriesId`).
+ */
+async function createReceivableSeries(input: ReceivableCreateInput, cls: Classification, actor: UserRef, options: { emit?: boolean; createdAt?: string }): Promise<Receivable[]> {
+  const plan = planOccurrences({ description: input.description, amount: roundCents(input.amount), dueDate: input.dueDate, competence: input.competence, repeat: input.repeat });
+  if (!plan.ok) throw new BusinessError(plan.error);
+  const now = options.createdAt ?? nowIso();
+  const baseId = newId(COLLECTIONS.receivables);
+  const mode = input.repeat!.mode;
+  const label = describeRepeat(input.repeat);
+  const numbering = await prepareNextNumber("REC", { pad: 5, year: dateKey(now).slice(0, 4), initFrom: { collection: COLLECTIONS.receivables, field: "code" } });
+  const created = await firestore.runTransaction(async (tx) => {
+    const { codes, commit } = await txNextNumbers(tx, numbering, plan.value.length);
+    const out: Receivable[] = [];
+    plan.value.forEach((o, i) => {
+      const id = `rec_${baseId}_p${o.index}`;
+      const data = stripUndefined({
+        organizationId: ORG_ID,
+        code: codes[i],
+        description: o.description,
+        amount: o.amount,
+        dueDate: noonIso(o.dueDate),
+        competence: o.competence,
+        clientId: cls.clientId,
+        payerName: cls.payerName,
+        categoryId: cls.categoryId,
+        costCenterId: cls.costCenterId,
+        accountId: cls.accountId,
+        documentNumber: input.documentNumber,
+        notes: input.notes,
+        status: "aberto" as const,
+        installment: o.installment?.n,
+        installments: o.installment?.total,
+        seriesId: baseId,
+        history: [history(actor, `Título a receber lançado (${mode === "parcelado" ? `parcela ${o.index}/${o.total}` : `fixo, ${o.index} de ${o.total}`}) · ${label}`, { to: "aberto" }, now)],
+        createdBy: actor.id,
+        createdAt: now,
+        updatedAt: now,
+      }) as Omit<Receivable, "id">;
+      tx.create(col(COLLECTIONS.receivables).doc(id), data);
+      out.push({ ...data, id } as Receivable);
+    });
+    commit();
+    return out;
+  });
+  if (options.emit !== false) {
+    for (const r of created) {
+      const audit = auditChanges<Receivable & { categoryName?: string; costCenterName?: string; plannedAccountName?: string }>(null, { ...r, categoryName: cls.names.category, costCenterName: cls.names.center, plannedAccountName: cls.names.account }, ["description", "payerName", "amount", "dueDate", "competence", "categoryName", "costCenterName", "plannedAccountName", "documentNumber"]);
+      await emitReceivable("receivable.created", actor, r, `Título a receber ${r.code} lançado: ${brl(r.amount)} de ${r.payerName}`, { ...audit, seriesId: baseId, repeat: input.repeat, occurrences: created.length, ...(r.installments ? { installment: r.installment, installments: r.installments } : {}) }, `${r.description} · vence ${formatDate(r.dueDate)} · ${label}`);
+    }
+  }
+  if (input.attachmentUrl) {
+    const doc = await addReceivableAttachment(created[0].id, { name: input.attachmentName?.trim() || `Anexo · ${input.description.trim()}`, url: input.attachmentUrl }, actor, { emit: false });
+    created[0] = { ...created[0], attachmentIds: [doc.id] };
+  }
   return created;
 }
 

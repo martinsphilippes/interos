@@ -1653,7 +1653,8 @@ export interface Payable extends BaseEntity {
   /** Vencido: aviso ao Financeiro já enviado (1× por título). */
   overdueNotifiedAt?: string;
   /**
-   * Cadastros financeiros (etapa CP/CR 1) — opcionais e ainda NÃO gravados pelo formulário (chegam na etapa 4).
+   * Cadastros financeiros (etapa CP/CR 1) — opcionais; gravados pelo formulário a partir da etapa 4 (centro → categoria
+   * → subcategoria), junto com os campos antigos derivados do cadastro (`legacyPayableFields`).
    * `categoryId`: categoria OU subcategoria de `finance_categories`; `costCenterId`: centro próprio do título (vazio =
    * herda da categoria, ver `resolveEffectiveCostCenter`). Os campos antigos `category`/`costCenter` continuam valendo.
    */
@@ -1676,6 +1677,11 @@ export interface Payable extends BaseEntity {
   originalAmount?: number;
   residualId?: string;
   residualOf?: string;
+  /**
+   * Formulário de títulos (etapa CP/CR 4) — opcional. Nº do documento do credor (NF, boleto do fornecedor), texto livre.
+   * A numeração automática do sistema continua sendo o `code` (PAG-AAAA-NNNNN).
+   */
+  documentNumber?: string;
 }
 
 /** Baixa de um título a pagar (etapa CP/CR 2). */

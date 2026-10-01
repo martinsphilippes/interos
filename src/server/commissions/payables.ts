@@ -9,7 +9,7 @@ import "server-only";
  * Toda operação grava o histórico no próprio título e emite evento com auditChanges (from → to) e motivo (D16).
  */
 import { firestore } from "@/server/firebase-admin";
-import { col, create, createIfAbsent, getById, getManyByIds, newId, ORG_ID, prepareNextNumber, txGetOwn, txNextNumber, nowIso, stripUndefined, update } from "@/server/db";
+import { col, create, createIfAbsent, getById, getManyByIds, newId, ORG_ID, prepareNextNumber, txGetOwn, txNextNumber, txNextNumbers, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { getSetting } from "@/server/admin/queries";
 import { SETTING_DEFAULTS, type ComissoesPagamentoConfig, type ContasAPagarConfig } from "@/server/admin/schemas";
@@ -24,6 +24,9 @@ import { PARTIAL_COMMISSION_BLOCKED, isCommissionLinkedPayable, openAmount, orig
 import { BusinessError } from "@/server/auth/error-classes";
 import { ACCOUNT_REQUIRED_MESSAGE, emitCashEntryEvent, newCashEntryId, txCreateCashEntry, txDeleteCashEntry, txReadCashEntry, txReadPaymentAccount } from "@/server/finance-registry/cash-entries";
 import { assignPayableCode, cleanPatch, deleteField, historyEntry, SYSTEM_ACTOR, transitionCommission } from "./store";
+import { describeRepeat, planOccurrences, type RepeatInput } from "@/domain/title-repeat";
+import { classificationLabel, ENGINE_ONLY_CATEGORY_KEYS, LEGACY_FALLBACK_CATEGORY } from "@/domain/title-classification";
+import { legacyFieldsFor, loadClassificationContext, readPlannedAccount, resolveOrThrow, type ClassificationContext } from "@/server/finance-registry/classification";
 
 export async function getCommissionPaymentSettings(): Promise<ComissoesPagamentoConfig> {
   const value = await getSetting<ComissoesPagamentoConfig>("comissoes_pagamento", SETTING_DEFAULTS.comissoes_pagamento);
@@ -543,28 +546,94 @@ export interface UpdatePayableInput {
   /** Série recorrente: encerra a série nesta data (AAAA-MM-DD). */
   recurrenceUntil?: string;
   reason: string;
+  // Etapa CP/CR 4 — ausente = mantém; "" = limpa.
+  documentNumber?: string;
+  /** Categoria/subcategoria de DESPESA do cadastro (não em título de comissão/bônus/estorno). */
+  categoryId?: string;
+  costCenterId?: string;
+  accountId?: string;
 }
 
-/** Alteração manual do título (auditada): valor só em título manual ainda não aprovado. */
+/**
+ * Alteração manual do título (auditada): valor só em título manual ainda não aprovado. Etapa CP/CR 4: também nº do
+ * documento, centro → categoria → subcategoria do cadastro e conta prevista (ausente = mantém; "" = limpa). A categoria
+ * de título de comissão/bônus/estorno segue o motor (não muda); os campos antigos `category`/`costCenter` acompanham o
+ * cadastro escolhido (derivados), sem apagar o que estava gravado quando a classificação é limpa.
+ */
 export async function updatePayable(id: string, input: UpdatePayableInput, actor: UserRef): Promise<Payable> {
   const reason = input.reason.trim();
   if (reason.length < 5) throw new Error("Informe o motivo da alteração");
   const current = await loadPayable(id);
   if (current.status === "pago" || current.status === "cancelado") throw new Error("Título pago ou cancelado não pode ser alterado");
   if (input.amount !== undefined && input.amount !== current.amount && (current.origin !== "manual" || current.status !== "previsto")) throw new Error("O valor só pode ser alterado em título manual ainda previsto (o de comissão segue a memória de cálculo)");
+  const keep = (value: string | undefined, currentValue: string | undefined) => (value === undefined ? currentValue : value.trim() || undefined);
+  const nextCategoryId = keep(input.categoryId, current.categoryId);
+  if (nextCategoryId !== current.categoryId && isCommissionLinkedPayable(current)) throw new BusinessError("A categoria de título de comissão/bônus/estorno segue o motor de comissões e não muda por aqui");
+  const nextCenterId = keep(input.costCenterId, current.costCenterId);
+  const nextAccountId = keep(input.accountId, current.accountId);
+  const classificationChanged = nextCategoryId !== current.categoryId || nextCenterId !== current.costCenterId;
+  const registry = classificationChanged || current.categoryId || current.costCenterId ? await loadClassificationContext() : null;
+  // Valida só o que mudou (um cadastro arquivado depois de gravado não impede alterar outros campos do título).
+  const resolved = registry && classificationChanged ? resolveOrThrow({ categoryId: nextCategoryId, costCenterId: nextCenterId }, "despesa", registry) : null;
+  const legacy = resolved && registry ? legacyFieldsFor(resolved, registry) : {};
+  // Conta prevista nova: precisa existir e estar ativa (a que já estava gravada não é revalidada).
+  if (nextAccountId !== current.accountId) await readPlannedAccount(nextAccountId);
   const patch: Partial<Payable> = {
     description: input.description?.trim() || current.description,
     dueDate: input.dueDate ? `${input.dueDate.slice(0, 10)}T12:00:00.000Z` : current.dueDate,
     amount: input.amount ?? current.amount,
     notes: input.notes?.trim() || current.notes,
-    costCenter: input.costCenter?.trim() || current.costCenter,
+    // Centro antigo: o do cadastro (derivado) quando a classificação mudou; senão o informado no select antigo.
+    costCenter: legacy.costCenter ?? (input.costCenter?.trim() || current.costCenter),
+    documentNumber: keep(input.documentNumber, current.documentNumber),
+    categoryId: nextCategoryId,
+    costCenterId: nextCenterId,
+    accountId: nextAccountId,
   };
+  // Chave antiga da categoria acompanha a categoria do cadastro (títulos de comissão nunca chegam aqui com mudança).
+  if (legacy.category && !isCommissionLinkedPayable(current)) patch.category = legacy.category;
   if (input.recurrenceUntil && current.recurrence) patch.recurrence = { ...current.recurrence, until: input.recurrenceUntil.slice(0, 10) };
-  const audit = auditChanges<Payable>(current, { ...current, ...patch }, ["description", "dueDate", "amount", "notes", "costCenter", "recurrence"], reason);
+  const fields = ["description", "dueDate", "amount", "notes", "costCenter", "recurrence", "category", "documentNumber", "categoryId", "costCenterId", "accountId"] as const;
+  const audit = auditChanges<Payable>(current, { ...current, ...patch }, [...fields], reason);
   if (Object.keys(audit.changes).length === 0) return current;
-  const { after } = await transitionPayable(id, [current.status], patch, payableHistory(actor, "Alterado", { reason, changes: audit.changes }));
-  await emitPayable("payable.updated", actor, after, `Título ${code(after)} alterado`, audit as unknown as Record<string, unknown>, describeChanges(audit, { description: "Descrição", dueDate: "Vencimento", amount: "Valor", notes: "Observações", costCenter: "Centro de custo", recurrence: "Recorrência" }, (field, v) => (v === null ? "—" : field === "amount" ? formatCurrency(Number(v)) : field === "dueDate" ? formatDate(String(v)) : typeof v === "object" ? JSON.stringify(v) : String(v))));
+  // Ids viram nomes legíveis na auditoria (categoria/subcategoria, centro, conta prevista).
+  const names = await registryNames(registry, [current.accountId, nextAccountId]);
+  const readable: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [k, c] of Object.entries(audit.changes)) {
+    if (k === "categoryId") {
+      const from = names.category(c.from as string | null);
+      const to = names.category(c.to as string | null);
+      if (from.category !== to.category) readable.categoryName = { from: from.category ?? null, to: to.category ?? null };
+      if (from.subcategory !== to.subcategory) readable.subcategoryName = { from: from.subcategory ?? null, to: to.subcategory ?? null };
+    } else if (k === "costCenterId") readable.costCenterName = { from: names.center(c.from as string | null), to: names.center(c.to as string | null) };
+    else if (k === "accountId") readable.plannedAccountName = { from: names.account(c.from as string | null), to: names.account(c.to as string | null) };
+    else readable[k] = c;
+  }
+  const changes = { ...audit, changes: readable };
+  // Campos limpos ("") saem do documento (FieldValue.delete) em vez de gravar undefined.
+  const writePatch: Record<string, unknown> = { ...patch };
+  for (const k of ["documentNumber", "categoryId", "costCenterId", "accountId"] as const) if (patch[k] === undefined && current[k] !== undefined) writePatch[k] = deleteField();
+  const { after } = await transitionPayable(id, [current.status], writePatch as Partial<Payable>, payableHistory(actor, "Alterado", { reason, changes: readable }));
+  for (const k of ["documentNumber", "categoryId", "costCenterId", "accountId"] as const) if (patch[k] === undefined) delete (after as unknown as Record<string, unknown>)[k];
+  await emitPayable("payable.updated", actor, after, `Título ${code(after)} alterado`, { ...changes, categoryId: after.categoryId ?? null, costCenterId: after.costCenterId ?? null, accountId: after.accountId ?? null }, describeChanges(changes, { description: "Descrição", dueDate: "Vencimento", amount: "Valor", notes: "Observações", costCenter: "Centro de custo", recurrence: "Recorrência", category: "Categoria (configuração)", documentNumber: "Nº do documento", categoryName: "Categoria", subcategoryName: "Subcategoria", costCenterName: "Centro de custo (cadastro)", plannedAccountName: "Conta prevista" }, (field, v) => (v === null ? "—" : field === "amount" ? formatCurrency(Number(v)) : field === "dueDate" ? formatDate(String(v)) : field === "category" ? payableCategoryLabel(String(v)) : typeof v === "object" ? JSON.stringify(v) : String(v))));
   return after;
+}
+
+/** Nomes dos cadastros para a auditoria (categoria-mãe/subcategoria, centro, conta). */
+async function registryNames(ctx: ClassificationContext | null, accountIds: (string | undefined)[]): Promise<{ category: (id: string | null) => { category?: string; subcategory?: string }; center: (id: string | null) => string | null; account: (id: string | null) => string | null }> {
+  const ids = Array.from(new Set(accountIds.filter((x): x is string => Boolean(x))));
+  const accounts = ids.length ? await getManyByIds<FinancialAccount>(COLLECTIONS.financialAccounts, ids) : new Map<string, FinancialAccount>();
+  const cats = new Map((ctx?.categories ?? []).map((c) => [c.id, c]));
+  return {
+    category: (id) => {
+      const c = id ? cats.get(id) : undefined;
+      if (!c) return id ? { category: id } : {};
+      const parent = c.parentId ? cats.get(c.parentId) : undefined;
+      return parent ? { category: parent.name, subcategory: c.name } : { category: c.name };
+    },
+    center: (id) => (id ? (ctx?.centers.find((c) => c.id === id)?.name ?? id) : null),
+    account: (id) => (id ? (accounts.get(id)?.name ?? id) : null),
+  };
 }
 
 export interface ManualPayableInput {
@@ -572,17 +641,31 @@ export interface ManualPayableInput {
   creditorId?: string;
   creditorName?: string;
   supplierId?: string;
-  category: string;
+  /** Chave antiga do setting (formulário sem cadastros). Com `categoryId`, é derivada do cadastro. */
+  category?: string;
   costCenter?: string;
   description: string;
   amount: number;
-  competence: string;
+  /** AAAA-MM; vazia = mês do vencimento (etapa CP/CR 4; cada ocorrência da repetição: o mês do próprio vencimento). */
+  competence?: string;
   dueDate: string;
   notes?: string;
+  /** Parcelamento ANTIGO (N títulos mensais "(parcela i/N)"): mantido para chamadores existentes (seed). */
   installments?: number;
   recurrence?: PayableRecurrence;
   attachmentUrl?: string;
   attachmentName?: string;
+  // Formulário de títulos (etapa CP/CR 4) — opcionais.
+  /** Categoria OU subcategoria de DESPESA do cadastro (`finance_categories`). */
+  categoryId?: string;
+  /** Centro de custo próprio do título (vazio = o da categoria). */
+  costCenterId?: string;
+  /** Conta financeira prevista (pré-seleciona a conta na baixa). */
+  accountId?: string;
+  /** Nº do documento do credor (NF, boleto). */
+  documentNumber?: string;
+  /** Repetição Único/Fixo/Parcelado com intervalo em dias/semanas/meses (src/domain/title-repeat.ts). */
+  repeat?: RepeatInput;
 }
 
 /** Categorias e centros de custo aceitos (setting `contas_a_pagar` + as fixas do circuito). */
@@ -630,8 +713,18 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
   }
   if (!creditorName) throw new Error("Informe o credor");
   const settings = await getPayablesSettings();
-  if (!settings.categorias.includes(input.category)) throw new Error(`Categoria "${input.category}" não está em Configurações › Contas a pagar`);
-  if (input.costCenter && settings.centrosDeCusto.length > 0 && !settings.centrosDeCusto.includes(input.costCenter)) throw new Error(`Centro de custo "${input.costCenter}" não está em Configurações › Contas a pagar`);
+  // Classificação pelos cadastros (etapa CP/CR 4): valida categoria de DESPESA/centro e deriva os campos antigos
+  // (`category` chave e `costCenter` nome) para listas, filtros, relatório e KPIs existentes.
+  const registry = input.categoryId || input.costCenterId ? await loadClassificationContext() : null;
+  const resolved = registry ? resolveOrThrow({ categoryId: input.categoryId, costCenterId: input.costCenterId }, "despesa", registry) : null;
+  const legacy = resolved && registry ? legacyFieldsFor(resolved, registry) : {};
+  const category = legacy.category ?? input.category ?? LEGACY_FALLBACK_CATEGORY;
+  const costCenter = legacy.costCenter ?? input.costCenter;
+  if (!legacy.category && input.category && !settings.categorias.includes(input.category)) throw new Error(`Categoria "${input.category}" não está em Configurações › Contas a pagar`);
+  if (!legacy.costCenter && input.costCenter && settings.centrosDeCusto.length > 0 && !settings.centrosDeCusto.includes(input.costCenter)) throw new Error(`Centro de custo "${input.costCenter}" não está em Configurações › Contas a pagar`);
+  if (ENGINE_ONLY_CATEGORY_KEYS.includes(category)) throw new BusinessError("Comissões e estornos nascem do motor de comissões, não de lançamento manual");
+  const account = await readPlannedAccount(input.accountId);
+  const documentNumber = input.documentNumber?.trim() || undefined;
   const n = Math.max(1, Math.min(48, Math.floor(input.installments ?? 1)));
   const now = options.createdAt ?? nowIso();
   const amount = Math.round(input.amount * 100) / 100;
@@ -640,18 +733,71 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
     creditorId: input.creditorType === "colaborador" ? input.creditorId : undefined,
     creditorName,
     supplierId,
-    category: input.category,
-    costCenter: input.costCenter,
+    category,
+    costCenter,
+    categoryId: resolved?.categoryId,
+    costCenterId: resolved?.costCenterId,
+    accountId: account?.id,
+    documentNumber,
     status: "previsto" as const,
     origin: "manual" as const,
     sourceIds: { commissionIds: [] },
     notes: input.notes?.trim() || undefined,
     createdBy: actor.id,
   };
+  // Nomes legíveis na auditoria (nunca ids soltos): categoria, subcategoria, centro efetivo e conta prevista.
+  const readable = { categoryName: resolved?.names.category, subcategoryName: resolved?.names.subcategory, costCenterName: resolved?.names.center, plannedAccountName: account?.name };
   const emitCreated = async (p: Payable, extra: Record<string, unknown> = {}) => {
     if (options.emit === false) return;
-    await emitPayable("payable.created", actor, p, `Título ${p.code} lançado: ${formatCurrency(p.amount)} para ${creditorName}`, { origin: "manual", category: input.category, supplierId: supplierId ?? null, costCenter: input.costCenter ?? null, ...extra, ...auditChanges<Payable>(null, p, ["creditorName", "category", "description", "amount", "competence", "dueDate"]) }, `${payableCategoryLabel(input.category)}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}${p.recurrence ? ` · recorrente (${p.recurrence.frequency})` : ""} · vence ${formatDate(p.dueDate)}`);
+    const audit = auditChanges<Payable & typeof readable>(null, { ...p, ...readable }, ["creditorName", "category", "description", "amount", "competence", "dueDate", "costCenter", "documentNumber", "categoryName", "subcategoryName", "costCenterName", "plannedAccountName"]);
+    await emitPayable("payable.created", actor, p, `Título ${p.code} lançado: ${formatCurrency(p.amount)} para ${creditorName}`, { origin: "manual", category, supplierId: supplierId ?? null, costCenter: costCenter ?? null, categoryId: p.categoryId ?? null, costCenterId: p.costCenterId ?? null, accountId: p.accountId ?? null, ...extra, ...audit }, `${classificationLabel(resolved?.names ?? {}) ?? payableCategoryLabel(category)}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}${p.recurrence ? ` · recorrente (${p.recurrence.frequency})` : ""} · vence ${formatDate(p.dueDate)}`);
   };
+  const attach = async (payableId: string) => {
+    if (!input.attachmentUrl) return undefined;
+    return addPayableAttachment(payableId, { name: input.attachmentName?.trim() || `Anexo · ${input.description.trim()}`, url: input.attachmentUrl }, actor, { emit: false });
+  };
+
+  // Repetição Fixo/Parcelado (etapa CP/CR 4): N títulos `pag_<base>_p<i>` gravados numa transação só, com os números PAG
+  // reservados no mesmo contador; mesma série (`seriesId`); só o parcelado grava a parcela {n, total}.
+  const repeatMode = input.repeat?.mode ?? "unico";
+  if (repeatMode !== "unico") {
+    if (input.recurrence) throw new BusinessError("Use a repetição OU a série recorrente, não os dois");
+    const plan = planOccurrences({ description: input.description, amount, dueDate: input.dueDate, competence: input.competence, repeat: input.repeat });
+    if (!plan.ok) throw new BusinessError(plan.error);
+    const baseId = newId(COLLECTIONS.payables);
+    const numbering = await prepareNextNumber("PAG", { pad: 5, year: dateKey(now).slice(0, 4), initFrom: { collection: COLLECTIONS.payables, field: "code" } });
+    const label = describeRepeat(input.repeat);
+    const parcels = await firestore.runTransaction(async (tx) => {
+      const { codes, commit } = await txNextNumbers(tx, numbering, plan.value.length);
+      const out: Payable[] = [];
+      plan.value.forEach((o, i) => {
+        const id = `pag_${baseId}_p${o.index}`;
+        const data = stripUndefined({
+          ...base,
+          organizationId: ORG_ID,
+          code: codes[i],
+          description: o.description,
+          amount: o.amount,
+          competence: o.competence,
+          dueDate: `${o.dueDate}T12:00:00.000Z`,
+          installment: o.installment?.n,
+          installments: o.installment?.total,
+          seriesId: baseId,
+          history: [payableHistory(actor, `Lançamento manual ${repeatMode === "parcelado" ? `parcelado (${o.index}/${o.total})` : `fixo (${o.index} de ${o.total})`} · ${label}`, { to: "previsto" }, now)],
+          createdAt: now,
+          updatedAt: now,
+        }) as Omit<Payable, "id">;
+        tx.create(col(COLLECTIONS.payables).doc(id), data);
+        out.push({ ...data, id } as Payable);
+      });
+      commit();
+      return out;
+    });
+    for (const p of parcels) await emitCreated(p, { seriesId: baseId, repeat: input.repeat, occurrence: parcels.indexOf(p) + 1, occurrences: parcels.length, ...(p.installments ? { installment: p.installment, installments: p.installments } : {}) });
+    const doc = await attach(parcels[0].id);
+    if (doc) parcels[0] = { ...parcels[0], attachmentIds: [doc.id] };
+    return { ...parcels[0], parcels };
+  }
 
   if (n > 1) {
     const baseId = newId(COLLECTIONS.payables);
@@ -678,7 +824,7 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
       parcels.push(p);
       if (created) await emitCreated(p, { installment: i + 1, installments: n, seriesId: baseId });
     }
-    if (input.attachmentUrl) await addPayableAttachment(parcels[0].id, { name: input.attachmentName?.trim() || `Anexo · ${input.description.trim()}`, url: input.attachmentUrl }, actor, { emit: false });
+    await attach(parcels[0].id);
     return { ...parcels[0], parcels };
   }
 
@@ -686,7 +832,8 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
     ...base,
     description: input.description.trim(),
     amount,
-    competence: input.competence,
+    // Competência vazia = mês do vencimento (etapa CP/CR 4).
+    competence: input.competence || input.dueDate.slice(0, 7),
     dueDate: `${input.dueDate.slice(0, 10)}T12:00:00.000Z`,
     recurrence: input.recurrence ? stripUndefined({ frequency: input.recurrence.frequency, dayOfMonth: input.recurrence.dayOfMonth, until: input.recurrence.until?.slice(0, 10) }) : undefined,
     history: [payableHistory(actor, input.recurrence ? `Lançamento manual recorrente (${input.recurrence.frequency}, dia ${input.recurrence.dayOfMonth})` : "Lançamento manual", { to: "previsto" }, now)],
@@ -697,10 +844,8 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
   if (input.recurrence) await update<Payable>(COLLECTIONS.payables, payable.id, { seriesId: payable.id });
   const withCode = { ...payable, seriesId: input.recurrence ? payable.id : undefined, code: await assignPayableCode(payable.id, now) };
   await emitCreated(withCode, input.recurrence ? { recurrence: withCode.recurrence, seriesId: payable.id } : {});
-  if (input.attachmentUrl) {
-    const doc = await addPayableAttachment(payable.id, { name: input.attachmentName?.trim() || `Anexo · ${input.description.trim()}`, url: input.attachmentUrl }, actor, { emit: false });
-    withCode.attachmentIds = [doc.id];
-  }
+  const doc = await attach(payable.id);
+  if (doc) withCode.attachmentIds = [doc.id];
   return withCode;
 }
 

@@ -4,6 +4,7 @@
  */
 import { z } from "zod";
 import { PAYMENT_METHODS } from "@/server/finance/schemas";
+import { titleRepeatSchema } from "@/server/commissions/schemas";
 
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida");
 const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Competência inválida (AAAA-MM)");
@@ -30,8 +31,10 @@ export const receivableCreateSchema = z.object({
   accountId: optionalId,
   documentNumber: optionalText(60),
   notes: optionalText(1000),
-  /** Único (1) ou parcelado mensal (2–48; sobra de centavos na última parcela). */
+  /** Único (1) ou parcelado mensal (2–48; sobra de centavos na última parcela) — formato da etapa 3, mantido. */
   installments: z.number("Parcelas inválidas").int("Parcelas inválidas").min(1).max(48, "Máximo de 48 parcelas").optional(),
+  /** Repetição do formulário (etapa CP/CR 4): Único / Fixo / Parcelado, a cada N dias, semanas ou meses. */
+  repeat: titleRepeatSchema.optional(),
   attachmentUrl: url.optional().or(z.literal("").transform(() => undefined)),
   attachmentName: optionalText(160),
 });

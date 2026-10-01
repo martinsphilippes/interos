@@ -304,6 +304,24 @@ export async function prepareNextNumber(prefix: string, options: NextNumberOptio
 }
 
 /**
+ * Vários números seguidos de uma vez (etapa CP/CR 4: série de títulos gravada numa transação só). Mesmo contador e
+ * formato de `txNextNumber`; `commit` grava o contador com o último número emitido.
+ */
+export async function txNextNumbers(tx: Transaction, prepared: PreparedNumber, count: number): Promise<{ codes: string[]; commit: () => void }> {
+  const snap = await tx.get(prepared.ref);
+  const current = snap.exists ? Number(snap.get("value")) || 0 : prepared.seed;
+  const last = current + count;
+  return {
+    codes: Array.from({ length: count }, (_, i) => `${prepared.head}${String(current + i + 1).padStart(prepared.pad, "0")}`),
+    commit: () => {
+      const now = nowIso();
+      if (snap.exists) tx.update(prepared.ref, { value: last, updatedAt: now });
+      else tx.set(prepared.ref, stripUndefined({ organizationId: ORG_ID, prefix: prepared.prefix, year: prepared.year ?? undefined, value: last, createdAt: now, updatedAt: now }));
+    },
+  };
+}
+
+/**
  * Lê o contador NA transação (fase de leituras) e devolve o número e a escrita do contador (chamar `commit` na fase de
  * escritas). Concorrência: a transação do Firestore repete quando o contador muda no meio.
  */

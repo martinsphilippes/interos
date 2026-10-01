@@ -38,6 +38,9 @@ import {
 import { getCommissionPaymentSettings, getPayablesSettings, listPayableAttachments } from "./payables";
 import { listSuppliers } from "./suppliers";
 import { listPaymentAccountOptions } from "@/server/finance-registry/cash-entries";
+import { loadClassificationContext, optionsFor, type ClassificationContext } from "@/server/finance-registry/classification";
+import { classificationLabel, hasClassification, resolveClassification, type ClassificationOptions } from "@/domain/title-classification";
+import { resolveEffectiveCostCenter } from "@/domain/finance-registry";
 import { isCommissionLinkedPayable, payablePaymentUndoBlock, payableSettlement, type SettlementStatus } from "@/domain/settlements";
 import { can } from "@/server/auth/permissions";
 import type { CommissionScope } from "./permissions";
@@ -661,6 +664,14 @@ export interface PayableRow {
 }
 
 export interface PayableDetail extends PayableRow {
+  /** Formulário de títulos (etapa CP/CR 4): credor, nº do documento e classificação do cadastro (editar e clonar). */
+  creditorType: Payable["creditorType"];
+  documentNumber?: string;
+  categoryId?: string;
+  costCenterId?: string;
+  /** "Mãe › Subcategoria" do cadastro e centro de custo efetivo (próprio ou da categoria). */
+  classification?: { label: string; center?: string; inherited: boolean };
+  plannedAccountName?: string;
   trace: TraceLink[];
   history: HistoryItem[];
   commission?: { id: string; code: string; status: CommissionStatus; steps: CommissionCalcStep[]; ruleText?: string };
@@ -712,6 +723,10 @@ export interface PayablesWorkspace {
   suppliers: Opt[];
   /** Contas financeiras ativas para a baixa (etapa CP/CR 2; só para quem paga). */
   accounts: Opt[];
+  /** Formulário de títulos (etapa CP/CR 4; quem cria/edita): contas ativas para a conta prevista e os selects
+   * Centro → Categoria → Subcategoria de DESPESA (null = sem cadastros: formulário antigo com aviso). */
+  formAccounts: Opt[];
+  classification: ClassificationOptions | null;
   settings: { categorias: Opt[]; centrosDeCusto: string[] };
   cashFlow: { overdue: CashFlowMonth; months: CashFlowMonth[] };
 }
@@ -803,16 +818,20 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
 
   const chosen = selectedId ? all.find((p) => p.id === selectedId) : undefined;
   const links: TraceAccess = { suppliers: caps.suppliers, rules: can(viewer, "financeiro.comissoes.regras.ver"), commissions: can(viewer, "financeiro.comissoes.ver") };
-  const selected = chosen ? await payableDetail(chosen, toRow(chosen), all, links) : null;
   // Lançamento manual: credores colaboradores dentro do escopo (empresa = todos os ativos).
-  const [users, suppliers, settings, cashFlow, accounts] = await Promise.all([
+  const [users, suppliers, settings, cashFlow, accountOptions, registry] = await Promise.all([
     caps.create ? list<User>(COLLECTIONS.users).then((us) => us.filter((u) => u.active !== false && (full || vis.creditorIds!.has(u.id))).map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"))) : Promise.resolve([] as Opt[]),
     caps.create && full ? listSuppliers({ activeOnly: true }).then((ss) => ss.map((s) => ({ value: s.id, label: s.name }))) : Promise.resolve([] as Opt[]),
     getPayablesSettings(),
     // Fluxo de caixa: seção própria e só com escopo empresa (soma cobranças e títulos da empresa inteira).
     caps.cashFlow && full ? buildCashFlow(all, today) : Promise.resolve({ overdue: emptyCashMonth("atraso", "Em atraso"), months: [] }),
-    caps.pay ? listPaymentAccountOptions() : Promise.resolve([] as Opt[]),
+    caps.pay || caps.create || caps.edit ? listPaymentAccountOptions() : Promise.resolve([] as Opt[]),
+    // Cadastros financeiros para o formulário (etapa CP/CR 4) e para a classificação mostrada no painel.
+    caps.create || caps.edit || chosen?.categoryId || chosen?.costCenterId ? loadClassificationContext() : Promise.resolve(null),
   ]);
+  const accounts = caps.pay ? accountOptions : [];
+  const selected = chosen ? await payableDetail(chosen, toRow(chosen), all, links, registry) : null;
+  const classificationOpts = registry && (caps.create || caps.edit) ? optionsFor(registry, "despesa") : null;
   const categories = Array.from(new Set([...settings.categorias, ...rowsAll.map((r) => r.category)])).map((c) => ({ value: c, label: payableCategoryLabel(c) })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   const costCenters = Array.from(new Set([...settings.centrosDeCusto, ...rowsAll.map((r) => r.costCenter).filter((c): c is string => Boolean(c))])).map((c) => ({ value: c, label: c })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   return {
@@ -825,6 +844,8 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
     users,
     suppliers,
     accounts,
+    formAccounts: caps.create || caps.edit ? accountOptions : [],
+    classification: classificationOpts && hasClassification(classificationOpts) ? classificationOpts : null,
     settings: { categorias: settings.categoriasComRotulo.filter((c) => c.value !== "comissao_comercial" && c.value !== "estorno_comissao"), centrosDeCusto: settings.centrosDeCusto },
     cashFlow,
   };
@@ -866,7 +887,7 @@ interface TraceAccess {
   commissions: boolean;
 }
 
-async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links: TraceAccess): Promise<PayableDetail> {
+async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links: TraceAccess, registry: ClassificationContext | null): Promise<PayableDetail> {
   const commissionId = p.sourceIds.commissionIds?.[0];
   const [commission, contract, billing, events, approver, attachments, paymentAccounts] = await Promise.all([
     commissionId ? getById<Commission>(COLLECTIONS.commissions, commissionId) : Promise.resolve(null),
@@ -875,11 +896,13 @@ async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links:
     list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", p.id]] }),
     p.approvedBy ? getById<User>(COLLECTIONS.users, p.approvedBy) : Promise.resolve(null),
     listPayableAttachments(p),
-    p.payments?.length ? getManyByIds<FinancialAccount>(COLLECTIONS.financialAccounts, p.payments.map((x) => x.accountId)) : Promise.resolve(new Map<string, FinancialAccount>()),
+    p.payments?.length || p.accountId ? getManyByIds<FinancialAccount>(COLLECTIONS.financialAccounts, [...(p.payments ?? []).map((x) => x.accountId), ...(p.accountId ? [p.accountId] : [])]) : Promise.resolve(new Map<string, FinancialAccount>()),
   ]);
   const trace: TraceLink[] = [];
   if (p.supplierId) trace.push({ key: "fornecedor", label: "Fornecedor", value: p.creditorName, href: links.suppliers ? `/financeiro/contas-a-pagar/fornecedores?fornecedor=${p.supplierId}` : undefined });
-  if (p.seriesId && p.seriesId !== p.id) trace.push({ key: "serie", label: p.installments ? "Parcelamento" : "Série", value: p.installments ? `parcela ${p.installment}/${p.installments}` : `ocorrência da série ${all.find((x) => x.id === p.seriesId)?.code ?? p.seriesId}`, href: `/financeiro/contas-a-pagar?serie=${p.seriesId}` });
+  // Série sem título-modelo (repetição "Fixo" da etapa CP/CR 4): "repetição de N títulos" em vez do id interno.
+  const seriesTemplate = p.seriesId ? all.find((x) => x.id === p.seriesId) : undefined;
+  if (p.seriesId && p.seriesId !== p.id) trace.push({ key: "serie", label: p.installments ? "Parcelamento" : "Série", value: p.installments ? `parcela ${p.installment}/${p.installments}` : seriesTemplate ? `ocorrência da série ${seriesTemplate.code ?? p.seriesId}` : `repetição de ${all.filter((x) => x.seriesId === p.seriesId && !x.residualOf).length} títulos`, href: `/financeiro/contas-a-pagar?serie=${p.seriesId}` });
   if (p.sourceIds.saleNumber || p.sourceIds.opportunityId) trace.push({ key: "venda", label: "Venda", value: p.sourceIds.saleNumber ?? "Oportunidade", href: p.sourceIds.opportunityId ? `/vendas/oportunidades?oportunidade=${p.sourceIds.opportunityId}` : undefined });
   if (contract) trace.push({ key: "contrato", label: "Contrato", value: contract.number, href: `/financeiro/contratos/${contract.id}` });
   if (billing) {
@@ -895,8 +918,17 @@ async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links:
   for (const e of events) history.push({ id: e.id, at: e.occurredAt, title: e.title, subtitle: e.description, by: e.actorName, tone: e.type === "payable.paid" ? "success" : e.type === "payable.cancelled" ? "danger" : "info" });
   history.sort((a, b) => b.at.localeCompare(a.at));
 
+  const resolved = registry && (p.categoryId || p.costCenterId) ? resolveClassification({ categoryId: p.categoryId, costCenterId: p.costCenterId }, "despesa", registry.categories.map((c) => ({ ...c, archived: false })), registry.centers.map((c) => ({ ...c, archived: false }))) : null;
+  const effective = registry && (p.categoryId || p.costCenterId) ? resolveEffectiveCostCenter(p, registry.categories, registry.centers) : null;
+  const classLabel = resolved?.ok ? classificationLabel(resolved.value.names) : undefined;
   return {
     ...row,
+    creditorType: p.creditorType,
+    documentNumber: p.documentNumber,
+    categoryId: p.categoryId,
+    costCenterId: p.costCenterId,
+    classification: classLabel || effective ? { label: classLabel ?? "Sem categoria do cadastro", center: effective?.name, inherited: effective ? effective.source !== "proprio" : false } : undefined,
+    plannedAccountName: p.accountId ? (paymentAccounts.get(p.accountId)?.name ?? "Conta removida") : undefined,
     trace,
     history,
     commission: commission ? { id: commission.id, code: commission.code ?? commission.id, status: commission.status, steps: commission.calc?.steps ?? legacySteps(commission), ruleText: commission.ruleSnapshot ? describeSnapshot(commission.ruleSnapshot) : undefined } : undefined,
