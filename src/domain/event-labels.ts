@@ -153,6 +153,9 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "permissions.updated": "Acessos alterados",
   "permissions.blocked": "Alteração de acesso bloqueada",
   "contract.pendency_resolved": "Pendência do contrato resolvida",
+  "portal.link_created": "Link do portal do cliente gerado",
+  "portal.link_revoked": "Link do portal do cliente revogado",
+  "portal.accessed": "Portal do cliente acessado",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -202,6 +205,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   commission_rule: "Financeiro",
   payable: "Financeiro",
   supplier: "Financeiro",
+  portal: "Financeiro",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",

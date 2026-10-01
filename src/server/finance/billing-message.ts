@@ -6,11 +6,13 @@ import "server-only";
  * Destinatário (D23): contato responsável do contrato (`contract.contactId`) → e-mail de cobrança da venda
  * (`opportunity.billingData.email`, só para e-mail) → contato principal → cadastro do cliente.
  * Variáveis dos textos da régua: {cliente} {contato} {valor} {vencimento} {parcela} {linhaDigitavel} {linkBoleto}
- * {linkPortal} — `{linkPortal}` fica vazio até existir o portal do cliente (portal: etapa 6).
+ * {linkPortal} — `{linkPortal}` (etapa 6B, D31) vira "Portal do cliente: <link>" com um link NOVO do portal (30 dias)
+ * gerado no envio (`sendBillingMessage`); sem envio possível ou sem link, fica vazio.
  */
 import { getById, list } from "@/server/db";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { COLLECTIONS, type Billing, type Client, type Contact, type Contract, type Opportunity } from "@/domain/types";
+import { portalLinkLine } from "@/domain/portal";
 
 export const BILLING_TYPE_LABEL: Record<Billing["type"], string> = { setup: "Adesão", mensalidade: "Mensalidade", hardware: "Hardware", servico: "Serviço" };
 
@@ -101,8 +103,14 @@ export function billingEmailSubject(ctx: Pick<BillingMessageContext, "billing" |
   return `${options.includeBoleto ? "Boleto" : "Cobrança"} ${billingLabel(ctx.billing)} · vencimento ${formatDate(ctx.billing.dueDate)} · contrato ${ctx.contract.number} — Intercert`;
 }
 
-/** Substitui as variáveis do texto de um marco da régua. Placeholder desconhecido fica vazio. */
-export function renderBillingTemplate(template: string, ctx: Pick<BillingMessageContext, "billing" | "client" | "contactName">): string {
+export { fillPortalLink, portalLinkLine } from "@/domain/portal";
+
+/**
+ * Substitui as variáveis do texto de um marco da régua. Placeholder desconhecido fica vazio. `{linkPortal}`: sem
+ * `options.linkPortal` o marcador é PRESERVADO para `sendBillingMessage` gerar o link no envio (um link novo por
+ * mensagem); com `linkPortal: ""` (tarefa/notificação interna) some; com uma URL vira "Portal do cliente: <url>".
+ */
+export function renderBillingTemplate(template: string, ctx: Pick<BillingMessageContext, "billing" | "client" | "contactName">, options: { linkPortal?: string } = {}): string {
   const b = ctx.billing;
   const vars: Record<string, string> = {
     cliente: ctx.client.tradeName,
@@ -112,8 +120,8 @@ export function renderBillingTemplate(template: string, ctx: Pick<BillingMessage
     parcela: billingLabel(b).toLowerCase(),
     linhaDigitavel: b.boleto?.linhaDigitavel ? `Linha digitável: ${b.boleto.linhaDigitavel}\n` : "",
     linkBoleto: b.boleto?.pdfUrl ? `Boleto: ${b.boleto.pdfUrl}\n` : b.paymentUrl ? `Link de pagamento: ${b.paymentUrl}\n` : "",
-    // portal: etapa 6 (link do portal do cliente).
-    linkPortal: "",
+    // Portal do cliente (D31): preservado para o envio gerar o link, ou resolvido aqui quando informado.
+    linkPortal: options.linkPortal === undefined ? "{linkPortal}" : portalLinkLine(options.linkPortal),
   };
   return template
     .replace(/\{(\w+)\}/g, (_m, key: string) => vars[key] ?? "")

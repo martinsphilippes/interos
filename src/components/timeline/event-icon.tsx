@@ -17,6 +17,9 @@ import {
   Truck,
   GitBranch,
   Handshake,
+  Link2,
+  Link2Off,
+  ExternalLink,
   Headset,
   HeartPulse,
   MapPin,
@@ -136,6 +139,7 @@ const PREFIX_CATEGORY: Record<string, EventCategory> = {
   achievement: "performance",
   automation: "automacao",
   supplier: "financeiro",
+  portal: "financeiro",
 };
 
 export function eventCategory(type: EventType | string): EventCategory {
@@ -218,6 +222,9 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "contract.pendency_resolved": BadgeCheck,
   "product.updated": Package,
   "settings.updated": Settings2,
+  "portal.link_created": Link2,
+  "portal.link_revoked": Link2Off,
+  "portal.accessed": ExternalLink,
 };
 
 export type EventTone = "success" | "warning" | "danger" | "info" | "brand" | "muted";
@@ -272,6 +279,8 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "billing.cancelled": "muted",
   "contract.pendency_resolved": "success",
   "contract.updated": "brand",
+  "portal.link_created": "brand",
+  "portal.link_revoked": "muted",
   "lead.disqualified": "muted",
   "note.added": "brand",
   "comment.added": "brand",

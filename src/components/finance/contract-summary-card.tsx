@@ -25,8 +25,12 @@ export interface ContractSummaryCardProps {
   description?: string;
   /** Mostra o link "Ver documento" (padrão: sim, exceto na impressão). */
   showDocumentLink?: boolean;
-  /** "essential": só o que resume o contratado (mensalidade, adesão, vencimento, forma, prazo, implantação, assinatura, financeiro, venda, vendedor) — Visão geral do Cliente 360º. */
-  rows?: "all" | "essential";
+  /**
+   * "essential": só o que resume o contratado (mensalidade, adesão, vencimento, forma, prazo, implantação, assinatura,
+   * financeiro, venda, vendedor) — Visão geral do Cliente 360º. "client": o essencial SEM o que é interno (venda,
+   * vendedor, situação financeira interna, cancelamento) — Portal do Cliente (D31).
+   */
+  rows?: "all" | "essential" | "client";
   /** Link extra no rodapé (ex.: "Abrir contrato" no Cliente 360º). */
   footer?: ReactNode;
   className?: string;
@@ -40,8 +44,12 @@ interface Row {
   essential?: boolean;
 }
 
-function rowsOf(s: ContractSummaryData, print: boolean, mode: "all" | "essential" = "all"): Row[] {
+/** Linhas internas: nunca aparecem para o cliente (portal). */
+const INTERNAL_ROWS = new Set(["Venda", "Vendedor", "Financeiro", "Cancelamento", "Contato do cliente", "Observações comerciais", "Observações para implantação"]);
+
+function rowsOf(s: ContractSummaryData, print: boolean, mode: "all" | "essential" | "client" = "all"): Row[] {
   const all = allRowsOf(s, print);
+  if (mode === "client") return all.filter((r) => r.essential && !INTERNAL_ROWS.has(r.label));
   return mode === "essential" ? all.filter((r) => r.essential) : all;
 }
 

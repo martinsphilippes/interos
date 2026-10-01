@@ -168,6 +168,15 @@ export const FINANCEIRO = {
           // Onde: [id]/page.tsx:211 (PendencyCard) · Hoje: só módulo; botões com canOperate
           rule: "all",
         },
+        {
+          key: "financeiro.contratos.portal.ver",
+          label: "Portal do cliente (links de acesso)",
+          // Etapa 6B (D31): card "Portal do cliente" na página do contrato e na aba Financeiro do Cliente 360 (links
+          // ativos com origem, criado por/em, validade, último acesso e nº de acessos). Seção NOVA, sem tela antiga:
+          // padrão = quem opera o Financeiro hoje (mesma regra de financeiro.contratos.editar). A página pública
+          // /portal/[token] não usa o catálogo (isenção por token, somente leitura).
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+        },
       ],
       actions: [
         {
@@ -335,6 +344,30 @@ export const FINANCEIRO = {
           // cs.churn.registrar (cs/service.ts:1083,1119).
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
           guards: ["src/server/finance/actions.ts#cancelContractAction"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contratos.portal.gerar",
+          label: "Gerar e enviar link do portal do cliente",
+          verb: "gerar",
+          // Etapa 6B (D31): gerar link (mostrado uma vez) e enviá-lo por WhatsApp/e-mail (templateKey portal_link).
+          // Também decide se `{linkPortal}` numa cobrança manual gera link (sem a chave, o marcador some).
+          // Padrão = quem opera o Financeiro (regra de financeiro.contratos.editar).
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/portal/actions.ts#createPortalLinkAction", "src/server/portal/actions.ts#sendPortalLinkAction"],
+          checkedIn: ["src/server/finance/actions.ts#sendBillingMessageAction?texto com {linkPortal}"],
+          recordCondition: "cliente com ao menos um contrato no escopo de Contratos (contrato informado: assertContractAccess)",
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contratos.portal.revogar",
+          label: "Revogar link do portal do cliente",
+          verb: "revogar",
+          // Etapa 6B (D31): revogação imediata (motivo opcional, evento portal.link_revoked). Padrão = quem opera o
+          // Financeiro.
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/portal/actions.ts#revokePortalLinkAction"],
+          recordCondition: "cliente do link com ao menos um contrato no escopo de Contratos",
           sensitive: true,
         },
       ],

@@ -78,6 +78,9 @@ export function financeCapabilities(user: PermissionHolder): FinanceCapabilities
       release: k("financeiro.contratos.liberar"),
       releaseWithPendency: k("financeiro.contratos.liberar") && k("financeiro.contratos.liberar-com-pendencia"),
       cancel: k("financeiro.contratos.cancelar"),
+      portalView: k("financeiro.contratos.portal.ver"),
+      portalCreate: k("financeiro.contratos.portal.gerar"),
+      portalRevoke: k("financeiro.contratos.portal.revogar"),
     },
     billings: {
       view: k("financeiro.cobrancas.ver"),
@@ -205,6 +208,18 @@ export async function assertOpportunityContractAccess(user: CurrentUser, opportu
   if (!opp) return; // o serviço responde "oportunidade não encontrada"
   const ref: OwnerRef = { id: `opp:${opp.id}`, clientId: opp.clientId, sellerId: opp.ownerId };
   if (!(await contractInScope(user, ref))) throw new PermissionError(OUT_OF_SCOPE_MESSAGE, "financeiro.contratos.ver");
+}
+
+/**
+ * Portal do cliente (D31): o cliente precisa ter ao menos um contrato e o usuário ver ao menos um deles na tela
+ * Contratos (o portal mostra os contratos e cobranças do cliente). Sem contrato → BusinessError; fora do escopo →
+ * PermissionError.
+ */
+export async function assertClientContractsAccess(user: CurrentUser, clientId: string): Promise<Contract[]> {
+  const contracts = await list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", clientId]] });
+  if (contracts.length === 0) throw new BusinessError("Cliente sem contrato: o portal mostra contratos e cobranças");
+  for (const c of contracts) if (await contractInScope(user, c)) return contracts;
+  throw new PermissionError(OUT_OF_SCOPE_MESSAGE, "financeiro.contratos.ver");
 }
 
 /**

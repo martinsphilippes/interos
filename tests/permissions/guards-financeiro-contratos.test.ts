@@ -131,12 +131,14 @@ describe("capacidades padrão ≡ comportamento anterior", () => {
     }
   });
 
-  it("seções das telas do Financeiro: todas para quem tem o módulo", () => {
-    const sections = FINANCE_SCREENS.flatMap((s) => SCREENS.find((x) => x.key === s)!.sections.map((x) => x.key));
+  it("seções das telas do Financeiro: todas para quem tem o módulo (exceto o Portal do cliente, seção nova de quem opera)", () => {
+    const sections = FINANCE_SCREENS.flatMap((s) => SCREENS.find((x) => x.key === s)!.sections.map((x) => x.key)).filter((k) => k !== "financeiro.contratos.portal.ver");
     expect(sections.length).toBeGreaterThan(10);
     for (const u of ALL_USERS) {
       const cu = asCurrentUser(u);
       for (const key of sections) expect(cu.permissions.has(key as PermissionKey), `${label(u)} ${key}`).toBe(inModule(u));
+      // Portal do cliente (D31): seção NOVA com a regra de quem opera o Financeiro (financeiro.contratos.editar).
+      expect(cu.permissions.has("financeiro.contratos.portal.ver" as PermissionKey), `${label(u)} portal`).toBe(operates(u));
     }
   });
 

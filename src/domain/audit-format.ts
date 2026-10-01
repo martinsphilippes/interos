@@ -118,6 +118,8 @@ export const CHANGE_FIELD_LABELS: Record<string, string> = {
   tiers: "Faixas",
   blockers: "Bloqueios",
   extras: "Extras",
+  expiresAt: "Expira em",
+  lastAccessAt: "Último acesso",
 };
 
 /** Campos que NUNCA aparecem em claro (defesa em profundidade: o serviço já grava mascarado). */
@@ -160,6 +162,9 @@ const STATUS_VALUE_LABELS: Record<string, string> = {
   vencida: "Vencida",
   paga: "Paga",
   cancelada: "Cancelada",
+  // Link do portal do cliente (D31).
+  revogado: "Revogado",
+  expirado: "Expirado",
 };
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?)?$/;
