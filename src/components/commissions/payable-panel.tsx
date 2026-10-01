@@ -184,7 +184,7 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
           title="Baixas"
           payments={p.payments.map((x) => ({ ...x, method: PAYOUT_METHOD_LABELS[x.method as keyof typeof PAYOUT_METHOD_LABELS] ?? x.method }))}
           canUndo={Boolean(can.undoPayment) && !p.undoBlocked}
-          undoBlocked={can.undoPayment ? p.undoBlocked : undefined}
+          undoBlocked={can.undoPayment && p.status !== "pago" ? p.undoBlocked : undefined}
           onUndo={(id) => {
             setUndoPaymentId(id);
             setDialog("undo");
