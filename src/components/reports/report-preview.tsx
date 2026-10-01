@@ -71,7 +71,7 @@ export function ReportPreview({ data }: { data: ReportData }) {
             {rows.map((row, i) => (
               <TableRow key={i}>
                 {columns.map((c, j) => (
-                  <TableCell key={c.key} className={cn("tabular-nums", NUMERIC.includes(c.type) && "text-right", c.type === "texto" && (c.wrap ? "min-w-[200px] max-w-[420px] whitespace-normal break-words align-top" : "max-w-[260px] truncate"))}>
+                  <TableCell key={c.key} className={cn("tabular-nums", NUMERIC.includes(c.type) && "text-right", c.type === "texto" && (c.wrap ? "min-w-[170px] max-w-[380px] whitespace-normal break-words align-top" : "max-w-[260px] truncate"))}>
                     {j === 0 && row.href ? (
                       <Link href={row.href} className="font-medium text-foreground hover:underline">
                         <Cell col={c} value={row.cells[c.key]} />

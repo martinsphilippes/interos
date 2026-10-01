@@ -267,7 +267,7 @@ permissões são uma camada sobre ele; não há segundo sistema de usuários, de
 
 ### Catálogo (`src/domain/permissions/`, puro, um arquivo por módulo)
 - Hierarquia MÓDULO `<m>.acessar` → TELA `<m>.<tela>.ver` → SEÇÃO/ABA `<m>.<tela>.<secao>.ver` → AÇÃO
-  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 65 telas, 128 seções, 235 ações (439 chaves na união
+  `<m>.<tela>[.<secao>].<verbo>` → ESCOPO por tela. 11 módulos, 65 telas, 129 seções, 236 ações (441 chaves na união
   literal `PermissionKey`). Rótulos de negócio em português em cada nó (a interface nunca mostra a chave técnica).
 - Cada nó tem uma **regra padrão** na DSL (`"all"`, `any`, `all`, `role`, `department`, `manager`, `director`,
   `managerOf`, `can`) que reproduz o comportamento anterior à etapa (teste T0 contra a cópia congelada dos predicados
@@ -410,15 +410,43 @@ catálogo; toda rota de tela tem página; todo guard aponta para função existe
 escopo contra os resolvedores antigos, navegação, erros, verificador, um arquivo `guards-<módulo>.test.ts` por
 módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não podem alcançar `next/navigation`). `npm run test:rules` (regras do Firestore no emulador). E2E `77-acessos.mjs` (T1–T10) na pasta de e2e.
 
-## Auditoria via eventos
+## Auditoria via eventos (D16 + D29, etapa 6B)
 - Não há coleção de auditoria: cada mudança relevante emite evento com `actorId`, `occurredAt` e
-  `payload.changes {campo: {from, to}}` + `payload.reason` (`auditChanges` em `src/server/audit.ts`). Cobre itens e
-  condições do contrato, regras de comissão (`commission_rule.changed`), aprovação/pagamento/cancelamento de títulos
-  (`payable.*`), estorno/cancelamento/bloqueio de comissão (`commission.*`), cancelamento de contrato,
-  `settings.updated`, boleto registrado (`billing.updated`), baixa (`payment.approved`), estorno (`payment.reversed`),
-  acessos (`permissions.updated`/`permissions.blocked`) e usuários/departamentos (`user.updated`, `user.deleted`,
-  `department.updated`). A timeline do cliente e do contrato usa os mesmos eventos (ícones em
-  `src/components/timeline/event-icon.tsx`).
+  `payload.changes {campo: {from, to}}` + `payload.reason` (`auditChanges`/`describeChanges` em `src/server/audit.ts`).
+  Valores de pessoas vão pelo NOME (responsáveis, gestor); salário só "valor anterior → novo valor" (nunca o número).
+- **Cobertura** (inventário em `scratchpad/circuito/auditoria-inventario.md`): itens e condições do contrato e
+  signatários (`contract.updated` SEMPRE, também na revisão que gera versão — `versioned`/`version` no payload), envio
+  para assinatura, assinatura manual, liberação (`financial.released`), status derivado após baixa/estorno
+  (`contract.updated` kind `status_derivado`, fora da timeline do cliente), dados de faturamento (`client.updated`,
+  "— → valor"), pendência (`payment.pending`) e resolução (`contract.pendency_resolved`, novo), cancelamento de
+  cobrança (`billing.cancelled` + `Billing.cancelledAt/cancelledBy/cancelReason`, também gravados nos cancelamentos em
+  lote do contrato e do aditivo), baixa/estorno, cancelamento de contrato, aditivos/renovação, comissões, regras,
+  títulos, fornecedores, `settings.updated` (inclusive os writers próprios `saveGoLiveSettings`, índices da Saúde da
+  operação/Desempenho e regras de SLA — kind `sla_rule`), produtos (`product.updated`: preços, comissão, ativo),
+  automações (`automation.rule_updated`), metas (`goal.*`), regra de bônus (contra a versão ativa), cadastro do cliente,
+  transferência de oportunidade, acessos e usuários/departamentos. Escritas em `settings` que só gravam marcador de
+  varredura ou o PADRÃO na primeira leitura não são auditadas (não são decisão de pessoa).
+- **Payload imutável**: nada reescreve `payload` depois da gravação. Metadados de execução ficam em `meta`
+  (`DomainEventMeta`: `handlerErrors`, `automation { ruleId, depth }` gravado NA CRIAÇÃO a partir do escopo
+  `src/server/automations/scope.ts`, `support { postGoLive… }`), escritos por `writeEventMeta` (merge em `meta.*`).
+  Leitor da cadeia de automação aceita o formato antigo `payload.__automation`. `handlerErrors` no topo é legado.
+- **Formatação** (`src/domain/audit-format.ts`, puro): `CHANGE_FIELD_LABELS` (fallback = nome do campo; o evento pode
+  trazer `payload.labels`), `formatChangeValue` (situações, datas, booleanos, quantias, listas de pessoas),
+  `changeLines`/`summarizeChanges`, `redactChanges` (A13: sem "Visualizar valores" as quantias saem do objeto ANTES de
+  ir à tela; sensíveis como salário sempre mascarados) e `eventChanges` (lê também o formato antigo `payload.from/to`
+  de `*.status_changed`/`*.stage_changed`).
+- **Timeline**: `emitEvent` copia `changes` e `reason` para `timeline_events`; `Timeline` mostra "Ver alterações (N)"
+  colapsável (`ChangeList`) com "campo: antes → depois" e o motivo. Cliente 360 e Implantação redigem quantias pela
+  permissão do usuário. Eventos anteriores à etapa só mostram alterações no histórico do contrato e no relatório.
+- **Histórico do contrato** (`getContract`): lido de `events` do cliente com `belongsToContractHistory` — entra o
+  evento com `payload.contractId` = este contrato ou cujo `entityId` é o contrato/uma cobrança/aditivo/projeto/oportunidade
+  dele; `payload.contractId` de OUTRO contrato nunca entra; comissões/títulos/indicadores ficam fora (tela própria).
+- **Relatório "Auditoria"** (`REPORT_KEYS`, `buildAudit` em `src/server/reports/build.ts`): eventos do período com
+  alterações ou motivo; filtros período (dia), usuário (quem fez), tipo de entidade, tipo de evento e texto (sem
+  acento); colunas quando, quem, evento, entidade, título, alterações (resumo "campo: de → para") e motivo; CSV/XLSX/PDF
+  pela rota existente (PDF troca "→" por "->", fonte padrão). Acesso: seção `gestao.relatorios.auditoria.ver` e
+  exportação `gestao.relatorios.auditoria.exportar` (padrão diretoria e administrador; ajustável por perfil/exceção);
+  escopo da tela Relatórios aplicado pelo ator; quantias só com "Visualizar valores". Sem hash chain.
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.

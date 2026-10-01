@@ -13,12 +13,11 @@ import { getCompanyScorecard } from "@/server/kpis/queries";
 import { currentMonthKey, inPeriod, localDayKey, monthPeriod, periodFromKey, periodReference, type Period } from "@/server/kpis/period";
 import { STATUS_LABELS, formatKpiValue, type KpiScope, type KpiStatus } from "@/server/kpis/schemas";
 import { COLLECTIONS, type Client, type ClientProduct, type Commission, type CurrentUser, type DomainEvent, type KpiSnapshot, type Payable, type Product, type Proposal, type User } from "@/domain/types";
-import { CLIENT_STATUS_LABELS, DEPARTMENT_KEYS, DEPARTMENT_LABELS, PRIORITY_LABELS, TASK_STATUS_LABELS, type DepartmentKey } from "@/domain/constants";
+import { CLIENT_STATUS_LABELS, DEPARTMENT_KEYS, DEPARTMENT_LABELS, EVENT_TYPES, PRIORITY_LABELS, TASK_STATUS_LABELS, type DepartmentKey, type EventType } from "@/domain/constants";
 import { formatCompetence } from "@/lib/format";
 import { ORIGIN_LABELS } from "@/components/tasks/task-model";
 import { AUDIT_ENTITY_LABELS, REPORT_DEFINITIONS, type ReportDefinition, type ReportFilters, type ReportKey, type ReportValue } from "./definitions";
-import { EVENT_TYPES, type EventType } from "@/domain/constants";
-import { EVENT_TYPE_LABELS } from "@/domain/event-labels";
+import { EVENT_TYPE_LABELS, eventTypeGroups } from "@/domain/event-labels";
 import { eventChanges, summarizeChanges } from "@/domain/audit-format";
 import { canSeeFinanceValues } from "@/server/finance/access";
 import { maskMoneyText } from "@/server/finance/redact";
@@ -1034,7 +1033,10 @@ export async function getReportFilterOptions(allowedUserIds?: ReadonlySet<string
     entities: Object.entries(AUDIT_ENTITY_LABELS)
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
-    events: EVENT_TYPES.map((value) => ({ value, label: `${EVENT_TYPE_LABELS[value]} (${value})` })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
+    // Rótulo de negócio + área (a interface não mostra a chave técnica).
+    events: eventTypeGroups()
+      .flatMap((g) => g.types.map((t) => ({ value: t.value, label: `${t.label} · ${g.label}` })))
+      .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
   };
 }
 

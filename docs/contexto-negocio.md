@@ -240,6 +240,20 @@ deliberadas listadas no relatório, como Marketing passar a exigir o módulo). R
 CEO/CTO na tela: restringir gestores de outras áreas no Financeiro; restringir o papel Vendas no Financeiro;
 restringir quem registra churn.
 
+## Histórico auditável e relatório de Auditoria (etapa 6B)
+- Toda alteração sensível guarda quem fez, quando, o valor anterior → novo e o motivo: condições, itens e signatários do
+  contrato, envio/assinatura/liberação, pendência (registrar e resolver), cancelamento de cobrança (com data, autor e
+  motivo na própria cobrança), baixa/estorno, aditivos/renovações, comissões, títulos, configurações, regras de SLA,
+  produtos, automações, metas, bônus, cadastro do cliente, transferência de oportunidade, papéis e acessos.
+- Na linha do tempo do cliente e no histórico do contrato, o item com alterações tem "Ver alterações": abre as linhas
+  "campo: antes → depois" e o motivo. O histórico de um contrato mostra só ele (cobranças, aditivos, renovações), não os
+  outros contratos do mesmo cliente.
+- **Relatório de Auditoria** (Gestão › Relatórios › Auditoria): escolha o período, quem fez, o tipo de registro
+  (contrato, cobrança, usuário, configuração…), o tipo de evento e/ou um texto (ex.: número do contrato, nome, motivo) e
+  exporte em CSV, XLSX ou PDF. Por padrão só Diretoria e Administrador veem e exportam; o CEO/CTO pode liberar a outro
+  perfil em Administração › Usuários › Perfis e acessos (seção "Relatório de Auditoria" e "Exportar relatório de
+  Auditoria"). Valores em dinheiro aparecem só para quem tem "Visualizar valores"; salário nunca aparece.
+
 ## Roadmap sugerido nos documentos (há duas versões, precisam ser conciliadas)
 Espec. Funcional: 1 Fundação (login, usuários, Meu Dia, tarefas, workflow, Cliente 360) ·
 2 Receita e atendimento · 3 Gestão e performance · 4 Escala e mobilidade.
