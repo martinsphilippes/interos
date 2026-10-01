@@ -59,12 +59,12 @@ export function ReceivablesTable({ rows, selectedId }: { rows: ReceivableRow[]; 
         ))}
       </ul>
       <div className="hidden md:block">
-        <Table className="min-w-[720px]">
+        <Table className="min-w-[600px]">
           <TableHeader>
             <TableRow>
               <TableHead>Vencimento</TableHead>
               <TableHead>Descrição</TableHead>
-              <TableHead>Cliente / pagador</TableHead>
+              <TableHead className="hidden 2xl:table-cell">Cliente / pagador</TableHead>
               <TableHead className="hidden 2xl:table-cell">Categoria</TableHead>
               <TableHead className="text-right">Valor</TableHead>
               <TableHead className="text-right">Em aberto</TableHead>
@@ -92,9 +92,10 @@ export function ReceivablesTable({ rows, selectedId }: { rows: ReceivableRow[]; 
                   <span className="block truncate text-xs text-muted">
                     {r.code}
                     {r.installments ? ` · ${r.installment}/${r.installments}` : ""}
+                    <span className="2xl:hidden"> · {r.payerName}</span>
                   </span>
                 </TableCell>
-                <TableCell className="max-w-[200px] truncate">{r.payerName}</TableCell>
+                <TableCell className="hidden max-w-[200px] truncate 2xl:table-cell">{r.payerName}</TableCell>
                 <TableCell className="hidden max-w-[200px] truncate text-sm text-muted 2xl:table-cell">{r.categoryName ?? "—"}</TableCell>
                 <TableCell className="whitespace-nowrap text-right font-semibold tabular-nums">{money(r.amount)}</TableCell>
                 <TableCell className="whitespace-nowrap text-right tabular-nums">{r.status === "aberto" ? money(r.open) : "—"}</TableCell>

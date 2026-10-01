@@ -328,7 +328,7 @@ export async function receiveReceivable(mode: PaymentMode, id: string, input: Re
             ? `Recebido (recebimento parcial de ${brl(payAmount)} quitou o restante, ${input.method}) · conta ${account.name}`
             : `Recebimento parcial de ${brl(payAmount)} (${input.method}) · conta ${account.name} · em aberto ${brl(openAfter)}`
           : `Recebido (${input.method}) · conta ${account.name}${amountChanged ? ` · valor ajustado de ${brl(before.amount)} para ${brl(newAmount)}` : ""}${paidBefore ? ` · ${brl(payAmount)} neste recebimento` : ""}`;
-    const entry = history(actor, action, { from: "aberto", to: settles ? "pago" : undefined, reason: reason ?? input.notes, changes: amountChanged ? { amount: { from: before.amount, to: newAmount } } : undefined }, at);
+    const entry = history(actor, action, { from: "aberto", to: settles ? "pago" : undefined, reason: reason ?? (input.notes?.trim() || undefined), changes: amountChanged ? { amount: { from: before.amount, to: newAmount } } : undefined }, at);
     const patch = cleanPatch({
       ...(settles ? { status: "pago", paidAt: noonIso(day) } : {}),
       payments: [...(before.payments ?? []), payment],

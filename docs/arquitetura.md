@@ -332,9 +332,61 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   para conta existente e para uma baixa existente com o MESMO transactionId; nenhuma baixa com transactionId sem
   lançamento (`cashEntryProblems`).
 
+## Baixa parcial, resíduo e títulos a receber avulsos (etapa CP/CR 3, `src/domain/settlements.ts`, `src/server/receivables/*`)
+- **Regras puras** (`src/domain/settlements.ts`, testes em `tests/finance/settlements.test.ts`): valores em centavos,
+  tolerância de meio centavo (`SETTLEMENT_TOLERANCE`). Já pago = soma das baixas (título a pagar PAGO sem `payments[]` =
+  uma baixa do valor total); em aberto = valor − pago, nunca negativo; status CALCULADO só para exibição
+  (`settlementStatus`: Pago se pago + 0,005 ≥ valor e valor > 0 ou gravado pago; Vencido; Parcial; Em aberto; Cancelado).
+  O status gravado não muda (a pagar continua `aprovado`/`a_pagar` até quitar). `planPayment(modo)`: **total** (Quitar:
+  padrão = em aberto; valor diferente ajusta o valor do título para a soma das baixas — desconto/juros), **parcial** (≤ em
+  aberto, mantém o valor, quita sozinho quando cobre o restante), **residuo** (< em aberto: valor := soma das baixas e o
+  restante vai para "Descrição — Resíduo", sem empilhar o sufixo); `planSettleByPaid` (valor := já pago, exige baixa);
+  `planUndoPayment` (remove a baixa indicada; título quitado volta a aberto e, se a quitação ajustou o valor SEM resíduo,
+  volta ao `originalAmount`); `settlementProblems` (verify (y)).
+- **Contas a Pagar** (fluxo de aprovação mantido: só aprovado/a pagar recebe baixa): `payPayable` (Quitar, agora com
+  `amount?`/`reason?` opcionais — sem eles, o comportamento anterior), `partialPayPayable`, `payPayableWithResidual` e
+  `settlePayableByPaid`, todos pelo núcleo `recordPayablePayment` (UMA transação: baixa + lançamento + novo valor +
+  comissões pagas + título de resíduo com o número PAG reservado no contador por `prepareNextNumber`/`txNextNumber` em
+  `db.ts`). `undoPayablePayment` desfaz UMA baixa (por `paymentId`), também em título ainda aberto com baixa parcial
+  (`payablePaymentUndoBlock`). Campos novos opcionais: `originalAmount` (valor antes do 1º ajuste; a varredura recorrente
+  gera as próximas ocorrências por ele), `residualId`, `residualOf`. **Resíduo**: mesmo credor, classificação, centro,
+  conta prevista, competência, vencimento e série; origem "manual"; observação explicando; MESMO status de aprovação do
+  original (decisão desta etapa: o valor já foi aprovado no título de origem). **Comissão/bônus/estorno**
+  (`isCommissionLinkedPayable`): só o pagamento integral existente — parcial, resíduo, valor diferente e quitar pelo já
+  pago são recusados (`PARTIAL_COMMISSION_BLOCKED`); desfazer continua recusado (etapa 2). Título com baixa parcial não é
+  cancelado (desfaça as baixas antes). Ações novas `financeiro.contas-a-pagar.{pagar-parcial,pagar-com-residuo,
+  quitar-pelo-pago}` (padrão = o de "Registrar pagamento"); a tela mostra o status calculado, já pago × em aberto, o
+  histórico de baixas com "Desfazer" em cada uma e, na lista atual, o badge "Parcial" + "em aberto" na linha. KPIs,
+  fluxo de caixa e relatório continuam pelo valor do título (a lista nova com acumulado/resumo é a etapa 6).
+- **Título a receber AVULSO** (receita fora de contrato; `Billing` e as cobranças de contrato NÃO mudaram): coleção
+  `receivables` (regra `if false`, `scripts/test-rules.ts`), código REC-AAAA-NNNNN (contador próprio), descrição, valor,
+  vencimento, competência (vazia = mês do vencimento), `clientId` ou nome livre (`payerName` sempre gravado),
+  `categoryId` só de RECEITA (validado no serviço) e `costCenterId` próprio opcional (vazio = herda da categoria,
+  `resolveEffectiveCostCenter`), conta prevista, nº do documento, observações, anexos (`documents` entityType
+  "receivable"), parcelamento mensal (`rec_<base>_p<n>`, sobra na última parcela), status gravado aberto|pago|cancelado
+  (sem aprovação) + status calculado, `payments[]` com as MESMAS regras (receber, parcial, resíduo, quitar pelo já
+  recebido, desfazer um recebimento) e `history[]`. Cada recebimento grava o lançamento de RECEITA (origem
+  `{ kind: "receivable" }`, contato = cliente/pagador) na mesma transação; `cashEntryProblems` e o extrato conhecem a
+  origem nova. Cancelar (nunca excluir) só sem recebimento. Categorias/centros: `listCategoryReferences`, contagem de uso
+  e mesclagem incluem os títulos avulsos.
+- **Tela**: aba "Títulos avulsos" em `/financeiro/contas-a-receber?aba=avulsos` (a aba padrão "Cobranças de contrato" é o
+  aging de sempre, sem mudança; os totais do aging NÃO incluem os avulsos — decisão pendente do dono): resumo da aba
+  (em aberto, vencido, recebido no mês), filtro por situação, lista simples, "Novo título a receber" (único ou parcelado)
+  e painel lateral (`?titulo=`). Acesso: seção `financeiro.contas-a-receber.avulsos.ver` (aba) e ações
+  `financeiro.contas-a-receber.avulsos.{criar,editar,receber,desfazer-recebimento,cancelar}` — padrão = quem opera as
+  cobranças hoje; URL sem a seção → `/meu-dia?erro=sem-permissao`. O título avulso não tem dono: só aparece com o escopo
+  "empresa" da tela (padrão de todos). Quantias sob "Visualizar valores" (sem ela: "Restrito" e sem criar/receber).
+- **Eventos** (auditoria de → para + motivo, fora da timeline do cliente): `payable.partially_paid`,
+  `payable.residual_created`, `payable.settled_by_paid` e `receivable.created|updated|received|partially_received|
+  residual_created|settled_by_paid|payment_undone|cancelled`; entidade "Título a receber avulso" no relatório de Auditoria.
+- **Seed/verify**: 1 título a pagar de fornecedor com baixa parcial de 40% e 1 título a receber avulso recebido em parte
+  (conta corrente). `verify.ts` (y): soma das baixas ≤ valor + 0,005, quitado com baixas ≈ valor, baixa com conta e
+  lançamento, REC único, categoria de receita, resíduo ↔ original.
+
 ## Numeração transacional (`nextNumber` em `src/server/db.ts`)
 - Coleção `counters` (`counter_<prefixo>_<ano>`), `runTransaction`, inicializada a partir do maior número já gravado
-  (`initFrom`). Usada por VEN, CT, PR, COM e PAG; formatos antigos preservados, sem renumerar documentos.
+  (`initFrom`). Usada por VEN, CT, PR, COM, PAG e REC; formatos antigos preservados, sem renumerar documentos. `prepareNextNumber` +
+  `txNextNumber` emitem o número DENTRO de outra transação (resíduo criado junto com a baixa).
   `verify.ts` confere que nenhum contador fica abaixo do maior número existente.
 
 ## Autorização (catálogo, precedência, escopo, invariantes, helpers)
