@@ -75,8 +75,17 @@ export const PERIOD_OPTIONS: { value: PeriodKey; label: string }[] = [
   { value: "ano", label: "Ano atual" },
 ];
 
-export function parsePeriod(value: string | undefined | null): PeriodKey {
-  return PERIOD_OPTIONS.some((p) => p.value === value) ? (value as PeriodKey) : "mes";
+/**
+ * Período padrão da Visão Geral de Marketing (sem `?periodo=`): últimos 30 dias, janela móvel. Com "Mês atual" como
+ * padrão, todo dia 1 a tela abria com o período 01/MM a 01/MM: zero leads, gráficos vazios e "-100%" em vermelho
+ * contra um único dia anterior, até o primeiro lead do mês chegar. A janela móvel compara 30 dias com os 30 anteriores
+ * em qualquer dia do mês; "Mês atual" continua disponível no seletor (?periodo=mes).
+ */
+export const DEFAULT_OVERVIEW_PERIOD: PeriodKey = "30d";
+
+/** `fallback` é o período quando o valor está ausente ou é inválido ("mes" para filtros explícitos e chamadores antigos). */
+export function parsePeriod(value: string | undefined | null, fallback: PeriodKey = "mes"): PeriodKey {
+  return PERIOD_OPTIONS.some((p) => p.value === value) ? (value as PeriodKey) : fallback;
 }
 
 export interface PeriodRange {

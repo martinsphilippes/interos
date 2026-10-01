@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { PeriodSelect } from "@/components/marketing/period-select";
 import { getCommunicationChannelStatus } from "@/server/integrations/status";
 import { EvolutionChart, LeadsByCampaignChart } from "@/components/marketing/overview-charts";
-import { parsePeriod } from "@/components/marketing/marketing-model";
+import { DEFAULT_OVERVIEW_PERIOD, parsePeriod } from "@/components/marketing/marketing-model";
 import { NewLeadDialog } from "@/components/marketing/new-lead-dialog";
 import { ImportLeadsDialog } from "@/components/marketing/import-leads-dialog";
 import { LeadCapture } from "@/components/marketing/lead-capture";
@@ -51,7 +51,7 @@ function pointsDelta(m: WorkspaceMetric, label: string): StatCardProps["delta"] 
 export default async function MarketingOverviewPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireScreen("marketing.visao-geral");
   const sp = await searchParams;
-  const period = parsePeriod(Array.isArray(sp.periodo) ? sp.periodo[0] : sp.periodo);
+  const period = parsePeriod(Array.isArray(sp.periodo) ? sp.periodo[0] : sp.periodo, DEFAULT_OVERVIEW_PERIOD);
   const caps = marketingCapabilities(user);
   const showAutomations = can(user, "marketing.visao-geral.automacoes.ver");
   const access = await leadAccess(user, MARKETING_SCREENS.overview);
