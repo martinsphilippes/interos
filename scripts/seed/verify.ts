@@ -3,13 +3,14 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile, type PortalLink } from "../../src/domain/types";
+import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile, type PortalLink, type CostCenter, type FinanceCategory, type FinancialAccount } from "../../src/domain/types";
 import { ROLE_KEYS } from "../../src/domain/constants";
 import { MODULE_KEYS, PROTECTED_KEYS, SCREEN_BY_KEY, isPermissionKey, type ScopeKind } from "../../src/domain/permissions";
 import { sanitizeAdjustments, type PermissionAdjustments } from "../../src/server/auth/permissions";
 import { ADMIN_CORE_KEYS, hasAccessAdministrator, type AccessState } from "../../src/server/auth/invariants";
 import { col, counterId, list, ORG_ID } from "../../src/server/db";
 import { commissionIdFor } from "../../src/server/commissions/store";
+import { FINANCIAL_ACCOUNT_TYPES, registryProblems } from "../../src/domain/finance-registry";
 
 const ENTITY_COLLECTION: Record<SlaInstance["entityType"], CollectionName> = {
   tarefa: COLLECTIONS.tasks,
@@ -190,6 +191,26 @@ async function main(): Promise<void> {
   }
   console.log(`Aditivos: ${amendments.length} (${amendments.filter((a) => a.status === "aplicado").length} aplicados); fornecedores: ${suppliers.length}; títulos parcelados/recorrentes: ${payables.filter((p) => p.installments).length}/${payables.filter((p) => p.recurrence || p.origin === "recorrencia").length}`);
 
+  // (w) cadastros financeiros: categoria (nível 1) com centro existente; subcategoria sem centro próprio, com mãe
+  //     existente de nível 1 e do mesmo tipo; conta com tipo válido, moeda BRL e saldo inicial numérico; título que
+  //     usa os campos novos aponta para categoria/centro existentes.
+  const financialAccounts = cache.get(COLLECTIONS.financialAccounts) as FinancialAccount[];
+  const costCenters = cache.get(COLLECTIONS.costCenters) as CostCenter[];
+  const financeCategories = (cache.get(COLLECTIONS.financeCategories) as FinanceCategory[]).map((c) => ({ ...c, parentId: c.parentId ?? null }));
+  for (const problem of registryProblems(financeCategories, costCenters)) problems.push(`(w) ${problem}`);
+  for (const a of financialAccounts) {
+    if (!FINANCIAL_ACCOUNT_TYPES.includes(a.type)) problems.push(`(w) conta ${a.id} com tipo inválido ${a.type}`);
+    if (a.currency !== "BRL") problems.push(`(w) conta ${a.id} com moeda ${a.currency}`);
+    if (typeof a.initialBalance !== "number" || !Number.isFinite(a.initialBalance)) problems.push(`(w) conta ${a.id} sem saldo inicial numérico`);
+  }
+  const financeCategoryIds = new Set(financeCategories.map((c) => c.id));
+  const costCenterIds = new Set(costCenters.map((c) => c.id));
+  for (const p of payables) {
+    if (p.categoryId && !financeCategoryIds.has(p.categoryId)) problems.push(`(w) ${p.id} aponta para categoria inexistente ${p.categoryId}`);
+    if (p.costCenterId && !costCenterIds.has(p.costCenterId)) problems.push(`(w) ${p.id} aponta para centro inexistente ${p.costCenterId}`);
+  }
+  console.log(`Cadastros financeiros: ${financialAccounts.length} conta(s), ${costCenters.length} centro(s), ${financeCategories.filter((c) => !c.parentId).length} categoria(s) e ${financeCategories.filter((c) => c.parentId).length} subcategoria(s)`);
+
   // (q) todo documento de toda coleção tem organizationId: getById/getManyByIds negam documento sem ele (hardening A0).
   //     Varre sem o filtro de organização (list() o aplicaria e esconderia justamente os documentos sem o campo).
   for (const name of names) {
@@ -282,7 +303,7 @@ async function main(): Promise<void> {
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(v): OK");
+    console.log("\nInvariantes (a)-(w): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);

@@ -110,6 +110,43 @@ export async function seedPayablesGeneral(): Promise<{ suppliers: number; parcel
   return { suppliers: 2, parcels: parcelado.parcels?.length ?? 1, recurring: recorrente.seriesId ? 1 : 0 };
 }
 
+/**
+ * Cadastros financeiros (etapa CP/CR 1), pelos serviços reais e sem eventos: 2 contas (conta corrente e caixa), os
+ * centros de custo padrão de Contas a Pagar (com a chave antiga) e categorias de receita e despesa com algumas
+ * subcategorias. Parte das categorias da configuração fica de fora de propósito: "Importar da configuração" ainda tem
+ * o que criar (exercitado pelo e2e 80).
+ */
+export async function seedFinanceRegistry(): Promise<{ accounts: number; centers: number; categories: number; subcategories: number }> {
+  const { saveCostCenter, saveFinanceCategory, saveFinancialAccount } = await import("../../src/server/finance-registry/service");
+  const { SETTING_DEFAULTS } = await import("../../src/server/admin/schemas");
+  const karem = { id: "user_karem", name: "Karem Feitosa" };
+  const quiet = { emit: false } as const;
+  await saveFinancialAccount({ name: "Banco do Brasil — conta movimento", type: "corrente", initialBalance: 48250.35, bankName: "Banco do Brasil", agency: "1234-5", accountNumber: "67890-1", notes: "Conta principal: recebimentos de boletos e PIX." }, karem, quiet);
+  await saveFinancialAccount({ name: "Caixa da empresa", type: "dinheiro", initialBalance: 650, notes: "Dinheiro em espécie para pequenas despesas." }, karem, quiet);
+  const centers = new Map<string, string>();
+  for (const name of SETTING_DEFAULTS.contas_a_pagar.centrosDeCusto) centers.set(name, (await saveCostCenter({ name, legacyKey: name }, karem, quiet)).center.id);
+  let categories = 0;
+  let subcategories = 0;
+  const tree: { name: string; type: "receita" | "despesa"; center: string; legacyKey?: string; subs?: string[] }[] = [
+    { name: "Comissão comercial", type: "despesa", center: "Comercial", legacyKey: "comissao_comercial" },
+    { name: "Aluguel", type: "despesa", center: "Administrativo", legacyKey: "aluguel" },
+    { name: "Software e assinaturas", type: "despesa", center: "Tecnologia", legacyKey: "software", subs: ["Licenças", "Hospedagem"] },
+    { name: "Deslocamento", type: "despesa", center: "Operações", subs: ["Diárias", "Combustível"] },
+    { name: "Pessoal", type: "despesa", center: "Administrativo", subs: ["Salários", "Benefícios"] },
+    { name: "Receita de contratos", type: "receita", center: "Comercial", subs: ["Adesão", "Mensalidades"] },
+    { name: "Outras receitas", type: "receita", center: "Administrativo" },
+  ];
+  for (const t of tree) {
+    const parent = (await saveFinanceCategory({ name: t.name, type: t.type, parentId: null, costCenterId: centers.get(t.center)!, legacyKey: t.legacyKey }, karem, quiet)).category;
+    categories++;
+    for (const name of t.subs ?? []) {
+      await saveFinanceCategory({ name, parentId: parent.id, costCenterId: null }, karem, quiet);
+      subcategories++;
+    }
+  }
+  return { accounts: 2, centers: centers.size, categories, subcategories };
+}
+
 export interface CommissionSeedResult {
   commissions: number;
   payables: number;
