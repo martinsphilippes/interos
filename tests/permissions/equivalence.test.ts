@@ -152,6 +152,10 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     "financeiro.contas-a-pagar.pagar",
     // Etapa CP/CR 2 (nova): desfazer pagamento = mesma regra de pagar.
     "financeiro.contas-a-pagar.desfazer-pagamento",
+    // Etapa CP/CR 3 (novas): baixa parcial, pagar com resíduo e quitar pelo já pago = mesma regra de pagar.
+    "financeiro.contas-a-pagar.pagar-parcial",
+    "financeiro.contas-a-pagar.pagar-com-residuo",
+    "financeiro.contas-a-pagar.quitar-pelo-pago",
     "financeiro.comissoes.estornar",
     "financeiro.comissoes.bloquear",
     "financeiro.comissoes.desbloquear",
@@ -210,6 +214,13 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     const legacy = (u: LegacyUser) => legacyCanEditArticles(u);
     const exp = expected(articleOps, (u) => legacyCanEditArticles(legacyUser(u)) && !inModule(u.role, "suporte"), legacy);
     expect(differences(articleOps, legacy)).toEqual(exp);
+  });
+
+  it("Títulos a receber avulsos (novo, etapa CP/CR 3: seção + 5 ações) ≡ módulo Financeiro ∧ canOperateFinance (quem opera as cobranças hoje)", () => {
+    const keys = ["financeiro.contas-a-receber.avulsos.ver", ...actionKeys("financeiro.contas-a-receber")];
+    expect(keys.length).toBe(6);
+    const legacy = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") && legacyCanOperateFinance(u);
+    expect(differences(keys, legacy)).toEqual([]);
   });
 
   it("Portal do cliente (novo, D31: ver, gerar e revogar) ≡ módulo Financeiro ∧ canOperateFinance (quem opera o Financeiro)", () => {

@@ -73,7 +73,8 @@ export async function ensureRecurringPayables(now: Date = new Date()): Promise<R
             creditorName: t.creditorName,
             category: t.category,
             description: t.description,
-            amount: t.amount,
+            // Etapa CP/CR 3: quitar o título-modelo com desconto/juros/resíduo ajusta o valor DELE, não o da série.
+            amount: t.originalAmount ?? t.amount,
             competence: comp,
             dueDate,
             status: "previsto",
@@ -99,10 +100,10 @@ export async function ensureRecurringPayables(now: Date = new Date()): Promise<R
           actor: SYSTEM_ACTOR,
           clientId: t.sourceIds?.clientId,
           entity: { type: "payable", id },
-          title: `Título ${code} gerado pela série ${t.code ?? t.id}: ${formatCurrency(t.amount)} para ${t.creditorName}`,
+          title: `Título ${code} gerado pela série ${t.code ?? t.id}: ${formatCurrency(t.originalAmount ?? t.amount)} para ${t.creditorName}`,
           description: `${t.description} · competência ${comp} · vence ${formatDate(dueDate)}`,
           department: "financeiro",
-          payload: { payableId: id, code, seriesId: t.id, competence: comp, amount: t.amount, dueDate, creditorId: t.creditorId ?? null, origin: "recorrencia" },
+          payload: { payableId: id, code, seriesId: t.id, competence: comp, amount: t.originalAmount ?? t.amount, dueDate, creditorId: t.creditorId ?? null, origin: "recorrencia" },
           timeline: false,
         });
       }

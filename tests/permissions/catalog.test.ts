@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 11 módulos, 66 telas, 133 seções e 252 ações (462 chaves únicas) — etapa CP/CR 2: + Desfazer pagamento (Contas a Pagar) e Ver extrato (Cadastros › Contas)", () => {
+  it("tem 11 módulos, 66 telas, 134 seções e 260 ações (471 chaves únicas) — etapa CP/CR 3: + 3 ações de Contas a Pagar (parcial, resíduo, quitar pelo já pago) e a seção Títulos avulsos com 5 ações em Contas a Receber", () => {
     expect(MODULES.length).toBe(11);
     expect(SCREENS.length).toBe(66);
-    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(133);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(252);
-    expect(PERMISSION_KEYS.length).toBe(462);
+    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(134);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(260);
+    expect(PERMISSION_KEYS.length).toBe(471);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -231,11 +231,14 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
     const { SETTINGS_TABS } = await import("@/components/admin/admin-model");
     const { CLIENT_TABS } = await import("@/components/clients/client-tabs");
     const { REGISTRY_TABS } = await import("@/components/finance-registry/registry-tabs");
+    const { RECEIVABLES_SECTION_TABS } = await import("@/components/receivables/receivables-tabs");
     const pageTabs: Record<string, readonly string[]> = {
       "admin.configuracoes": SETTINGS_TABS,
       "financeiro.configuracoes": SETTINGS_TABS,
       "operacao.clientes": CLIENT_TABS.map((t) => t.key),
       "financeiro.cadastros": REGISTRY_TABS,
+      // Etapa CP/CR 3: aba "Títulos avulsos" de Contas a Receber (a aba padrão é a própria tela).
+      "financeiro.contas-a-receber": RECEIVABLES_SECTION_TABS,
     };
     const modeled = new Set<string>();
     for (const screen of SCREENS) {
@@ -250,5 +253,6 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
     for (const tab of SETTINGS_TABS) expect(modeled.has(`configuracoes:${tab}`), `aba ${tab} de /admin/configuracoes sem seção`).toBe(true);
     for (const { key } of CLIENT_TABS) if (key !== "visao") expect(modeled.has(`operacao.clientes:${key}`), `aba ${key} do Cliente 360 sem seção`).toBe(true);
     for (const tab of REGISTRY_TABS) expect(modeled.has(`financeiro.cadastros:${tab}`), `aba ${tab} de Cadastros financeiros sem seção`).toBe(true);
+    for (const tab of RECEIVABLES_SECTION_TABS) expect(modeled.has(`financeiro.contas-a-receber:${tab}`), `aba ${tab} de Contas a Receber sem seção`).toBe(true);
   });
 });

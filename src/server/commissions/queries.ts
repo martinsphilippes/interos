@@ -38,7 +38,7 @@ import {
 import { getCommissionPaymentSettings, getPayablesSettings, listPayableAttachments } from "./payables";
 import { listSuppliers } from "./suppliers";
 import { listPaymentAccountOptions } from "@/server/finance-registry/cash-entries";
-import { payableUndoBlock } from "@/domain/cash-entries";
+import { isCommissionLinkedPayable, payablePaymentUndoBlock, payableSettlement, type SettlementStatus } from "@/domain/settlements";
 import { can } from "@/server/auth/permissions";
 import type { CommissionScope } from "./permissions";
 import {
@@ -654,6 +654,10 @@ export interface PayableRow {
   installments?: number;
   seriesId?: string;
   recurring: boolean;
+  /** Baixas (etapa CP/CR 3): já pago, valor em aberto e status CALCULADO (Pago/Vencido/Parcial/Em aberto). */
+  paid: number;
+  open: number;
+  settlement: SettlementStatus;
 }
 
 export interface PayableDetail extends PayableRow {
@@ -665,11 +669,18 @@ export interface PayableDetail extends PayableRow {
   notes?: string;
   cancelReason?: string;
   /** Baixas com conta (etapa CP/CR 2) com o nome da conta; vazio = baixa antiga sem conta/lançamento. */
-  payments: { id: string; date: string; amount: number; accountId: string; accountName: string; transactionId: string; method: string }[];
+  payments: { id: string; date: string; amount: number; accountId: string; accountName: string; transactionId: string; method: string; byName?: string }[];
   /** Conta prevista do título (pré-seleciona a conta na baixa). */
   accountId?: string;
   /** Desfazer pagamento bloqueado (título de comissão/bônus/estorno): a mensagem mostrada no lugar do botão. */
   undoBlocked?: string;
+  /** Título de comissão/bônus/estorno: só o pagamento integral (etapa CP/CR 3). */
+  integralOnly: boolean;
+  /** Valor antes do ajuste de quitação (desconto/juros/resíduo/quitar pelo já pago). */
+  originalAmount?: number;
+  /** Resíduo criado a partir deste título e título de origem (quando este é o resíduo). */
+  residual?: { id: string; code: string };
+  residualOf?: { id: string; code: string };
   approvedBy?: string;
   approvedAt?: string;
   scheduledAt?: string;
@@ -703,6 +714,12 @@ export interface PayablesWorkspace {
   accounts: Opt[];
   settings: { categorias: Opt[]; centrosDeCusto: string[] };
   cashFlow: { overdue: CashFlowMonth; months: CashFlowMonth[] };
+}
+
+/** Já pago, em aberto e status calculado (etapa CP/CR 3; o status gravado não muda). */
+function settlementOf(p: Payable, today: string): Pick<PayableRow, "paid" | "open" | "settlement"> {
+  const v = payableSettlement(p, today);
+  return { paid: v.paid, open: v.open, settlement: v.status };
 }
 
 function isOverduePayable(p: Pick<Payable, "status" | "dueDate">, today: string): boolean {
@@ -741,6 +758,7 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
     installments: p.installments,
     seriesId: p.seriesId,
     recurring: Boolean(p.recurrence) || p.origin === "recorrencia",
+    ...settlementOf(p, today),
   });
   const rowsAll = all.map(toRow);
   const kpis = { previsto: z(), aprovado: z(), a_pagar: z(), vencidos: z(), pagosMes: z() };
@@ -886,9 +904,13 @@ async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links:
     receiptUrl: p.receiptUrl,
     notes: p.notes,
     cancelReason: p.cancelReason,
-    payments: (p.payments ?? []).map((x) => ({ id: x.id, date: x.date, amount: x.amount, accountId: x.accountId, accountName: paymentAccounts.get(x.accountId)?.name ?? "Conta removida", transactionId: x.transactionId, method: x.method })),
+    payments: (p.payments ?? []).map((x) => ({ id: x.id, date: x.date, amount: x.amount, accountId: x.accountId, accountName: paymentAccounts.get(x.accountId)?.name ?? "Conta removida", transactionId: x.transactionId, method: x.method, byName: x.byName })),
     accountId: p.accountId,
-    undoBlocked: p.status === "pago" ? (payableUndoBlock(p) ?? undefined) : undefined,
+    undoBlocked: p.status === "pago" || (p.payments?.length ?? 0) > 0 ? (payablePaymentUndoBlock(p) ?? undefined) : undefined,
+    integralOnly: isCommissionLinkedPayable(p),
+    originalAmount: p.originalAmount,
+    residual: p.residualId ? { id: p.residualId, code: all.find((x) => x.id === p.residualId)?.code ?? p.residualId } : undefined,
+    residualOf: p.residualOf ? { id: p.residualOf, code: all.find((x) => x.id === p.residualOf)?.code ?? p.residualOf } : undefined,
     approvedBy: approver?.name,
     approvedAt: p.approvedAt,
     scheduledAt: p.scheduledAt,

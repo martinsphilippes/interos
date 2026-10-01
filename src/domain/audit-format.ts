@@ -145,6 +145,18 @@ export const CHANGE_FIELD_LABELS: Record<string, string> = {
   paymentMethod: "Forma de pagamento",
   receiptUrl: "Comprovante",
   contaRecebimentoPadraoId: "Conta padrão de recebimento",
+  // Baixa parcial, resíduo e títulos a receber avulsos (etapa CP/CR 3).
+  paidTotal: "Já pago",
+  openAmount: "Em aberto",
+  originalAmount: "Valor original",
+  residualAmount: "Valor do resíduo",
+  residualCode: "Título de resíduo",
+  paymentAmount: "Valor da baixa",
+  payerName: "Pagador",
+  documentNumber: "Nº do documento",
+  competence: "Competência",
+  categoryName: "Categoria",
+  plannedAccountName: "Conta prevista",
 };
 
 /** Campos que NUNCA aparecem em claro (defesa em profundidade: o serviço já grava mascarado). */
@@ -165,6 +177,11 @@ export const MONEY_CHANGE_FIELDS = new Set([
   "value",
   "baseAmount",
   "initialBalance",
+  "paidTotal",
+  "openAmount",
+  "originalAmount",
+  "residualAmount",
+  "paymentAmount",
 ]);
 
 /** Rótulos dos valores de situação conhecidos (contrato, cobrança, financeiro, cliente, tarefa, comissão, título). */
@@ -188,6 +205,8 @@ const STATUS_VALUE_LABELS: Record<string, string> = {
   vencida: "Vencida",
   paga: "Paga",
   cancelada: "Cancelada",
+  // Título a receber avulso (etapa CP/CR 3).
+  aberto: "Em aberto",
   // Link do portal do cliente (D31).
   revogado: "Revogado",
   expirado: "Expirado",

@@ -11,7 +11,7 @@ import { z } from "zod";
 import { PermissionError, can, failAction, requirePermission } from "@/server/auth/session";
 import { getById } from "@/server/db";
 import { COLLECTIONS, type ActionResult, type CommissionRule, type CurrentUser, type UserRef } from "@/domain/types";
-import { addPayableAttachment, approvePayable, cancelPayable, createManualPayable, payPayable, schedulePayable, undoPayablePayment, updatePayable } from "./payables";
+import { addPayableAttachment, approvePayable, cancelPayable, createManualPayable, partialPayPayable, payPayable, payPayableWithResidual, schedulePayable, settlePayableByPaid, undoPayablePayment, updatePayable } from "./payables";
 import { requireManualPaymentAccount } from "@/server/finance-registry/cash-entries";
 import { getSupplier, saveSupplier, setSupplierActive } from "./suppliers";
 import { assertCommissionAccess, assertCreditorInScope, assertPayableAccess, isCommissionPayable } from "./access";
@@ -25,8 +25,10 @@ import {
   payableIdSchema,
   supplierActiveSchema,
   supplierSchema,
+  partialPayPayableSchema,
   payPayableSchema,
   paymentDaySchema,
+  settlePayableByPaidSchema,
   ruleActiveSchema,
   ruleInputSchema,
   schedulePayableSchema,
@@ -205,12 +207,58 @@ export async function payPayableAction(input: unknown): Promise<ActionResult<{ c
     await assertPayableAccess(user, data.payableId);
     // Baixa manual: a conta financeira é obrigatória (vira o lançamento de despesa na mesma transação).
     const accountId = await requireManualPaymentAccount(data.accountId);
-    const r = await payPayable(data.payableId, { paidAt: data.paidAt, paymentMethod: data.paymentMethod, receiptUrl: data.receiptUrl, notes: data.notes, accountId }, actorOf(user));
+    const r = await payPayable(data.payableId, { paidAt: data.paidAt, paymentMethod: data.paymentMethod, receiptUrl: data.receiptUrl, notes: data.notes, accountId, amount: data.amount, reason: data.reason }, actorOf(user));
     revalidateCommissions();
     revalidatePath("/financeiro/cadastros");
     return { ok: true, data: { commissions: r.commissionIds.length } };
   } catch (error) {
     return fail(error, "Não foi possível registrar o pagamento");
+  }
+}
+
+/** Baixa parcial (etapa CP/CR 3): grava a baixa e o lançamento; quita sozinho quando cobre o restante. */
+export async function partialPayPayableAction(input: unknown): Promise<ActionResult<{ settled: boolean }>> {
+  try {
+    const user = await requirePermission("financeiro.contas-a-pagar.pagar-parcial");
+    const data = partialPayPayableSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
+    const accountId = await requireManualPaymentAccount(data.accountId);
+    const r = await partialPayPayable(data.payableId, { paidAt: data.paidAt, paymentMethod: data.paymentMethod, receiptUrl: data.receiptUrl, notes: data.notes, accountId, amount: data.amount, reason: data.reason }, actorOf(user));
+    revalidateCommissions();
+    revalidatePath("/financeiro/cadastros");
+    return { ok: true, data: { settled: r.settled } };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar a baixa parcial");
+  }
+}
+
+/** Pagar parcialmente com resíduo (etapa CP/CR 3): original quitado pelo total pago + título "— Resíduo" com o restante. */
+export async function payPayableWithResidualAction(input: unknown): Promise<ActionResult<{ residualId: string; residualCode?: string }>> {
+  try {
+    const user = await requirePermission("financeiro.contas-a-pagar.pagar-com-residuo");
+    const data = partialPayPayableSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
+    const accountId = await requireManualPaymentAccount(data.accountId);
+    const r = await payPayableWithResidual(data.payableId, { paidAt: data.paidAt, paymentMethod: data.paymentMethod, receiptUrl: data.receiptUrl, notes: data.notes, accountId, amount: data.amount, reason: data.reason }, actorOf(user));
+    revalidateCommissions();
+    revalidatePath("/financeiro/cadastros");
+    return { ok: true, data: { residualId: r.residual?.id ?? "", residualCode: r.residual?.code } };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar o pagamento com resíduo");
+  }
+}
+
+/** Quitar pelo já pago (etapa CP/CR 3): valor := já pago, sem nova baixa nem lançamento. */
+export async function settlePayableByPaidAction(input: unknown): Promise<ActionResult<{ amount: number }>> {
+  try {
+    const user = await requirePermission("financeiro.contas-a-pagar.quitar-pelo-pago");
+    const data = settlePayableByPaidSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
+    const r = await settlePayableByPaid(data.payableId, { reason: data.reason }, actorOf(user));
+    revalidateCommissions();
+    return { ok: true, data: { amount: r.payable.amount } };
+  } catch (error) {
+    return fail(error, "Não foi possível quitar pelo já pago");
   }
 }
 

@@ -466,6 +466,18 @@ export const EVENT_TYPES = [
   "cash_entry.created",
   "cash_entry.deleted",
   "payable.payment_undone",
+  // baixa parcial, resíduo, quitar pelo já pago e títulos a receber avulsos (etapa CP/CR 3)
+  "payable.partially_paid",
+  "payable.residual_created",
+  "payable.settled_by_paid",
+  "receivable.created",
+  "receivable.updated",
+  "receivable.received",
+  "receivable.partially_received",
+  "receivable.residual_created",
+  "receivable.settled_by_paid",
+  "receivable.payment_undone",
+  "receivable.cancelled",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

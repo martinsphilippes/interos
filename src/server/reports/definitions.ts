@@ -425,6 +425,7 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   billing: "Cobrança",
   contract_amendment: "Aditivo",
   payable: "Título a pagar",
+  receivable: "Título a receber avulso",
   commission: "Comissão",
   commission_rule: "Regra de comissão",
   supplier: "Fornecedor",

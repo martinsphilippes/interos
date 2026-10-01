@@ -277,3 +277,46 @@ export async function nextNumber(prefix: string, options: NextNumberOptions = {}
   });
   return `${head}${String(value).padStart(pad, "0")}`;
 }
+
+/** Numeração preparada fora da transação (semente lida antes) para emitir o número DENTRO de outra transação. */
+export interface PreparedNumber {
+  ref: DocumentReference;
+  head: string;
+  pad: number;
+  prefix: string;
+  year: string | null;
+  seed: number;
+}
+
+/**
+ * Prepara `txNextNumber` (mesmo formato e contador de `nextNumber`): calcula a semente quando o contador ainda não
+ * existe. Use quando o número precisa nascer na MESMA transação do documento (ex.: título de resíduo criado junto com a
+ * baixa — se a transação falhar, nem o título nem o número ficam gravados).
+ */
+export async function prepareNextNumber(prefix: string, options: NextNumberOptions = {}): Promise<PreparedNumber> {
+  const year = options.year === null ? null : (options.year ?? dateKey(new Date()).slice(0, 4));
+  const pad = options.pad ?? 4;
+  const head = `${prefix}-${year ? `${year}-` : ""}`;
+  const ref = col(COLLECTIONS.counters).doc(counterId(prefix, year));
+  const exists = (await ref.get()).exists;
+  const seed = !exists && options.initFrom ? await maxExistingSequence(options.initFrom.collection, options.initFrom.field ?? "number", head) : 0;
+  return { ref, head, pad, prefix, year, seed };
+}
+
+/**
+ * Lê o contador NA transação (fase de leituras) e devolve o número e a escrita do contador (chamar `commit` na fase de
+ * escritas). Concorrência: a transação do Firestore repete quando o contador muda no meio.
+ */
+export async function txNextNumber(tx: Transaction, prepared: PreparedNumber): Promise<{ code: string; commit: () => void }> {
+  const snap = await tx.get(prepared.ref);
+  const current = snap.exists ? Number(snap.get("value")) || 0 : prepared.seed;
+  const next = current + 1;
+  return {
+    code: `${prepared.head}${String(next).padStart(prepared.pad, "0")}`,
+    commit: () => {
+      const now = nowIso();
+      if (snap.exists) tx.update(prepared.ref, { value: next, updatedAt: now });
+      else tx.set(prepared.ref, stripUndefined({ organizationId: ORG_ID, prefix: prepared.prefix, year: prepared.year ?? undefined, value: next, createdAt: now, updatedAt: now }));
+    },
+  };
+}

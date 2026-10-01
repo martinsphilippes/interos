@@ -51,6 +51,7 @@ async function main(): Promise<void> {
       await setDoc(doc(db, "financial_accounts/fa_1"), { name: "Conta corrente", type: "corrente", initialBalance: 1000, currency: "BRL", archived: false, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
       await setDoc(doc(db, "cost_centers/cc_1"), { name: "Comercial", archived: false, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
       await setDoc(doc(db, "finance_categories/fc_1"), { name: "Aluguel", type: "despesa", parentId: null, costCenterId: "cc_1", archived: false, organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
+      await setDoc(doc(db, "receivables/rec_1"), { code: "REC-2026-00001", description: "Consultoria avulsa", amount: 500, dueDate: "2026-01-10T12:00:00.000Z", competence: "2026-01", payerName: "Cliente X", status: "aberto", history: [], organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
       await setDoc(doc(db, "cash_entries/ce_1"), { date: "2026-01-02", amount: 150, type: "despesa", description: "PAG-2026-00001 · Aluguel", accountId: "fa_1", reconciled: false, origin: { kind: "payable", id: "pag_1", paymentId: "pp_1" }, organizationId: "intercert", createdAt: "2026-01-02T00:00:00.000Z" });
       await setDoc(doc(db, `portal_links/${PORTAL_LINK_ID}`), { clientId: "client_001", origin: "manual", expiresAt: "2099-01-01T00:00:00.000Z", accessCount: 0, createdBy: "bob", organizationId: "intercert", createdAt: "2026-01-01T00:00:00.000Z" });
     });
@@ -94,6 +95,8 @@ async function main(): Promise<void> {
       ["financial_accounts/fa_1", { name: "Conta X", type: "corrente", initialBalance: 999999, currency: "BRL", archived: false, organizationId: "intercert" }],
       ["cost_centers/cc_1", { name: "Centro X", archived: false, organizationId: "intercert" }],
       ["finance_categories/fc_1", { name: "Categoria X", type: "despesa", parentId: null, costCenterId: "cc_1", archived: false, organizationId: "intercert" }],
+      // Títulos a receber avulsos (etapa CP/CR 3): recebimento e valor só mudam pelo servidor.
+      ["receivables/rec_1", { description: "X", amount: 1, dueDate: "2026-01-10T12:00:00.000Z", competence: "2026-01", payerName: "X", status: "pago", history: [], organizationId: "intercert" }],
       // Lançamentos de caixa (etapa CP/CR 2): saldo das contas só muda pela baixa no servidor.
       ["cash_entries/ce_1", { date: "2026-01-02", amount: 999999, type: "receita", description: "X", accountId: "fa_1", reconciled: true, organizationId: "intercert" }],
     ] as const) {

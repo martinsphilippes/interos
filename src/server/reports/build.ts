@@ -735,6 +735,8 @@ function auditHref(e: DomainEvent): string | undefined {
       return `/clientes/${id}`;
     case "payable":
       return `/financeiro/contas-a-pagar?titulo=${id}`;
+    case "receivable":
+      return `/financeiro/contas-a-receber?aba=avulsos&titulo=${id}`;
     case "opportunity":
       return `/vendas/oportunidades?oportunidade=${id}`;
     case "project":

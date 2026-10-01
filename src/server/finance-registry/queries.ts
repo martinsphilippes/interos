@@ -15,7 +15,7 @@ import { canSeeFinanceValues } from "@/server/finance/access";
 import { redactChanges } from "@/domain/audit-format";
 import { accountBalance, activeCategoriesByCenter, categoriesWithoutCenter, categoryUsageTotal, countCategoryUsage, nameKey, planLegacyImport, type LegacyImportPlan } from "@/domain/finance-registry";
 import type { EventType } from "@/domain/constants";
-import { COLLECTIONS, type Billing, type CashEntry, type CashEntryType, type Contract, type CostCenter, type CurrentUser, type DomainEvent, type FinanceCategory, type FinancialAccount, type Payable, type TimelineEvent } from "@/domain/types";
+import { COLLECTIONS, type Billing, type CashEntry, type CashEntryType, type Contract, type CostCenter, type CurrentUser, type DomainEvent, type FinanceCategory, type FinancialAccount, type Payable, type Receivable, type TimelineEvent } from "@/domain/types";
 import { dateKey } from "@/lib/format";
 import { getSetting } from "@/server/admin/queries";
 import { SETTING_DEFAULTS, type ContasAPagarConfig } from "@/server/admin/schemas";
@@ -193,7 +193,7 @@ export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?:
   const needsCategories = sees.categorias || sees.centros;
   const canStatement = sees.contas && can(user, "financeiro.cadastros.contas.extrato");
 
-  const [accounts, centers, categories, allPayables, visibility, setting, events, entries] = await Promise.all([
+  const [accounts, centers, categories, allPayables, visibility, setting, events, entries, receivables] = await Promise.all([
     sees.contas ? listFinancialAccounts() : Promise.resolve([] as FinancialAccount[]),
     needsCategories ? listCostCenters() : Promise.resolve([] as CostCenter[]),
     needsCategories ? listFinanceCategories() : Promise.resolve([] as FinanceCategory[]),
@@ -202,13 +202,15 @@ export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?:
     canImport ? getSetting<ContasAPagarConfig>("contas_a_pagar", SETTING_DEFAULTS.contas_a_pagar) : Promise.resolve(null),
     visibleTabs.length ? list<DomainEvent>(COLLECTIONS.events, { where: [["type", "in", REGISTRY_EVENTS_BY_TAB[tab]]] }) : Promise.resolve([] as DomainEvent[]),
     sees.contas || needsCategories ? list<CashEntry>(COLLECTIONS.cashEntries) : Promise.resolve([] as CashEntry[]),
+    // Títulos a receber avulsos (etapa CP/CR 3) também usam categorias de receita e centros.
+    needsCategories ? list<Receivable>(COLLECTIONS.receivables) : Promise.resolve([] as Receivable[]),
   ]);
   // Contagens de uso só com os títulos que o usuário vê em Contas a Pagar.
   const payables = allPayables.filter((p) => payableAllowed(visibility, p));
   // Uso pelos campos novos: títulos visíveis + lançamentos de caixa (etapa CP/CR 2).
-  const usage = countCategoryUsage([...payables, ...entries]);
+  const usage = countCategoryUsage([...payables, ...entries, ...receivables]);
   const centerUsage = new Map<string, number>();
-  for (const p of [...payables, ...entries]) if (p.costCenterId) centerUsage.set(p.costCenterId, (centerUsage.get(p.costCenterId) ?? 0) + 1);
+  for (const p of [...payables, ...entries, ...receivables]) if (p.costCenterId) centerUsage.set(p.costCenterId, (centerUsage.get(p.costCenterId) ?? 0) + 1);
   const movements = cashEntryMovements(entries);
   const legacyCategoryUsage = new Map<string, number>();
   const legacyCenterUsage = new Map<string, number>();
@@ -329,16 +331,22 @@ async function buildAccountStatement(user: CurrentUser, account: FinancialAccoun
   const st = buildStatement(account, entries, period);
   const lines = [...st.lines].reverse(); // mais recentes primeiro na tela
   const payableIds = lines.filter((l) => l.entry.origin?.kind === "payable").map((l) => l.entry.origin!.id);
+  const receivableIds = lines.filter((l) => l.entry.origin?.kind === "receivable").map((l) => l.entry.origin!.id);
   const billingIds = lines.filter((l) => l.entry.origin?.kind === "billing").map((l) => l.entry.origin!.id);
-  const [payables, billings] = await Promise.all([getManyByIds<Payable>(COLLECTIONS.payables, payableIds), getManyByIds<Billing>(COLLECTIONS.billing, billingIds)]);
+  const [payables, billings, receivables] = await Promise.all([getManyByIds<Payable>(COLLECTIONS.payables, payableIds), getManyByIds<Billing>(COLLECTIONS.billing, billingIds), getManyByIds<Receivable>(COLLECTIONS.receivables, receivableIds)]);
   const contracts = await getManyByIds<Contract>(COLLECTIONS.contracts, Array.from(billings.values()).map((b) => b.contractId));
   const canPayables = canSeeHref(user, "/financeiro/contas-a-pagar");
   const canBillings = canSeeHref(user, "/financeiro/cobrancas");
+  const canReceivables = canSeeHref(user, "/financeiro/contas-a-receber?aba=avulsos");
   const origin = (e: CashEntry): StatementRow["origin"] => {
     if (!e.origin) return undefined;
     if (e.origin.kind === "payable") {
       const p = payables.get(e.origin.id);
       return { label: `Título ${p?.code ?? e.origin.id}`, href: canPayables ? `/financeiro/contas-a-pagar?titulo=${e.origin.id}` : undefined };
+    }
+    if (e.origin.kind === "receivable") {
+      const r = receivables.get(e.origin.id);
+      return { label: `Título a receber ${r?.code ?? e.origin.id}`, href: canReceivables ? `/financeiro/contas-a-receber?aba=avulsos&titulo=${e.origin.id}` : undefined };
     }
     const b = billings.get(e.origin.id);
     const c = b ? contracts.get(b.contractId) : undefined;

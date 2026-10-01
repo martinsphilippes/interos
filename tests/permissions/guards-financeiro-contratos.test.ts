@@ -133,14 +133,17 @@ describe("capacidades padrão ≡ comportamento anterior", () => {
     }
   });
 
-  it("seções das telas do Financeiro: todas para quem tem o módulo (exceto o Portal do cliente, seção nova de quem opera)", () => {
-    const sections = FINANCE_SCREENS.flatMap((s) => SCREENS.find((x) => x.key === s)!.sections.map((x) => x.key)).filter((k) => k !== "financeiro.contratos.portal.ver");
+  // Etapa CP/CR 3: "Títulos avulsos" (Contas a Receber) também é seção nova de quem opera (as cobranças).
+  const OPERATOR_SECTIONS = ["financeiro.contratos.portal.ver", "financeiro.contas-a-receber.avulsos.ver"];
+  it("seções das telas do Financeiro: todas para quem tem o módulo (exceto o Portal do cliente e os Títulos avulsos, seções novas de quem opera)", () => {
+    const sections = FINANCE_SCREENS.flatMap((s) => SCREENS.find((x) => x.key === s)!.sections.map((x) => x.key)).filter((k) => !OPERATOR_SECTIONS.includes(k));
     expect(sections.length).toBeGreaterThan(10);
     for (const u of ALL_USERS) {
       const cu = asCurrentUser(u);
       for (const key of sections) expect(cu.permissions.has(key as PermissionKey), `${label(u)} ${key}`).toBe(inModule(u));
       // Portal do cliente (D31): seção NOVA com a regra de quem opera o Financeiro (financeiro.contratos.editar).
       expect(cu.permissions.has("financeiro.contratos.portal.ver" as PermissionKey), `${label(u)} portal`).toBe(operates(u));
+      expect(cu.permissions.has("financeiro.contas-a-receber.avulsos.ver" as PermissionKey), `${label(u)} avulsos`).toBe(operates(u));
     }
   });
 

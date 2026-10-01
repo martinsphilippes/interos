@@ -30,7 +30,7 @@ import {
   type Check,
   type LegacyImportPlan,
 } from "@/domain/finance-registry";
-import { COLLECTIONS, type CashEntry, type CostCenter, type FinanceCategory, type FinancialAccount, type Payable, type PayableHistoryEntry, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type CashEntry, type CostCenter, type FinanceCategory, type FinancialAccount, type Payable, type PayableHistoryEntry, type Receivable, type ReceivableHistoryEntry, type UserRef } from "@/domain/types";
 import type { CostCenterInput, FinanceCategoryInput, FinancialAccountInput } from "./schemas";
 
 type EmitOptions = { emit?: boolean };
@@ -62,10 +62,12 @@ export async function listFinanceCategories(): Promise<FinanceCategory[]> {
  * Registros que usam categorias/centros pelos campos NOVOS: títulos a pagar com `categoryId`/`costCenterId` (gravados
  * a partir da etapa 4) e lançamentos de caixa (etapa 2, herdam a classificação do título na baixa).
  */
-export async function listCategoryReferences(): Promise<(CategoryReference & { kind: "payable" | "cash_entry"; id: string })[]> {
-  const [payables, entries] = await Promise.all([list<Payable>(COLLECTIONS.payables), list<CashEntry>(COLLECTIONS.cashEntries)]);
+export async function listCategoryReferences(): Promise<(CategoryReference & { kind: "payable" | "cash_entry" | "receivable"; id: string })[]> {
+  const [payables, entries, receivables] = await Promise.all([list<Payable>(COLLECTIONS.payables), list<CashEntry>(COLLECTIONS.cashEntries), list<Receivable>(COLLECTIONS.receivables)]);
   return [
     ...payables.filter((p) => p.categoryId || p.costCenterId).map((p) => ({ kind: "payable" as const, id: p.id, categoryId: p.categoryId, costCenterId: p.costCenterId })),
+    // Títulos a receber avulsos (etapa CP/CR 3): usam categorias de receita e centros.
+    ...receivables.filter((r) => r.categoryId || r.costCenterId).map((r) => ({ kind: "receivable" as const, id: r.id, categoryId: r.categoryId, costCenterId: r.costCenterId })),
     ...entries.filter((e) => e.categoryId || e.costCenterId).map((e) => ({ kind: "cash_entry" as const, id: e.id, categoryId: e.categoryId, costCenterId: e.costCenterId })),
   ];
 }
@@ -362,21 +364,25 @@ export async function moveSubcategories(subcategoryIds: readonly string[], targe
  * `categoryId` da origem passam para a destino (com linha no histórico do título); a origem é arquivada com `mergedIntoId`.
  */
 export async function mergeFinanceCategories(sourceId: string, targetId: string, reason: string, actor: UserRef): Promise<{ subcategories: number; records: number }> {
-  const [categories, payables, entries] = await Promise.all([listFinanceCategories(), list<Payable>(COLLECTIONS.payables), list<CashEntry>(COLLECTIONS.cashEntries)]);
-  // Índices < payables.length = títulos; os seguintes = lançamentos de caixa.
-  const refs = [...payables.map((p) => ({ categoryId: p.categoryId, costCenterId: p.costCenterId })), ...entries.map((e) => ({ categoryId: e.categoryId, costCenterId: e.costCenterId }))];
-  const recordId = (i: number) => (i < payables.length ? payables[i].id : entries[i - payables.length].id);
+  const [categories, payables, entries, receivables] = await Promise.all([listFinanceCategories(), list<Payable>(COLLECTIONS.payables), list<CashEntry>(COLLECTIONS.cashEntries), list<Receivable>(COLLECTIONS.receivables)]);
+  // Índices < payables.length = títulos; depois os lançamentos de caixa; por último os títulos a receber avulsos (etapa CP/CR 3).
+  const refs = [...payables.map((p) => ({ categoryId: p.categoryId, costCenterId: p.costCenterId })), ...entries.map((e) => ({ categoryId: e.categoryId, costCenterId: e.costCenterId })), ...receivables.map((r) => ({ categoryId: r.categoryId, costCenterId: r.costCenterId }))];
+  const entriesEnd = payables.length + entries.length;
+  const recordId = (i: number) => (i < payables.length ? payables[i].id : i < entriesEnd ? entries[i - payables.length].id : receivables[i - entriesEnd].id);
   const plan = must(planMergeCategories(sourceId, targetId, categories, refs));
   const at = nowIso();
   const trimmed = reason.trim();
   const history = (p: Payable): PayableHistoryEntry[] => [...(p.history ?? []), { at, by: actor.id, byName: actor.name, action: "Categoria mesclada", reason: trimmed, changes: { Categoria: { from: plan.source.name, to: plan.target.name } } }];
+  const receivableHistory = (r: Receivable): ReceivableHistoryEntry[] => [...(r.history ?? []), { at, by: actor.id, byName: actor.name, action: "Categoria mesclada", reason: trimmed, changes: { Categoria: { from: plan.source.name, to: plan.target.name } } }];
   await batchSet([
     { collection: COLLECTIONS.financeCategories, id: plan.source.id, data: { archived: true, archivedAt: at, archivedBy: actor.id, archiveReason: `Mesclada em ${plan.target.name}: ${trimmed}`, mergedIntoId: plan.target.id, updatedBy: actor.id, updatedAt: at }, merge: true },
     ...plan.movedSubcategories.map((m) => ({ collection: COLLECTIONS.financeCategories, id: m.id, data: { parentId: plan.target.id, updatedBy: actor.id, updatedAt: at }, merge: true })),
     ...plan.reassignedRecords.map((i) =>
       i < payables.length
         ? { collection: COLLECTIONS.payables, id: payables[i].id, data: { categoryId: plan.target.id, history: history(payables[i]), updatedAt: at }, merge: true }
-        : { collection: COLLECTIONS.cashEntries, id: entries[i - payables.length].id, data: { categoryId: plan.target.id, updatedAt: at }, merge: true },
+        : i < entriesEnd
+          ? { collection: COLLECTIONS.cashEntries, id: entries[i - payables.length].id, data: { categoryId: plan.target.id, updatedAt: at }, merge: true }
+          : { collection: COLLECTIONS.receivables, id: receivables[i - entriesEnd].id, data: { categoryId: plan.target.id, history: receivableHistory(receivables[i - entriesEnd]), updatedAt: at }, merge: true },
     ),
   ]);
   const changes: AuditPayload["changes"] = { mergedInto: { from: null, to: plan.target.name }, archived: { from: false, to: true } };

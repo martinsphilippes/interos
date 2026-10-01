@@ -177,6 +177,10 @@ export interface PayableCapabilities {
   pay: boolean;
   /** Desfazer pagamento (etapa CP/CR 2): título volta a "A pagar" e o lançamento de caixa é apagado. */
   undoPayment: boolean;
+  /** Baixa parcial, pagar com resíduo e quitar pelo já pago (etapa CP/CR 3). */
+  payPartial: boolean;
+  payResidual: boolean;
+  settleByPaid: boolean;
   edit: boolean;
   attach: boolean;
   cancel: boolean;
@@ -203,6 +207,9 @@ export function payableCapabilities(user: CurrentUser): PayableCapabilities {
     schedule,
     pay: can(user, "financeiro.contas-a-pagar.pagar"),
     undoPayment: can(user, "financeiro.contas-a-pagar.desfazer-pagamento"),
+    payPartial: can(user, "financeiro.contas-a-pagar.pagar-parcial"),
+    payResidual: can(user, "financeiro.contas-a-pagar.pagar-com-residuo"),
+    settleByPaid: can(user, "financeiro.contas-a-pagar.quitar-pelo-pago"),
     edit,
     attach,
     cancel,

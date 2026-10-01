@@ -72,7 +72,18 @@ export const payPayableSchema = z.object({
   notes: optionalText(500),
   /** Conta financeira da baixa (etapa CP/CR 2): obrigatória na action manual (mensagem própria quando falta). */
   accountId: optionalText(60),
+  /**
+   * Valor da baixa (etapa CP/CR 3). Quitar: opcional (padrão = em aberto; diferente ajusta o valor do título — desconto
+   * ou juros). Parcial e resíduo: obrigatório (ver `partialPayPayableSchema`).
+   */
+  amount: z.number("Valor inválido").positive("O valor da baixa deve ser maior que zero").max(10_000_000, "Valor muito alto").optional(),
+  /** Motivo do ajuste de valor (desconto, juros, resíduo). */
+  reason: optionalText(500),
 });
+/** Pagar parcialmente / pagar com resíduo (etapa CP/CR 3): o valor da baixa é obrigatório. */
+export const partialPayPayableSchema = payPayableSchema.extend({ amount: z.number("Informe o valor da baixa").positive("O valor da baixa deve ser maior que zero").max(10_000_000, "Valor muito alto") });
+/** Quitar pelo já pago (etapa CP/CR 3): sem nova baixa; motivo opcional. */
+export const settlePayableByPaidSchema = z.object({ payableId: z.string().trim().min(1, "Título inválido"), reason: optionalText(500) });
 /** Desfazer pagamento (etapa CP/CR 2): motivo obrigatório; sem `paymentId` desfaz a última baixa. */
 export const undoPayablePaymentSchema = z.object({ payableId: z.string().trim().min(1, "Título inválido"), reason, paymentId: optionalText(80) });
 export const cancelPayableSchema = z.object({ payableId: z.string().trim().min(1, "Título inválido"), reason });

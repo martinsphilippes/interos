@@ -174,6 +174,17 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "cash_entry.created": "Lançamento de caixa registrado",
   "cash_entry.deleted": "Lançamento de caixa apagado",
   "payable.payment_undone": "Pagamento de título desfeito",
+  "payable.partially_paid": "Baixa parcial de título a pagar",
+  "payable.residual_created": "Título de resíduo criado",
+  "payable.settled_by_paid": "Título quitado pelo já pago",
+  "receivable.created": "Título a receber criado",
+  "receivable.updated": "Título a receber alterado",
+  "receivable.received": "Título a receber recebido",
+  "receivable.partially_received": "Recebimento parcial de título a receber",
+  "receivable.residual_created": "Título a receber de resíduo criado",
+  "receivable.settled_by_paid": "Título a receber quitado pelo já recebido",
+  "receivable.payment_undone": "Recebimento de título desfeito",
+  "receivable.cancelled": "Título a receber cancelado",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -222,6 +233,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   commission: "Performance",
   commission_rule: "Financeiro",
   payable: "Financeiro",
+  receivable: "Financeiro",
   supplier: "Financeiro",
   portal: "Financeiro",
   financial_account: "Financeiro",

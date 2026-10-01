@@ -74,6 +74,10 @@ service cloud.firestore {
     match /cash_entries/{docId} {
       allow read, write: if false;
     }
+    // Títulos a receber avulsos (etapa CP/CR 3): só pelo servidor (recebimento grava o lançamento na mesma transação).
+    match /receivables/{docId} {
+      allow read, write: if false;
+    }
 
     // Negação padrão para qualquer outro caminho.
     match /{document=**} {

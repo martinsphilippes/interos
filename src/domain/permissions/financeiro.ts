@@ -646,8 +646,61 @@ export const FINANCEIRO = {
           // Onde: contas-a-receber/page.tsx:114-166 · Hoje: page.tsx:26-27
           rule: "all",
         },
+        {
+          key: "financeiro.contas-a-receber.avulsos.ver",
+          label: "Títulos avulsos (receitas fora de contrato)",
+          // Seção NOVA (etapa CP/CR 3): aba ?aba=avulsos de /financeiro/contas-a-receber. Padrão = quem opera as cobranças
+          // hoje (financeiro.cobrancas.baixar: gestores, papel ou departamento Financeiro). Os títulos avulsos não têm
+          // dono: só aparecem com o escopo "empresa" da tela (src/server/receivables/access.ts).
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          tab: "avulsos",
+        },
       ],
-      actions: [],
+      actions: [
+        {
+          key: "financeiro.contas-a-receber.avulsos.criar",
+          label: "Criar título a receber avulso",
+          verb: "criar",
+          // Ação NOVA (etapa CP/CR 3). Padrão = quem opera as cobranças hoje.
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/receivables/actions.ts#createReceivableAction"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-receber.avulsos.editar",
+          label: "Editar título a receber avulso (e anexar documento)",
+          verb: "editar",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/receivables/actions.ts#updateReceivableAction", "src/server/receivables/actions.ts#addReceivableAttachmentAction"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-receber.avulsos.receber",
+          label: "Registrar recebimento (total, parcial, com resíduo, quitar pelo já recebido)",
+          verb: "receber",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/receivables/actions.ts#receiveReceivableAction", "src/server/receivables/actions.ts#partialReceiveReceivableAction", "src/server/receivables/actions.ts#receiveWithResidualAction", "src/server/receivables/actions.ts#settleReceivableByPaidAction"],
+          recordCondition: "título aberto; conta financeira obrigatória",
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-receber.avulsos.desfazer-recebimento",
+          label: "Desfazer recebimento (apaga o lançamento de caixa)",
+          verb: "desfazer-recebimento",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/receivables/actions.ts#undoReceivablePaymentAction"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-receber.avulsos.cancelar",
+          label: "Cancelar título a receber avulso",
+          verb: "cancelar",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/receivables/actions.ts#cancelReceivableAction"],
+          recordCondition: "título aberto sem recebimento",
+          sensitive: true,
+        },
+      ],
       scope: {
         entity: "billing (agregado por cliente)",
         ownerFields: ["contract.sellerId", "contract.ownerId"],
@@ -666,7 +719,7 @@ export const FINANCEIRO = {
           colaborador: "empresa",
         },
         sameAs: "financeiro.contratos",
-        applyAt: ["src/server/finance/queries.ts#getReceivablesAging"],
+        applyAt: ["src/server/finance/queries.ts#getReceivablesAging", "src/server/receivables/access.ts#receivablesVisible (títulos avulsos: só escopo empresa)"],
       },
     },
     {
@@ -1048,7 +1101,38 @@ export const FINANCEIRO = {
           // (estorno de comissão é o caminho).
           rule: { any: [{ director: true }, { managerOf: "financeiro" }] },
           guards: ["src/server/commissions/actions.ts#undoPayablePaymentAction"],
-          recordCondition: "título pago que não seja de comissão/bônus/estorno (payableUndoBlock)",
+          recordCondition: "título pago (ou aberto com baixa parcial, etapa CP/CR 3) que não seja de comissão/bônus/estorno (payablePaymentUndoBlock)",
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-pagar.pagar-parcial",
+          label: "Pagar parcialmente (baixa parcial)",
+          verb: "pagar-parcial",
+          // Ação NOVA (etapa CP/CR 3). Padrão = o de "Registrar pagamento" (diretoria ou gestor do Financeiro). Título de
+          // comissão/bônus é recusado no serviço (só pagamento integral).
+          rule: { any: [{ director: true }, { managerOf: "financeiro" }] },
+          guards: ["src/server/commissions/actions.ts#partialPayPayableAction"],
+          recordCondition: "título aprovado/a pagar que não seja de comissão/bônus/estorno (isCommissionLinkedPayable)",
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-pagar.pagar-com-residuo",
+          label: "Pagar com resíduo (quita o original e cria o título \"— Resíduo\")",
+          verb: "pagar-com-residuo",
+          // Ação NOVA (etapa CP/CR 3). Padrão = o de "Registrar pagamento".
+          rule: { any: [{ director: true }, { managerOf: "financeiro" }] },
+          guards: ["src/server/commissions/actions.ts#payPayableWithResidualAction"],
+          recordCondition: "título aprovado/a pagar que não seja de comissão/bônus/estorno (isCommissionLinkedPayable)",
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-pagar.quitar-pelo-pago",
+          label: "Quitar pelo já pago (ajusta o valor, sem nova baixa)",
+          verb: "quitar-pelo-pago",
+          // Ação NOVA (etapa CP/CR 3). Padrão = o de "Registrar pagamento".
+          rule: { any: [{ director: true }, { managerOf: "financeiro" }] },
+          guards: ["src/server/commissions/actions.ts#settlePayableByPaidAction"],
+          recordCondition: "título com baixa parcial que não seja de comissão/bônus/estorno",
           sensitive: true,
         },
         {
