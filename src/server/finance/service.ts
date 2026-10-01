@@ -24,7 +24,7 @@ import { cancelTaskInternal, completeTaskInternal, createTaskInternal } from "@/
 import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
-import { auditChanges, describeChanges } from "@/server/audit";
+import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { DEFAULT_CLOSING, SALE_PAYMENT_METHOD_LABELS, contractEffectiveItems } from "@/domain/sale-closing";
 import { contractSnapshot, describeReadjustment } from "@/domain/contract-snapshot";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
@@ -441,16 +441,17 @@ export async function updateContractItems(contractId: string, items: ContractIte
       console.error(`[financeiro] falha ao recalcular as comissões do contrato ${contract.id}`, error);
     }
   }
-  if (!version.versioned) {
+  // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão, com o número da versão).
+  if (hasChanges(audit)) {
     await emitEvent({
-      type: "client.updated",
+      type: "contract.updated",
       actor,
       clientId: contract.clientId,
       entity: { type: "contract", id: contract.id },
-      title: `Itens do contrato ${contract.number} atualizados`,
+      title: `Itens do contrato ${contract.number} atualizados${version.versioned ? ` (v${next.version})` : ""}`,
       description: `${normalized.length} item(ns) · ${formatCurrency(totals.monthlyTotal)}/mês · adesão ${formatCurrency(totals.setupTotal)} · hardware ${formatCurrency(totals.hardwareTotal)}`,
       department: "financeiro",
-      payload: { contractId: contract.id, totals, ...audit, clientProducts: synced ? { created: synced.created, updated: synced.updated, removed: synced.removed } : null },
+      payload: { contractId: contract.id, kind: "itens", versioned: version.versioned, version: next.version, totals, ...audit, clientProducts: synced ? { created: synced.created, updated: synced.updated, removed: synced.removed } : null },
     });
   }
   return { contract: next, versioned: version.versioned };
@@ -502,16 +503,17 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
   if (!input.paymentCondition && contract.paymentCondition) clear.push("paymentCondition");
   await clearFields(COLLECTIONS.contracts, contract.id, clear);
   const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
-  if (!version.versioned) {
+  // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão).
+  if (hasChanges(audit)) {
     await emitEvent({
-      type: "client.updated",
+      type: "contract.updated",
       actor,
       clientId: contract.clientId,
       entity: { type: "contract", id: contract.id },
-      title: `Condições do contrato ${contract.number} atualizadas`,
+      title: `Condições do contrato ${contract.number} atualizadas${version.versioned ? ` (v${version.patch.version})` : ""}`,
       description: describeChanges(audit, CONDITION_LABELS, (field, value) => (value === null ? "—" : field === "firstDueDate" ? formatDate(String(value)) : field === "paymentMethod" ? (SALE_PAYMENT_METHOD_LABELS[value as keyof typeof SALE_PAYMENT_METHOD_LABELS] ?? String(value)) : field === "readjustment" ? describeReadjustment(value as ContractReadjustment) : field === "autoRenew" ? (value ? "sim" : "não") : String(value))) || `Vencimento dia ${input.billingDay} · ${input.termMonths} meses · ${input.recurrence}`,
       department: "financeiro",
-      payload: { contractId: contract.id, billingDay: input.billingDay, termMonths: input.termMonths, recurrence: input.recurrence, firstDueDate: input.firstDueDate, paymentMethod: input.paymentMethod, setupInstallments: input.setupInstallments, ...audit },
+      payload: { contractId: contract.id, kind: "condicoes", versioned: version.versioned, version: version.patch.version ?? contract.version, labels: CONDITION_LABELS, billingDay: input.billingDay, termMonths: input.termMonths, recurrence: input.recurrence, firstDueDate: input.firstDueDate ?? null, paymentMethod: input.paymentMethod ?? null, setupInstallments: input.setupInstallments ?? null, ...audit },
     });
   }
   return { versioned: version.versioned };
@@ -536,11 +538,14 @@ export async function completeBillingData(input: BillingDataInput & { document?:
   const filled: string[] = [];
   const clientPatch: Partial<Client> = {};
   const billingPatch: NonNullable<Opportunity["billingData"]> = { ...(opp?.billingData ?? {}) };
+  // Auditoria (D29): cada campo preenchido entra como "— → valor" (nada é sobrescrito aqui).
+  const changes: Record<string, { from: null; to: string }> = {};
   const take = (key: "legalName" | "document" | "email", value: string | undefined, label: string) => {
     if (!value || current[key]) return;
     billingPatch[key] = value;
     if (!client[key]) clientPatch[key] = value;
     filled.push(label);
+    changes[key] = { from: null, to: value };
   };
   take("legalName", input.legalName, "razão social");
   take("document", input.document, "CPF/CNPJ");
@@ -551,6 +556,7 @@ export async function completeBillingData(input: BillingDataInput & { document?:
     if (!value || current.address[key]) continue;
     addressPatch[key] = key === "state" ? value.toUpperCase() : value;
     filled.push(label);
+    changes[key] = { from: null, to: addressPatch[key]! };
   }
   if (filled.length === 0) throw new Error("Nenhum dado novo: os campos já preenchidos vêm da venda e não são alterados aqui");
   if (Object.keys(addressPatch).length > 0) {
@@ -567,9 +573,14 @@ export async function completeBillingData(input: BillingDataInput & { document?:
     title: "Dados de faturamento completados pelo Financeiro",
     description: `Preenchido: ${filled.join(", ")}`,
     department: "financeiro",
-    payload: { contractId: contract.id, fields: filled },
+    payload: { contractId: contract.id, fields: filled, changes },
   });
   return { filled };
+}
+
+/** Signatários na auditoria: nome, e-mail e papel (sem evidências). */
+function signerView(signers: Contract["signers"]): { name: string; email: string; role: string }[] {
+  return signers.map((s) => ({ name: s.name, email: s.email, role: s.role }));
 }
 
 export async function addSigner(input: { contractId: string; name: string; email: string; role: string }, actor: UserRef): Promise<void> {
@@ -580,14 +591,14 @@ export async function addSigner(input: { contractId: string; name: string; email
   const signers = [...contract.signers, { name: input.name.trim(), email, role: input.role.trim(), status: "pendente" as const }];
   await update<Contract>(COLLECTIONS.contracts, contract.id, { signers });
   await emitEvent({
-    type: "client.updated",
+    type: "contract.updated",
     actor,
     clientId: contract.clientId,
     entity: { type: "contract", id: contract.id },
     title: `Signatário adicionado ao contrato ${contract.number}`,
     description: `${input.name} (${input.role}) · ${email}`,
     department: "financeiro",
-    payload: { contractId: contract.id, email },
+    payload: { contractId: contract.id, kind: "signatarios", email, changes: { signers: { from: signerView(contract.signers), to: signerView(signers) } } },
     timeline: false,
   });
 }
@@ -601,14 +612,14 @@ export async function removeSigner(input: { contractId: string; email: string },
   const signers = contract.signers.filter((s) => s !== signer);
   await update<Contract>(COLLECTIONS.contracts, contract.id, { signers });
   await emitEvent({
-    type: "client.updated",
+    type: "contract.updated",
     actor,
     clientId: contract.clientId,
     entity: { type: "contract", id: contract.id },
     title: `Signatário removido do contrato ${contract.number}`,
     description: `${signer.name} · ${signer.email}`,
     department: "financeiro",
-    payload: { contractId: contract.id, email: signer.email },
+    payload: { contractId: contract.id, kind: "signatarios", email: signer.email, changes: { signers: { from: signerView(contract.signers), to: signerView(signers) } } },
     timeline: false,
   });
 }
@@ -653,7 +664,7 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
       ? `Aguardando assinatura — envio manual ao cliente. ${signers.length} signatário(s): ${signers.map((s) => s.name).join(", ")} · documento ${envelope.envelopeId}`
       : `${signers.length} signatário(s): ${signers.map((s) => s.name).join(", ")} · envelope ${envelope.envelopeId}`,
     department: "financeiro",
-    payload: { contractId: contract.id, envelopeId: envelope.envelopeId, provider: envelope.provider, method: manual ? "manual" : "provedor", documentHash: envelope.documentHash, signers: signers.map((s) => s.email), version: contract.version },
+    payload: { contractId: contract.id, envelopeId: envelope.envelopeId, provider: envelope.provider, method: manual ? "manual" : "provedor", documentHash: envelope.documentHash, signers: signers.map((s) => s.email), version: contract.version, ...auditChanges<Contract>(contract, { ...contract, ...patch }, ["status", "documentHash"]) },
   });
   return { ...contract, ...patch };
 }
@@ -700,7 +711,7 @@ export async function registerManualSignature(input: ManualSignatureInput, actor
     title: `${signer.name} assinou o contrato ${contract.number} (registro manual)`,
     description: `${signer.role} · ${signer.email} · assinado em ${formatDate(signedAt)} · evidência: ${evidence}`,
     department: "financeiro",
-    payload: { contractId: contract.id, email: signer.email, method: "manual", evidence, evidenceUrl, signedAt, documentHash, envelopeId: contract.signatureEnvelopeId },
+    payload: { contractId: contract.id, email: signer.email, method: "manual", evidence, evidenceUrl, signedAt, documentHash, envelopeId: contract.signatureEnvelopeId, changes: { signer: { from: `${signer.name}: pendente`, to: `${signer.name}: assinado em ${formatDate(signedAt)}` } } },
   });
   if (done) {
     const version = contract.version;
@@ -722,7 +733,7 @@ export async function registerManualSignature(input: ManualSignatureInput, actor
       title: `Contrato ${contract.number} assinado por todos`,
       description: `${signers.length} assinatura(s) registrada(s) com evidência · hash ${documentHash.slice(0, 19)}…`,
       department: "financeiro",
-      payload: { contractId: contract.id, signedAt: patch.signedAt, envelopeId: contract.signatureEnvelopeId, documentHash, ownerId: contract.ownerId, method: "manual" },
+      payload: { contractId: contract.id, signedAt: patch.signedAt, envelopeId: contract.signatureEnvelopeId, documentHash, ownerId: contract.ownerId, method: "manual", ...auditChanges<Contract>(contract, { ...contract, ...patch }, ["status", "signedAt"]) },
     });
   }
   return { allSigned: done };
@@ -1196,9 +1207,29 @@ export async function registerPayment(input: RegisterPaymentInput, actor: UserRe
   if (contract.status !== "liberado" && contract.status !== "cancelado" && contract.status !== "pendencia") {
     const [billings, settings] = await Promise.all([contractBillings(contract.id), getGateSettings()]);
     const next = deriveContractStatus(contract, billings.map((b) => (b.id === paid.id ? paid : b)), settings);
-    if (next !== contract.status) await update<Contract>(COLLECTIONS.contracts, contract.id, { status: next });
+    await applyDerivedContractStatus(contract, next, actor, `Pagamento registrado: ${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""}`);
   }
   return paid;
+}
+
+/**
+ * Status DERIVADO do contrato (aguardando pagamento ↔ pago) depois de baixa/estorno: grava e audita (D29) com
+ * `contract.updated` (changes.status + motivo) fora da timeline do cliente — o marco já está no evento do pagamento.
+ */
+async function applyDerivedContractStatus(contract: Contract, next: Contract["status"], actor: UserRef, reason: string): Promise<void> {
+  if (next === contract.status) return;
+  await update<Contract>(COLLECTIONS.contracts, contract.id, { status: next });
+  await emitEvent({
+    type: "contract.updated",
+    actor,
+    clientId: contract.clientId,
+    entity: { type: "contract", id: contract.id },
+    title: `Situação do contrato ${contract.number} recalculada`,
+    description: reason,
+    department: "financeiro",
+    payload: { contractId: contract.id, kind: "status_derivado", ...auditChanges<Contract>(contract, { ...contract, status: next }, ["status"], reason) },
+    timeline: false,
+  });
 }
 
 /** Pagamento parcial automático abaixo da tolerância: não baixa; pendência (contrato aberto) ou aviso (liberado). */
@@ -1329,26 +1360,39 @@ export async function reversePayment(input: { billingId: string; reason: string 
   } else if (contract.status !== "cancelado" && contract.status !== "pendencia") {
     const [billings, settings] = await Promise.all([contractBillings(contract.id), getGateSettings()]);
     const next = deriveContractStatus(contract, billings.map((b) => (b.id === after.id ? after : b)), settings);
-    if (next !== contract.status) await update<Contract>(COLLECTIONS.contracts, contract.id, { status: next });
+    await applyDerivedContractStatus(contract, next, actor, `Pagamento estornado (${label}): ${reason}`);
   }
   return after;
 }
 
+/** Campos de cancelamento gravados na cobrança (individual ou em lote): quem, quando e por quê (D29). */
+export function billingCancellationPatch(billing: Pick<Billing, "chargeStatus">, actor: UserRef, reason: string, at: string = nowIso()): Partial<Billing> {
+  return { status: "cancelada", cancelledAt: at, cancelledBy: actor.id, cancelReason: reason, ...(billing.chargeStatus ? { chargeStatus: "cancelado" as const } : {}) };
+}
+
+/**
+ * Cancela uma cobrança em aberto/vencida com motivo: grava `cancelledAt/cancelledBy/cancelReason` e emite
+ * `billing.cancelled` com as alterações (situação, motivo) — antes era uma nota sem autor/data na cobrança.
+ */
 export async function cancelBilling(billingId: string, reason: string, actor: UserRef): Promise<void> {
+  const trimmed = reason.trim();
+  if (trimmed.length < 3) throw new Error("Informe o motivo do cancelamento");
   const billing = await loadBilling(billingId);
   if (billing.status === "paga") throw new Error("Cobrança paga não pode ser cancelada");
   if (billing.status === "cancelada") throw new Error("Esta cobrança já está cancelada");
   const providerNote = await cancelChargeAtProvider(billing);
-  await update<Billing>(COLLECTIONS.billing, billing.id, { status: "cancelada", ...(billing.chargeStatus ? { chargeStatus: "cancelado" } : {}) });
+  const patch = billingCancellationPatch(billing, actor, trimmed);
+  await update<Billing>(COLLECTIONS.billing, billing.id, patch);
+  const audit = auditChanges<Billing>(billing, { ...billing, ...patch }, ["status", "chargeStatus", "cancelReason"], trimmed);
   await emitEvent({
-    type: "note.added",
+    type: "billing.cancelled",
     actor,
     clientId: billing.clientId,
     entity: { type: "billing", id: billing.id },
     title: `Cobrança cancelada: ${TYPE_LABEL[billing.type]}${billing.installment ? ` ${billing.installment}` : ""} de ${formatCurrency(billing.amount)}`,
-    description: providerNote ? `${reason} · ${providerNote}` : reason,
+    description: providerNote ? `${trimmed} · ${providerNote}` : trimmed,
     department: "financeiro",
-    payload: { billingId: billing.id, contractId: billing.contractId, reason, previousStatus: billing.status, providerNote },
+    payload: { billingId: billing.id, contractId: billing.contractId, type: billing.type, installment: billing.installment ?? null, amount: billing.amount, competence: billing.competence, previousStatus: billing.status, cancelledAt: patch.cancelledAt, providerNote: providerNote ?? null, ...audit },
   });
 }
 
@@ -1570,7 +1614,8 @@ export async function registerPendency(contractId: string, reason: string, actor
   const contract = await loadContract(contractId);
   if (contract.status === "liberado" || contract.status === "cancelado") throw new Error("Contrato encerrado não recebe pendência");
   if (contract.status === "pendencia") throw new Error("O contrato já está com pendência. Resolva a atual antes de registrar outra.");
-  await update<Contract>(COLLECTIONS.contracts, contract.id, { status: "pendencia", financialStatus: "pendencia", pendingReason: reason });
+  const pendencyPatch: Partial<Contract> = { status: "pendencia", financialStatus: "pendencia", pendingReason: reason };
+  await update<Contract>(COLLECTIONS.contracts, contract.id, pendencyPatch);
   const client = await loadClient(contract.clientId);
   const opp = contract.opportunityId ? await getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : null;
   const sellerId = opp?.ownerId ?? client.ownerSalesId;
@@ -1582,7 +1627,7 @@ export async function registerPendency(contractId: string, reason: string, actor
     title: `Pendência financeira no contrato ${contract.number}`,
     description: reason,
     department: "financeiro",
-    payload: { contractId: contract.id, reason, sellerId, previousStatus: contract.status },
+    payload: { contractId: contract.id, sellerId, previousStatus: contract.status, ...auditChanges<Contract>(contract, { ...contract, ...pendencyPatch }, ["status", "financialStatus", "pendingReason"], reason), reason },
   });
   await notify({
     userIds: [sellerId, contract.ownerId].filter((id): id is string => Boolean(id) && id !== actor.id),
@@ -1602,15 +1647,22 @@ export async function resolvePendency(contractId: string, resolution: string | u
   const status = deriveContractStatus({ ...contract, status: "aguardando_contrato" }, billings, settings);
   await update<Contract>(COLLECTIONS.contracts, contract.id, { status, financialStatus: "pendente" });
   await clearFields(COLLECTIONS.contracts, contract.id, ["pendingReason"]);
+  const solution = resolution?.trim() || undefined;
   await emitEvent({
-    type: "note.added",
+    type: "contract.pendency_resolved",
     actor,
     clientId: contract.clientId,
     entity: { type: "contract", id: contract.id },
     title: `Pendência resolvida no contrato ${contract.number}`,
-    description: [contract.pendingReason ? `Pendência: ${contract.pendingReason}` : null, resolution ? `Solução: ${resolution}` : null].filter(Boolean).join(" · ") || undefined,
+    description: [contract.pendingReason ? `Pendência: ${contract.pendingReason}` : null, solution ? `Solução: ${solution}` : null].filter(Boolean).join(" · ") || undefined,
     department: "financeiro",
-    payload: { contractId: contract.id, reason: contract.pendingReason, resolution, status },
+    payload: {
+      contractId: contract.id,
+      pendingReason: contract.pendingReason ?? null,
+      resolution: solution ?? null,
+      status,
+      ...auditChanges<Contract>(contract, { ...contract, status, financialStatus: "pendente", pendingReason: undefined }, ["status", "financialStatus", "pendingReason"], solution),
+    },
   });
   return status;
 }
@@ -1695,7 +1747,7 @@ export async function cancelContract(input: { contractId: string; reason: string
     const note = await cancelChargeAtProvider(b);
     if (note) providerNotes.push(`${TYPE_LABEL[b.type]}${b.installment ? ` ${b.installment}` : ""}: ${note}`);
   }
-  await batchSet(open.map((b) => ({ collection: COLLECTIONS.billing, id: b.id, data: { status: "cancelada", updatedAt: stamp, ...(b.chargeStatus ? { chargeStatus: "cancelado" } : {}) }, merge: true })));
+  await batchSet(open.map((b) => ({ collection: COLLECTIONS.billing, id: b.id, data: { ...billingCancellationPatch(b, actor, `Contrato ${contract.number} cancelado: ${reason}`, stamp), updatedAt: stamp }, merge: true })));
   const cancelledBillingIds = open.map((b) => b.id);
   if (providerNotes.length > 0) {
     await emitEvent({
@@ -1821,7 +1873,7 @@ export async function releaseContract(contractId: string, actor: FinanceActor, e
     title: `Contrato ${contract.number} liberado para implantação${exception ? " (exceção)" : ""}`,
     description: exception ? `Liberado com pendência por ${actor.name}: ${reason}` : `Critérios atendidos: ${gate.checks.map((c) => c.label.toLowerCase()).join(", ")}`,
     department: "financeiro",
-    payload: { contractId: contract.id, exceptionReason: exception ? reason : undefined, monthlyTotal: contract.monthlyTotal, setupTotal: contract.setupTotal, checks: gate.checks },
+    payload: { contractId: contract.id, exceptionReason: exception ? reason : undefined, monthlyTotal: contract.monthlyTotal, setupTotal: contract.setupTotal, checks: gate.checks, ...auditChanges<Contract>(contract, released, ["status", "financialStatus", "startDate", "endDate"], exception ? reason : undefined) },
   });
 
   // Criação do projeto: caminho único no módulo de Implantação (combina templates, SLA, evento implementation.created).
