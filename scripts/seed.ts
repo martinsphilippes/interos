@@ -21,7 +21,7 @@ import { seedSupport } from "./seed/journey-support";
 import { seedWorkflowAndTasks } from "./seed/journey-workflow";
 import { seedEventsAndNotifications } from "./seed/journey-events";
 import { seedPerformance } from "./seed/journey-performance";
-import { seedAmendments, seedBoletos, seedCommissionEngine, seedDerived, seedFinanceRegistry, seedPayablesGeneral, seedPortalLinks } from "./seed/derived";
+import { seedAmendments, seedBoletos, seedCommissionEngine, seedDerived, seedFinanceRegistry, seedPayablesGeneral, seedPortalLinks, seedSettlements } from "./seed/derived";
 
 function elapsed(from: number): string {
   return `${((Date.now() - from) / 1000).toFixed(1)}s`;
@@ -97,6 +97,9 @@ async function main(): Promise<void> {
   const cap = await seedPayablesGeneral();
   total += cap.suppliers + cap.parcels + cap.recurring;
   console.log(`  ${"contas a pagar (serviço)".padEnd(26)} ${String(cap.suppliers + cap.parcels + cap.recurring).padStart(5)}  (${cap.suppliers} fornecedores, ${cap.parcels} parcelas, ${cap.recurring} série recorrente)`);
+  const settlements = await seedSettlements(registry.bankAccountId);
+  total += 2 + settlements.entries;
+  console.log(`  ${"baixas parciais (serviço)".padEnd(26)} ${String(2 + settlements.entries).padStart(5)}  (título a pagar ${settlements.payableId} com baixa parcial; título a receber avulso ${settlements.receivableId} recebido em parte; ${settlements.entries} lançamentos)`);
   const tDerived = Date.now();
   const derived = await seedDerived();
   total += derived.snapshots + derived.bonus;

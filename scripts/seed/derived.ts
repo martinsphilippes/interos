@@ -10,7 +10,7 @@
  * Requer o seed rodando com `--conditions=react-server` (os motores são server-only).
  */
 import { listRecentMonths, previousPeriod, currentMonthKey, monthPeriod } from "../../src/server/kpis/period";
-import { COLLECTIONS, type Billing, type Contract, type Payable, type Settings } from "../../src/domain/types";
+import { COLLECTIONS, type Billing, type Contract, type FinanceCategory, type Payable, type Settings } from "../../src/domain/types";
 import { getById, getManyByIds, list, update } from "../../src/server/db";
 import { dateKey } from "../../src/lib/format";
 import { NOW, addDays, competence, daysAgo, daysFromNow } from "./lib";
@@ -108,6 +108,30 @@ export async function seedPayablesGeneral(): Promise<{ suppliers: number; parcel
     { emit: false, createdAt: daysAgo(20) },
   );
   return { suppliers: 2, parcels: parcelado.parcels?.length ?? 1, recurring: recorrente.seriesId ? 1 : 0 };
+}
+
+/**
+ * Baixa parcial e título a receber avulso (etapa CP/CR 3), pelos serviços reais e sem eventos: 1 título a pagar de
+ * fornecedor aprovado/programado com BAIXA PARCIAL de 40% na conta corrente (fica "Parcial", vence em 8 dias) e 1 título
+ * a receber AVULSO (consultoria fora de contrato, categoria de receita) com RECEBIMENTO PARCIAL na conta corrente. Cada
+ * baixa grava o lançamento de caixa na mesma transação.
+ */
+export async function seedSettlements(bankAccountId: string): Promise<{ payableId: string; receivableId: string; entries: number }> {
+  const { createManualPayable, approvePayable, schedulePayable, partialPayPayable } = await import("../../src/server/commissions/payables");
+  const { createReceivables, receiveReceivable } = await import("../../src/server/receivables/service");
+  const karem = { id: "user_karem", name: "Karem Feitosa" };
+  const quiet = { emit: false } as const;
+  const month = dateKey(NOW).slice(0, 7);
+  const due = daysFromNow(8).slice(0, 10);
+  const payable = await createManualPayable({ creditorType: "fornecedor", creditorName: "Climatiza Cariri Refrigeração", category: "outros", costCenter: "Administrativo", description: "Manutenção preventiva dos aparelhos de ar-condicionado", amount: 1800, competence: month, dueDate: due, notes: "Contrato semestral; pagamento combinado em duas vezes." }, karem, { emit: false, createdAt: daysAgo(6) });
+  await approvePayable(payable.id, karem, undefined, { emit: false, at: daysAgo(5) });
+  await schedulePayable(payable.id, {}, karem, { emit: false, at: daysAgo(5) });
+  await partialPayPayable(payable.id, { paidAt: daysAgo(2).slice(0, 10), paymentMethod: "pix", accountId: bankAccountId, amount: 720, notes: "Sinal de 40% na aprovação do orçamento." }, karem, { ...quiet, at: daysAgo(2) });
+  const categories = await list<FinanceCategory>(COLLECTIONS.financeCategories);
+  const outras = categories.find((c) => c.name === "Outras receitas" && c.type === "receita");
+  const [receivable] = await createReceivables({ description: "Consultoria avulsa de parametrização fiscal", amount: 2400, dueDate: daysFromNow(10).slice(0, 10), clientId: "client_003", categoryId: outras?.id, accountId: bankAccountId, documentNumber: "NFS-e 2026/0418", notes: "Serviço fora do contrato: 2 dias de consultoria presencial." }, karem, { emit: false, createdAt: daysAgo(4) });
+  await receiveReceivable("parcial", receivable.id, { paidAt: daysAgo(1).slice(0, 10), method: "pix", accountId: bankAccountId, amount: 1000, notes: "Adiantamento combinado." }, karem, { ...quiet, at: daysAgo(1) });
+  return { payableId: payable.id, receivableId: receivable.id, entries: 2 };
 }
 
 /**

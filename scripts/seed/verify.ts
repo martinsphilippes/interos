@@ -3,7 +3,7 @@
  * Uso: npx tsx --env-file=.env.local scripts/seed/verify.ts
  */
 import "./quiet";
-import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile, type PortalLink, type CostCenter, type FinanceCategory, type FinancialAccount, type CashEntry } from "../../src/domain/types";
+import { COLLECTIONS, type Billing, type Client, type ClientProduct, type Commission, type Contract, type ContractAmendment, type Counter, type Opportunity, type Payable, type PaymentEvent, type Proposal, type SlaInstance, type Supplier, type Task, type TimelineEvent, type User, type WorkflowStep, type CollectionName, type Organization, type PermissionProfile, type PortalLink, type CostCenter, type FinanceCategory, type FinancialAccount, type CashEntry, type Receivable } from "../../src/domain/types";
 import { ROLE_KEYS } from "../../src/domain/constants";
 import { MODULE_KEYS, PROTECTED_KEYS, SCREEN_BY_KEY, isPermissionKey, type ScopeKind } from "../../src/domain/permissions";
 import { sanitizeAdjustments, type PermissionAdjustments } from "../../src/server/auth/permissions";
@@ -12,6 +12,7 @@ import { col, counterId, list, ORG_ID } from "../../src/server/db";
 import { commissionIdFor } from "../../src/server/commissions/store";
 import { FINANCIAL_ACCOUNT_TYPES, registryProblems } from "../../src/domain/finance-registry";
 import { cashEntryProblems, realizedTotals } from "../../src/domain/cash-entries";
+import { settlementProblems } from "../../src/domain/settlements";
 
 const ENTITY_COLLECTION: Record<SlaInstance["entityType"], CollectionName> = {
   tarefa: COLLECTIONS.tasks,
@@ -79,6 +80,7 @@ async function main(): Promise<void> {
     ...opportunities.map((o) => o.saleNumber),
     ...(cache.get(COLLECTIONS.commissions) as Commission[]).map((c) => c.code),
     ...(cache.get(COLLECTIONS.payables) as Payable[]).map((p) => p.code),
+    ...(cache.get(COLLECTIONS.receivables) as Receivable[]).map((r) => r.code),
   ];
   for (const n of numbered) {
     const m = n?.match(/^([A-Z]+)-(\d{4})-(\d+)$/);
@@ -217,11 +219,37 @@ async function main(): Promise<void> {
   //     transactionId fica sem lançamento; classificação nova aponta para cadastros existentes.
   const cashEntries = cache.get(COLLECTIONS.cashEntries) as CashEntry[];
   const allBillings = cache.get(COLLECTIONS.billing) as Billing[];
-  for (const problem of cashEntryProblems({ entries: cashEntries, accountIds: new Set(financialAccounts.map((a) => a.id)), payables, billings: allBillings })) problems.push(`(x) ${problem}`);
+  const receivables = cache.get(COLLECTIONS.receivables) as Receivable[];
+  for (const problem of cashEntryProblems({ entries: cashEntries, accountIds: new Set(financialAccounts.map((a) => a.id)), payables, billings: allBillings, receivables })) problems.push(`(x) ${problem}`);
   for (const e of cashEntries) {
     if (e.categoryId && !financeCategoryIds.has(e.categoryId)) problems.push(`(x) lançamento ${e.id} aponta para categoria inexistente ${e.categoryId}`);
     if (e.costCenterId && !costCenterIds.has(e.costCenterId)) problems.push(`(x) lançamento ${e.id} aponta para centro inexistente ${e.costCenterId}`);
   }
+  // (y) baixas parciais e títulos a receber avulsos (etapa CP/CR 3): soma das baixas ≤ valor + 0,005; título quitado
+  //     com baixas soma ≈ valor; toda baixa tem conta e lançamento (o lançamento existir é conferido em (x)); título a
+  //     receber com código REC único, categoria de RECEITA existente e centro/conta existentes; resíduo aponta para o
+  //     original (e vice-versa).
+  for (const problem of settlementProblems([
+    ...payables.map((p) => ({ label: "título", id: p.id, amount: p.amount, status: p.status, settled: p.status === "pago", payments: p.payments })),
+    ...receivables.map((r) => ({ label: "título a receber", id: r.id, amount: r.amount, status: r.status, settled: r.status === "pago", payments: r.payments })),
+  ]))
+    problems.push(`(y) ${problem}`);
+  const receivableCodes = receivables.map((r) => r.code).filter(Boolean);
+  if (new Set(receivableCodes).size !== receivableCodes.length) problems.push("(y) código REC duplicado");
+  const categoryById = new Map(financeCategories.map((c) => [c.id, c]));
+  const accountIds = new Set(financialAccounts.map((a) => a.id));
+  const receivableById = new Map(receivables.map((r) => [r.id, r]));
+  for (const r of receivables) {
+    if (!r.code) problems.push(`(y) título a receber ${r.id} sem código REC`);
+    if (!r.payerName) problems.push(`(y) título a receber ${r.id} sem pagador`);
+    if (r.categoryId && categoryById.get(r.categoryId)?.type !== "receita") problems.push(`(y) título a receber ${r.id} com categoria inexistente ou que não é de receita (${r.categoryId})`);
+    if (r.costCenterId && !costCenterIds.has(r.costCenterId)) problems.push(`(y) título a receber ${r.id} aponta para centro inexistente ${r.costCenterId}`);
+    if (r.accountId && !accountIds.has(r.accountId)) problems.push(`(y) título a receber ${r.id} aponta para conta inexistente ${r.accountId}`);
+    if (r.residualOf && receivableById.get(r.residualOf)?.residualId !== r.id) problems.push(`(y) resíduo ${r.id} sem o original ${r.residualOf} apontando de volta`);
+    if (r.status === "cancelado" && (r.payments?.length ?? 0) > 0) problems.push(`(y) título a receber ${r.id} cancelado com recebimento`);
+  }
+  for (const p of payables) if (p.residualOf && payableById.get(p.residualOf)?.residualId !== p.id) problems.push(`(y) resíduo ${p.id} sem o original ${p.residualOf} apontando de volta`);
+  console.log(`Baixas parciais: ${payables.filter((p) => p.status !== "pago" && (p.payments?.length ?? 0) > 0).length} título(s) a pagar com baixa parcial; títulos a receber avulsos: ${receivables.length} (${receivables.filter((r) => r.status === "pago").length} recebidos, ${receivables.filter((r) => r.status === "aberto" && (r.payments?.length ?? 0) > 0).length} parciais)`);
   const realized = realizedTotals({ entries: cashEntries, payables, billings: allBillings });
   console.log(`Lançamentos de caixa: ${cashEntries.length} (${cashEntries.filter((e) => e.type === "despesa").length} despesas, ${cashEntries.filter((e) => e.type === "receita").length} receitas); realizado: lançamentos ${realized.fromEntries.receitas.toFixed(2)}/${realized.fromEntries.despesas.toFixed(2)} + baixas antigas ${realized.fromLegacy.receitas.toFixed(2)}/${realized.fromLegacy.despesas.toFixed(2)} (receitas/despesas)`);
 
@@ -317,7 +345,7 @@ async function main(): Promise<void> {
   console.log(`Clientes: ${clients.length}; timeline por cliente ativo (mín.): ${Math.min(...clients.filter((c) => c.status === "ativo").map((c) => timeline.filter((t) => t.clientId === c.id).length))}`);
 
   if (problems.length === 0) {
-    console.log("\nInvariantes (a)-(x): OK");
+    console.log("\nInvariantes (a)-(y): OK");
   } else {
     console.log(`\nInvariantes com ${problems.length} problema(s):`);
     for (const p of problems.slice(0, 50)) console.log("  " + p);
