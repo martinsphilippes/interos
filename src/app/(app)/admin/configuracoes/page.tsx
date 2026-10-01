@@ -7,6 +7,7 @@ import { can, requireScreenAny } from "@/server/auth/session";
 import { listLeadSourceKeys, loadSettingsForAdmin } from "@/server/admin/queries";
 import { SETTING_KEYS, type SettingKey, type SettingValues } from "@/server/admin/schemas";
 import { previewBillingReminders } from "@/server/finance/regua";
+import { listPaymentAccountOptions } from "@/server/finance-registry/cash-entries";
 import { getOperationHealthConfig, getPerformanceIndexConfig } from "@/server/kpis/operation-health";
 import { listFormulas } from "@/server/kpis/queries";
 import { PageContainer } from "@/components/layout/page-container";
@@ -73,12 +74,13 @@ export default async function ConfiguracoesPage({ searchParams }: { searchParams
   const tab = tabs.includes(requested) ? requested : (tabs[0] ?? requested);
   const sees = (k: SettingKey) => access.visible.includes(k);
 
-  const [settings, originKeys, operationHealth, performanceIndex, reguaPreview] = await Promise.all([
+  const [settings, originKeys, operationHealth, performanceIndex, reguaPreview, paymentAccounts] = await Promise.all([
     loadSettingsForAdmin(),
     sees("lead_scoring") ? listLeadSourceKeys() : Promise.resolve([] as string[]),
     access.saudeIndice.visible ? getOperationHealthConfig() : Promise.resolve(null),
     access.saudeIndice.visible ? getPerformanceIndexConfig() : Promise.resolve(null),
     sees("regua_cobranca") ? previewBillingReminders() : Promise.resolve(null),
+    sees("financeiro_baixa") ? listPaymentAccountOptions() : Promise.resolve([] as { value: string; label: string }[]),
   ]);
   const kpiOptions = access.saudeIndice.visible
     ? listFormulas()
@@ -118,6 +120,7 @@ export default async function ConfiguracoesPage({ searchParams }: { searchParams
           performanceIndex={performanceIndex}
           kpiOptions={kpiOptions}
           reguaPreview={reguaPreview}
+          paymentAccounts={paymentAccounts}
           access={access}
         />
       </Suspense>

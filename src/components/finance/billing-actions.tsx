@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Ban, CircleDollarSign, FileText, Link2, Mail, MessageCircle, MoreHorizontal, Phone, Receipt, Send, Undo2 } from "lucide-react";
+import { Ban, CircleDollarSign, FileText, Landmark, Link2, Mail, MessageCircle, MoreHorizontal, Phone, Receipt, Send, Undo2 } from "lucide-react";
+import Link from "next/link";
 import type { Billing } from "@/domain/types";
-import { cancelBillingAction, getBillingContactAction, registerBillingCallAction, registerBoletoAction, registerPaymentAction, reversePaymentAction, sendBillingMessageAction } from "@/server/finance/actions";
+import { cancelBillingAction, getBillingContactAction, listPaymentAccountsAction, registerBillingCallAction, registerBoletoAction, registerPaymentAction, reversePaymentAction, sendBillingMessageAction } from "@/server/finance/actions";
 import type { BillingChannelResult, BillingContactInfo } from "@/server/finance/service";
 import { BOLETO_FILTER_LABELS, boletoState, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type BoletoFilter } from "@/server/finance/schemas";
 import { dateKey, formatCurrency, formatDate, formatPhone } from "@/lib/format";
@@ -46,16 +47,49 @@ export function BoletoBadge({ billing, size = "sm" }: { billing: Pick<Billing, "
   );
 }
 
-/** Registrar pagamento: data, valor, forma e comprovante (link). */
+/**
+ * "Sem conta" (etapa CP/CR 2): cobrança paga por baixa AUTOMÁTICA (provedor/conciliação) sem conta padrão de
+ * recebimento configurada — a baixa valeu, mas não gerou lançamento de caixa. Baixas manuais antigas não são marcadas.
+ */
+export function NoAccountBadge({ billing }: { billing: Pick<Billing, "status"> & Partial<Pick<Billing, "paymentSource" | "cashEntryId">> }) {
+  if (billing.status !== "paga" || billing.cashEntryId || !billing.paymentSource || billing.paymentSource === "manual") return null;
+  return (
+    <Badge variant="warning" size="sm" title="Baixa automática sem conta financeira: não gerou lançamento de caixa. Configure a conta padrão de recebimento em Configurações › Cobrança; para regularizar esta, estorne e registre o pagamento com a conta." data-testid="billing-no-account">
+      Sem conta
+    </Badge>
+  );
+}
+
+/** Registrar pagamento: data, valor, conta financeira (etapa CP/CR 2), forma e comprovante (link). */
 export function PaymentDialog({ billing, open, onOpenChange }: { billing: BillingLite; open: boolean; onOpenChange: (open: boolean) => void }) {
   const id = React.useId();
-  const [form, setForm] = React.useState(() => ({ paidAt: dateKey(new Date()), amount: String(billing.amount).replace(".", ","), method: "pix", receiptUrl: "" }));
+  const [form, setForm] = React.useState(() => ({ paidAt: dateKey(new Date()), amount: String(billing.amount).replace(".", ","), method: "pix", receiptUrl: "", accountId: "" }));
   const { pending, run } = useFinanceAction();
   const amount = Number(form.amount.includes(",") ? form.amount.replace(/\./g, "").replace(",", ".") : form.amount);
+  // Contas ativas lidas do servidor ao abrir (a conta padrão de recebimento, se configurada, vem pré-selecionada).
+  const [accounts, setAccounts] = React.useState<{ value: string; label: string }[] | null>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void listPaymentAccountsAction().then((r) => {
+      if (!alive) return;
+      if (!r.ok) {
+        toast.error(r.error);
+        setAccounts([]);
+        return;
+      }
+      setAccounts(r.data.accounts);
+      const preset = r.data.defaultAccountId ?? (r.data.accounts.length === 1 ? r.data.accounts[0].value : "");
+      if (preset) setForm((f) => (f.accountId ? f : { ...f, accountId: preset }));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
 
   const submit = async () => {
     const ok = await run(
-      () => registerPaymentAction({ billingId: billing.id, paidAt: form.paidAt, amount, method: form.method, receiptUrl: form.receiptUrl.trim() }),
+      () => registerPaymentAction({ billingId: billing.id, paidAt: form.paidAt, amount, method: form.method, receiptUrl: form.receiptUrl.trim(), accountId: form.accountId }),
       `Pagamento de ${formatCurrency(amount)} registrado`,
     );
     if (ok) onOpenChange(false);
@@ -78,6 +112,24 @@ export function PaymentDialog({ billing, open, onOpenChange }: { billing: Billin
           <FormField label="Valor pago (R$)" htmlFor={`${id}-v`} required error={Number.isFinite(amount) && amount > 0 ? undefined : "Informe um valor válido"}>
             <Input id={`${id}-v`} inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="h-11 md:h-9" />
           </FormField>
+          {accounts === null ? (
+            <p className="text-sm text-muted sm:col-span-2">Carregando as contas financeiras…</p>
+          ) : accounts.length > 0 ? (
+            <FormField label="Conta financeira" htmlFor={`${id}-a`} required className="sm:col-span-2" hint="Onde o dinheiro entrou: gera o lançamento de receita no extrato da conta" error={form.accountId ? undefined : "Escolha a conta"}>
+              <Select id={`${id}-a`} value={form.accountId} onChange={(e) => setForm({ ...form, accountId: e.target.value })} placeholder="Selecione a conta" options={accounts} />
+            </FormField>
+          ) : (
+            <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm text-warning-fg sm:col-span-2" data-testid="pay-no-account">
+              <Landmark className="mt-0.5 size-4 shrink-0" />
+              <span>
+                Nenhuma conta financeira cadastrada. Cadastre em{" "}
+                <Link href="/financeiro/cadastros?aba=contas" className="font-medium underline">
+                  Financeiro › Cadastros financeiros
+                </Link>{" "}
+                para registrar o pagamento.
+              </span>
+            </p>
+          )}
           <FormField label="Forma de pagamento" htmlFor={`${id}-m`} required>
             <Select id={`${id}-m`} value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} options={PAYMENT_METHODS.map((m) => ({ value: m, label: PAYMENT_METHOD_LABELS[m] }))} />
           </FormField>
@@ -89,7 +141,7 @@ export function PaymentDialog({ billing, open, onOpenChange }: { billing: Billin
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending} className="h-11 md:h-9">
             Cancelar
           </Button>
-          <Button onClick={submit} loading={pending} disabled={!form.paidAt || !(amount > 0)} className="h-11 md:h-9">
+          <Button onClick={submit} loading={pending} disabled={!form.paidAt || !(amount > 0) || accounts === null} className="h-11 md:h-9">
             Registrar pagamento
           </Button>
         </DialogFooter>

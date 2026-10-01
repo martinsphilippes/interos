@@ -4,15 +4,19 @@ import "server-only";
  * uso em títulos (campo novo `categoryId`) e na configuração antiga (`Payable.category`/`costCenter` = `legacyKey`),
  * plano da importação manual e histórico (eventos). Valores sob "Visualizar valores" (A13): sem a chave, o saldo não
  * sai do servidor. Contagens de títulos respeitam o escopo de Contas a Pagar do usuário.
+ * Etapa CP/CR 2: saldo atual = saldo inicial + lançamentos de caixa; extrato somente leitura por conta (?conta=<id>,
+ * período ?de=&ate=) sob a ação `financeiro.cadastros.contas.extrato`.
  */
-import { can } from "@/server/auth/session";
-import { list } from "@/server/db";
+import { can, canSeeHref } from "@/server/auth/session";
+import { getManyByIds, list } from "@/server/db";
+import { buildStatement, CASH_ENTRY_TYPE_LABELS, cashEntryMovements } from "@/domain/cash-entries";
 import { payableAllowed, payableVisibility } from "@/server/commissions/access";
 import { canSeeFinanceValues } from "@/server/finance/access";
 import { redactChanges } from "@/domain/audit-format";
 import { accountBalance, activeCategoriesByCenter, categoriesWithoutCenter, categoryUsageTotal, countCategoryUsage, nameKey, planLegacyImport, type LegacyImportPlan } from "@/domain/finance-registry";
 import type { EventType } from "@/domain/constants";
-import { COLLECTIONS, type CostCenter, type CurrentUser, type DomainEvent, type FinanceCategory, type FinancialAccount, type Payable, type TimelineEvent } from "@/domain/types";
+import { COLLECTIONS, type Billing, type CashEntry, type CashEntryType, type Contract, type CostCenter, type CurrentUser, type DomainEvent, type FinanceCategory, type FinancialAccount, type Payable, type TimelineEvent } from "@/domain/types";
+import { dateKey } from "@/lib/format";
 import { getSetting } from "@/server/admin/queries";
 import { SETTING_DEFAULTS, type ContasAPagarConfig } from "@/server/admin/schemas";
 import { listCostCenters, listFinanceCategories, listFinancialAccounts } from "./service";
@@ -88,6 +92,47 @@ export interface CategoryRow {
   activeSubcategories: string[];
 }
 
+/** Linha do extrato (somente leitura). Quantias null = sem "Visualizar valores" (Restrito). */
+export interface StatementRow {
+  id: string;
+  date: string;
+  description: string;
+  type: CashEntryType;
+  typeLabel: string;
+  /** + entrada, − saída. */
+  amount: number | null;
+  /** Saldo depois do lançamento. */
+  balance: number | null;
+  contactName?: string;
+  notes?: string;
+  reconciled: boolean;
+  origin?: { label: string; href?: string };
+}
+
+export interface AccountStatement {
+  accountId: string;
+  accountName: string;
+  archived: boolean;
+  /** Período aplicado (AAAA-MM-DD, inclusivo). */
+  from: string;
+  to: string;
+  opening: number | null;
+  closing: number | null;
+  inflow: number | null;
+  outflow: number | null;
+  rows: StatementRow[];
+}
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Período do extrato: ?de=&ate= válidos; padrão = últimos 90 dias até hoje (São Paulo). */
+export function statementPeriod(requested: { de?: string; ate?: string }, today: string = dateKey(new Date())): { from: string; to: string } {
+  const to = requested.ate && DAY.test(requested.ate) ? requested.ate : today;
+  const fallbackFrom = new Date(Date.parse(`${to}T12:00:00Z`) - 89 * 86_400_000).toISOString().slice(0, 10);
+  const from = requested.de && DAY.test(requested.de) ? requested.de : fallbackFrom;
+  return from <= to ? { from, to } : { from: to, to: from };
+}
+
 export interface RegistryWorkspace {
   tab: RegistryTab;
   visibleTabs: RegistryTab[];
@@ -97,8 +142,12 @@ export interface RegistryWorkspace {
   counts: { accounts: number; centers: number; categories: number; subcategories: number; withoutCenter: number };
   importPlan: LegacyImportPlan | null;
   history: TimelineEvent[];
+  /** Extrato da conta pedida (?conta=), quando o usuário pode ver. */
+  statement: AccountStatement | null;
   can: {
     values: boolean;
+    /** Ver extrato das contas (etapa CP/CR 2). */
+    statement: boolean;
     accounts: { create: boolean; edit: boolean; archive: boolean };
     centers: { create: boolean; edit: boolean; archive: boolean };
     categories: { create: boolean; edit: boolean; archive: boolean; reorganize: boolean; merge: boolean };
@@ -131,7 +180,7 @@ function toTimeline(e: DomainEvent, hideValues: boolean): TimelineEvent {
   };
 }
 
-export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?: string; item?: string }): Promise<RegistryWorkspace> {
+export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?: string; item?: string; conta?: string; de?: string; ate?: string }): Promise<RegistryWorkspace> {
   const sees = {
     contas: can(user, "financeiro.cadastros.contas.ver"),
     centros: can(user, "financeiro.cadastros.centros.ver"),
@@ -142,8 +191,9 @@ export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?:
   const values = canSeeFinanceValues(user);
   const canImport = can(user, "financeiro.cadastros.importar") && (sees.categorias || sees.centros);
   const needsCategories = sees.categorias || sees.centros;
+  const canStatement = sees.contas && can(user, "financeiro.cadastros.contas.extrato");
 
-  const [accounts, centers, categories, allPayables, visibility, setting, events] = await Promise.all([
+  const [accounts, centers, categories, allPayables, visibility, setting, events, entries] = await Promise.all([
     sees.contas ? listFinancialAccounts() : Promise.resolve([] as FinancialAccount[]),
     needsCategories ? listCostCenters() : Promise.resolve([] as CostCenter[]),
     needsCategories ? listFinanceCategories() : Promise.resolve([] as FinanceCategory[]),
@@ -151,12 +201,15 @@ export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?:
     payableVisibility(user),
     canImport ? getSetting<ContasAPagarConfig>("contas_a_pagar", SETTING_DEFAULTS.contas_a_pagar) : Promise.resolve(null),
     visibleTabs.length ? list<DomainEvent>(COLLECTIONS.events, { where: [["type", "in", REGISTRY_EVENTS_BY_TAB[tab]]] }) : Promise.resolve([] as DomainEvent[]),
+    sees.contas || needsCategories ? list<CashEntry>(COLLECTIONS.cashEntries) : Promise.resolve([] as CashEntry[]),
   ]);
   // Contagens de uso só com os títulos que o usuário vê em Contas a Pagar.
   const payables = allPayables.filter((p) => payableAllowed(visibility, p));
-  const usage = countCategoryUsage(payables);
+  // Uso pelos campos novos: títulos visíveis + lançamentos de caixa (etapa CP/CR 2).
+  const usage = countCategoryUsage([...payables, ...entries]);
   const centerUsage = new Map<string, number>();
-  for (const p of payables) if (p.costCenterId) centerUsage.set(p.costCenterId, (centerUsage.get(p.costCenterId) ?? 0) + 1);
+  for (const p of [...payables, ...entries]) if (p.costCenterId) centerUsage.set(p.costCenterId, (centerUsage.get(p.costCenterId) ?? 0) + 1);
+  const movements = cashEntryMovements(entries);
   const legacyCategoryUsage = new Map<string, number>();
   const legacyCenterUsage = new Map<string, number>();
   for (const p of payables) {
@@ -173,8 +226,8 @@ export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?:
       name: a.name,
       type: a.type,
       initialBalance: values ? a.initialBalance : null,
-      // Lançamentos de caixa chegam na etapa 2: hoje o saldo é o inicial (accountBalance já soma movimentos).
-      balance: values ? accountBalance(a, []) : null,
+      // Saldo atual = saldo inicial + lançamentos de caixa (receitas entram, despesas saem).
+      balance: values ? accountBalance(a, movements) : null,
       currency: "BRL" as const,
       bankName: a.bankName || undefined,
       agency: a.agency || undefined,
@@ -228,6 +281,9 @@ export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?:
     .slice(0, 40)
     .map((e) => toTimeline(e, !values));
 
+  const statementAccount = canStatement && requested.conta ? accounts.find((a) => a.id === requested.conta) : undefined;
+  const statement = statementAccount ? await buildAccountStatement(user, statementAccount, entries, statementPeriod(requested), values) : null;
+
   const active = categories.filter((c) => !c.archived);
   return {
     tab,
@@ -244,8 +300,10 @@ export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?:
     },
     importPlan,
     history,
+    statement,
     can: {
       values,
+      statement: canStatement,
       accounts: { create: can(user, "financeiro.cadastros.contas.criar"), edit: can(user, "financeiro.cadastros.contas.editar"), archive: can(user, "financeiro.cadastros.contas.arquivar") },
       centers: { create: can(user, "financeiro.cadastros.centros.criar"), edit: can(user, "financeiro.cadastros.centros.editar"), archive: can(user, "financeiro.cadastros.centros.arquivar") },
       categories: {
@@ -257,5 +315,58 @@ export async function getRegistryWorkspace(user: CurrentUser, requested: { tab?:
       },
       import: Boolean(setting),
     },
+  };
+}
+
+const BILLING_TYPE_LABEL: Record<Billing["type"], string> = { setup: "Adesão", mensalidade: "Mensalidade", hardware: "Hardware", servico: "Serviço" };
+
+/**
+ * Extrato de uma conta no período: saldo de abertura, lançamentos (data, descrição, tipo, valor ±, origem com link para
+ * o título/cobrança, conciliado) e saldo de fechamento. Links só para telas que o usuário abre; quantias só com
+ * "Visualizar valores".
+ */
+async function buildAccountStatement(user: CurrentUser, account: FinancialAccount, entries: CashEntry[], period: { from: string; to: string }, values: boolean): Promise<AccountStatement> {
+  const st = buildStatement(account, entries, period);
+  const lines = [...st.lines].reverse(); // mais recentes primeiro na tela
+  const payableIds = lines.filter((l) => l.entry.origin?.kind === "payable").map((l) => l.entry.origin!.id);
+  const billingIds = lines.filter((l) => l.entry.origin?.kind === "billing").map((l) => l.entry.origin!.id);
+  const [payables, billings] = await Promise.all([getManyByIds<Payable>(COLLECTIONS.payables, payableIds), getManyByIds<Billing>(COLLECTIONS.billing, billingIds)]);
+  const contracts = await getManyByIds<Contract>(COLLECTIONS.contracts, Array.from(billings.values()).map((b) => b.contractId));
+  const canPayables = canSeeHref(user, "/financeiro/contas-a-pagar");
+  const canBillings = canSeeHref(user, "/financeiro/cobrancas");
+  const origin = (e: CashEntry): StatementRow["origin"] => {
+    if (!e.origin) return undefined;
+    if (e.origin.kind === "payable") {
+      const p = payables.get(e.origin.id);
+      return { label: `Título ${p?.code ?? e.origin.id}`, href: canPayables ? `/financeiro/contas-a-pagar?titulo=${e.origin.id}` : undefined };
+    }
+    const b = billings.get(e.origin.id);
+    const c = b ? contracts.get(b.contractId) : undefined;
+    const label = b ? `Cobrança ${BILLING_TYPE_LABEL[b.type]}${b.installment ? ` ${b.installment}` : ""}${c ? ` · ${c.number}` : ""}` : "Cobrança";
+    return { label, href: b && canBillings ? `/financeiro/cobrancas?cliente=${b.clientId}&competencia=${b.competence}&tipo=${b.type}` : undefined };
+  };
+  return {
+    accountId: account.id,
+    accountName: account.name,
+    archived: Boolean(account.archived),
+    from: period.from,
+    to: period.to,
+    opening: values ? st.opening : null,
+    closing: values ? st.closing : null,
+    inflow: values ? st.inflow : null,
+    outflow: values ? st.outflow : null,
+    rows: lines.map((l) => ({
+      id: l.entry.id,
+      date: l.entry.date,
+      description: l.entry.description,
+      type: l.entry.type,
+      typeLabel: CASH_ENTRY_TYPE_LABELS[l.entry.type],
+      amount: values ? l.signed : null,
+      balance: values ? l.balance : null,
+      contactName: l.entry.contact?.name,
+      notes: l.entry.notes,
+      reconciled: Boolean(l.entry.reconciled),
+      origin: origin(l.entry),
+    })),
   };
 }

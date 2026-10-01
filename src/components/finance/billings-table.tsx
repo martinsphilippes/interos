@@ -16,7 +16,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination, paginate } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { BillingActions, billingLabel, BoletoBadge } from "./billing-actions";
+import { BillingActions, billingLabel, BoletoBadge, NoAccountBadge } from "./billing-actions";
 
 const PAGE_SIZE = 25;
 
@@ -64,6 +64,7 @@ export function BillingsTable({ rows }: { rows: BillingRow[] }) {
                 <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
                   {BILLING_STATUS_LABELS[b.status]}
                 </Badge>
+                <NoAccountBadge billing={b} />
                 {b.status !== "cancelada" ? <BoletoBadge billing={b} /> : null}
                 <DueInfo row={b} />
               </div>
@@ -113,9 +114,12 @@ export function BillingsTable({ rows }: { rows: BillingRow[] }) {
                   </span>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
-                    {BILLING_STATUS_LABELS[b.status]}
-                  </Badge>
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    <Badge variant={BILLING_STATUS_VARIANT[b.status]} size="sm">
+                      {BILLING_STATUS_LABELS[b.status]}
+                    </Badge>
+                    <NoAccountBadge billing={b} />
+                  </span>
                 </TableCell>
                 <TableCell>{b.status !== "cancelada" ? <BoletoBadge billing={b} /> : <span className="text-xs text-muted">—</span>}</TableCell>
                 {canOperate ? (

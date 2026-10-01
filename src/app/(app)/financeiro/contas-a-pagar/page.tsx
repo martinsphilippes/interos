@@ -110,7 +110,7 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
         </Card>
         {ws.selected ? (
           <SidePanelShell explicit={Boolean(requested)} param="titulo" ariaLabel="Título selecionado" title={`${ws.selected.code} · ${ws.selected.creditorName}`}>
-            <PayablePanel key={ws.selected.id} p={ws.selected} can={ws.can} costCenters={ws.settings.centrosDeCusto} />
+            <PayablePanel key={ws.selected.id} p={ws.selected} can={ws.can} costCenters={ws.settings.centrosDeCusto} accounts={ws.accounts} />
           </SidePanelShell>
         ) : (
           <aside className="hidden xl:block">

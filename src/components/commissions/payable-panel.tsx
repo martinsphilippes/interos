@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, ExternalLink, FileText, History, Paperclip, Pencil, Plus, Repeat, Route } from "lucide-react";
+import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Repeat, Route, Undo2 } from "lucide-react";
 import type { PayableDetail } from "@/server/commissions/queries";
 import type { PayableCapabilities } from "@/server/commissions/access";
-import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, createManualPayableAction, payPayableAction, schedulePayableAction, updatePayableAction } from "@/server/commissions/actions";
+import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, createManualPayableAction, payPayableAction, schedulePayableAction, undoPayablePaymentAction, updatePayableAction } from "@/server/commissions/actions";
 import { PAYOUT_METHOD_LABELS, PAYOUT_METHODS } from "@/server/commissions/schemas";
 import { PAYABLE_ORIGIN_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { dateKey, formatCompetence, formatCurrency, formatDate } from "@/lib/format";
@@ -20,15 +20,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { useFinanceAction } from "@/components/finance/use-finance-action";
 import { CalcMemory, CommissionStatusBadge, HistoryList, PayableStatusBadge, ReasonDialog, TraceChain } from "./commission-ui";
 
-type Dialogs = null | "schedule" | "pay" | "cancel" | "edit" | "attach";
+type Dialogs = null | "schedule" | "pay" | "cancel" | "edit" | "attach" | "undo";
+
+type Opt = { value: string; label: string };
 
 /** Capacidades calculadas no servidor (payableCapabilities); a interface só esconde — as actions revalidam. */
-export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate">;
+export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate"> & Partial<Pick<PayableCapabilities, "undoPayment">>;
 
 const today = () => dateKey(new Date());
 
 /** Painel do título: valores, ações (aprovar → programar → pagar; cancelar), origem rastreável, anexos, série, memória da comissão e histórico. */
-export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; can: PayableCan; costCenters?: string[] }) {
+export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: PayableDetail; can: PayableCan; costCenters?: string[]; accounts?: Opt[] }) {
   const { pending, run } = useFinanceAction();
   const [dialog, setDialog] = React.useState<Dialogs>(null);
   const open = p.status !== "pago" && p.status !== "cancelado";
@@ -65,6 +67,20 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
               { label: "Vencimento", value: formatDate(p.dueDate) },
               ...(p.approvedBy ? [{ label: "Aprovado por", value: `${p.approvedBy}${p.approvedAt ? ` em ${formatDate(p.approvedAt)}` : ""}` }] : []),
               ...(p.paidAt ? [{ label: "Pago em", value: `${formatDate(p.paidAt)}${p.paymentMethod ? ` · ${PAYOUT_METHOD_LABELS[p.paymentMethod as keyof typeof PAYOUT_METHOD_LABELS] ?? p.paymentMethod}` : ""}` }] : []),
+              ...(p.status === "pago"
+                ? [
+                    {
+                      label: "Conta da baixa",
+                      value: p.payments.length ? (
+                        <span data-testid="payable-payment-account">{Array.from(new Set(p.payments.map((x) => x.accountName))).join(", ")}</span>
+                      ) : (
+                        <span className="text-muted" data-testid="payable-payment-account">
+                          Sem conta (pagamento anterior às contas financeiras)
+                        </span>
+                      ),
+                    },
+                  ]
+                : []),
               ...(p.receiptUrl
                 ? [
                     {
@@ -116,6 +132,19 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
             </div>
           ) : null}
           {open && p.status === "previsto" && !canApprove && can.operate ? <p className="mt-3 text-xs text-muted">Aguardando aprovação do gestor do Financeiro.</p> : null}
+          {p.status === "pago" && can.undoPayment ? (
+            p.undoBlocked ? (
+              <p className="mt-3 text-xs text-muted" data-testid="payable-undo-blocked">
+                {p.undoBlocked}
+              </p>
+            ) : (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button variant="outline" className="h-11 md:h-9" onClick={() => setDialog("undo")}>
+                  <Undo2 /> Desfazer pagamento
+                </Button>
+              </div>
+            )
+          ) : null}
         </CardContent>
       </Card>
 
@@ -222,7 +251,7 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
       </Card>
 
       {dialog === "schedule" ? <ScheduleDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => schedulePayableAction({ payableId: p.id, ...v }), "Pagamento programado").then(close)} /> : null}
-      {dialog === "pay" ? <PayDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => payPayableAction({ payableId: p.id, ...v }), (d) => (d.commissions > 0 ? "Título pago · comissão marcada como paga" : "Título pago")).then(close)} /> : null}
+      {dialog === "pay" ? <PayDialog p={p} accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => payPayableAction({ payableId: p.id, ...v }), (d) => (d.commissions > 0 ? "Título pago · comissão marcada como paga" : "Título pago")).then(close)} /> : null}
       {dialog === "edit" ? <EditDialog p={p} costCenters={costCenters} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updatePayableAction({ payableId: p.id, ...v }), "Título alterado").then(close)} /> : null}
       {dialog === "attach" ? <AttachDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => addPayableAttachmentAction({ payableId: p.id, ...v }), "Anexo adicionado").then(close)} /> : null}
       <ReasonDialog
@@ -234,6 +263,16 @@ export function PayablePanel({ p, can, costCenters = [] }: { p: PayableDetail; c
         destructive
         pending={pending}
         onConfirm={(reason) => run(() => cancelPayableAction({ payableId: p.id, reason }), "Título cancelado").then(close)}
+      />
+      <ReasonDialog
+        open={dialog === "undo"}
+        onOpenChange={(o) => setDialog(o ? "undo" : null)}
+        title={`Desfazer o pagamento de ${p.code}?`}
+        description={p.payments.length ? `O título volta para "A pagar" e o lançamento de ${formatCurrency(p.payments[p.payments.length - 1].amount)} é apagado da conta ${p.payments[p.payments.length - 1].accountName} (o saldo volta).` : 'O título volta para "A pagar". Este pagamento é anterior às contas financeiras: não há lançamento de caixa a apagar.'}
+        confirmLabel="Desfazer pagamento"
+        destructive
+        pending={pending}
+        onConfirm={(reason) => run(() => undoPayablePaymentAction({ payableId: p.id, reason }), (d) => (d.cashEntryRemoved ? "Pagamento desfeito · lançamento de caixa apagado" : "Pagamento desfeito")).then(close)}
       />
     </>
   );
@@ -271,8 +310,10 @@ function ScheduleDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; p
   );
 }
 
-function PayDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pending: boolean; onClose: () => void; onSubmit: (v: { paidAt: string; paymentMethod: string; receiptUrl?: string; notes?: string }) => Promise<boolean> }) {
+function PayDialog({ p, accounts, pending, onClose, onSubmit }: { p: PayableDetail; accounts: Opt[]; pending: boolean; onClose: () => void; onSubmit: (v: { paidAt: string; paymentMethod: string; receiptUrl?: string; notes?: string; accountId: string }) => Promise<boolean> }) {
   const id = React.useId();
+  // Conta da baixa (etapa CP/CR 2): a prevista no título ou, havendo uma só conta ativa, ela; senão o usuário escolhe.
+  const [accountId, setAccountId] = React.useState(() => (p.accountId && accounts.some((a) => a.value === p.accountId) ? p.accountId : accounts.length === 1 ? accounts[0].value : ""));
   const [paidAt, setPaidAt] = React.useState(today());
   const [method, setMethod] = React.useState<string>("pix");
   const [receiptUrl, setReceiptUrl] = React.useState("");
@@ -290,6 +331,22 @@ function PayDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pendin
           <FormField label="Data do pagamento" htmlFor={`${id}-d`} required>
             <Input id={`${id}-d`} type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
           </FormField>
+          {accounts.length > 0 ? (
+            <FormField label="Conta financeira" htmlFor={`${id}-a`} required hint="De onde o dinheiro saiu: gera o lançamento de despesa no extrato da conta" error={accountId ? undefined : "Escolha a conta"}>
+              <Select id={`${id}-a`} value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="Selecione a conta" options={accounts} />
+            </FormField>
+          ) : (
+            <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm text-warning-fg" data-testid="pay-no-account">
+              <Landmark className="mt-0.5 size-4 shrink-0" />
+              <span>
+                Nenhuma conta financeira cadastrada. Cadastre em{" "}
+                <Link href="/financeiro/cadastros?aba=contas" className="font-medium text-brand-fg hover:underline">
+                  Financeiro › Cadastros financeiros
+                </Link>{" "}
+                para registrar o pagamento.
+              </span>
+            </p>
+          )}
           <FormField label="Forma de pagamento" htmlFor={`${id}-m`} required>
             <Select id={`${id}-m`} value={method} onChange={(e) => setMethod(e.target.value)} options={PAYOUT_METHODS.map((m) => ({ value: m, label: PAYOUT_METHOD_LABELS[m] }))} />
           </FormField>
@@ -304,7 +361,7 @@ function PayDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pendin
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Voltar
           </Button>
-          <Button variant="success" onClick={() => onSubmit({ paidAt, paymentMethod: method, receiptUrl, notes })} loading={pending} disabled={!paidAt}>
+          <Button variant="success" onClick={() => onSubmit({ paidAt, paymentMethod: method, receiptUrl, notes, accountId })} loading={pending} disabled={!paidAt}>
             <CircleDollarSign /> Confirmar pagamento
           </Button>
         </DialogFooter>

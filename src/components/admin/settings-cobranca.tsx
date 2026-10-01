@@ -224,13 +224,15 @@ export function SettingsCobrancaCanais({ value, stored }: { value: CobrancaCanai
 // Baixa automática
 // ---------------------------------------------------------------------------
 
-export function SettingsFinanceiroBaixa({ value, stored }: { value: FinanceiroBaixaConfig; stored: boolean }) {
+export function SettingsFinanceiroBaixa({ value, stored, accounts = [] }: { value: FinanceiroBaixaConfig; stored: boolean; accounts?: { value: string; label: string }[] }) {
   const { pending, error, save } = useSaveSetting("financeiro_baixa");
-  const [form, setForm] = React.useState({ toleranciaValor: String(value.toleranciaValor).replace(".", ","), pagamentoParcialAutomatico: value.pagamentoParcialAutomatico });
+  const [form, setForm] = React.useState({ toleranciaValor: String(value.toleranciaValor).replace(".", ","), pagamentoParcialAutomatico: value.pagamentoParcialAutomatico, contaRecebimentoPadraoId: value.contaRecebimentoPadraoId ?? "" });
+  // Conta padrão gravada que foi arquivada/removida: aparece como opção para não sumir em silêncio.
+  const accountOptions = form.contaRecebimentoPadraoId && !accounts.some((a) => a.value === form.contaRecebimentoPadraoId) ? [...accounts, { value: form.contaRecebimentoPadraoId, label: "Conta arquivada ou removida (baixa automática fica sem conta)" }] : accounts;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    save({ toleranciaValor: Number(form.toleranciaValor.replace(",", ".")), pagamentoParcialAutomatico: form.pagamentoParcialAutomatico }, "Baixa automática salva");
+    save({ toleranciaValor: Number(form.toleranciaValor.replace(",", ".")), pagamentoParcialAutomatico: form.pagamentoParcialAutomatico, contaRecebimentoPadraoId: form.contaRecebimentoPadraoId || undefined }, "Baixa automática salva");
   };
 
   return (
@@ -248,6 +250,14 @@ export function SettingsFinanceiroBaixa({ value, stored }: { value: FinanceiroBa
         </FormField>
         <FormField label="Pagamento parcial automático" htmlFor="fb-parcial" required>
           <Select id="fb-parcial" value={form.pagamentoParcialAutomatico} onChange={(e) => setForm((f) => ({ ...f, pagamentoParcialAutomatico: e.target.value as FinanceiroBaixaConfig["pagamentoParcialAutomatico"] }))} options={[{ value: "pendencia", label: "Não baixar: registrar pendência e avisar" }, { value: "baixar", label: "Baixar com o valor recebido" }]} />
+        </FormField>
+        <FormField
+          label="Conta padrão de recebimento"
+          htmlFor="fb-conta"
+          className="sm:col-span-2"
+          hint="Onde entram as baixas automáticas (gera o lançamento de receita). Sem conta, a baixa automática acontece mesmo assim, sem lançamento, e a cobrança fica marcada “Sem conta”. Também vem pré-selecionada no “Registrar pagamento”."
+        >
+          <Select id="fb-conta" value={form.contaRecebimentoPadraoId} onChange={(e) => setForm((f) => ({ ...f, contaRecebimentoPadraoId: e.target.value }))} placeholder="Sem conta padrão" options={accountOptions} />
         </FormField>
       </div>
     </SettingsSection>

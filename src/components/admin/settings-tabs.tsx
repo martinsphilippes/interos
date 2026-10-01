@@ -59,6 +59,8 @@ export interface SettingsTabsProps {
   kpiOptions: KpiOption[];
   /** Prévia honesta da régua de cobrança (o que a varredura faria hoje, sem enviar). */
   reguaPreview: ReguaPreview | null;
+  /** Contas financeiras ativas (conta padrão de recebimento da baixa automática — etapa CP/CR 2). */
+  paymentAccounts?: { value: string; label: string }[];
   /** O que o perfil vê e edita (A12), calculado no servidor. */
   access: SettingsAccess;
 }
@@ -82,7 +84,7 @@ function ReadOnlyBlock({ readOnly, children }: { readOnly: boolean; children: Re
  * Abas das configurações (?aba=...). Cada aba é um formulário independente que salva a própria chave. Só aparecem
  * as abas e seções que o perfil pode ver; sem a chave de edição a seção fica somente leitura.
  */
-export function SettingsTabs({ tab, values, stored, slaRules, originKeys, interestKeys, operationHealth, performanceIndex, kpiOptions, reguaPreview, access }: SettingsTabsProps) {
+export function SettingsTabs({ tab, values, stored, slaRules, originKeys, interestKeys, operationHealth, performanceIndex, kpiOptions, reguaPreview, paymentAccounts = [], access }: SettingsTabsProps) {
   const { setLocal } = useAdminUrl();
   const tabs = visibleSettingsTabs(access);
   const initial = tabs.includes(tab) ? tab : (tabs[0] ?? tab);
@@ -181,7 +183,7 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
             ) : null}
             {sees("financeiro_baixa") ? (
               <Guard editable={edits("financeiro_baixa")}>
-                <SettingsFinanceiroBaixa key={JSON.stringify(values.financeiro_baixa)} value={values.financeiro_baixa!} stored={has("financeiro_baixa")} />
+                <SettingsFinanceiroBaixa key={JSON.stringify(values.financeiro_baixa)} value={values.financeiro_baixa!} stored={has("financeiro_baixa")} accounts={paymentAccounts} />
               </Guard>
             ) : null}
           </div>

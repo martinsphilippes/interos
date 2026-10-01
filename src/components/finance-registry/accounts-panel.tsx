@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Archive, ArchiveRestore, Landmark, Pencil, Plus } from "lucide-react";
+import Link from "next/link";
+import { Archive, ArchiveRestore, Landmark, Pencil, Plus, ScrollText } from "lucide-react";
 import type { FinancialAccountType } from "@/domain/types";
 import { FINANCIAL_ACCOUNT_TYPES, FINANCIAL_ACCOUNT_TYPE_LABELS } from "@/domain/finance-registry";
 import type { AccountRow } from "@/server/finance-registry/queries";
@@ -10,6 +11,7 @@ import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -23,6 +25,8 @@ import { ArchivedBadge } from "./shared";
 
 export interface AccountsCan {
   values: boolean;
+  /** Ver extrato (etapa CP/CR 2). */
+  statement?: boolean;
   create: boolean;
   edit: boolean;
   archive: boolean;
@@ -31,8 +35,8 @@ export interface AccountsCan {
 const money = (n: number | null) => (n === null ? "Restrito" : formatCurrency(n));
 const bankLine = (a: AccountRow) => [a.bankName, a.agency ? `ag. ${a.agency}` : null, a.accountNumber ? `conta ${a.accountNumber}` : null].filter(Boolean).join(" · ");
 
-/** Contas financeiras: onde o dinheiro entra e sai. Saldo = saldo inicial (+ lançamentos, a partir da etapa 2). */
-export function AccountsPanel({ rows, can }: { rows: AccountRow[]; can: AccountsCan }) {
+/** Contas financeiras: onde o dinheiro entra e sai. Saldo atual = saldo inicial + lançamentos de caixa (baixas com conta). */
+export function AccountsPanel({ rows, can, selectedId }: { rows: AccountRow[]; can: AccountsCan; selectedId?: string }) {
   const [editing, setEditing] = React.useState<AccountRow | "new" | null>(null);
   const [archiving, setArchiving] = React.useState<AccountRow | null>(null);
   const { pending, run } = useFinanceAction();
@@ -47,7 +51,7 @@ export function AccountsPanel({ rows, can }: { rows: AccountRow[]; can: Accounts
           <div className="min-w-0">
             <CardTitle>Contas financeiras</CardTitle>
             <p className="mt-0.5 text-sm text-muted">
-              {active} ativa(s){rows.length > active ? ` · ${rows.length - active} arquivada(s)` : ""} · saldo = saldo inicial + lançamentos (os lançamentos de caixa chegam com as baixas)
+              {active} ativa(s){rows.length > active ? ` · ${rows.length - active} arquivada(s)` : ""} · saldo atual = saldo inicial + lançamentos de caixa (pagamentos e recebimentos registrados com a conta)
             </p>
           </div>
           {can.create ? (
@@ -61,7 +65,7 @@ export function AccountsPanel({ rows, can }: { rows: AccountRow[]; can: Accounts
         ) : (
           <ul className="flex flex-col divide-y divide-border" data-testid="accounts-list">
             {rows.map((r) => (
-              <li key={r.id} data-account={r.name} className={cn("flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:gap-4", r.archived && "opacity-70")}>
+              <li key={r.id} data-account={r.name} className={cn("flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:gap-4", r.archived && "opacity-70", selectedId === r.id && "bg-brand-soft/40")}>
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2 font-medium">
                     <span className="min-w-0 break-words">{r.name}</span>
@@ -81,6 +85,11 @@ export function AccountsPanel({ rows, can }: { rows: AccountRow[]; can: Accounts
                   </dd>
                 </dl>
                 <div className="flex flex-wrap gap-2 md:shrink-0 md:justify-end">
+                  {can.statement ? (
+                    <Link href={`/financeiro/cadastros?aba=contas&conta=${r.id}`} className={buttonVariants({ variant: "outline", size: "sm", className: "h-10 md:h-8" })} aria-label={`Extrato de ${r.name}`} aria-current={selectedId === r.id ? "true" : undefined}>
+                      <ScrollText /> Extrato
+                    </Link>
+                  ) : null}
                   {can.edit && can.values && !r.archived ? (
                     <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={() => setEditing(r)} aria-label={`Editar ${r.name}`}>
                       <Pencil /> Editar

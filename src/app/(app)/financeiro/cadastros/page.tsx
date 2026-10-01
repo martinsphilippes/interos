@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { Timeline } from "@/components/timeline/timeline";
 import { AccountsPanel } from "@/components/finance-registry/accounts-panel";
+import { AccountStatementCard } from "@/components/finance-registry/account-statement";
 import { CentersPanel } from "@/components/finance-registry/centers-panel";
 import { CategoriesPanel } from "@/components/finance-registry/categories-panel";
 import { ImportButton } from "@/components/finance-registry/import-button";
@@ -23,7 +24,8 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
 
 /**
  * Financeiro › Cadastros financeiros (etapa CP/CR 1): contas financeiras, centros de custo e categorias de
- * receita/despesa com subcategoria (?aba=contas|centros|categorias; ?item=<id> filtra o histórico). Tela
+ * receita/despesa com subcategoria (?aba=contas|centros|categorias; ?item=<id> filtra o histórico; ?conta=<id>&de=&ate=
+ * abre o extrato somente leitura da conta — etapa CP/CR 2). Tela
  * financeiro.cadastros; cada aba é uma seção; cada botão pela sua chave (calculada no servidor; as actions revalidam).
  * Saldo sob "Visualizar valores". Histórico = eventos de auditoria ("de → para" e motivo).
  */
@@ -31,7 +33,7 @@ export default async function FinanceRegistryPage({ searchParams }: { searchPara
   const user = await requireScreen("financeiro.cadastros");
   const sp = await searchParams;
   const item = first(sp.item);
-  const ws = await getRegistryWorkspace(user, { tab: first(sp.aba), item });
+  const ws = await getRegistryWorkspace(user, { tab: first(sp.aba), item, conta: first(sp.conta), de: first(sp.de), ate: first(sp.ate) });
   const importButton = ws.importPlan && ws.can.import ? <ImportButton plan={ws.importPlan} /> : null;
 
   return (
@@ -54,7 +56,8 @@ export default async function FinanceRegistryPage({ searchParams }: { searchPara
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 2xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0">
-          {ws.tab === "contas" ? <AccountsPanel rows={ws.accounts} can={{ values: ws.can.values, ...ws.can.accounts }} /> : null}
+          {ws.tab === "contas" ? <AccountsPanel rows={ws.accounts} can={{ values: ws.can.values, statement: ws.can.statement, ...ws.can.accounts }} selectedId={ws.statement?.accountId} /> : null}
+          {ws.tab === "contas" && ws.statement ? <AccountStatementCard statement={ws.statement} /> : null}
           {ws.tab === "centros" ? <CentersPanel rows={ws.centers} can={ws.can.centers} canImport={Boolean(importButton)} /> : null}
           {ws.tab === "categorias" ? <CategoriesPanel rows={ws.categories} centers={ws.centers} withoutCenter={ws.counts.withoutCenter} can={ws.can.categories} canImport={Boolean(importButton)} /> : null}
         </div>
