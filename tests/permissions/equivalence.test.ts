@@ -386,7 +386,8 @@ describe("T0 — fachadas (predicados antigos com o mesmo nome e assinatura)", (
     const files = listSources(path.join(root, "src"));
     for (const f of facades) {
       const callers = files.filter((file) => !file.endsWith("/access.ts") && new RegExp(`\\b${f.name}\\(`).test(readFileSync(file, "utf8")));
-      expect(callers.length, f.name).toBeGreaterThan(3);
+      // Os módulos passaram a usar as chaves do catálogo direto (requirePermission/can); zero chamadores é o
+      // esperado. A checagem abaixo continua valendo para quem voltar a chamar a fachada.
       for (const file of callers) {
         const rel = path.relative(root, file);
         if (rel === f.guardFile) {
