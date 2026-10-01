@@ -17,6 +17,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { EmptyState } from "@/components/ui/empty-state";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ReasonDialog } from "@/components/commissions/commission-ui";
@@ -127,7 +128,7 @@ export function AccountsPanel({ rows, can, selectedId }: { rows: AccountRow[]; c
   );
 }
 
-type Form = { name: string; type: FinancialAccountType; initialBalance: string; bankName: string; agency: string; accountNumber: string; notes: string };
+type Form = { name: string; type: FinancialAccountType; initialBalance: number | null; bankName: string; agency: string; accountNumber: string; notes: string };
 
 function AccountDialog({ account, canSeeValues, onClose }: { account: AccountRow | null; canSeeValues: boolean; onClose: () => void }) {
   const id = React.useId();
@@ -135,7 +136,7 @@ function AccountDialog({ account, canSeeValues, onClose }: { account: AccountRow
   const [f, setF] = React.useState<Form>(() => ({
     name: account?.name ?? "",
     type: account?.type ?? "corrente",
-    initialBalance: account?.initialBalance !== null && account?.initialBalance !== undefined ? String(account.initialBalance) : "0",
+    initialBalance: account?.initialBalance !== null && account?.initialBalance !== undefined ? account.initialBalance : 0,
     bankName: account?.bankName ?? "",
     agency: account?.agency ?? "",
     accountNumber: account?.accountNumber ?? "",
@@ -144,7 +145,8 @@ function AccountDialog({ account, canSeeValues, onClose }: { account: AccountRow
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((prev) => ({ ...prev, [k]: v }));
   // Sem "Visualizar valores" o saldo não vem do servidor: editar a conta exige ver o valor que será gravado.
   const balanceHidden = Boolean(account) && !canSeeValues;
-  const balance = Number(f.initialBalance.replace(",", "."));
+  // Máscara em centavos (etapa CP/CR 4): campo vazio = saldo zero.
+  const balance = f.initialBalance ?? 0;
   const valid = f.name.trim().length >= 2 && Number.isFinite(balance);
   const submit = () =>
     void run(
@@ -166,8 +168,8 @@ function AccountDialog({ account, canSeeValues, onClose }: { account: AccountRow
           <FormField label="Tipo" htmlFor={`${id}-t`} required>
             <Select id={`${id}-t`} value={f.type} onChange={(e) => set("type", e.target.value as FinancialAccountType)} options={FINANCIAL_ACCOUNT_TYPES.map((t) => ({ value: t, label: FINANCIAL_ACCOUNT_TYPE_LABELS[t] }))} />
           </FormField>
-          <FormField label="Saldo inicial (R$)" htmlFor={`${id}-s`} required hint={balanceHidden ? "Restrito: seu perfil não visualiza valores" : "Moeda: real (BRL). Use ponto ou vírgula para os centavos"}>
-            <Input id={`${id}-s`} inputMode="decimal" value={balanceHidden ? "" : f.initialBalance} disabled={balanceHidden} onChange={(e) => set("initialBalance", e.target.value)} />
+          <FormField label="Saldo inicial (R$)" htmlFor={`${id}-s`} required hint={balanceHidden ? "Restrito: seu perfil não visualiza valores" : "Moeda: real (BRL). Digite só os números (os centavos entram sozinhos); \"-\" para saldo negativo"}>
+            <MoneyInput id={`${id}-s`} value={balanceHidden ? null : f.initialBalance} placeholder={balanceHidden ? "" : undefined} disabled={balanceHidden} allowNegative onValueChange={(v) => set("initialBalance", v)} />
           </FormField>
           <FormField label="Banco" htmlFor={`${id}-b`} hint="Informativo">
             <Input id={`${id}-b`} value={f.bankName} onChange={(e) => set("bankName", e.target.value)} />

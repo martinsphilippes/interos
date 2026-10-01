@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Ban, CircleDollarSign, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Receipt, Repeat, Scissors, Split } from "lucide-react";
+import { Ban, CircleDollarSign, Copy, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Receipt, Repeat, Scissors, Split } from "lucide-react";
 import type { ReceivableDetail } from "@/server/receivables/queries";
 import type { ReceivableCapabilities } from "@/server/receivables/access";
 import { addReceivableAttachmentAction, cancelReceivableAction, createReceivableAction, partialReceiveReceivableAction, receiveReceivableAction, receiveWithResidualAction, settleReceivableByPaidAction, undoReceivablePaymentAction, updateReceivableAction } from "@/server/receivables/actions";
@@ -21,6 +21,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useFinanceAction } from "@/components/finance/use-finance-action";
 import { PaymentsHistory, SettleByPaidDialog, SettlementBadge, SettlementSummary } from "@/components/finance/settlement-ui";
 import { HistoryList, ReasonDialog } from "@/components/commissions/commission-ui";
+import { MoneyInput } from "@/components/ui/money-input";
+import { ClassificationFields, EMPTY_CLASSIFICATION, NoClassificationNotice, type ClassificationValue } from "@/components/finance/classification-fields";
+import { DEFAULT_REPEAT, OccurrencePreview, RepeatFields, repeatInput } from "@/components/finance/repeat-fields";
+import { hasClassification, splitCategoryOption, titleCategoryId, type ClassificationOptions } from "@/domain/title-classification";
+import { planOccurrences, stripInstallmentSuffix, type RepeatMode } from "@/domain/title-repeat";
 
 type Opt = { value: string; label: string };
 
@@ -31,9 +36,11 @@ export interface ReceivableOptions {
   accounts: Opt[];
   /** Centro efetivo de cada categoria (pré-preenche o centro ao escolher a categoria). */
   categoryCenters: Record<string, string>;
+  /** Etapa CP/CR 4: Centro → Categoria → Subcategoria de RECEITA (null/ausente = selects da etapa 3 com aviso). */
+  classification?: ClassificationOptions | null;
 }
 
-type Dialogs = null | "receive" | "receive-partial" | "receive-residual" | "settle" | "edit" | "attach" | "cancel" | "undo";
+type Dialogs = null | "receive" | "receive-partial" | "receive-residual" | "settle" | "edit" | "attach" | "cancel" | "undo" | "clone";
 type ReceiveMode = "total" | "parcial" | "residuo";
 
 const today = () => dateKey(new Date());
@@ -75,7 +82,7 @@ export function ReceivablePanel({ r, can, options }: { r: ReceivableDetail; can:
               { label: "Competência", value: formatCompetence(r.competence) },
               { label: "Vencimento", value: formatDate(r.dueDate) },
               ...(r.installments ? [{ label: "Parcela", value: `${r.installment}/${r.installments}` }] : []),
-              ...(r.documentNumber ? [{ label: "Nº do documento", value: r.documentNumber }] : []),
+              ...(r.documentNumber ? [{ label: "Nº do documento", value: <span data-testid="receivable-document-number">{r.documentNumber}</span> }] : []),
               ...(r.paidAt ? [{ label: "Recebido em", value: formatDate(r.paidAt) }] : []),
               ...(r.residual ? [{ label: "Resíduo", value: r.residual.code, href: `/financeiro/contas-a-receber?aba=avulsos&titulo=${r.residual.id}` }] : []),
               ...(r.residualOf ? [{ label: "Resíduo de", value: r.residualOf.code, href: `/financeiro/contas-a-receber?aba=avulsos&titulo=${r.residualOf.id}` }] : []),
@@ -118,6 +125,13 @@ export function ReceivablePanel({ r, can, options }: { r: ReceivableDetail; can:
                   <Ban /> Cancelar título
                 </Button>
               ) : null}
+            </div>
+          ) : null}
+          {can.create ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button variant="ghost" className="h-11 md:h-9" onClick={() => setDialog("clone")} data-testid="receivable-clone">
+                <Copy /> Clonar
+              </Button>
             </div>
           ) : null}
         </CardContent>
@@ -215,6 +229,7 @@ export function ReceivablePanel({ r, can, options }: { r: ReceivableDetail; can:
       ) : null}
       {dialog === "settle" && r.amount !== null && r.paid !== null ? <SettleByPaidDialog code={r.code} amount={r.amount} paid={r.paid} verb="recebido" pending={pending} onClose={() => setDialog(null)} onConfirm={(reason) => run(() => settleReceivableByPaidAction({ receivableId: r.id, reason }), (d) => `Título quitado pelo já recebido (${formatCurrency(d.amount)})`).then(close)} /> : null}
       {dialog === "edit" ? <EditReceivableDialog r={r} options={options} values={can.values} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updateReceivableAction({ receivableId: r.id, ...v }), "Título alterado").then(close)} /> : null}
+      {dialog === "clone" ? <ReceivableFormDialog options={options} cloneOf={r.code} initial={cloneInitial(r)} onClose={() => setDialog(null)} /> : null}
       {dialog === "attach" ? <AttachDialog code={r.code} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => addReceivableAttachmentAction({ receivableId: r.id, ...v }), "Anexo adicionado").then(close)} /> : null}
       <ReasonDialog open={dialog === "cancel"} onOpenChange={(o) => setDialog(o ? "cancel" : null)} title={`Cancelar o título ${r.code}?`} description="O título fica cancelado (não é excluído) e não pode mais ser recebido. O motivo fica no histórico e na auditoria." confirmLabel="Cancelar título" destructive pending={pending} onConfirm={(reason) => run(() => cancelReceivableAction({ receivableId: r.id, reason }), "Título cancelado").then(close)} />
       <ReasonDialog
@@ -253,12 +268,13 @@ function ReceiveDialog({ r, mode, accounts, pending, onClose, onSubmit }: { r: R
   const [accountId, setAccountId] = React.useState(() => (r.accountId && accounts.some((a) => a.value === r.accountId) ? r.accountId : accounts.length === 1 ? accounts[0].value : ""));
   const [paidAt, setPaidAt] = React.useState(today());
   const [method, setMethod] = React.useState<string>("pix");
-  const [amount, setAmount] = React.useState(mode === "total" ? String(open) : "");
+  // Valor com máscara em centavos (etapa CP/CR 4): null = vazio.
+  const [amount, setAmount] = React.useState<number | null>(mode === "total" ? open : null);
   const [receiptUrl, setReceiptUrl] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [reason, setReason] = React.useState("");
-  const value = Number(amount);
-  const changed = mode === "total" && amount.trim() !== "" && cents(value) !== cents(open);
+  const value = amount ?? 0;
+  const changed = mode === "total" && amount !== null && cents(value) !== cents(open);
   const residual = mode === "residuo" && value > 0 && cents(value) < cents(open) ? (cents(open) - cents(value)) / 100 : null;
   const amountOk = value > 0 && (mode !== "parcial" || cents(value) <= cents(open)) && (mode !== "residuo" || residual !== null);
   return (
@@ -278,7 +294,7 @@ function ReceiveDialog({ r, mode, accounts, pending, onClose, onSubmit }: { r: R
             <Input id={`${id}-d`} type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
           </FormField>
           <FormField label={text.amountLabel} htmlFor={`${id}-v`} required hint={text.hint}>
-            <Input id={`${id}-v`} type="number" inputMode="decimal" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <MoneyInput id={`${id}-v`} value={amount} onValueChange={setAmount} />
           </FormField>
           {residual !== null ? (
             <p className="rounded-md border border-info/35 bg-info-soft px-3 py-2 text-sm text-info-fg" data-testid="residual-preview">
@@ -337,12 +353,18 @@ function PayerAndClassification({
   f,
   set,
   options,
+  cls,
+  setCls,
 }: {
   id: string;
   f: { clientId: string; payerName: string; categoryId: string; costCenterId: string; accountId: string };
   set: (k: "clientId" | "payerName" | "categoryId" | "costCenterId" | "accountId", v: string) => void;
   options: ReceivableOptions;
+  /** Etapa CP/CR 4: Centro → Categoria → Subcategoria (quando há cadastros de receita). */
+  cls?: ClassificationValue;
+  setCls?: (v: ClassificationValue) => void;
 }) {
+  const registry = hasClassification(options.classification) ? options.classification! : null;
   return (
     <>
       <FormField label="Cliente" htmlFor={`${id}-cli`} required hint="Cliente cadastrado ou nome livre do pagador">
@@ -355,22 +377,29 @@ function PayerAndClassification({
       ) : (
         <span className="hidden sm:block" aria-hidden />
       )}
-      <FormField label="Categoria (receita)" htmlFor={`${id}-cat`} hint={options.categories.length === 0 ? "Nenhuma categoria de receita em Cadastros financeiros" : "Só categorias de receita"}>
-        <Select
-          id={`${id}-cat`}
-          value={f.categoryId}
-          onChange={(e) => {
-            set("categoryId", e.target.value);
-            // Escolher a categoria preenche o centro (editável).
-            set("costCenterId", options.categoryCenters[e.target.value] ?? "");
-          }}
-          placeholder="Sem categoria"
-          options={options.categories}
-        />
-      </FormField>
-      <FormField label="Centro de custo" htmlFor={`${id}-cc`} hint="Vazio = o da categoria">
-        <Select id={`${id}-cc`} value={f.costCenterId} onChange={(e) => set("costCenterId", e.target.value)} placeholder="O da categoria" options={options.centers} />
-      </FormField>
+      {registry && cls && setCls ? (
+        <ClassificationFields id={id} options={registry} value={cls} onChange={setCls} />
+      ) : (
+        <>
+          {cls ? <NoClassificationNotice kind="receita" className="sm:col-span-2" /> : null}
+          <FormField label="Categoria (receita)" htmlFor={`${id}-cat`} hint={options.categories.length === 0 ? "Nenhuma categoria de receita em Cadastros financeiros" : "Só categorias de receita"}>
+            <Select
+              id={`${id}-cat`}
+              value={f.categoryId}
+              onChange={(e) => {
+                set("categoryId", e.target.value);
+                // Escolher a categoria preenche o centro (editável).
+                set("costCenterId", options.categoryCenters[e.target.value] ?? "");
+              }}
+              placeholder="Sem categoria"
+              options={options.categories}
+            />
+          </FormField>
+          <FormField label="Centro de custo" htmlFor={`${id}-cc`} hint="Vazio = o da categoria">
+            <Select id={`${id}-cc`} value={f.costCenterId} onChange={(e) => set("costCenterId", e.target.value)} placeholder="O da categoria" options={options.centers} />
+          </FormField>
+        </>
+      )}
       <FormField label="Conta prevista" htmlFor={`${id}-acc`} hint="Pré-seleciona a conta no recebimento">
         <Select id={`${id}-acc`} value={f.accountId} onChange={(e) => set("accountId", e.target.value)} placeholder="Sem conta prevista" options={options.accounts} />
       </FormField>
@@ -378,11 +407,20 @@ function PayerAndClassification({
   );
 }
 
+/** Classificação inicial a partir do `categoryId` gravado (separa categoria-mãe e subcategoria). */
+function initialClassification(options: ReceivableOptions, categoryId?: string, costCenterId?: string): ClassificationValue {
+  const registry = hasClassification(options.classification) ? options.classification! : null;
+  if (!registry) return EMPTY_CLASSIFICATION;
+  const split = splitCategoryOption(categoryId, registry);
+  const known = registry.categories.some((c) => c.value === split.categoryId);
+  return { ...(known ? split : { categoryId: "", subcategoryId: "" }), costCenterId: costCenterId && registry.centers.some((c) => c.value === costCenterId) ? costCenterId : "" };
+}
+
 function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }: { r: ReceivableDetail; options: ReceivableOptions; values: boolean; pending: boolean; onClose: () => void; onSubmit: (v: Record<string, unknown>) => Promise<boolean> }) {
   const id = React.useId();
   const [f, setF] = React.useState({
     description: r.description,
-    amount: r.amount === null ? "" : String(r.amount),
+    amount: r.amount as number | null,
     dueDate: dateKey(r.dueDate),
     competence: r.competence,
     clientId: r.clientId ?? FREE,
@@ -394,17 +432,23 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
     notes: r.notes ?? "",
     reason: "",
   });
-  const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
+  const set = (k: Exclude<keyof typeof f, "amount">, v: string) => setF((p) => ({ ...p, [k]: v }));
   const amountEditable = values && r.payments.length === 0 && !r.paid;
+  // Etapa CP/CR 4: com cadastros de receita, Centro → Categoria → Subcategoria (separa o categoryId gravado).
+  const registry = hasClassification(options.classification);
+  const [cls, setCls] = React.useState<ClassificationValue>(() => {
+    const start = initialClassification(options, r.categoryId, r.costCenterId);
+    // Categoria gravada fora das opções (arquivada): mantém o id para não limpar sem querer.
+    return r.categoryId && !start.categoryId ? { ...start, categoryId: r.categoryId } : start;
+  });
   const submit = () =>
     onSubmit({
       description: f.description,
-      ...(amountEditable ? { amount: Number(f.amount) } : {}),
+      ...(amountEditable && f.amount !== null ? { amount: f.amount } : {}),
       dueDate: f.dueDate,
       competence: f.competence,
       ...(f.clientId === FREE ? { payerName: f.payerName } : { clientId: f.clientId }),
-      categoryId: f.categoryId,
-      costCenterId: f.costCenterId,
+      ...(registry ? { categoryId: titleCategoryId(cls) ?? "", costCenterId: cls.costCenterId } : { categoryId: f.categoryId, costCenterId: f.costCenterId }),
       accountId: f.accountId,
       documentNumber: f.documentNumber,
       notes: f.notes,
@@ -422,7 +466,7 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
             <Input id={`${id}-desc`} value={f.description} onChange={(e) => set("description", e.target.value)} />
           </FormField>
           <FormField label="Valor (R$)" htmlFor={`${id}-amount`} hint={amountEditable ? undefined : "Com recebimento registrado o valor muda pelas baixas"}>
-            <Input id={`${id}-amount`} type="number" inputMode="decimal" step="0.01" value={f.amount} onChange={(e) => set("amount", e.target.value)} disabled={!amountEditable} />
+            <MoneyInput id={`${id}-amount`} value={f.amount} onValueChange={(v) => setF((p) => ({ ...p, amount: v }))} disabled={!amountEditable} />
           </FormField>
           <FormField label="Vencimento" htmlFor={`${id}-due`}>
             <Input id={`${id}-due`} type="date" value={f.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
@@ -433,7 +477,7 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
           <FormField label="Nº do documento" htmlFor={`${id}-doc`}>
             <Input id={`${id}-doc`} value={f.documentNumber} onChange={(e) => set("documentNumber", e.target.value)} />
           </FormField>
-          <PayerAndClassification id={id} f={f} set={set} options={options} />
+          <PayerAndClassification id={id} f={f} set={set} options={options} cls={registry ? cls : undefined} setCls={setCls} />
           <FormField label="Observações" htmlFor={`${id}-notes`} className="sm:col-span-2">
             <Textarea id={`${id}-notes`} value={f.notes} onChange={(e) => set("notes", e.target.value)} />
           </FormField>
@@ -445,7 +489,7 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Voltar
           </Button>
-          <Button onClick={submit} loading={pending} disabled={f.reason.trim().length < 5 || (f.clientId === FREE && f.payerName.trim().length < 2)}>
+          <Button onClick={submit} loading={pending} disabled={f.reason.trim().length < 5 || (f.clientId === FREE && f.payerName.trim().length < 2) || (amountEditable && !(f.amount && f.amount > 0))}>
             Salvar alteração
           </Button>
         </DialogFooter>
@@ -486,106 +530,161 @@ function AttachDialog({ code, pending, onClose, onSubmit }: { code: string; pend
   );
 }
 
+/** Valores iniciais do formulário (clonar um título a receber). */
+interface ReceivableFormInitial {
+  description: string;
+  amount: number | null;
+  dueDate: string;
+  competence?: string;
+  clientId?: string;
+  payerName?: string;
+  categoryId?: string;
+  costCenterId?: string;
+  accountId?: string;
+  notes?: string;
+}
+
+/** Clonar (etapa CP/CR 4): sem sufixo de parcela, sem recebimentos e sem o nº do documento (novo documento). */
+function cloneInitial(r: ReceivableDetail): ReceivableFormInitial {
+  return {
+    description: stripInstallmentSuffix(r.description),
+    amount: r.amount !== null && r.amount > 0 ? r.amount : null,
+    dueDate: dateKey(r.dueDate),
+    competence: r.competence,
+    clientId: r.clientId,
+    payerName: r.payerName,
+    categoryId: r.categoryId,
+    costCenterId: r.costCenterId,
+    accountId: r.accountId,
+    notes: r.notes,
+  };
+}
+
 /**
- * "Novo título a receber" (etapa CP/CR 3): receita fora de contrato — único ou parcelado mensal (sobra de centavos na
- * última parcela), cliente cadastrado ou nome livre, categoria de RECEITA (preenche o centro), conta prevista, nº do
- * documento, observações e anexo por link. A repetição avançada (intervalos, fixo, prévia) é da etapa 4.
+ * "Novo título a receber" (etapas CP/CR 3 e 4): receita fora de contrato — Único / Fixo / Parcelado a cada N dias,
+ * semanas ou meses (sobra de centavos na última parcela) com prévia ao vivo, valor com máscara em centavos, cliente
+ * cadastrado ou nome livre, Centro → Categoria → Subcategoria de RECEITA, conta prevista, nº do documento, competência
+ * (vazia = mês do vencimento), observações e anexo por link.
  */
 export function NewReceivableButton({ options }: { options: ReceivableOptions }) {
-  const id = React.useId();
   const [open, setOpen] = React.useState(false);
-  const { pending, run } = useFinanceAction();
-  const blank = () => ({ description: "", amount: "", dueDate: today(), competence: "", clientId: options.clients[0]?.value ?? FREE, payerName: "", categoryId: "", costCenterId: "", accountId: "", documentNumber: "", notes: "", mode: "unico" as "unico" | "parcelado", installments: "2", attachmentUrl: "", attachmentName: "" });
-  const [f, setF] = React.useState(blank);
-  const set = (k: keyof ReturnType<typeof blank>, v: string) => setF((p) => ({ ...p, [k]: v }));
-  const n = f.mode === "parcelado" ? Math.floor(Number(f.installments)) : 1;
-  const valid = f.description.trim().length >= 3 && Number(f.amount) > 0 && Boolean(f.dueDate) && (f.clientId !== FREE || f.payerName.trim().length >= 2) && (f.mode === "unico" || (n >= 2 && n <= 48));
-  const submit = async () => {
-    const ok = await run(
-      () =>
-        createReceivableAction({
-          description: f.description,
-          amount: Number(f.amount),
-          dueDate: f.dueDate,
-          competence: f.competence || undefined,
-          ...(f.clientId === FREE ? { payerName: f.payerName } : { clientId: f.clientId }),
-          categoryId: f.categoryId || undefined,
-          costCenterId: f.costCenterId || undefined,
-          accountId: f.accountId || undefined,
-          documentNumber: f.documentNumber || undefined,
-          notes: f.notes || undefined,
-          installments: f.mode === "parcelado" ? n : undefined,
-          attachmentUrl: f.attachmentUrl || undefined,
-          attachmentName: f.attachmentName || undefined,
-        }),
-      (d) => (d.parcels > 1 ? `${d.parcels} títulos a receber lançados (${d.code ?? ""} …)` : `Título a receber ${d.code ?? ""} lançado`),
-    );
-    if (ok) {
-      setOpen(false);
-      setF(blank());
-    }
-  };
-  const perParcel = n > 1 && Number(f.amount) > 0 ? Math.floor((Math.round(Number(f.amount) * 100) / n)) / 100 : null;
   return (
     <>
       <Button className="h-11 md:h-9" onClick={() => setOpen(true)}>
         <Plus /> Novo título a receber
       </Button>
-      <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
-        <DialogContent size="lg">
-          <DialogHeader>
-            <DialogTitle>Novo título a receber</DialogTitle>
-            <DialogDescription>Receita fora de contrato (consultoria avulsa, reembolso, venda de equipamento…). Cobranças de contrato continuam nascendo do contrato.</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Descrição" htmlFor={`${id}-desc`} required className="sm:col-span-2">
-              <Input id={`${id}-desc`} value={f.description} onChange={(e) => set("description", e.target.value)} />
-            </FormField>
-            <FormField label="Lançamento" htmlFor={`${id}-mode`} required>
-              <Select id={`${id}-mode`} value={f.mode} onChange={(e) => set("mode", e.target.value)}>
-                <option value="unico">Único</option>
-                <option value="parcelado">Parcelado mensal</option>
-              </Select>
-            </FormField>
-            <FormField label={f.mode === "parcelado" ? "Valor total (R$)" : "Valor (R$)"} htmlFor={`${id}-valor`} required hint={perParcel !== null ? `≈ ${formatCurrency(perParcel)} por parcela (a sobra de centavos vai na última)` : undefined}>
-              <Input id={`${id}-valor`} type="number" inputMode="decimal" min={0} step="0.01" value={f.amount} onChange={(e) => set("amount", e.target.value)} />
-            </FormField>
-            <FormField label={f.mode === "parcelado" ? "Vencimento da 1ª parcela" : "Vencimento"} htmlFor={`${id}-due`} required>
-              <Input id={`${id}-due`} type="date" value={f.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
-            </FormField>
-            {f.mode === "parcelado" ? (
-              <FormField label="Parcelas" htmlFor={`${id}-inst`} required hint="2 a 48, vencimentos mensais">
-                <Input id={`${id}-inst`} type="number" inputMode="numeric" min={2} max={48} value={f.installments} onChange={(e) => set("installments", e.target.value)} />
-              </FormField>
-            ) : (
-              <FormField label="Competência" htmlFor={`${id}-comp`} hint="Vazia = mês do vencimento">
-                <Input id={`${id}-comp`} type="month" value={f.competence} onChange={(e) => set("competence", e.target.value)} />
-              </FormField>
-            )}
-            <PayerAndClassification id={id} f={f} set={set} options={options} />
-            <FormField label="Nº do documento" htmlFor={`${id}-doc`}>
-              <Input id={`${id}-doc`} value={f.documentNumber} onChange={(e) => set("documentNumber", e.target.value)} />
-            </FormField>
-            <FormField label="Anexo (link)" htmlFor={`${id}-att`} hint="Nota fiscal, recibo…">
-              <Input id={`${id}-att`} type="url" value={f.attachmentUrl} onChange={(e) => set("attachmentUrl", e.target.value)} placeholder="https://" />
-            </FormField>
-            <FormField label="Nome do anexo" htmlFor={`${id}-attn`}>
-              <Input id={`${id}-attn`} value={f.attachmentName} onChange={(e) => set("attachmentName", e.target.value)} disabled={!f.attachmentUrl} />
-            </FormField>
-            <FormField label="Observações (opcional)" htmlFor={`${id}-obs`} className="sm:col-span-2">
-              <Textarea id={`${id}-obs`} value={f.notes} onChange={(e) => set("notes", e.target.value)} />
-            </FormField>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={pending}>
-              Cancelar
-            </Button>
-            <Button onClick={submit} loading={pending} disabled={!valid}>
-              {f.mode === "parcelado" ? `Lançar ${n > 0 ? n : 0} títulos` : "Lançar título"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {open ? <ReceivableFormDialog options={options} onClose={() => setOpen(false)} /> : null}
     </>
+  );
+}
+
+function ReceivableFormDialog({ options, initial, cloneOf, onClose }: { options: ReceivableOptions; initial?: ReceivableFormInitial; cloneOf?: string; onClose: () => void }) {
+  const id = React.useId();
+  const { pending, run } = useFinanceAction();
+  const registry = hasClassification(options.classification);
+  const [f, setF] = React.useState(() => ({
+    description: initial?.description ?? "",
+    dueDate: initial?.dueDate ?? today(),
+    competence: initial?.competence ?? "",
+    clientId: initial ? (initial.clientId && options.clients.some((c) => c.value === initial.clientId) ? initial.clientId : FREE) : (options.clients[0]?.value ?? FREE),
+    payerName: initial && !(initial.clientId && options.clients.some((c) => c.value === initial.clientId)) ? (initial.payerName ?? "") : "",
+    categoryId: initial?.categoryId && options.categories.some((c) => c.value === initial.categoryId) ? initial.categoryId : "",
+    costCenterId: initial?.costCenterId && options.centers.some((c) => c.value === initial.costCenterId) ? initial.costCenterId : "",
+    accountId: initial?.accountId && options.accounts.some((a) => a.value === initial.accountId) ? initial.accountId : "",
+    documentNumber: "",
+    notes: initial?.notes ?? "",
+    attachmentUrl: "",
+    attachmentName: "",
+  }));
+  const [amount, setAmount] = React.useState<number | null>(initial?.amount ?? null);
+  const [mode, setMode] = React.useState<RepeatMode>("unico");
+  const [repeatState, setRepeatState] = React.useState(DEFAULT_REPEAT);
+  const [cls, setCls] = React.useState<ClassificationValue>(() => {
+    const start = initialClassification(options, initial?.categoryId, initial?.costCenterId);
+    // Clonar sem centro próprio: o centro vem da categoria (como ao escolher a categoria).
+    if (!start.costCenterId && start.categoryId) start.costCenterId = options.classification?.categories.find((c) => c.value === start.categoryId)?.costCenterId ?? "";
+    return start;
+  });
+  const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
+  const repeat = repeatInput(mode, repeatState);
+  const plan = planOccurrences({ description: f.description || "x", amount: amount ?? 0, dueDate: f.dueDate, competence: f.competence || undefined, repeat });
+  const n = plan.ok ? plan.value.length : 0;
+  const valid = f.description.trim().length >= 3 && (amount ?? 0) > 0 && Boolean(f.dueDate) && (f.clientId !== FREE || f.payerName.trim().length >= 2) && plan.ok;
+  const submit = async () => {
+    const ok = await run(
+      () =>
+        createReceivableAction({
+          description: f.description,
+          amount: amount ?? 0,
+          dueDate: f.dueDate,
+          competence: f.competence || undefined,
+          ...(f.clientId === FREE ? { payerName: f.payerName } : { clientId: f.clientId }),
+          ...(registry ? { categoryId: titleCategoryId(cls), costCenterId: cls.costCenterId || undefined } : { categoryId: f.categoryId || undefined, costCenterId: f.costCenterId || undefined }),
+          accountId: f.accountId || undefined,
+          documentNumber: f.documentNumber || undefined,
+          notes: f.notes || undefined,
+          repeat,
+          attachmentUrl: f.attachmentUrl || undefined,
+          attachmentName: f.attachmentName || undefined,
+        }),
+      (d) => (d.parcels > 1 ? `${d.parcels} títulos a receber lançados (${d.code ?? ""} …)` : `Título a receber ${d.code ?? ""} lançado`),
+    );
+    if (ok) onClose();
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
+      <DialogContent size="lg">
+        <DialogHeader>
+          <DialogTitle>{cloneOf ? `Clonar ${cloneOf}` : "Novo título a receber"}</DialogTitle>
+          <DialogDescription>
+            {cloneOf ? "Novo título com os dados copiados (sem recebimentos, sem sufixo de parcela, repetição Único). Revise e lance." : "Receita fora de contrato (consultoria avulsa, reembolso, venda de equipamento…). Cobranças de contrato continuam nascendo do contrato."}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Descrição" htmlFor={`${id}-desc`} required className="sm:col-span-2">
+            <Input id={`${id}-desc`} value={f.description} onChange={(e) => set("description", e.target.value)} />
+          </FormField>
+          <FormField label="Lançamento" htmlFor={`${id}-mode`} required>
+            <Select id={`${id}-mode`} value={mode} onChange={(e) => setMode(e.target.value as RepeatMode)}>
+              <option value="unico">Único</option>
+              <option value="fixo">Fixo (mesmo valor repetido)</option>
+              <option value="parcelado">Parcelado (total dividido)</option>
+            </Select>
+          </FormField>
+          <FormField label={mode === "parcelado" ? "Valor total (R$)" : mode === "fixo" ? "Valor de cada título (R$)" : "Valor (R$)"} htmlFor={`${id}-valor`} required>
+            <MoneyInput id={`${id}-valor`} value={amount} onValueChange={setAmount} />
+          </FormField>
+          <FormField label={mode === "parcelado" ? "Vencimento da 1ª parcela" : mode === "fixo" ? "Vencimento do 1º título" : "Vencimento"} htmlFor={`${id}-due`} required>
+            <Input id={`${id}-due`} type="date" value={f.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
+          </FormField>
+          <FormField label="Competência" htmlFor={`${id}-comp`} hint="Vazia = mês do vencimento">
+            <Input id={`${id}-comp`} type="month" value={f.competence} onChange={(e) => set("competence", e.target.value)} />
+          </FormField>
+          <RepeatFields id={id} mode={mode} value={repeatState} onChange={setRepeatState} />
+          <PayerAndClassification id={id} f={f} set={set} options={options} cls={registry ? cls : EMPTY_CLASSIFICATION} setCls={registry ? setCls : undefined} />
+          <FormField label="Nº do documento" htmlFor={`${id}-doc`} hint="Documento do cliente/NF (o código REC- é automático)">
+            <Input id={`${id}-doc`} value={f.documentNumber} onChange={(e) => set("documentNumber", e.target.value)} maxLength={60} />
+          </FormField>
+          <FormField label="Anexo (link)" htmlFor={`${id}-att`} hint="Nota fiscal, recibo…">
+            <Input id={`${id}-att`} type="url" value={f.attachmentUrl} onChange={(e) => set("attachmentUrl", e.target.value)} placeholder="https://" />
+          </FormField>
+          <FormField label="Nome do anexo" htmlFor={`${id}-attn`}>
+            <Input id={`${id}-attn`} value={f.attachmentName} onChange={(e) => set("attachmentName", e.target.value)} disabled={!f.attachmentUrl} />
+          </FormField>
+          <FormField label="Observações (opcional)" htmlFor={`${id}-obs`} className="sm:col-span-2">
+            <Textarea id={`${id}-obs`} value={f.notes} onChange={(e) => set("notes", e.target.value)} />
+          </FormField>
+          <OccurrencePreview className="sm:col-span-2" description={f.description} amount={amount} dueDate={f.dueDate} competence={f.competence} repeat={repeat} verb="receba" />
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
+            Cancelar
+          </Button>
+          <Button onClick={submit} loading={pending} disabled={!valid}>
+            {n > 1 ? `Lançar ${n} títulos` : "Lançar título"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

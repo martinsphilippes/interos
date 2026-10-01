@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Receipt, Repeat, Route, Scissors, Split, Undo2 } from "lucide-react";
+import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, Copy, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Receipt, Repeat, Route, Scissors, Split, Undo2 } from "lucide-react";
 import type { PayableDetail } from "@/server/commissions/queries";
 import type { PayableCapabilities } from "@/server/commissions/access";
 import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, createManualPayableAction, partialPayPayableAction, payPayableAction, payPayableWithResidualAction, schedulePayableAction, settlePayableByPaidAction, undoPayablePaymentAction, updatePayableAction } from "@/server/commissions/actions";
@@ -17,21 +17,29 @@ import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { MoneyInput } from "@/components/ui/money-input";
 import { useFinanceAction } from "@/components/finance/use-finance-action";
+import { ClassificationFields, EMPTY_CLASSIFICATION, NoClassificationNotice, type ClassificationValue } from "@/components/finance/classification-fields";
+import { DEFAULT_REPEAT, OccurrencePreview, RepeatFields, repeatInput } from "@/components/finance/repeat-fields";
+import { hasClassification, splitCategoryOption, titleCategoryId, type ClassificationOptions } from "@/domain/title-classification";
+import { planOccurrences, stripInstallmentSuffix } from "@/domain/title-repeat";
 import { CalcMemory, CommissionStatusBadge, HistoryList, PayableStatusBadge, ReasonDialog, TraceChain } from "./commission-ui";
 import { PaymentsHistory, SettleByPaidDialog, SettlementBadge, SettlementSummary } from "@/components/finance/settlement-ui";
 
-type Dialogs = null | "schedule" | "pay" | "pay-partial" | "pay-residual" | "settle-paid" | "cancel" | "edit" | "attach" | "undo";
+type Dialogs = null | "schedule" | "pay" | "pay-partial" | "pay-residual" | "settle-paid" | "cancel" | "edit" | "attach" | "undo" | "clone";
 
 type Opt = { value: string; label: string };
 
 /** Capacidades calculadas no servidor (payableCapabilities); a interface só esconde — as actions revalidam. */
-export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate"> & Partial<Pick<PayableCapabilities, "undoPayment" | "payPartial" | "payResidual" | "settleByPaid">>;
+export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate"> & Partial<Pick<PayableCapabilities, "undoPayment" | "payPartial" | "payResidual" | "settleByPaid" | "create">>;
+
+/** Opções do formulário (etapa CP/CR 4): clonar abre o mesmo formulário de "Lançar título"; editar usa a classificação. */
+export type PayableFormOptions = Omit<ManualPayableButtonProps, "users"> & { users?: Opt[] };
 
 const today = () => dateKey(new Date());
 
 /** Painel do título: valores, ações (aprovar → programar → pagar; cancelar), origem rastreável, anexos, série, memória da comissão e histórico. */
-export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: PayableDetail; can: PayableCan; costCenters?: string[]; accounts?: Opt[] }) {
+export function PayablePanel({ p, can, costCenters = [], accounts = [], form }: { p: PayableDetail; can: PayableCan; costCenters?: string[]; accounts?: Opt[]; form?: PayableFormOptions }) {
   const { pending, run } = useFinanceAction();
   const [dialog, setDialog] = React.useState<Dialogs>(null);
   // Baixa específica a desfazer (histórico de baixas, etapa CP/CR 3).
@@ -70,6 +78,10 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
               { label: "Credor", value: p.creditorName, href: supplierHref },
               { label: "Categoria", value: payableCategoryLabel(p.category) },
               ...(p.costCenter ? [{ label: "Centro de custo", value: p.costCenter }] : []),
+              // Etapa CP/CR 4: classificação pelos cadastros financeiros, conta prevista e nº do documento.
+              ...(p.classification ? [{ label: "Classificação", value: <span data-testid="payable-classification">{`${p.classification.label}${p.classification.center ? ` · ${p.classification.center}${p.classification.inherited ? " (da categoria)" : ""}` : ""}`}</span> }] : []),
+              ...(p.plannedAccountName && p.status !== "pago" ? [{ label: "Conta prevista", value: p.plannedAccountName }] : []),
+              ...(p.documentNumber ? [{ label: "Nº do documento", value: <span data-testid="payable-document-number">{p.documentNumber}</span> }] : []),
               { label: "Origem", value: `${PAYABLE_ORIGIN_LABELS[p.origin]}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}` },
               ...(p.recurrence ? [{ label: "Recorrência", value: `${p.recurrence.frequency === "anual" ? "Anual" : "Mensal"} · dia ${p.recurrence.dayOfMonth}${p.recurrence.until ? ` · até ${formatDate(`${p.recurrence.until}T12:00:00.000Z`)}` : " · sem data limite"}` }] : []),
               { label: "Competência", value: formatCompetence(p.competence) },
@@ -157,6 +169,13 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
               ) : null}
             </div>
           ) : null}
+          {can.create && form && !p.integralOnly ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button variant="ghost" className="h-11 md:h-9" onClick={() => setDialog("clone")} data-testid="payable-clone">
+                <Copy /> Clonar
+              </Button>
+            </div>
+          ) : null}
           {open && p.status === "previsto" && !canApprove && can.operate ? <p className="mt-3 text-xs text-muted">Aguardando aprovação do gestor do Financeiro.</p> : null}
           {payable && p.integralOnly && (can.payPartial || can.payResidual) ? (
             <p className="mt-3 text-xs text-muted" data-testid="payable-integral-only">
@@ -242,7 +261,7 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Repeat className="size-4 text-muted" /> {p.installments ? "Parcelas" : "Série recorrente"}
+              <Repeat className="size-4 text-muted" /> {p.installments ? "Parcelas" : p.recurring ? "Série recorrente" : "Títulos da série"}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0" data-testid="payable-siblings">
@@ -299,7 +318,8 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [] }: { p: P
       {dialog === "pay-partial" ? <PayDialog p={p} mode="parcial" accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => partialPayPayableAction({ payableId: p.id, ...v }), (d) => (d.settled ? "Baixa registrada · título quitado" : "Baixa parcial registrada")).then(close)} /> : null}
       {dialog === "pay-residual" ? <PayDialog p={p} mode="residuo" accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => payPayableWithResidualAction({ payableId: p.id, ...v }), (d) => `Título pago com resíduo · ${d.residualCode ?? "resíduo"} criado`).then(close)} /> : null}
       {dialog === "settle-paid" ? <SettleByPaidDialog code={p.code ?? p.id} amount={p.amount} paid={p.paid} verb="pago" pending={pending} onClose={() => setDialog(null)} onConfirm={(reason) => run(() => settlePayableByPaidAction({ payableId: p.id, reason }), (d) => `Título quitado pelo já pago (${formatCurrency(d.amount)})`).then(close)} /> : null}
-      {dialog === "edit" ? <EditDialog p={p} costCenters={costCenters} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updatePayableAction({ payableId: p.id, ...v }), "Título alterado").then(close)} /> : null}
+      {dialog === "edit" ? <EditDialog p={p} costCenters={costCenters} classification={form?.classification ?? null} accounts={form?.accounts ?? []} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updatePayableAction({ payableId: p.id, ...v }), "Título alterado").then(close)} /> : null}
+      {dialog === "clone" && form ? <PayableFormDialog {...form} users={form.users ?? []} cloneOf={p.code} initial={cloneInitial(p)} onClose={() => setDialog(null)} /> : null}
       {dialog === "attach" ? <AttachDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => addPayableAttachmentAction({ payableId: p.id, ...v }), "Anexo adicionado").then(close)} /> : null}
       <ReasonDialog
         open={dialog === "cancel"}
@@ -389,11 +409,12 @@ function PayDialog({ p, mode, accounts, pending, onClose, onSubmit }: { p: Payab
   const [receiptUrl, setReceiptUrl] = React.useState("");
   const [notes, setNotes] = React.useState("");
   // Valor (etapa CP/CR 3): Quitar já vem com o em aberto; parcial/resíduo o usuário informa.
-  const [amount, setAmount] = React.useState(mode === "total" ? String(p.open) : "");
+  // Valor com máscara em centavos (etapa CP/CR 4): null = vazio.
+  const [amount, setAmount] = React.useState<number | null>(mode === "total" ? p.open : null);
   const [reason, setReason] = React.useState("");
-  const value = Number(amount);
+  const value = amount ?? 0;
   const cents = (v: number) => Math.round(v * 100);
-  const changed = mode === "total" && amount.trim() !== "" && cents(value) !== cents(p.open);
+  const changed = mode === "total" && amount !== null && cents(value) !== cents(p.open);
   const residual = mode === "residuo" && value > 0 && cents(value) < cents(p.open) ? (cents(p.open) - cents(value)) / 100 : null;
   const amountLocked = mode === "total" && (p.integralOnly || p.amount < 0);
   const amountOk = amountLocked || (value > 0 && (mode !== "parcial" || cents(value) <= cents(p.open)) && (mode !== "residuo" || residual !== null));
@@ -414,7 +435,7 @@ function PayDialog({ p, mode, accounts, pending, onClose, onSubmit }: { p: Payab
             <Input id={`${id}-d`} type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
           </FormField>
           <FormField label={text.amountLabel} htmlFor={`${id}-v`} required={!amountLocked} hint={amountLocked ? "Título de comissão/bônus: valor integral" : text.hint}>
-            <Input id={`${id}-v`} type="number" inputMode="decimal" min={0} step="0.01" value={amountLocked ? String(p.open) : amount} onChange={(e) => setAmount(e.target.value)} disabled={amountLocked} />
+            <MoneyInput id={`${id}-v`} value={amountLocked ? p.open : amount} onValueChange={setAmount} disabled={amountLocked} allowNegative={amountLocked && p.open < 0} />
           </FormField>
           {residual !== null ? (
             <p className="rounded-md border border-info/35 bg-info-soft px-3 py-2 text-sm text-info-fg" data-testid="residual-preview">
@@ -470,16 +491,30 @@ function PayDialog({ p, mode, accounts, pending, onClose, onSubmit }: { p: Payab
   );
 }
 
-function EditDialog({ p, costCenters, pending, onClose, onSubmit }: { p: PayableDetail; costCenters: string[]; pending: boolean; onClose: () => void; onSubmit: (v: { description?: string; dueDate?: string; amount?: number; notes?: string; costCenter?: string; recurrenceUntil?: string; reason: string }) => Promise<boolean> }) {
+function EditDialog({ p, costCenters, classification, accounts, pending, onClose, onSubmit }: { p: PayableDetail; costCenters: string[]; classification: ClassificationOptions | null; accounts: Opt[]; pending: boolean; onClose: () => void; onSubmit: (v: { description?: string; dueDate?: string; amount?: number; notes?: string; costCenter?: string; recurrenceUntil?: string; reason: string; documentNumber?: string; categoryId?: string; costCenterId?: string; accountId?: string }) => Promise<boolean> }) {
   const id = React.useId();
   const [description, setDescription] = React.useState(p.description);
   const [dueDate, setDueDate] = React.useState(dateKey(p.dueDate));
-  const [amount, setAmount] = React.useState(String(p.amount));
+  const [amount, setAmount] = React.useState<number | null>(p.amount);
   const [notes, setNotes] = React.useState(p.notes ?? "");
   const [costCenter, setCostCenter] = React.useState(p.costCenter ?? "");
   const [recurrenceUntil, setRecurrenceUntil] = React.useState(p.recurrence?.until ?? "");
   const [reason, setReason] = React.useState("");
+  // Etapa CP/CR 4: nº do documento, conta prevista e Centro → Categoria → Subcategoria (separa o categoryId gravado).
+  const [documentNumber, setDocumentNumber] = React.useState(p.documentNumber ?? "");
+  const [accountId, setAccountId] = React.useState(p.accountId ?? "");
+  const registry = hasClassification(classification) ? classification : null;
+  const initialCls: ClassificationValue = registry ? { ...splitCategoryOption(p.categoryId, registry), costCenterId: p.costCenterId ?? "" } : EMPTY_CLASSIFICATION;
+  const [cls, setCls] = React.useState<ClassificationValue>(initialCls);
   const amountEditable = p.origin === "manual" && p.status === "previsto";
+  const nextCategory = titleCategoryId(cls) ?? "";
+  // Só manda o que mudou (ausente = mantém): um cadastro arquivado depois de gravado não trava a edição de outros campos.
+  const classification_ = registry
+    ? {
+        ...(nextCategory !== (p.categoryId ?? "") && !p.integralOnly ? { categoryId: nextCategory } : {}),
+        ...(cls.costCenterId !== (p.costCenterId ?? "") ? { costCenterId: cls.costCenterId } : {}),
+      }
+    : { costCenter: costCenter || undefined };
   return (
     <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
       <DialogContent size="md">
@@ -495,13 +530,21 @@ function EditDialog({ p, costCenters, pending, onClose, onSubmit }: { p: Payable
             <Input id={`${id}-due`} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           </FormField>
           <FormField label="Valor (R$)" htmlFor={`${id}-amount`} hint={amountEditable ? undefined : "Só em título manual previsto"}>
-            <Input id={`${id}-amount`} type="number" inputMode="decimal" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={!amountEditable} />
+            <MoneyInput id={`${id}-amount`} value={amount} onValueChange={setAmount} disabled={!amountEditable} allowNegative={!amountEditable && p.amount < 0} />
           </FormField>
-          {costCenters.length > 0 ? (
+          {registry ? (
+            <ClassificationFields id={id} options={registry} value={cls} onChange={setCls} categoryDisabled={p.integralOnly} categoryHint={p.integralOnly ? "Título de comissão/bônus: a categoria segue o motor" : undefined} />
+          ) : costCenters.length > 0 ? (
             <FormField label="Centro de custo" htmlFor={`${id}-cc`}>
               <Select id={`${id}-cc`} value={costCenter} onChange={(e) => setCostCenter(e.target.value)} placeholder="Sem centro de custo" options={costCenters.map((c) => ({ value: c, label: c }))} />
             </FormField>
           ) : null}
+          <FormField label="Conta prevista" htmlFor={`${id}-acc`} hint="Pré-seleciona a conta no pagamento">
+            <Select id={`${id}-acc`} value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="Sem conta prevista" options={accountId && !accounts.some((a) => a.value === accountId) ? [...accounts, { value: accountId, label: p.plannedAccountName ?? "Conta atual" }] : accounts} />
+          </FormField>
+          <FormField label="Nº do documento" htmlFor={`${id}-doc`} hint="NF ou boleto do fornecedor">
+            <Input id={`${id}-doc`} value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} maxLength={60} />
+          </FormField>
           {p.recurrence ? (
             <FormField label="Repetir até" htmlFor={`${id}-until`} hint="Encerra a série recorrente nesta data">
               <Input id={`${id}-until`} type="date" value={recurrenceUntil} onChange={(e) => setRecurrenceUntil(e.target.value)} />
@@ -518,13 +561,49 @@ function EditDialog({ p, costCenters, pending, onClose, onSubmit }: { p: Payable
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Voltar
           </Button>
-          <Button onClick={() => onSubmit({ description, dueDate, amount: amountEditable ? Number(amount) : undefined, notes, costCenter: costCenter || undefined, recurrenceUntil: recurrenceUntil || undefined, reason })} loading={pending} disabled={reason.trim().length < 5}>
+          <Button
+            onClick={() =>
+              onSubmit({
+                description,
+                dueDate,
+                amount: amountEditable && amount !== null ? amount : undefined,
+                notes,
+                recurrenceUntil: recurrenceUntil || undefined,
+                reason,
+                ...classification_,
+                ...(documentNumber.trim() !== (p.documentNumber ?? "") ? { documentNumber: documentNumber.trim() } : {}),
+                ...(accountId !== (p.accountId ?? "") ? { accountId } : {}),
+              })
+            }
+            loading={pending}
+            disabled={reason.trim().length < 5 || (amountEditable && !(amount && amount > 0))}
+          >
             Salvar alteração
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Clonar (etapa CP/CR 4): dados do título sem o sufixo de parcela, sem baixas e sem o nº do documento (novo documento). */
+function cloneInitial(p: PayableDetail): PayableFormInitial {
+  return {
+    creditorType: p.creditorType,
+    creditorId: p.creditorId,
+    supplierId: p.supplierId,
+    creditorName: p.creditorName,
+    category: p.category,
+    costCenter: p.costCenter,
+    categoryId: p.categoryId,
+    costCenterId: p.costCenterId,
+    description: stripInstallmentSuffix(p.description),
+    amount: p.amount > 0 ? p.amount : null,
+    competence: p.competence,
+    dueDate: dateKey(p.dueDate),
+    notes: p.notes,
+    accountId: p.accountId,
+  };
 }
 
 function AttachDialog({ p, pending, onClose, onSubmit }: { p: PayableDetail; pending: boolean; onClose: () => void; onSubmit: (v: { name: string; url: string }) => Promise<boolean> }) {
@@ -564,42 +643,100 @@ export interface ManualPayableButtonProps {
   suppliers?: { value: string; label: string }[];
   categories?: { value: string; label: string }[];
   costCenters?: string[];
+  /** Etapa CP/CR 4: Centro → Categoria → Subcategoria de DESPESA dos cadastros (null = formulário antigo com aviso). */
+  classification?: ClassificationOptions | null;
+  /** Contas ativas para a conta prevista (etapa CP/CR 4). */
+  accounts?: Opt[];
 }
 
 const SUPPLIER_FREE = "__livre__";
+const DEFAULT_CATEGORIES: Opt[] = [
+  { value: "bonus", label: payableCategoryLabel("bonus") },
+  { value: "outros", label: payableCategoryLabel("outros") },
+];
+
+type LaunchMode = "unico" | "fixo" | "parcelado" | "recorrente";
+
+/** Valores iniciais do formulário (clonar um título). */
+export interface PayableFormInitial {
+  creditorType: "colaborador" | "fornecedor";
+  creditorId?: string;
+  supplierId?: string;
+  creditorName?: string;
+  category?: string;
+  costCenter?: string;
+  categoryId?: string;
+  costCenterId?: string;
+  description: string;
+  amount: number | null;
+  competence?: string;
+  dueDate: string;
+  notes?: string;
+  accountId?: string;
+}
 
 /**
- * "Lançar título": título manual do Financeiro (D28) — colaborador ou fornecedor (cadastrado ou nome livre), categoria e
- * centro de custo do setting, parcelamento (N títulos) ou recorrência (série), anexo por link. Entra como "Previsto"
- * e segue o mesmo fluxo de aprovação e pagamento.
+ * "Lançar título": título manual do Financeiro (D28) — colaborador ou fornecedor (cadastrado ou nome livre), parcelamento
+ * ou recorrência (série), anexo por link. Entra como "Previsto" e segue o mesmo fluxo de aprovação e pagamento.
  */
-export function ManualPayableButton({ users, suppliers = [], categories = [{ value: "bonus", label: payableCategoryLabel("bonus") }, { value: "outros", label: payableCategoryLabel("outros") }], costCenters = [] }: ManualPayableButtonProps) {
-  const id = React.useId();
+export function ManualPayableButton(props: ManualPayableButtonProps) {
   const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <Button className="h-11 md:h-9" onClick={() => setOpen(true)}>
+        <Plus /> Lançar título
+      </Button>
+      {open ? <PayableFormDialog {...props} onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
+
+/**
+ * Formulário do título a pagar (etapa CP/CR 4, também usado por "Clonar"): valor com máscara em centavos, competência
+ * vazia = mês do vencimento, nº do documento, Centro → Categoria → Subcategoria dos cadastros (sem cadastros: categoria e
+ * centro da configuração, como antes), conta prevista, repetição Único/Fixo/Parcelado a cada N dias/semanas/meses com
+ * prévia ao vivo, e a série recorrente existente (título-modelo + varredura).
+ */
+export function PayableFormDialog({ users, suppliers = [], categories = DEFAULT_CATEGORIES, costCenters = [], classification = null, accounts = [], initial, cloneOf, onClose }: ManualPayableButtonProps & { initial?: PayableFormInitial; cloneOf?: string; onClose: () => void }) {
+  const id = React.useId();
   const { pending, run } = useFinanceAction();
-  const month = today().slice(0, 7);
-  const [f, setF] = React.useState({
-    creditorType: "colaborador" as "colaborador" | "fornecedor",
-    creditorId: "",
-    supplierId: suppliers[0]?.value ?? SUPPLIER_FREE,
-    creditorName: "",
-    category: categories.find((c) => c.value === "bonus")?.value ?? categories[0]?.value ?? "outros",
-    costCenter: "",
-    description: "",
-    amount: "",
-    competence: month,
-    dueDate: today(),
-    notes: "",
-    mode: "unico" as "unico" | "parcelado" | "recorrente",
-    installments: "2",
+  const hasRegistry = hasClassification(classification);
+  const startCls = (): ClassificationValue => {
+    if (!classification || !initial) return EMPTY_CLASSIFICATION;
+    const split = splitCategoryOption(initial.categoryId, classification);
+    const known = classification.categories.some((c) => c.value === split.categoryId);
+    const categoryCenter = classification.categories.find((c) => c.value === split.categoryId)?.costCenterId ?? "";
+    const center = initial.costCenterId && classification.centers.some((c) => c.value === initial.costCenterId) ? initial.costCenterId : categoryCenter;
+    return known ? { categoryId: split.categoryId, subcategoryId: split.subcategoryId, costCenterId: center } : { categoryId: "", subcategoryId: "", costCenterId: center };
+  };
+  const [f, setF] = React.useState(() => ({
+    creditorType: initial?.creditorType ?? ("colaborador" as "colaborador" | "fornecedor"),
+    creditorId: initial?.creditorType === "colaborador" ? (initial.creditorId ?? "") : "",
+    supplierId: initial ? (initial.supplierId && suppliers.some((x) => x.value === initial.supplierId) ? initial.supplierId : initial.creditorType === "fornecedor" ? SUPPLIER_FREE : (suppliers[0]?.value ?? SUPPLIER_FREE)) : (suppliers[0]?.value ?? SUPPLIER_FREE),
+    creditorName: initial?.creditorType === "fornecedor" && !(initial.supplierId && suppliers.some((x) => x.value === initial.supplierId)) ? (initial.creditorName ?? "") : "",
+    category: initial?.category && categories.some((c) => c.value === initial.category) ? initial.category : (categories.find((c) => c.value === "bonus")?.value ?? categories[0]?.value ?? "outros"),
+    costCenter: initial?.costCenter && costCenters.includes(initial.costCenter) ? initial.costCenter : "",
+    cls: startCls(),
+    description: initial?.description ?? "",
+    amount: initial?.amount ?? (null as number | null),
+    competence: initial?.competence ?? "",
+    dueDate: initial?.dueDate ?? today(),
+    notes: initial?.notes ?? "",
+    mode: "unico" as LaunchMode,
+    repeat: DEFAULT_REPEAT,
     frequency: "mensal" as "mensal" | "anual",
     dayOfMonth: "10",
     until: "",
+    accountId: initial?.accountId && accounts.some((a) => a.value === initial.accountId) ? initial.accountId : "",
+    documentNumber: "",
     attachmentUrl: "",
     attachmentName: "",
-  });
+  }));
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((prev) => ({ ...prev, [k]: v }));
   const supplierFree = f.supplierId === SUPPLIER_FREE || suppliers.length === 0;
+  const repeat = f.mode === "fixo" || f.mode === "parcelado" ? repeatInput(f.mode, f.repeat) : undefined;
+  const plan = f.mode === "recorrente" ? null : planOccurrences({ description: f.description || "x", amount: f.amount ?? 0, dueDate: f.dueDate, competence: f.competence || undefined, repeat });
+  const count = plan?.ok ? plan.value.length : 0;
   const submit = async () => {
     const ok = await run(
       () =>
@@ -608,127 +745,138 @@ export function ManualPayableButton({ users, suppliers = [], categories = [{ val
           creditorId: f.creditorType === "colaborador" ? f.creditorId : undefined,
           supplierId: f.creditorType === "fornecedor" && !supplierFree ? f.supplierId : undefined,
           creditorName: f.creditorType === "fornecedor" && supplierFree ? f.creditorName : undefined,
-          category: f.category,
-          costCenter: f.costCenter || undefined,
+          // Com cadastros: categoria/subcategoria e centro do cadastro (os campos antigos são derivados no servidor).
+          ...(hasRegistry ? { categoryId: titleCategoryId(f.cls), costCenterId: f.cls.costCenterId || undefined } : { category: f.category, costCenter: f.costCenter || undefined }),
           description: f.description,
-          amount: Number(f.amount),
-          competence: f.competence,
+          amount: f.amount ?? 0,
+          competence: f.competence || undefined,
           dueDate: f.dueDate,
           notes: f.notes,
-          installments: f.mode === "parcelado" ? Number(f.installments) : undefined,
+          repeat,
           recurrence: f.mode === "recorrente" ? { frequency: f.frequency, dayOfMonth: Number(f.dayOfMonth), until: f.until || undefined } : undefined,
+          accountId: f.accountId || undefined,
+          documentNumber: f.documentNumber || undefined,
           attachmentUrl: f.attachmentUrl || undefined,
           attachmentName: f.attachmentName || undefined,
         }),
       (d) => (d.parcels > 1 ? `${d.parcels} títulos lançados (${d.code ?? ""} …)` : `Título ${d.code ?? ""} lançado`),
     );
-    if (ok) {
-      setOpen(false);
-      setF((prev) => ({ ...prev, description: "", amount: "", notes: "", attachmentUrl: "", attachmentName: "", mode: "unico" }));
-    }
+    if (ok) onClose();
   };
   const creditorOk = f.creditorType === "colaborador" ? Boolean(f.creditorId) : supplierFree ? f.creditorName.trim().length >= 2 : Boolean(f.supplierId);
-  const valid = creditorOk && f.description.trim().length >= 3 && Number(f.amount) > 0 && Boolean(f.category) && (f.mode !== "parcelado" || Number(f.installments) >= 2) && (f.mode !== "recorrente" || (Number(f.dayOfMonth) >= 1 && Number(f.dayOfMonth) <= 28));
+  const valid = creditorOk && f.description.trim().length >= 3 && (f.amount ?? 0) > 0 && Boolean(f.dueDate) && (hasRegistry || Boolean(f.category)) && (f.mode === "recorrente" ? Number(f.dayOfMonth) >= 1 && Number(f.dayOfMonth) <= 28 : Boolean(plan?.ok));
+  const amountLabel = f.mode === "parcelado" ? "Valor total (R$)" : f.mode === "fixo" ? "Valor de cada título (R$)" : "Valor (R$)";
+  const dueLabel = f.mode === "parcelado" ? "Vencimento da 1ª parcela" : f.mode === "fixo" ? "Vencimento do 1º título" : "Vencimento";
   return (
-    <>
-      <Button className="h-11 md:h-9" onClick={() => setOpen(true)}>
-        <Plus /> Lançar título
-      </Button>
-      <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
-        <DialogContent size="lg">
-          <DialogHeader>
-            <DialogTitle>Lançar título a pagar</DialogTitle>
-            <DialogDescription>Título manual (fornecedor, imposto, folha, bônus, outros). Entra como &quot;Previsto&quot; e segue o mesmo fluxo de aprovação e pagamento. Comissões nascem do motor, não daqui.</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Credor" htmlFor={`${id}-tipo`} required>
-              <Select id={`${id}-tipo`} value={f.creditorType} onChange={(e) => set("creditorType", e.target.value as "colaborador" | "fornecedor")}>
-                <option value="colaborador">Colaborador</option>
-                <option value="fornecedor">Fornecedor</option>
-              </Select>
+    <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
+      <DialogContent size="lg">
+        <DialogHeader>
+          <DialogTitle>{cloneOf ? `Clonar ${cloneOf}` : "Lançar título a pagar"}</DialogTitle>
+          <DialogDescription>
+            {cloneOf
+              ? "Novo título com os dados copiados (sem baixas, sem sufixo de parcela, repetição Único). Revise e lance: ele entra como \"Previsto\"."
+              : "Título manual (fornecedor, imposto, folha, bônus, outros). Entra como \"Previsto\" e segue o mesmo fluxo de aprovação e pagamento. Comissões nascem do motor, não daqui."}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Credor" htmlFor={`${id}-tipo`} required>
+            <Select id={`${id}-tipo`} value={f.creditorType} onChange={(e) => set("creditorType", e.target.value as "colaborador" | "fornecedor")}>
+              <option value="colaborador">Colaborador</option>
+              <option value="fornecedor">Fornecedor</option>
+            </Select>
+          </FormField>
+          {f.creditorType === "colaborador" ? (
+            <FormField label="Colaborador" htmlFor={`${id}-user`} required>
+              <Select id={`${id}-user`} value={f.creditorId} onChange={(e) => set("creditorId", e.target.value)} placeholder="Escolha" options={users} />
             </FormField>
-            {f.creditorType === "colaborador" ? (
-              <FormField label="Colaborador" htmlFor={`${id}-user`} required>
-                <Select id={`${id}-user`} value={f.creditorId} onChange={(e) => set("creditorId", e.target.value)} placeholder="Escolha" options={users} />
+          ) : (
+            <>
+              <FormField label="Fornecedor" htmlFor={`${id}-sup`} required hint={suppliers.length === 0 ? "Nenhum fornecedor cadastrado: informe o nome (ou cadastre em Fornecedores)" : undefined}>
+                <Select id={`${id}-sup`} value={f.supplierId} onChange={(e) => set("supplierId", e.target.value)} options={[...suppliers, { value: SUPPLIER_FREE, label: "Outro (nome livre)" }]} />
               </FormField>
-            ) : (
-              <>
-                <FormField label="Fornecedor" htmlFor={`${id}-sup`} required hint={suppliers.length === 0 ? "Nenhum fornecedor cadastrado: informe o nome (ou cadastre em Fornecedores)" : undefined}>
-                  <Select id={`${id}-sup`} value={f.supplierId} onChange={(e) => set("supplierId", e.target.value)} options={[...suppliers, { value: SUPPLIER_FREE, label: "Outro (nome livre)" }]} />
+              {supplierFree ? (
+                <FormField label="Nome do fornecedor" htmlFor={`${id}-forn`} required className="sm:col-span-2">
+                  <Input id={`${id}-forn`} value={f.creditorName} onChange={(e) => set("creditorName", e.target.value)} />
                 </FormField>
-                {supplierFree ? (
-                  <FormField label="Nome do fornecedor" htmlFor={`${id}-forn`} required className="sm:col-span-2">
-                    <Input id={`${id}-forn`} value={f.creditorName} onChange={(e) => set("creditorName", e.target.value)} />
-                  </FormField>
-                ) : null}
-              </>
-            )}
-            <FormField label="Categoria" htmlFor={`${id}-cat`} required hint="Lista em Configurações › Contas a pagar">
-              <Select id={`${id}-cat`} value={f.category} onChange={(e) => set("category", e.target.value)} options={categories} />
-            </FormField>
-            <FormField label="Centro de custo" htmlFor={`${id}-cc`} hint={costCenters.length === 0 ? "Nenhum centro cadastrado em Configurações" : undefined}>
-              <Select id={`${id}-cc`} value={f.costCenter} onChange={(e) => set("costCenter", e.target.value)} placeholder="Sem centro de custo" options={costCenters.map((c) => ({ value: c, label: c }))} disabled={costCenters.length === 0} />
-            </FormField>
-            <FormField label="Descrição" htmlFor={`${id}-desc`} required className="sm:col-span-2">
-              <Input id={`${id}-desc`} value={f.description} onChange={(e) => set("description", e.target.value)} />
-            </FormField>
-            <FormField label={f.mode === "parcelado" ? "Valor total (R$)" : "Valor (R$)"} htmlFor={`${id}-valor`} required>
-              <Input id={`${id}-valor`} type="number" inputMode="decimal" min={0} step="0.01" value={f.amount} onChange={(e) => set("amount", e.target.value)} />
-            </FormField>
-            <FormField label="Lançamento" htmlFor={`${id}-mode`} required>
-              <Select id={`${id}-mode`} value={f.mode} onChange={(e) => set("mode", e.target.value as typeof f.mode)}>
-                <option value="unico">Único</option>
-                <option value="parcelado">Parcelado (N títulos)</option>
-                <option value="recorrente">Recorrente (série)</option>
-              </Select>
-            </FormField>
-            <FormField label="Competência" htmlFor={`${id}-comp`} required>
-              <Input id={`${id}-comp`} type="month" value={f.competence} onChange={(e) => set("competence", e.target.value)} />
-            </FormField>
-            <FormField label={f.mode === "parcelado" ? "Vencimento da 1ª parcela" : "Vencimento"} htmlFor={`${id}-due`} required>
-              <Input id={`${id}-due`} type="date" value={f.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
-            </FormField>
-            {f.mode === "parcelado" ? (
-              <FormField label="Parcelas" htmlFor={`${id}-inst`} required hint="Vencimentos mensais a partir da 1ª parcela; centavos exatos">
-                <Input id={`${id}-inst`} type="number" inputMode="numeric" min={2} max={48} value={f.installments} onChange={(e) => set("installments", e.target.value)} />
+              ) : null}
+            </>
+          )}
+          <FormField label="Descrição" htmlFor={`${id}-desc`} required className="sm:col-span-2">
+            <Input id={`${id}-desc`} value={f.description} onChange={(e) => set("description", e.target.value)} />
+          </FormField>
+          <FormField label="Lançamento" htmlFor={`${id}-mode`} required hint={f.mode === "recorrente" ? "Título-modelo: a próxima ocorrência nasce 30 dias antes do vencimento" : undefined}>
+            <Select id={`${id}-mode`} value={f.mode} onChange={(e) => set("mode", e.target.value as LaunchMode)}>
+              <option value="unico">Único</option>
+              <option value="fixo">Fixo (mesmo valor repetido)</option>
+              <option value="parcelado">Parcelado (total dividido)</option>
+              <option value="recorrente">Recorrente (série)</option>
+            </Select>
+          </FormField>
+          <FormField label={amountLabel} htmlFor={`${id}-valor`} required>
+            <MoneyInput id={`${id}-valor`} value={f.amount} onValueChange={(v) => set("amount", v)} />
+          </FormField>
+          <FormField label={dueLabel} htmlFor={`${id}-due`} required>
+            <Input id={`${id}-due`} type="date" value={f.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
+          </FormField>
+          <FormField label="Competência" htmlFor={`${id}-comp`} hint="Vazia = mês do vencimento">
+            <Input id={`${id}-comp`} type="month" value={f.competence} onChange={(e) => set("competence", e.target.value)} />
+          </FormField>
+          <RepeatFields id={id} mode={f.mode === "fixo" || f.mode === "parcelado" ? f.mode : "unico"} value={f.repeat} onChange={(v) => set("repeat", v)} />
+          {f.mode === "recorrente" ? (
+            <>
+              <FormField label="Frequência" htmlFor={`${id}-freq`} required>
+                <Select id={`${id}-freq`} value={f.frequency} onChange={(e) => set("frequency", e.target.value as "mensal" | "anual")}>
+                  <option value="mensal">Mensal</option>
+                  <option value="anual">Anual</option>
+                </Select>
               </FormField>
-            ) : null}
-            {f.mode === "recorrente" ? (
-              <>
-                <FormField label="Frequência" htmlFor={`${id}-freq`} required>
-                  <Select id={`${id}-freq`} value={f.frequency} onChange={(e) => set("frequency", e.target.value as "mensal" | "anual")}>
-                    <option value="mensal">Mensal</option>
-                    <option value="anual">Anual</option>
-                  </Select>
-                </FormField>
-                <FormField label="Dia do vencimento" htmlFor={`${id}-dom`} required hint="1 a 28">
-                  <Input id={`${id}-dom`} type="number" inputMode="numeric" min={1} max={28} value={f.dayOfMonth} onChange={(e) => set("dayOfMonth", e.target.value)} />
-                </FormField>
-                <FormField label="Repetir até" htmlFor={`${id}-until`} hint="Vazio = sem data limite. A próxima ocorrência nasce 30 dias antes do vencimento.">
-                  <Input id={`${id}-until`} type="date" value={f.until} onChange={(e) => set("until", e.target.value)} />
-                </FormField>
-              </>
-            ) : null}
-            <FormField label="Anexo (link)" htmlFor={`${id}-att`} hint="Nota fiscal, boleto do fornecedor…">
-              <Input id={`${id}-att`} type="url" value={f.attachmentUrl} onChange={(e) => set("attachmentUrl", e.target.value)} placeholder="https://" />
-            </FormField>
-            <FormField label="Nome do anexo" htmlFor={`${id}-attn`}>
-              <Input id={`${id}-attn`} value={f.attachmentName} onChange={(e) => set("attachmentName", e.target.value)} disabled={!f.attachmentUrl} />
-            </FormField>
-            <FormField label="Observações (opcional)" htmlFor={`${id}-obs`} className="sm:col-span-2">
-              <Textarea id={`${id}-obs`} value={f.notes} onChange={(e) => set("notes", e.target.value)} />
-            </FormField>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={pending}>
-              Cancelar
-            </Button>
-            <Button onClick={submit} loading={pending} disabled={!valid}>
-              {f.mode === "parcelado" ? `Lançar ${Number(f.installments) || 0} títulos` : "Lançar título"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+              <FormField label="Dia do vencimento" htmlFor={`${id}-dom`} required hint="1 a 28">
+                <Input id={`${id}-dom`} type="number" inputMode="numeric" min={1} max={28} value={f.dayOfMonth} onChange={(e) => set("dayOfMonth", e.target.value)} />
+              </FormField>
+              <FormField label="Repetir até" htmlFor={`${id}-until`} hint="Vazio = sem data limite. A próxima ocorrência nasce 30 dias antes do vencimento.">
+                <Input id={`${id}-until`} type="date" value={f.until} onChange={(e) => set("until", e.target.value)} />
+              </FormField>
+            </>
+          ) : null}
+          {hasRegistry && classification ? (
+            <ClassificationFields id={id} options={classification} value={f.cls} onChange={(v) => set("cls", v)} />
+          ) : (
+            <>
+              <NoClassificationNotice kind="despesa" className="sm:col-span-2" />
+              <FormField label="Categoria" htmlFor={`${id}-cat`} required hint="Lista em Configurações › Contas a pagar">
+                <Select id={`${id}-cat`} value={f.category} onChange={(e) => set("category", e.target.value)} options={categories} />
+              </FormField>
+              <FormField label="Centro de custo" htmlFor={`${id}-cc`} hint={costCenters.length === 0 ? "Nenhum centro cadastrado em Configurações" : undefined}>
+                <Select id={`${id}-cc`} value={f.costCenter} onChange={(e) => set("costCenter", e.target.value)} placeholder="Sem centro de custo" options={costCenters.map((c) => ({ value: c, label: c }))} disabled={costCenters.length === 0} />
+              </FormField>
+            </>
+          )}
+          <FormField label="Conta prevista" htmlFor={`${id}-acc`} hint={accounts.length === 0 ? "Nenhuma conta financeira ativa" : "Pré-seleciona a conta no pagamento"}>
+            <Select id={`${id}-acc`} value={f.accountId} onChange={(e) => set("accountId", e.target.value)} placeholder="Sem conta prevista" options={accounts} disabled={accounts.length === 0} />
+          </FormField>
+          <FormField label="Nº do documento" htmlFor={`${id}-doc`} hint="NF ou boleto do fornecedor (o código PAG- é automático)">
+            <Input id={`${id}-doc`} value={f.documentNumber} onChange={(e) => set("documentNumber", e.target.value)} maxLength={60} />
+          </FormField>
+          <FormField label="Anexo (link)" htmlFor={`${id}-att`} hint="Nota fiscal, boleto do fornecedor…">
+            <Input id={`${id}-att`} type="url" value={f.attachmentUrl} onChange={(e) => set("attachmentUrl", e.target.value)} placeholder="https://" />
+          </FormField>
+          <FormField label="Nome do anexo" htmlFor={`${id}-attn`}>
+            <Input id={`${id}-attn`} value={f.attachmentName} onChange={(e) => set("attachmentName", e.target.value)} disabled={!f.attachmentUrl} />
+          </FormField>
+          <FormField label="Observações (opcional)" htmlFor={`${id}-obs`} className="sm:col-span-2">
+            <Textarea id={`${id}-obs`} value={f.notes} onChange={(e) => set("notes", e.target.value)} />
+          </FormField>
+          {f.mode === "recorrente" ? null : <OccurrencePreview className="sm:col-span-2" description={f.description} amount={f.amount} dueDate={f.dueDate} competence={f.competence} repeat={repeat} verb="aprove e pague" />}
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
+            Cancelar
+          </Button>
+          <Button onClick={submit} loading={pending} disabled={!valid}>
+            {count > 1 ? `Lançar ${count} títulos` : "Lançar título"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

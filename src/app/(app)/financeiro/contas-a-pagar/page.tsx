@@ -69,7 +69,7 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
                   <Truck /> Fornecedores
                 </Link>
               ) : null}
-              {ws.can.create ? <ManualPayableButton users={ws.users} suppliers={ws.suppliers} categories={ws.settings.categorias} costCenters={ws.settings.centrosDeCusto} /> : null}
+              {ws.can.create ? <ManualPayableButton users={ws.users} suppliers={ws.suppliers} categories={ws.settings.categorias} costCenters={ws.settings.centrosDeCusto} classification={ws.classification} accounts={ws.formAccounts} /> : null}
             </>
           ) : undefined
         }
@@ -110,7 +110,14 @@ export default async function PayablesPage({ searchParams }: { searchParams: Sea
         </Card>
         {ws.selected ? (
           <SidePanelShell explicit={Boolean(requested)} param="titulo" ariaLabel="Título selecionado" title={`${ws.selected.code} · ${ws.selected.creditorName}`}>
-            <PayablePanel key={ws.selected.id} p={ws.selected} can={ws.can} costCenters={ws.settings.centrosDeCusto} accounts={ws.accounts} />
+            <PayablePanel
+              key={ws.selected.id}
+              p={ws.selected}
+              can={ws.can}
+              costCenters={ws.settings.centrosDeCusto}
+              accounts={ws.accounts}
+              form={{ users: ws.users, suppliers: ws.suppliers, categories: ws.settings.categorias, costCenters: ws.settings.centrosDeCusto, classification: ws.classification, accounts: ws.formAccounts }}
+            />
           </SidePanelShell>
         ) : (
           <aside className="hidden xl:block">

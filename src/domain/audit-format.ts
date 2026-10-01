@@ -157,6 +157,11 @@ export const CHANGE_FIELD_LABELS: Record<string, string> = {
   competence: "Competência",
   categoryName: "Categoria",
   plannedAccountName: "Conta prevista",
+  // Formulário de títulos (etapa CP/CR 4).
+  subcategoryName: "Subcategoria",
+  creditorName: "Credor",
+  costCenter: "Centro de custo",
+  recurrence: "Recorrência",
 };
 
 /** Campos que NUNCA aparecem em claro (defesa em profundidade: o serviço já grava mascarado). */

@@ -615,7 +615,7 @@ export async function updatePayable(id: string, input: UpdatePayableInput, actor
   for (const k of ["documentNumber", "categoryId", "costCenterId", "accountId"] as const) if (patch[k] === undefined && current[k] !== undefined) writePatch[k] = deleteField();
   const { after } = await transitionPayable(id, [current.status], writePatch as Partial<Payable>, payableHistory(actor, "Alterado", { reason, changes: readable }));
   for (const k of ["documentNumber", "categoryId", "costCenterId", "accountId"] as const) if (patch[k] === undefined) delete (after as unknown as Record<string, unknown>)[k];
-  await emitPayable("payable.updated", actor, after, `Título ${code(after)} alterado`, { ...changes, categoryId: after.categoryId ?? null, costCenterId: after.costCenterId ?? null, accountId: after.accountId ?? null }, describeChanges(changes, { description: "Descrição", dueDate: "Vencimento", amount: "Valor", notes: "Observações", costCenter: "Centro de custo", recurrence: "Recorrência", category: "Categoria (configuração)", documentNumber: "Nº do documento", categoryName: "Categoria", subcategoryName: "Subcategoria", costCenterName: "Centro de custo (cadastro)", plannedAccountName: "Conta prevista" }, (field, v) => (v === null ? "—" : field === "amount" ? formatCurrency(Number(v)) : field === "dueDate" ? formatDate(String(v)) : field === "category" ? payableCategoryLabel(String(v)) : typeof v === "object" ? JSON.stringify(v) : String(v))));
+  await emitPayable("payable.updated", actor, after, `Título ${code(after)} alterado`, { ...changes, categoryId: after.categoryId ?? null, costCenterId: after.costCenterId ?? null, accountId: after.accountId ?? null, labels: PAYABLE_AUDIT_LABELS }, describeChanges(changes, { description: "Descrição", dueDate: "Vencimento", amount: "Valor", notes: "Observações", costCenter: "Centro de custo", recurrence: "Recorrência", category: "Categoria (configuração)", documentNumber: "Nº do documento", categoryName: "Categoria", subcategoryName: "Subcategoria", costCenterName: "Centro de custo (cadastro)", plannedAccountName: "Conta prevista" }, (field, v) => (v === null ? "—" : field === "amount" ? formatCurrency(Number(v)) : field === "dueDate" ? formatDate(String(v)) : field === "category" ? payableCategoryLabel(String(v)) : typeof v === "object" ? JSON.stringify(v) : String(v))));
   return after;
 }
 
@@ -635,6 +635,12 @@ async function registryNames(ctx: ClassificationContext | null, accountIds: (str
     account: (id) => (id ? (accounts.get(id)?.name ?? id) : null),
   };
 }
+
+/**
+ * Rótulos da auditoria dos títulos a pagar (etapa CP/CR 4, `payload.labels`): os campos ANTIGOS derivados do cadastro
+ * aparecem como "(configuração)" para não se confundirem com a categoria/centro do cadastro.
+ */
+const PAYABLE_AUDIT_LABELS: Record<string, string> = { category: "Categoria (configuração)", costCenter: "Centro de custo (configuração)", costCenterName: "Centro de custo", categoryName: "Categoria", subcategoryName: "Subcategoria", documentNumber: "Nº do documento", plannedAccountName: "Conta prevista" };
 
 export interface ManualPayableInput {
   creditorType: "colaborador" | "fornecedor";
@@ -750,7 +756,7 @@ export async function createManualPayable(input: ManualPayableInput, actor: User
   const emitCreated = async (p: Payable, extra: Record<string, unknown> = {}) => {
     if (options.emit === false) return;
     const audit = auditChanges<Payable & typeof readable>(null, { ...p, ...readable }, ["creditorName", "category", "description", "amount", "competence", "dueDate", "costCenter", "documentNumber", "categoryName", "subcategoryName", "costCenterName", "plannedAccountName"]);
-    await emitPayable("payable.created", actor, p, `Título ${p.code} lançado: ${formatCurrency(p.amount)} para ${creditorName}`, { origin: "manual", category, supplierId: supplierId ?? null, costCenter: costCenter ?? null, categoryId: p.categoryId ?? null, costCenterId: p.costCenterId ?? null, accountId: p.accountId ?? null, ...extra, ...audit }, `${classificationLabel(resolved?.names ?? {}) ?? payableCategoryLabel(category)}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}${p.recurrence ? ` · recorrente (${p.recurrence.frequency})` : ""} · vence ${formatDate(p.dueDate)}`);
+    await emitPayable("payable.created", actor, p, `Título ${p.code} lançado: ${formatCurrency(p.amount)} para ${creditorName}`, { origin: "manual", category, supplierId: supplierId ?? null, costCenter: costCenter ?? null, categoryId: p.categoryId ?? null, costCenterId: p.costCenterId ?? null, accountId: p.accountId ?? null, ...extra, ...audit, labels: PAYABLE_AUDIT_LABELS }, `${classificationLabel(resolved?.names ?? {}) ?? payableCategoryLabel(category)}${p.installments ? ` · parcela ${p.installment}/${p.installments}` : ""}${p.recurrence ? ` · recorrente (${p.recurrence.frequency})` : ""} · vence ${formatDate(p.dueDate)}`);
   };
   const attach = async (payableId: string) => {
     if (!input.attachmentUrl) return undefined;
