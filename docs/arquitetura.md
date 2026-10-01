@@ -4,7 +4,7 @@
 - Next.js 16 App Router + React 19 + TypeScript estrito. Tailwind v4. Deploy na Vercel com as funções em `gru1`
   (São Paulo, `regions` no vercel.json), perto do banco (Supabase `sa-east-1`): cada tela faz várias leituras e a ida
   e volta até os EUA multiplicava a latência.
-- Banco: Postgres do Supabase (projeto `interos-prod`, região `sa-east-1`, migrado do Firestore em 10/2026). Acesso
+- Banco: Postgres do Supabase (projeto `interos` (`vqkpyjpwxsmsqfgpdjao`), região `sa-east-1`, migrado do Firestore em 10/2026). Acesso
   **somente pelo servidor** (Server Components, Server Actions, Route Handlers) com o papel `interos_app` pela
   `DATABASE_URL` (pooler em modo transação). Modelo de documentos: uma tabela por coleção no schema `interos`
   (`id text`, `data jsonb`), que **não** é exposto pela Data API; RLS ligado com política só para `interos_app`.

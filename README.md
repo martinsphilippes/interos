@@ -8,7 +8,7 @@ Aplicação web construída com Next.js (App Router), TypeScript, Tailwind CSS e
 | -------- | ----------------------------------------- | ------------------------------------------------------------- |
 | GitHub   | `martinsphilippes/interos`                | Branch padrão `main`. CI roda lint, typecheck e build.        |
 | Vercel   | Projeto `interos`, time `martinsphilippes` | Deploy automático a cada push. Funções em `gru1` (São Paulo). |
-| Supabase | Projeto `interos-prod` (`sa-east-1`), Postgres + Auth | Schema versionado em `supabase/migrations/`. Dados só pelo servidor. |
+| Supabase | Projeto `interos` (`vqkpyjpwxsmsqfgpdjao`, `sa-east-1`), Postgres + Auth | Schema versionado em `supabase/migrations/`. Dados só pelo servidor. |
 
 ## Primeiros passos
 

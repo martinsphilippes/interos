@@ -10,6 +10,8 @@
 -- - RLS ligado em toda tabela, com política apenas para `interos_app` (papel usado pelo servidor do Next).
 -- O papel `interos_app` é criado aqui SEM login; a senha é definida fora do repositório:
 --   alter role interos_app with login password '<senha>';
+-- Aplicada no projeto `interos` (vqkpyjpwxsmsqfgpdjao) em 2026-10-01, dividida em partes (interos_docstore_1..8) pelo
+-- limite de tempo do conector; as funções com DELETE (auth_update_user/revoke/delete) foram rodadas no SQL Editor.
 -- =====================================================================================================================
 
 create extension if not exists pgcrypto with schema extensions;
