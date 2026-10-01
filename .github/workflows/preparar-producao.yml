@@ -61,12 +61,11 @@ jobs:
           printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
 
-      # A service account padrão do Firebase Admin não tem serviceusage.services.get, que o firebase-tools
-      # consulta antes do deploy. Sem esse papel o passo falha sem afetar o app (o Admin SDK ignora as regras
-      # e um banco em modo produção já nega o acesso do navegador); conceda "Service Usage Consumer" para ativá-lo.
-      - name: Publicar regras e índices do Firestore
-        continue-on-error: true
-        run: npx --yes firebase-tools@latest deploy --only firestore:rules,firestore:indexes --project interos-crm --non-interactive
+      # Publica pela API Firebase Rules (scripts/deploy-rules.ts). O `firebase deploy` não serve aqui: ele consulta
+      # antes a API Service Usage (serviceusage.services.get), papel que a service account do Admin SDK não tem, e
+      # falhava com 403 sem publicar. firestore.indexes.json está vazio, então não há índices a publicar.
+      - name: Publicar regras do Firestore
+        run: npx tsx scripts/deploy-rules.ts interos-crm
 
       - name: Recriar dados de demonstração
         if: ${{ inputs.seed }}
