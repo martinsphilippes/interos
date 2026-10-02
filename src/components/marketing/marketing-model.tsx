@@ -1,6 +1,6 @@
 /**
  * Tipos, rótulos e helpers PUROS do módulo de Marketing, compartilhados entre servidor (queries) e
- * Client Components. Sem firebase e sem React aqui.
+ * Client Components. Sem acesso ao banco e sem React aqui.
  */
 import type { Campaign, Communication, Lead, LeadStatus, LeadTemperature, Prospect, ProspectList } from "@/domain/types";
 import type { DepartmentKey } from "@/domain/constants";

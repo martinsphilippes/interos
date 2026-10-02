@@ -201,8 +201,8 @@ describe("catálogo — cobertura de páginas", () => {
       .filter((s) => s && !/^\(.*\)$/.test(s))
       .join("/");
 
-  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (90 páginas — etapa CP/CR 1: + /financeiro/cadastros)", () => {
-    expect(pages.length).toBe(90);
+  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (92 páginas — migração Supabase: + /redefinir-senha e /login/microsoft)", () => {
+    expect(pages.length).toBe(92);
     const exempt = new Set<string>(EXEMPTIONS.filter((e) => e.kind === "page").map((e) => e.target));
     const routes = new Set(SCREENS.flatMap((s) => [...s.routes, ...s.sections.flatMap((x) => x.routes ?? [])]));
     const missing = pages.filter((p) => !exempt.has(p) && !routes.has(toRoute(p)));

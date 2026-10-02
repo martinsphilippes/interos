@@ -8,13 +8,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { dateKey } from "@/lib/format";
 import { DEFAULT_OVERVIEW_PERIOD, periodRange } from "@/components/marketing/marketing-model";
 
-// A geração é em memória; o acesso ao Firestore/Auth só é usado na gravação (fora deste teste).
+// A geração é em memória; o acesso ao banco/Auth só é usado na gravação (fora deste teste).
 vi.mock("../../src/server/db", () => ({
   batchSet: vi.fn(),
   ORG_ID: "org_test",
   counterId: (prefix: string, year: string | null) => `counter_org_test_${prefix}${year ? `_${year}` : ""}`,
 }));
-vi.mock("../../src/server/firebase-admin", () => ({ adminAuth: vi.fn() }));
+vi.mock("../../src/server/auth/auth-admin", () => ({ authAdmin: vi.fn() }));
 
 interface SeedLead {
   id: string;

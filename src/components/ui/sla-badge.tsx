@@ -14,7 +14,7 @@ const stateVariant: Record<SlaState, NonNullable<BadgeProps["variant"]>> = {
 
 /**
  * Formata tempo restante como "2h 15m", "3d 4h" ou "-1h 20m".
- * Espelha formatRemaining de src/server/sla.ts (que não pode ser importado no cliente por depender do firebase-admin).
+ * Espelha formatRemaining de src/server/sla.ts (que não pode ser importado no cliente por depender do banco no servidor).
  */
 export function formatRemainingMs(ms: number): string {
   const sign = ms < 0 ? "-" : "";

@@ -1,7 +1,7 @@
 /**
  * Modelo puro do módulo de Vendas: rótulos, tons, cálculo de totais e de comissão.
  *
- * Sem React e sem firebase: é importado pelo servidor (queries, serviço, comissões) e pelos
+ * Sem React e sem acesso ao banco: é importado pelo servidor (queries, serviço, comissões) e pelos
  * Client Components (simulador, editor de proposta), para que o número exibido seja o mesmo
  * calculado no servidor.
  */

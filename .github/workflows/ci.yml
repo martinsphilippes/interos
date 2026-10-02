@@ -11,9 +11,9 @@ concurrency:
 
 jobs:
   verify:
-    name: Lint, typecheck e build
+    name: Lint, typecheck, testes e build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +31,52 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Testes unitários
+        run: npm test
+
+      - name: Cobertura de acessos
+        run: npm run check:access
+
       - name: Build
         run: npm run build
         env:
-          # O build não depende do Firebase estar configurado; a validação
-          # acontece em runtime apenas onde o SDK é usado.
+          # O build não depende do banco nem do Supabase; a validação acontece em runtime onde são usados.
           NEXT_TELEMETRY_DISABLED: "1"
+
+  banco:
+    name: Banco (docdb, migrations e seed no Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: interos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/interos
+      DATABASE_URL: postgres://interos_app:local@127.0.0.1:5432/interos
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Aplicar migrations
+        run: npm run db:local
+
+      - name: Testes de integração do banco
+        run: npm run test:db
+
+      - name: Seed e invariantes
+        run: |
+          npx tsx --conditions=react-server scripts/seed.ts
+          npx tsx --conditions=react-server scripts/seed/verify.ts

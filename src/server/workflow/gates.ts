@@ -1,5 +1,5 @@
 /**
- * Validação de gates de workflow. Módulo PURO (sem firebase, sem React): é usado pelo serviço no
+ * Validação de gates de workflow. Módulo PURO (sem acesso ao banco, sem React): é usado pelo serviço no
  * servidor e pelos componentes para exibir o estado de cada exigência do gate.
  *
  * Um campo obrigatório é satisfeito por um valor que exista no contexto da instância (lead,

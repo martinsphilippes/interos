@@ -7,7 +7,7 @@ import "server-only";
  * Toda mutação relevante emite evento (timeline, notificações, KPIs). Erros de regra são lançados
  * como Error com mensagem em português (as actions devolvem a mensagem ao usuário).
  */
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "@/server/docdb";
 import { col, create, getById, getManyByIds, list, nextNumber, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { registerHandler } from "@/server/events/emit";

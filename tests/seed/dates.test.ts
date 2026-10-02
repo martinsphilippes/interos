@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dateKey } from "@/lib/format";
 
-// lib.ts importa o acesso ao Firestore só para o gravador em lote; aqui interessam apenas as datas.
+// lib.ts importa o acesso ao banco só para o gravador em lote; aqui interessam apenas as datas.
 vi.mock("../../src/server/db", () => ({ batchSet: vi.fn(), ORG_ID: "org_test" }));
 
 async function seedLibAt(instant: string) {

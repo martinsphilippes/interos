@@ -2,23 +2,18 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { signOut } from "firebase/auth";
 import { LogOut } from "lucide-react";
 import { Button, type ButtonProps } from "@/components/ui/button";
-import { getFirebaseAuth } from "@/lib/firebase/client";
+import { discardSupabaseSession } from "@/lib/supabase/client";
 
-/** Encerra a sessão no servidor (cookie) e no Firebase client. Não navega. */
+/** Encerra a sessão no servidor (cookie) e descarta qualquer sessão local do Supabase. Não navega. */
 export async function performLogout(): Promise<void> {
   try {
     await fetch("/api/auth/session", { method: "DELETE", credentials: "same-origin" });
   } catch (error) {
     console.warn("[auth] falha ao encerrar sessão no servidor", error);
   }
-  try {
-    await signOut(getFirebaseAuth());
-  } catch {
-    // Sem config do Firebase no cliente ou já deslogado: ignorar.
-  }
+  await discardSupabaseSession();
 }
 
 export interface LogoutButtonProps extends Omit<ButtonProps, "onClick" | "loading"> {

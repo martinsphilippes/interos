@@ -1,6 +1,6 @@
 /**
  * Utilitários do seed: PRNG determinístico, geradores de dados brasileiros, datas relativas a
- * "hoje" e um armazém em memória que grava tudo no Firestore em lotes ao final.
+ * "hoje" e um armazém em memória que grava tudo no banco em lotes ao final.
  */
 import { batchSet, ORG_ID } from "../../src/server/db";
 import type { CollectionName } from "../../src/domain/types";
@@ -311,7 +311,7 @@ export class Store {
     return this.docs.get(collection)?.size ?? 0;
   }
 
-  /** Grava uma coleção no Firestore e devolve a quantidade gravada. `id` fica de fora do documento. */
+  /** Grava uma coleção no banco e devolve a quantidade gravada. `id` fica de fora do documento. */
   async flush(collection: CollectionName): Promise<number> {
     const bucket = this.docs.get(collection);
     if (!bucket || bucket.size === 0) return 0;

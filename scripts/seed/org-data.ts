@@ -1,5 +1,5 @@
 /**
- * Dados puros da organização do seed (usuários e departamentos), sem Firestore nem Auth: usados pelo seed e pelos
+ * Dados puros da organização do seed (usuários e departamentos), sem banco nem Auth: usados pelo seed e pelos
  * testes de permissões (fixtures em memória, T0).
  */
 import type { DepartmentKey, RoleKey } from "../../src/domain/constants";

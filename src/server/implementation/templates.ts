@@ -3,7 +3,7 @@ import "server-only";
  * Templates de implantação: combinação dos templates dos produtos contratados em um plano único
  * (usado na criação do projeto) e manutenção dos templates (CRUD da tela /implantacao/checklists).
  */
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "@/server/docdb";
 import { col, create, getById, getManyByIds, list, update } from "@/server/db";
 import { addBusinessHours, businessDaysToHours } from "@/server/sla";
 import { shortId } from "@/lib/utils";

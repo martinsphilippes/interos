@@ -12,8 +12,7 @@ import "server-only";
  * direto pelo Financeiro. Renovação (kind "renovacao") também gera as mensalidades do novo prazo.
  */
 import { createHash } from "node:crypto";
-import { FieldValue } from "firebase-admin/firestore";
-import { firestore } from "@/server/firebase-admin";
+import { docdb, FieldValue } from "@/server/docdb";
 import { col, createIfAbsent, getById, getManyByIds, list, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { notify } from "@/server/notifications";
@@ -329,7 +328,7 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
   const now = nowIso();
   const contractRef = col(COLLECTIONS.contracts).doc(a.contractId);
   const amendmentRef = col(COLLECTIONS.contractAmendments).doc(a.id);
-  const { before, after: next } = await firestore.runTransaction(async (tx) => {
+  const { before, after: next } = await docdb.runTransaction(async (tx) => {
     const [cSnap, aSnap] = await Promise.all([tx.get(contractRef), tx.get(amendmentRef)]);
     if (!cSnap.exists) throw new Error("Contrato não encontrado");
     const current = { ...(cSnap.data() as Omit<Contract, "id">), id: a.contractId } as Contract;

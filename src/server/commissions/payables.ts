@@ -8,7 +8,7 @@ import "server-only";
  * do título como pagas NA MESMA TRANSAÇÃO; cancelar devolve as comissões para "Elegível" (liberada) com o motivo.
  * Toda operação grava o histórico no próprio título e emite evento com auditChanges (from → to) e motivo (D16).
  */
-import { firestore } from "@/server/firebase-admin";
+import { docdb } from "@/server/docdb";
 import { col, create, createIfAbsent, getById, getManyByIds, newId, txGetOwn, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { getSetting } from "@/server/admin/queries";
@@ -114,7 +114,7 @@ async function loadPayable(id: string): Promise<Payable> {
 /** Transição transacional do título (status atual precisa estar em `allowed`). */
 async function transitionPayable(id: string, allowed: readonly PayableStatus[], patch: Partial<Payable>, entry: PayableHistoryEntry): Promise<{ before: Payable; after: Payable }> {
   const ref = col(COLLECTIONS.payables).doc(id);
-  return firestore.runTransaction(async (tx) => {
+  return docdb.runTransaction(async (tx) => {
     // Título de outra organização = inexistente (mesmo isolamento de getById).
     const snap = await txGetOwn(tx, ref);
     if (!snap) throw new Error("Título não encontrado");
@@ -169,7 +169,7 @@ export async function payPayable(id: string, input: PayPayableInput, actor: User
   const paidAt = `${input.paidAt.slice(0, 10)}T12:00:00.000Z`;
   const at = options.at ?? nowIso();
   const ref = col(COLLECTIONS.payables).doc(id);
-  const result = await firestore.runTransaction(async (tx) => {
+  const result = await docdb.runTransaction(async (tx) => {
     // Título de outra organização = inexistente (mesmo isolamento de getById).
     const snap = await txGetOwn(tx, ref);
     if (!snap) throw new Error("Título não encontrado");
@@ -217,7 +217,7 @@ export async function cancelPayable(id: string, reason: string, actor: UserRef, 
   const trimmed = reason.trim();
   if (trimmed.length < 5) throw new Error("Descreva o motivo do cancelamento");
   const ref = col(COLLECTIONS.payables).doc(id);
-  const result = await firestore.runTransaction(async (tx) => {
+  const result = await docdb.runTransaction(async (tx) => {
     // Título de outra organização = inexistente (mesmo isolamento de getById).
     const snap = await txGetOwn(tx, ref);
     if (!snap) throw new Error("Título não encontrado");

@@ -3,7 +3,7 @@ import "server-only";
  * Regras de cobrança: plano de parcelas de um contrato, critérios do gate de liberação, aging de
  * contas a receber e a detecção automática de vencidas (feita na leitura, sem cron).
  */
-import { firestore } from "@/server/firebase-admin";
+import { docdb } from "@/server/docdb";
 import { col, getManyByIds, list, nowIso, type ListOptions } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
@@ -269,7 +269,7 @@ export async function sweepOverdue(billings: Billing[]): Promise<Billing[]> {
   const flipped = new Set<string>();
   for (const b of due) {
     const ref = col(COLLECTIONS.billing).doc(b.id);
-    const changed = await firestore.runTransaction(async (tx) => {
+    const changed = await docdb.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (snap.get("status") !== "aberta") return false;
       tx.update(ref, { status: "vencida", updatedAt: nowIso() });

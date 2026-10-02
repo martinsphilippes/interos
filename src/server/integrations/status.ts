@@ -36,7 +36,7 @@ interface CatalogEntry {
   docsUrl: string;
   fallback: string;
   whereToConfigure?: string;
-  /** Estado que não dá para detectar pelo servidor (ex.: SSO no console do Firebase). */
+  /** Estado que não dá para detectar pelo servidor (ex.: SSO no painel do Supabase). */
   undetectable?: string;
 }
 
@@ -124,14 +124,14 @@ const CATALOG: CatalogEntry[] = [
   },
   {
     key: "sso",
-    name: "Microsoft SSO (Entra ID via Firebase Authentication)",
+    name: "Microsoft SSO (Entra ID via Supabase Auth)",
     enables: "Login com a conta corporativa Microsoft.",
     requirements: [],
     descriptions: {},
-    docsUrl: "https://firebase.google.com/docs/auth/web/microsoft-oauth",
-    fallback: "Login por e-mail e senha do Firebase Authentication.",
-    whereToConfigure: "Console do Firebase → Authentication → Sign-in method → Microsoft (Client ID e segredo do app no Entra ID).",
-    undetectable: "O provedor é habilitado no console do Firebase; o servidor não consegue confirmar.",
+    docsUrl: "https://supabase.com/docs/guides/auth/social-login/auth-azure",
+    fallback: "Login por e-mail e senha (Supabase Auth).",
+    whereToConfigure: "Painel do Supabase → Authentication → Sign In / Providers → Azure (Client ID, segredo e tenant URL do app no Entra ID). Redirect URI no Entra ID: <NEXT_PUBLIC_SUPABASE_URL>/auth/v1/callback.",
+    undetectable: "O provedor é habilitado no painel do Supabase; a tela de login confere antes de redirecionar.",
   },
   {
     key: "ia",

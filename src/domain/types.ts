@@ -191,7 +191,7 @@ export interface PermissionProfile extends BaseEntity {
 }
 
 export interface User extends BaseEntity {
-  /** Igual ao uid do Firebase Auth. */
+  /** O id é o `interos_uid` do login no Supabase Auth (auth.users.raw_app_meta_data). */
   name: string;
   email: string;
   role: RoleKey;
@@ -209,6 +209,8 @@ export interface User extends BaseEntity {
   /** Presença informada pelo próprio usuário na top bar (telas operacionais). */
   presence?: UserPresence;
   presenceUpdatedAt?: string;
+  /** Cookies de sessão emitidos antes deste instante são recusados (gravado por authAdmin ao encerrar sessões). */
+  sessionsRevokedAt?: string;
 }
 
 export const USER_PRESENCES = ["online", "ausente", "ocupado"] as const;

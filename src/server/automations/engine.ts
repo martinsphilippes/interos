@@ -18,7 +18,7 @@ import "server-only";
  * (emitEvent lê o escopo; o payload é imutável — D29; eventos antigos têm payload.__automation, ainda aceito);
  * a mesma regra nunca dispara de novo na própria cadeia e a profundidade máxima de automações encadeadas é 3.
  */
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "@/server/docdb";
 import { col, create, getById, getManyByIds, list, nowIso } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { COLLECTIONS, type AutomationRule, type Client, type CsAccount, type DomainEvent, type SlaInstance } from "@/domain/types";
