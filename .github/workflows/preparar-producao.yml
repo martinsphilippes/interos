@@ -28,7 +28,8 @@ jobs:
   preparar:
     name: Dados de demonstração
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Rodando nos EUA, cada operação dos motores (comissões, KPIs) vai e volta até o banco em São Paulo.
+    timeout-minutes: 60
     environment: producao
     steps:
       - uses: actions/checkout@v4
