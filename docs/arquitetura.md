@@ -435,7 +435,7 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   comissão/bônus/estorno não tem "Clonar" (nasce do motor).
 - **Edição de título único** (`updatePayable`/`updateReceivable`): aceita nº do documento, classificação e conta prevista
   (ausente = mantém; "" = limpa), com as regras de quem edita o quê de antes (valor só em título manual previsto no a
-  pagar; sem recebimentos no a receber). Edição em SÉRIE é a etapa 5.
+  pagar; sem recebimentos no a receber). Edição em SÉRIE: etapa 5 (abaixo).
 - **Auditoria**: `payable.created`/`payable.updated` com `changes` de → para de nº do documento, categoria, subcategoria,
   centro de custo (nomes, nunca ids) e conta prevista (`payload.labels`: os campos antigos aparecem como "Categoria
   (configuração)"/"Centro de custo (configuração)"); `receivable.created`/`updated` como na etapa 3; série com `seriesId`,
@@ -443,6 +443,52 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - **Verify** (z): título a pagar com categoria do cadastro aponta para DESPESA e mantém a categoria antiga; conta prevista
   existente; parcela n de N coerente e sem repetição na série. Testes: `tests/finance/title-form.test.ts`; e2e
   `83-formulario-titulos.mjs`.
+
+## Edição e cancelamento em série (etapa CP/CR 5, `src/domain/title-series.ts`)
+- **Futuros iguais** (`findFutureTitles`, testes em `tests/finance/title-series.test.ts`): sem nenhuma baixa e não
+  pagos/cancelados; vencimento ≥ o do título editado (o de ANTES da edição); mesma série (`seriesId`) ou, sem série, mesma
+  descrição ignorando maiúsculas, acentos e o sufixo de parcela (" (i/N)" e o antigo " (parcela i/N)") entre os títulos
+  também sem série. Ficam fora o próprio título e os de resíduo (`residualOf`); título de resíduo não tem futuros.
+  **Contas a Pagar** (`findPayableFutures`): também ficam fora comissão/bônus/estorno (`isCommissionLinkedPayable`) e a
+  série RECORRENTE (título-modelo com `recurrence` + ocorrências `recorrencia`): nela o comportamento atual continua
+  ("Repetir até" no modelo ou cancelar o modelo encerra a série); o título dessas origens não oferece "este + futuros".
+- **O que vai** (`seriesEditFrom` + `applySeriesEdit`): só o que MUDOU no título editado — descrição (base sem sufixo +
+  o sufixo de parcela de CADA futuro, refeito pelo `installment/installments` gravado no formato que ele já usa), valor,
+  credor (a pagar: `creditorType/creditorId/creditorName/supplierId`) ou pagador (a receber: `clientId/payerName`),
+  classificação (`categoryId/costCenterId`; no a pagar os campos ANTIGOS `category/costCenter` são derivados de novo para
+  cada futuro, como na etapa 4), conta prevista e observações. Cada futuro mantém vencimento, competência, nº da parcela,
+  nº do documento e baixas. Se o DIA do vencimento mudou (10 → 5), cada futuro passa a vencer nesse dia no PRÓPRIO mês
+  (limitado ao fim do mês: 31 → 30/28/29) e a competência anda o mesmo número de meses (zero: fica). Mudar só o mês do
+  vencimento, só o sufixo da descrição ou só o nº do documento não vai para os futuros.
+- **Fluxo de aprovação (decisão 1)**: cada futuro recebe as mudanças só se a regra ATUAL de edição permitir
+  (`payableSeriesSkip`: valor só em título manual ainda PREVISTO); senão fica FORA inteiro (nada dele muda) e a tela
+  informa quantos e por quê. Decisão desta etapa: pular o título inteiro (e não só o campo) para não deixar um futuro
+  "meio alterado". O título editado segue as regras de sempre (`planPayableUpdate`/`planReceivableUpdate`, as mesmas do
+  "Salvar só este").
+- **Gravação** (`updatePayableSeries`/`cancelPayableSeries`, `updateReceivableSeries`/`cancelReceivableSeries`): o
+  título e os futuros numa transação Firestore só, relendo cada um (futuro que recebeu baixa ou mudou de situação no
+  meio fica FORA com o motivo; o editado com outra situação aborta tudo). Acima de 400 futuros (limite de 500 escritas
+  por transação) a gravação segue em LOTES atômicos de 400 (o 1º leva o título editado) — na prática a repetição tem no
+  máximo 120 ocorrências. `history[]` em cada título ("Alterado em série (este + N futuros)" / "… (a partir de PAG-…)"),
+  evento por título (`payable.updated`/`payable.cancelled`, `receivable.updated`/`receivable.cancelled` com `changes` de →
+  para, motivo e `series.role` editado|futuro) e o RESUMO da série `payable.series_updated|series_cancelled` /
+  `receivable.series_updated|series_cancelled` (mudanças do editado + `futuresUpdated`/`futuresCancelled`, motivo,
+  `match` serie|descricao, ids/códigos alterados e `skipped` com o motivo). Cancelar em série exige motivo; título com
+  baixa parcial/recebimento não cancela (regra da etapa 3). Nada é excluído.
+- **Credor no "Alterar" (a pagar)**: para a edição em série levar o credor, o "Alterar" do título MANUAL passou a trocar
+  o credor (colaborador do cadastro, fornecedor cadastrado ou nome livre; mesmas validações do lançamento e o escopo de
+  `assertCreditorInScope`); comissão/bônus/estorno recusa (segue o motor). Na auditoria: "Credor"/"Tipo de credor".
+- **Tela**: no diálogo "Alterar" do painel (a pagar e avulso a receber), com futuros e a chave da série, os botões
+  "Salvar só este" e "Salvar este + N futuros" (N calculado no servidor ao abrir, `PayableDetail.series` /
+  `ReceivableDetail.series`), aviso com o que vai/não vai, a lista dos futuros e, no a pagar, quantos ficariam fora se o
+  valor mudar. "Cancelar título" abre o diálogo com "Cancelar só este" e "Cancelar este + N futuros". Sem futuros (ou sem
+  a chave), os botões de antes ("Salvar alteração", "Cancelar título"). Depois de salvar: toast e um aviso persistente
+  no painel com quantos futuros foram alterados/cancelados e quais ficaram fora (código + motivo) — `series-ui.tsx`.
+- **Acesso**: ações novas `financeiro.contas-a-pagar.{editar-serie,cancelar-serie}` e
+  `financeiro.contas-a-receber.avulsos.{editar-serie,cancelar-serie}` (padrão = o de editar/cancelar o título); as
+  actions exigem a chave da série E a do título (`checkedIn`), conferem o escopo do título e, no a pagar, só levam
+  futuros dentro do escopo do usuário (`payableAllowed`). `check:access` 0.
+- Testes: `tests/finance/title-series.test.ts`; e2e `84-edicao-serie.mjs`.
 
 ## Numeração transacional (`nextNumber` em `src/server/db.ts`)
 - Coleção `counters` (`counter_<prefixo>_<ano>`), `runTransaction`, inicializada a partir do maior número já gravado
