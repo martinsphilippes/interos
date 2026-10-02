@@ -95,6 +95,24 @@ describe("escritas", () => {
     expect([b1.get("n"), b2.get("n"), b3.exists]).toEqual([3, 2, false]);
   });
 
+  it("batch agrupa sets/deletes consecutivos sem mudar o resultado (último set do mesmo id vence, ordem preservada)", async () => {
+    const col = docdb.collection(C);
+    const batch = docdb.batch();
+    for (let i = 0; i < 300; i++) batch.set(col.doc(id(`g${i}`)), { i });
+    batch.set(col.doc(id("g0")), { i: "último" });
+    batch.update(col.doc(id("g1")), { extra: true });
+    batch.delete(col.doc(id("g2")));
+    batch.delete(col.doc(id("g3")));
+    batch.set(col.doc(id("g3")), { i: "recriado" });
+    await batch.commit();
+    const [g0, g1, g2, g3, g299] = await docdb.getAll(...["g0", "g1", "g2", "g3", "g299"].map((k) => col.doc(id(k))));
+    expect(g0.data()).toEqual({ i: "último" });
+    expect(g1.data()).toEqual({ i: 1, extra: true });
+    expect(g2.exists).toBe(false);
+    expect(g3.data()).toEqual({ i: "recriado" });
+    expect(g299.get("i")).toBe(299);
+  });
+
   it("batch com erro não grava nada", async () => {
     const batch = docdb.batch();
     batch.set(docdb.collection(C).doc(id("rb1")), { n: 1 });

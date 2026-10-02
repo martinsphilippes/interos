@@ -527,13 +527,53 @@ type PendingWrite =
   | { kind: "create"; ref: DocumentReference; data: DocumentData }
   | { kind: "delete"; ref: DocumentReference };
 
+/** Escritas que podem ir num único comando com outras iguais da mesma coleção (set sem merge e delete). */
+type GroupableWrite = Extract<PendingWrite, { kind: "delete" }> | (Extract<PendingWrite, { kind: "set" }> & { merge: false });
+
+function groupKey(w: PendingWrite): string | null {
+  if (w.kind === "delete") return `delete:${w.ref.collectionName}`;
+  if (w.kind === "set" && !w.merge) return `set:${w.ref.collectionName}`;
+  return null;
+}
+
+/**
+ * Aplica as escritas na ordem. Sequências consecutivas de set (sem merge) ou de delete na mesma coleção viram um
+ * comando só: um lote de 450 documentos faz 1 ida ao banco em vez de 450 (diferença grande fora da região do banco).
+ */
 async function applyWrites(run: Runner, writes: PendingWrite[]): Promise<void> {
-  for (const w of writes) {
-    if (w.kind === "set") await writeSet(run, w.ref, w.data, { merge: w.merge });
-    else if (w.kind === "update") await writeUpdate(run, w.ref, w.data);
-    else if (w.kind === "create") await writeCreate(run, w.ref, w.data);
-    else await writeDelete(run, w.ref);
+  for (let i = 0; i < writes.length; ) {
+    const key = groupKey(writes[i]);
+    let j = i + 1;
+    if (key) while (j < writes.length && groupKey(writes[j]) === key) j++;
+    if (j - i > 1) {
+      await writeGroup(run, writes.slice(i, j) as GroupableWrite[]);
+    } else {
+      const w = writes[i];
+      if (w.kind === "set") await writeSet(run, w.ref, w.data, { merge: w.merge });
+      else if (w.kind === "update") await writeUpdate(run, w.ref, w.data);
+      else if (w.kind === "create") await writeCreate(run, w.ref, w.data);
+      else await writeDelete(run, w.ref);
+    }
+    i = j;
   }
+}
+
+async function writeGroup(run: Runner, group: GroupableWrite[]): Promise<void> {
+  const t = table(group[0].ref.collectionName);
+  if (group[0].kind === "delete") {
+    await run.unsafe(`delete from ${t} where id = any($1::text[])`, [group.map((w) => w.ref.id)]);
+    return;
+  }
+  // O mesmo id duas vezes no lote: vale o último (como na sequência de sets); o Postgres não aceita repetir a linha.
+  const last = new Map<string, DocumentData>();
+  for (const w of group as Extract<GroupableWrite, { kind: "set" }>[]) last.set(w.ref.id, plainDoc(w.data));
+  const rows = [...last].map(([id, data]) => ({ id, data }));
+  await run.unsafe(
+    `insert into ${t} (id, data)
+     select r->>'id', r->'data' from jsonb_array_elements($1::text::jsonb) r
+     on conflict (id) do update set data = excluded.data, updated_at = now()`,
+    [toJson(rows)],
+  );
 }
 
 class WriteBuffer {
