@@ -136,6 +136,9 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     "financeiro.contas-a-pagar.anexar",
     "financeiro.contas-a-pagar.programar",
     "financeiro.contas-a-pagar.cancelar",
+    // Etapa CP/CR 5 (novas): editar/cancelar em série = mesma regra de editar/cancelar o título.
+    "financeiro.contas-a-pagar.editar-serie",
+    "financeiro.contas-a-pagar.cancelar-serie",
     "financeiro.contas-a-pagar.fornecedores.criar",
     "financeiro.contas-a-pagar.fornecedores.editar",
     "financeiro.contas-a-pagar.fornecedores.ativar",
@@ -216,9 +219,9 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     expect(differences(articleOps, legacy)).toEqual(exp);
   });
 
-  it("Títulos a receber avulsos (novo, etapa CP/CR 3: seção + 5 ações) ≡ módulo Financeiro ∧ canOperateFinance (quem opera as cobranças hoje)", () => {
+  it("Títulos a receber avulsos (novo, etapa CP/CR 3: seção + 5 ações; etapa CP/CR 5: + editar/cancelar em série) ≡ módulo Financeiro ∧ canOperateFinance (quem opera as cobranças hoje)", () => {
     const keys = ["financeiro.contas-a-receber.avulsos.ver", ...actionKeys("financeiro.contas-a-receber")];
-    expect(keys.length).toBe(6);
+    expect(keys.length).toBe(8);
     const legacy = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") && legacyCanOperateFinance(u);
     expect(differences(keys, legacy)).toEqual([]);
   });

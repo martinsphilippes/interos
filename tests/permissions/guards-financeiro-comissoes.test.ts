@@ -113,8 +113,9 @@ describe("actions de Comissões e Contas a Pagar: a primeira chave exigida é a 
   const body = (name: string) => functions.find((f) => f.name === name)!.body;
 
   // Etapa CP/CR 2: + undoPayablePaymentAction (desfazer pagamento). Etapa CP/CR 3: + parcial, resíduo e quitar pelo já pago.
-  it("todas as 20 funções exportadas têm dono e o exigem antes da validação, do escopo e do serviço", () => {
-    expect(functions.length).toBe(20);
+  // Etapa CP/CR 5: + editar/cancelar em série.
+  it("todas as 22 funções exportadas têm dono e o exigem antes da validação, do escopo e do serviço", () => {
+    expect(functions.length).toBe(22);
     for (const fn of functions) {
       const keys = [...fn.body.matchAll(/requirePermission\("([^"]+)"\)/g)].map((m) => m[1]);
       expect(keys.length, fn.name).toBeGreaterThan(0);
@@ -137,7 +138,7 @@ describe("actions de Comissões e Contas a Pagar: a primeira chave exigida é a 
 
   it("actions sobre comissão ou título conferem o escopo do registro", () => {
     for (const name of ["reverseCommissionAction", "blockCommissionAction", "unblockCommissionAction", "regenerateCommissionPayableAction"]) expect(body(name), name).toMatch(/await assertCommissionAccess\(user, data\.commissionId\)/);
-    for (const name of ["approvePayableAction", "schedulePayableAction", "payPayableAction", "cancelPayableAction", "updatePayableAction", "addPayableAttachmentAction", "undoPayablePaymentAction", "partialPayPayableAction", "payPayableWithResidualAction", "settlePayableByPaidAction"]) expect(body(name), name).toMatch(/assertPayableAccess\(user, data\.payableId\)/);
+    for (const name of ["approvePayableAction", "schedulePayableAction", "payPayableAction", "cancelPayableAction", "updatePayableAction", "addPayableAttachmentAction", "undoPayablePaymentAction", "partialPayPayableAction", "payPayableWithResidualAction", "settlePayableByPaidAction", "updatePayableSeriesAction", "cancelPayableSeriesAction"]) expect(body(name), name).toMatch(/assertPayableAccess\(user, data\.payableId\)/);
     expect(body("createManualPayableAction")).toMatch(/await assertCreditorInScope\(user, data\)/);
   });
 

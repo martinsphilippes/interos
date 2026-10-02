@@ -9,7 +9,7 @@ import "server-only";
  * Toda operação grava o histórico no próprio título e emite evento com auditChanges (from → to) e motivo (D16).
  */
 import { firestore } from "@/server/firebase-admin";
-import { col, create, createIfAbsent, getById, getManyByIds, newId, ORG_ID, prepareNextNumber, txGetOwn, txNextNumber, txNextNumbers, nowIso, stripUndefined, update } from "@/server/db";
+import { col, create, createIfAbsent, getById, getManyByIds, list, newId, ORG_ID, prepareNextNumber, txGetOwn, txNextNumber, txNextNumbers, nowIso, stripUndefined, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { getSetting } from "@/server/admin/queries";
 import { SETTING_DEFAULTS, type ComissoesPagamentoConfig, type ContasAPagarConfig } from "@/server/admin/schemas";
@@ -19,7 +19,7 @@ import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import { COMMISSION_REVENUE_LABELS, PAYABLE_CATEGORIES, PAYABLE_STATUS_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { COLLECTIONS, type CashEntry, type Client, type Commission, type Document, type FinancialAccount, type Payable, type PayableHistoryEntry, type PayablePayment, type PayableRecurrence, type PayableStatus, type Supplier, type User, type UserRef } from "@/domain/types";
 import { buildPayableCashEntry } from "@/domain/cash-entries";
-import { roundCents } from "@/domain/finance-registry";
+import { resolveEffectiveCostCenter, roundCents } from "@/domain/finance-registry";
 import { PARTIAL_COMMISSION_BLOCKED, isCommissionLinkedPayable, openAmount, originalAmountFor, payablePaidAmount, payablePaymentUndoBlock, planPayment, planSettleByPaid, planUndoPayment, residualDescription, residualNote, type PaymentMode } from "@/domain/settlements";
 import { BusinessError } from "@/server/auth/error-classes";
 import { ACCOUNT_REQUIRED_MESSAGE, emitCashEntryEvent, newCashEntryId, txCreateCashEntry, txDeleteCashEntry, txReadCashEntry, txReadPaymentAccount } from "@/server/finance-registry/cash-entries";
@@ -27,6 +27,7 @@ import { assignPayableCode, cleanPatch, deleteField, historyEntry, SYSTEM_ACTOR,
 import { describeRepeat, planOccurrences, type RepeatInput } from "@/domain/title-repeat";
 import { classificationLabel, ENGINE_ONLY_CATEGORY_KEYS, LEGACY_FALLBACK_CATEGORY } from "@/domain/title-classification";
 import { legacyFieldsFor, loadClassificationContext, readPlannedAccount, resolveOrThrow, type ClassificationContext } from "@/server/finance-registry/classification";
+import { applySeriesEdit, chunk, findPayableFutures, hasSettlement, PAYABLE_SERIES_FIELDS, payableSeriesSkip, payableSeriesUnavailable, SERIES_SKIP_COMMISSION, SERIES_SKIP_SETTLED, seriesEditFrom, seriesMatchOf, summarizeSkipped, type SeriesMatch } from "@/domain/title-series";
 
 export async function getCommissionPaymentSettings(): Promise<ComissoesPagamentoConfig> {
   const value = await getSetting<ComissoesPagamentoConfig>("comissoes_pagamento", SETTING_DEFAULTS.comissoes_pagamento);
@@ -134,7 +135,7 @@ async function transitionPayable(id: string, allowed: readonly PayableStatus[], 
   });
 }
 
-async function emitPayable(type: "payable.created" | "payable.approved" | "payable.scheduled" | "payable.paid" | "payable.cancelled" | "payable.updated" | "payable.payment_undone" | "payable.partially_paid" | "payable.settled_by_paid", actor: UserRef, p: Payable, title: string, payload: Record<string, unknown>, description?: string) {
+async function emitPayable(type: "payable.created" | "payable.approved" | "payable.scheduled" | "payable.paid" | "payable.cancelled" | "payable.updated" | "payable.payment_undone" | "payable.partially_paid" | "payable.settled_by_paid" | "payable.series_updated" | "payable.series_cancelled", actor: UserRef, p: Payable, title: string, payload: Record<string, unknown>, description?: string) {
   await emitEvent({
     type,
     actor,
@@ -552,18 +553,65 @@ export interface UpdatePayableInput {
   categoryId?: string;
   costCenterId?: string;
   accountId?: string;
+  // Etapa CP/CR 5 — credor (só título manual; ausente = mantém): colaborador do cadastro, fornecedor cadastrado ou
+  // nome livre. Vai para os futuros na edição em série.
+  creditorType?: "colaborador" | "fornecedor";
+  creditorId?: string;
+  supplierId?: string;
+  creditorName?: string;
+}
+
+/** Plano de uma alteração (validado): patch, o que gravar (campos limpos viram FieldValue.delete) e a auditoria legível. */
+interface PayableUpdatePlan {
+  reason: string;
+  patch: Partial<Payable>;
+  writePatch: Record<string, unknown>;
+  /** Mudanças legíveis (nomes, nunca ids). */
+  readable: Record<string, { from: unknown; to: unknown }>;
+  changes: ReturnType<typeof auditChanges>;
+  registry: ClassificationContext | null;
+}
+
+/** Campos que a alteração pode LIMPAR (FieldValue.delete em vez de gravar undefined). */
+const PAYABLE_CLEARABLE = ["documentNumber", "categoryId", "costCenterId", "accountId", "creditorId", "supplierId"] as const;
+const PAYABLE_UPDATE_FIELDS = ["description", "dueDate", "amount", "notes", "costCenter", "recurrence", "category", "documentNumber", "categoryId", "costCenterId", "accountId", "creditorName", "creditorType"] as const;
+const PAYABLE_DESCRIBE_LABELS: Record<string, string> = { description: "Descrição", dueDate: "Vencimento", amount: "Valor", notes: "Observações", costCenter: "Centro de custo", recurrence: "Recorrência", category: "Categoria (configuração)", documentNumber: "Nº do documento", categoryName: "Categoria", subcategoryName: "Subcategoria", costCenterName: "Centro de custo (cadastro)", plannedAccountName: "Conta prevista", creditorName: "Credor", creditorType: "Tipo de credor", competence: "Competência" };
+const describePayableValue = (field: string, v: unknown) => (v === null ? "—" : field === "amount" ? formatCurrency(Number(v)) : field === "dueDate" ? formatDate(String(v)) : field === "category" ? payableCategoryLabel(String(v)) : typeof v === "object" ? JSON.stringify(v) : String(v));
+
+/** Credor novo do título (etapa CP/CR 5): valida colaborador/fornecedor como no lançamento manual. */
+async function resolveCreditorChange(current: Payable, input: UpdatePayableInput): Promise<Partial<Payable> | null> {
+  if (input.creditorType === undefined && input.creditorId === undefined && input.supplierId === undefined && input.creditorName === undefined) return null;
+  const type = input.creditorType ?? current.creditorType;
+  let next: Pick<Payable, "creditorType" | "creditorId" | "creditorName" | "supplierId">;
+  if (type === "colaborador") {
+    const userId = input.creditorId ?? current.creditorId;
+    const user = userId ? await getById<User>(COLLECTIONS.users, userId) : null;
+    if (!user) throw new BusinessError("Selecione o colaborador");
+    next = { creditorType: "colaborador", creditorId: user.id, creditorName: user.name, supplierId: undefined };
+  } else if (input.supplierId) {
+    const supplier = await getById<Supplier>(COLLECTIONS.suppliers, input.supplierId);
+    if (!supplier) throw new BusinessError("Fornecedor não encontrado");
+    if (supplier.active === false && supplier.id !== current.supplierId) throw new BusinessError(`O fornecedor ${supplier.name} está inativo`);
+    next = { creditorType: "fornecedor", creditorId: undefined, creditorName: supplier.name, supplierId: supplier.id };
+  } else {
+    const name = (input.creditorName ?? (input.supplierId === "" ? "" : current.creditorName)).trim();
+    if (name.length < 2) throw new BusinessError("Informe o credor");
+    next = { creditorType: "fornecedor", creditorId: undefined, creditorName: name, supplierId: undefined };
+  }
+  const changed = next.creditorType !== current.creditorType || (next.creditorId ?? null) !== (current.creditorId ?? null) || next.creditorName !== current.creditorName || (next.supplierId ?? null) !== (current.supplierId ?? null);
+  if (!changed) return null;
+  if (isCommissionLinkedPayable(current)) throw new BusinessError("O credor de título de comissão/bônus/estorno segue o motor de comissões e não muda por aqui");
+  return next;
 }
 
 /**
- * Alteração manual do título (auditada): valor só em título manual ainda não aprovado. Etapa CP/CR 4: também nº do
- * documento, centro → categoria → subcategoria do cadastro e conta prevista (ausente = mantém; "" = limpa). A categoria
- * de título de comissão/bônus/estorno segue o motor (não muda); os campos antigos `category`/`costCenter` acompanham o
- * cadastro escolhido (derivados), sem apagar o que estava gravado quando a classificação é limpa.
+ * Valida e monta a alteração de UM título (regras de quem edita o quê): valor só em título manual ainda não aprovado;
+ * categoria de comissão/bônus/estorno segue o motor; conta prevista nova ativa; classificação nova validada. Null = nada
+ * mudou.
  */
-export async function updatePayable(id: string, input: UpdatePayableInput, actor: UserRef): Promise<Payable> {
+async function planPayableUpdate(current: Payable, input: UpdatePayableInput): Promise<PayableUpdatePlan | null> {
   const reason = input.reason.trim();
   if (reason.length < 5) throw new Error("Informe o motivo da alteração");
-  const current = await loadPayable(id);
   if (current.status === "pago" || current.status === "cancelado") throw new Error("Título pago ou cancelado não pode ser alterado");
   if (input.amount !== undefined && input.amount !== current.amount && (current.origin !== "manual" || current.status !== "previsto")) throw new Error("O valor só pode ser alterado em título manual ainda previsto (o de comissão segue a memória de cálculo)");
   const keep = (value: string | undefined, currentValue: string | undefined) => (value === undefined ? currentValue : value.trim() || undefined);
@@ -571,6 +619,7 @@ export async function updatePayable(id: string, input: UpdatePayableInput, actor
   if (nextCategoryId !== current.categoryId && isCommissionLinkedPayable(current)) throw new BusinessError("A categoria de título de comissão/bônus/estorno segue o motor de comissões e não muda por aqui");
   const nextCenterId = keep(input.costCenterId, current.costCenterId);
   const nextAccountId = keep(input.accountId, current.accountId);
+  const creditor = await resolveCreditorChange(current, input);
   const classificationChanged = nextCategoryId !== current.categoryId || nextCenterId !== current.costCenterId;
   const registry = classificationChanged || current.categoryId || current.costCenterId ? await loadClassificationContext() : null;
   // Valida só o que mudou (um cadastro arquivado depois de gravado não impede alterar outros campos do título).
@@ -589,17 +638,27 @@ export async function updatePayable(id: string, input: UpdatePayableInput, actor
     categoryId: nextCategoryId,
     costCenterId: nextCenterId,
     accountId: nextAccountId,
+    ...(creditor ?? {}),
   };
   // Chave antiga da categoria acompanha a categoria do cadastro (títulos de comissão nunca chegam aqui com mudança).
   if (legacy.category && !isCommissionLinkedPayable(current)) patch.category = legacy.category;
   if (input.recurrenceUntil && current.recurrence) patch.recurrence = { ...current.recurrence, until: input.recurrenceUntil.slice(0, 10) };
-  const fields = ["description", "dueDate", "amount", "notes", "costCenter", "recurrence", "category", "documentNumber", "categoryId", "costCenterId", "accountId"] as const;
-  const audit = auditChanges<Payable>(current, { ...current, ...patch }, [...fields], reason);
-  if (Object.keys(audit.changes).length === 0) return current;
+  const audit = auditChanges<Payable>(current, { ...current, ...patch }, [...PAYABLE_UPDATE_FIELDS], reason);
+  const writePatch: Record<string, unknown> = { ...patch };
+  const touched = Object.keys(audit.changes).length > 0 || (creditor !== null && ((patch.creditorId ?? null) !== (current.creditorId ?? null) || (patch.supplierId ?? null) !== (current.supplierId ?? null)));
+  if (!touched) return null;
   // Ids viram nomes legíveis na auditoria (categoria/subcategoria, centro, conta prevista).
   const names = await registryNames(registry, [current.accountId, nextAccountId]);
+  const readable = readablePayableChanges(audit.changes, names);
+  // Campos limpos ("") saem do documento (FieldValue.delete) em vez de gravar undefined.
+  for (const k of PAYABLE_CLEARABLE) if (patch[k] === undefined && current[k] !== undefined) writePatch[k] = deleteField();
+  return { reason, patch, writePatch, readable, changes: { ...audit, changes: readable }, registry };
+}
+
+/** Mudanças com ids trocados por nomes (categoria/subcategoria, centro, conta prevista). */
+function readablePayableChanges(changes: Record<string, { from: unknown; to: unknown }>, names: Awaited<ReturnType<typeof registryNames>>): Record<string, { from: unknown; to: unknown }> {
   const readable: Record<string, { from: unknown; to: unknown }> = {};
-  for (const [k, c] of Object.entries(audit.changes)) {
+  for (const [k, c] of Object.entries(changes)) {
     if (k === "categoryId") {
       const from = names.category(c.from as string | null);
       const to = names.category(c.to as string | null);
@@ -609,14 +668,226 @@ export async function updatePayable(id: string, input: UpdatePayableInput, actor
     else if (k === "accountId") readable.plannedAccountName = { from: names.account(c.from as string | null), to: names.account(c.to as string | null) };
     else readable[k] = c;
   }
-  const changes = { ...audit, changes: readable };
-  // Campos limpos ("") saem do documento (FieldValue.delete) em vez de gravar undefined.
-  const writePatch: Record<string, unknown> = { ...patch };
-  for (const k of ["documentNumber", "categoryId", "costCenterId", "accountId"] as const) if (patch[k] === undefined && current[k] !== undefined) writePatch[k] = deleteField();
-  const { after } = await transitionPayable(id, [current.status], writePatch as Partial<Payable>, payableHistory(actor, "Alterado", { reason, changes: readable }));
-  for (const k of ["documentNumber", "categoryId", "costCenterId", "accountId"] as const) if (patch[k] === undefined) delete (after as unknown as Record<string, unknown>)[k];
-  await emitPayable("payable.updated", actor, after, `Título ${code(after)} alterado`, { ...changes, categoryId: after.categoryId ?? null, costCenterId: after.costCenterId ?? null, accountId: after.accountId ?? null, labels: PAYABLE_AUDIT_LABELS }, describeChanges(changes, { description: "Descrição", dueDate: "Vencimento", amount: "Valor", notes: "Observações", costCenter: "Centro de custo", recurrence: "Recorrência", category: "Categoria (configuração)", documentNumber: "Nº do documento", categoryName: "Categoria", subcategoryName: "Subcategoria", costCenterName: "Centro de custo (cadastro)", plannedAccountName: "Conta prevista" }, (field, v) => (v === null ? "—" : field === "amount" ? formatCurrency(Number(v)) : field === "dueDate" ? formatDate(String(v)) : field === "category" ? payableCategoryLabel(String(v)) : typeof v === "object" ? JSON.stringify(v) : String(v))));
+  return readable;
+}
+
+/** Remove do objeto em memória os campos limpos (o Firestore já os apagou). */
+function dropCleared(after: Payable, patch: Partial<Payable>): Payable {
+  for (const k of PAYABLE_CLEARABLE) if (patch[k] === undefined) delete (after as unknown as Record<string, unknown>)[k];
   return after;
+}
+
+/**
+ * Alteração manual do título (auditada): valor só em título manual ainda não aprovado. Etapa CP/CR 4: também nº do
+ * documento, centro → categoria → subcategoria do cadastro e conta prevista (ausente = mantém; "" = limpa). A categoria
+ * de título de comissão/bônus/estorno segue o motor (não muda); os campos antigos `category`/`costCenter` acompanham o
+ * cadastro escolhido (derivados), sem apagar o que estava gravado quando a classificação é limpa. Etapa CP/CR 5: também
+ * o credor (só título manual).
+ */
+export async function updatePayable(id: string, input: UpdatePayableInput, actor: UserRef): Promise<Payable> {
+  const current = await loadPayable(id);
+  const plan = await planPayableUpdate(current, input);
+  if (!plan) return current;
+  const { after } = await transitionPayable(id, [current.status], plan.writePatch as Partial<Payable>, payableHistory(actor, "Alterado", { reason: plan.reason, changes: plan.readable }));
+  dropCleared(after, plan.patch);
+  await emitPayable("payable.updated", actor, after, `Título ${code(after)} alterado`, { ...plan.changes, categoryId: after.categoryId ?? null, costCenterId: after.costCenterId ?? null, accountId: after.accountId ?? null, labels: PAYABLE_AUDIT_LABELS }, describeChanges(plan.changes, PAYABLE_DESCRIBE_LABELS, describePayableValue));
+  return after;
+}
+
+// ---------------------------------------------------------------------------
+// Edição e cancelamento em série (etapa CP/CR 5, regras puras em src/domain/title-series.ts)
+// ---------------------------------------------------------------------------
+
+/** Título que ficou fora da série, com o motivo (mostrado na tela e gravado no evento resumo). */
+export interface SeriesSkipped {
+  id: string;
+  code: string;
+  reason: string;
+}
+
+export interface PayableSeriesResult {
+  payable: Payable;
+  /** Futuros alterados/cancelados (sem contar o próprio título). */
+  updated: number;
+  skipped: SeriesSkipped[];
+  match: SeriesMatch;
+}
+
+/** Visibilidade do usuário (escopo de Contas a Pagar): futuros fora do escopo nem entram na conta. */
+export type PayableFilter = (p: Payable) => boolean;
+
+/**
+ * "Salvar este + N futuros": a alteração do título (mesmas regras de `updatePayable`) e, nos futuros iguais
+ * (`findPayableFutures`), só o que MUDOU — descrição com o sufixo de parcela de cada um refeito, valor, credor,
+ * classificação (com os campos antigos derivados de novo para cada um), conta prevista, observações e o dia do vencimento
+ * no próprio mês. Fluxo de aprovação (decisão 1): futuro que a regra atual não deixa alterar (valor fora de título manual
+ * previsto) fica FORA inteiro, com o motivo. Gravação: o título e os futuros na MESMA transação (lotes atômicos de 400
+ * quando passar disso — o limite do Firestore é 500 escritas por transação), histórico em cada título, evento
+ * `payable.updated` por título e o resumo `payable.series_updated` (de → para + motivo + quantos alterados/pulados).
+ */
+export async function updatePayableSeries(id: string, input: UpdatePayableInput, actor: UserRef, options: { allow?: PayableFilter } = {}): Promise<PayableSeriesResult> {
+  const current = await loadPayable(id);
+  const all = await list<Payable>(COLLECTIONS.payables);
+  const unavailable = payableSeriesUnavailable(current, all);
+  if (unavailable) throw new BusinessError(`Este título não tem alteração em série: ${unavailable}`);
+  const plan = await planPayableUpdate(current, input);
+  const futures = findPayableFutures(current, all).filter(options.allow ?? (() => true));
+  const match = seriesMatchOf(current);
+  if (!plan) return { payable: current, updated: 0, skipped: [], match };
+  const after = { ...current, ...plan.patch } as Payable;
+  const edit = seriesEditFrom(current, after, PAYABLE_SERIES_FIELDS);
+  const registry = plan.registry ?? (edit.fields.categoryId !== undefined || edit.fields.costCenterId !== undefined ? await loadClassificationContext() : null);
+  // Patch de cada futuro (só as diferenças) e os campos antigos derivados de novo quando a classificação muda nele.
+  const planned: { future: Payable; patch: Record<string, unknown> }[] = [];
+  const skipped: SeriesSkipped[] = [];
+  for (const f of futures) {
+    const raw = applySeriesEdit(f, edit);
+    if ("dueDate" in raw) raw.dueDate = `${raw.dueDate}T12:00:00.000Z`;
+    if (registry && ("categoryId" in raw || "costCenterId" in raw)) {
+      const next = { categoryId: ("categoryId" in raw ? raw.categoryId : f.categoryId) as string | null | undefined, costCenterId: ("costCenterId" in raw ? raw.costCenterId : f.costCenterId) as string | null | undefined };
+      const effective = resolveEffectiveCostCenter(next, registry.categories, registry.centers).id ?? undefined;
+      const legacy = legacyFieldsFor({ categoryId: next.categoryId ?? undefined, effectiveCostCenterId: effective, names: {} }, registry);
+      delete raw.category;
+      delete raw.costCenter;
+      if (legacy.category && legacy.category !== f.category) raw.category = legacy.category;
+      if (legacy.costCenter && legacy.costCenter !== f.costCenter) raw.costCenter = legacy.costCenter;
+    }
+    if (Object.keys(raw).length === 0) continue;
+    const reason = payableSeriesSkip(f, raw);
+    if (reason) skipped.push({ id: f.id, code: code(f), reason });
+    else planned.push({ future: f, patch: raw });
+  }
+  const names = await registryNames(registry, [current.accountId, after.accountId, ...planned.map((x) => x.future.accountId)]);
+  const now = nowIso();
+  const head = `Alterado em série (este + ${planned.length} futuro${planned.length === 1 ? "" : "s"})`;
+  const results: { before: Payable; after: Payable; readable: Record<string, { from: unknown; to: unknown }> }[] = [];
+  let edited: Payable = current;
+  // Lote 1 leva o título editado; cada lote é uma transação (tudo ou nada). Reler dentro da transação: futuro que
+  // recebeu baixa ou mudou de situação entretanto fica FORA (motivo), o editado com outra situação aborta tudo.
+  const batches = chunk(planned);
+  if (batches.length === 0) batches.push([]);
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const out = await firestore.runTransaction(async (tx) => {
+      const refs = batch.map((x) => col(COLLECTIONS.payables).doc(x.future.id));
+      const editedRef = col(COLLECTIONS.payables).doc(id);
+      const editedSnap = b === 0 ? await txGetOwn(tx, editedRef) : null;
+      const snaps = await Promise.all(refs.map((r) => txGetOwn(tx, r)));
+      const done: { before: Payable; after: Payable; readable: Record<string, { from: unknown; to: unknown }> }[] = [];
+      const late: SeriesSkipped[] = [];
+      let editedAfter: Payable | null = null;
+      if (b === 0) {
+        if (!editedSnap) throw new Error("Título não encontrado");
+        const before = { ...(editedSnap.data() as Omit<Payable, "id">), id } as Payable;
+        if (before.status !== current.status) throw new Error(`Título ${PAYABLE_STATUS_LABELS[before.status].toLowerCase()} não permite esta ação`);
+        const data = cleanPatch({ ...plan.writePatch, updatedAt: now, history: [...(before.history ?? []), payableHistory(actor, planned.length > 0 ? head : "Alterado", { reason: plan.reason, changes: plan.readable }, now)] });
+        tx.update(editedRef, data);
+        editedAfter = dropCleared({ ...before, ...(data as Partial<Payable>) }, plan.patch);
+      }
+      batch.forEach((x, i) => {
+        const snap = snaps[i];
+        const before = snap ? ({ ...(snap.data() as Omit<Payable, "id">), id: x.future.id } as Payable) : null;
+        const why = before ? payableSeriesSkip(before, x.patch) : SERIES_SKIP_SETTLED;
+        if (!before || why) {
+          late.push({ id: x.future.id, code: code(x.future), reason: why ?? SERIES_SKIP_SETTLED });
+          return;
+        }
+        const write: Record<string, unknown> = {};
+        const view: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(x.patch)) {
+          write[k] = v === null ? deleteField() : v;
+          view[k] = v === null ? undefined : v;
+        }
+        const nextView = { ...before, ...view } as Payable;
+        const audit = auditChanges<Payable>(before, nextView, [...PAYABLE_UPDATE_FIELDS, "competence"], plan.reason);
+        const readable = readablePayableChanges(audit.changes, names);
+        tx.update(refs[i], cleanPatch({ ...write, updatedAt: now, history: [...(before.history ?? []), payableHistory(actor, `Alterado em série (a partir de ${code(current)})`, { reason: plan.reason, changes: readable }, now)] }));
+        for (const [k, v] of Object.entries(view)) if (v === undefined) delete (nextView as unknown as Record<string, unknown>)[k];
+        done.push({ before, after: nextView, readable });
+      });
+      return { done, late, editedAfter };
+    });
+    results.push(...out.done);
+    skipped.push(...out.late);
+    if (out.editedAfter) edited = out.editedAfter;
+  }
+  // Eventos: um por título (o editado e cada futuro) + o resumo da série.
+  await emitPayable("payable.updated", actor, edited, `Título ${code(edited)} alterado`, { ...plan.changes, categoryId: edited.categoryId ?? null, costCenterId: edited.costCenterId ?? null, accountId: edited.accountId ?? null, labels: PAYABLE_AUDIT_LABELS, series: { role: "editado", futures: results.length } }, describeChanges(plan.changes, PAYABLE_DESCRIBE_LABELS, describePayableValue));
+  for (const r of results) {
+    const changes = { changes: r.readable, reason: plan.reason };
+    await emitPayable("payable.updated", actor, r.after, `Título ${code(r.after)} alterado em série (a partir de ${code(current)})`, { ...changes, categoryId: r.after.categoryId ?? null, costCenterId: r.after.costCenterId ?? null, accountId: r.after.accountId ?? null, labels: PAYABLE_AUDIT_LABELS, series: { role: "futuro", editedId: current.id, editedCode: code(current) } }, describeChanges(changes, PAYABLE_DESCRIBE_LABELS, describePayableValue));
+  }
+  await emitPayable("payable.series_updated", actor, edited, `Série alterada a partir de ${code(edited)}: ${results.length} futuro${results.length === 1 ? "" : "s"} alterado${results.length === 1 ? "" : "s"}${skipped.length ? `, ${skipped.length} fora` : ""}`, { ...plan.changes, futuresUpdated: { from: null, to: results.length }, ...seriesPayload(match, current.seriesId, results.map((r) => r.after), skipped), labels: PAYABLE_AUDIT_LABELS }, `${plan.reason}${skipped.length ? ` · fora: ${summarizeSkipped(skipped).map((s) => `${s.count} (${s.reason})`).join("; ")}` : ""}`);
+  return { payable: edited, updated: results.length, skipped, match };
+}
+
+/** Parte comum do evento resumo da série: como os futuros foram encontrados, quais foram alterados e quais ficaram fora. */
+function seriesPayload(match: SeriesMatch, seriesId: string | undefined, titles: { id: string; code?: string }[], skipped: SeriesSkipped[]): Record<string, unknown> {
+  return { match, seriesId: seriesId ?? null, titleIds: titles.map((t) => t.id), titleCodes: titles.map((t) => t.code ?? t.id), skipped, skippedSummary: summarizeSkipped(skipped) };
+}
+
+/**
+ * "Cancelar este + N futuros" (decisão 4: cancelar em vez de excluir): o título e os futuros iguais (mesma regra da
+ * edição) ficam cancelados com o motivo, na mesma transação (lotes de 400). Título com baixa parcial não cancela
+ * (regra da etapa 3); futuro que recebeu baixa entretanto fica FORA. Comissão/bônus/estorno e série recorrente não têm
+ * cancelamento em série (o modelo da série recorrente continua encerrando a série pelo cancelamento normal).
+ */
+export async function cancelPayableSeries(id: string, reason: string, actor: UserRef, options: { allow?: PayableFilter } = {}): Promise<PayableSeriesResult> {
+  const trimmed = reason.trim();
+  if (trimmed.length < 5) throw new Error("Descreva o motivo do cancelamento");
+  const current = await loadPayable(id);
+  if (current.status === "pago") throw new Error("Título pago não pode ser cancelado: estorne a comissão");
+  if (current.status === "cancelado") throw new Error("Este título já está cancelado");
+  if ((current.payments?.length ?? 0) > 0) throw new BusinessError("Este título tem baixa parcial registrada: desfaça as baixas (histórico de baixas) antes de cancelar, ou quite pelo já pago");
+  const all = await list<Payable>(COLLECTIONS.payables);
+  const unavailable = payableSeriesUnavailable(current, all);
+  if (unavailable) throw new BusinessError(`Este título não tem cancelamento em série: ${unavailable}`);
+  const futures = findPayableFutures(current, all).filter(options.allow ?? (() => true));
+  const match = seriesMatchOf(current);
+  const now = nowIso();
+  const cancelled: Payable[] = [];
+  const skipped: SeriesSkipped[] = [];
+  let edited: Payable = current;
+  const batches = chunk(futures);
+  if (batches.length === 0) batches.push([]);
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const out = await firestore.runTransaction(async (tx) => {
+      const ids = b === 0 ? [id, ...batch.map((f) => f.id)] : batch.map((f) => f.id);
+      const refs = ids.map((x) => col(COLLECTIONS.payables).doc(x));
+      const snaps = await Promise.all(refs.map((r) => txGetOwn(tx, r)));
+      const done: Payable[] = [];
+      const late: SeriesSkipped[] = [];
+      snaps.forEach((snap, i) => {
+        const isEdited = b === 0 && i === 0;
+        const before = snap ? ({ ...(snap.data() as Omit<Payable, "id">), id: ids[i] } as Payable) : null;
+        if (isEdited) {
+          if (!before) throw new Error("Título não encontrado");
+          if (before.status === "pago" || before.status === "cancelado") throw new Error("Este título já foi pago ou cancelado");
+          if ((before.payments?.length ?? 0) > 0) throw new BusinessError("Este título tem baixa parcial registrada: desfaça as baixas antes de cancelar");
+        } else if (!before || hasSettlement(before) || isCommissionLinkedPayable(before)) {
+          const f = batch[b === 0 ? i - 1 : i];
+          late.push({ id: f.id, code: code(f), reason: before && isCommissionLinkedPayable(before) ? SERIES_SKIP_COMMISSION : SERIES_SKIP_SETTLED });
+          return;
+        }
+        const label = isEdited ? (futures.length ? `Cancelado em série (este + ${futures.length} futuro${futures.length === 1 ? "" : "s"})` : "Cancelado") : `Cancelado em série (a partir de ${code(current)})`;
+        const patch = cleanPatch({ status: "cancelado", cancelledAt: now, cancelledBy: actor.id, cancelReason: trimmed, updatedAt: now, history: [...(before!.history ?? []), payableHistory(actor, label, { from: before!.status, to: "cancelado", reason: trimmed }, now)] });
+        tx.update(refs[i], patch);
+        done.push({ ...before!, ...(patch as Partial<Payable>) });
+      });
+      return { done, late };
+    });
+    for (const p of out.done) {
+      if (p.id === id) edited = p;
+      else cancelled.push(p);
+    }
+    skipped.push(...out.late);
+  }
+  const statusFrom = (p: Payable) => futures.find((f) => f.id === p.id)?.status ?? current.status;
+  await emitPayable("payable.cancelled", actor, edited, `Título ${code(edited)} cancelado`, { ...auditChanges<Payable>(current, edited, ["status"], trimmed), returnedCommissionIds: [], series: { role: "editado", futures: cancelled.length } }, trimmed);
+  for (const p of cancelled) await emitPayable("payable.cancelled", actor, p, `Título ${code(p)} cancelado em série (a partir de ${code(current)})`, { ...auditChanges<Payable>({ ...p, status: statusFrom(p) }, p, ["status"], trimmed), returnedCommissionIds: [], series: { role: "futuro", editedId: current.id, editedCode: code(current) } }, trimmed);
+  await emitPayable("payable.series_cancelled", actor, edited, `Série cancelada a partir de ${code(edited)}: este + ${cancelled.length} futuro${cancelled.length === 1 ? "" : "s"}${skipped.length ? `, ${skipped.length} fora` : ""}`, { changes: { status: { from: current.status, to: "cancelado" }, futuresCancelled: { from: null, to: cancelled.length } }, reason: trimmed, ...seriesPayload(match, current.seriesId, cancelled, skipped) }, trimmed);
+  return { payable: edited, updated: cancelled.length, skipped, match };
 }
 
 /** Nomes dos cadastros para a auditoria (categoria-mãe/subcategoria, centro, conta). */

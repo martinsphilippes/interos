@@ -672,6 +672,18 @@ export const FINANCEIRO = {
           verb: "editar",
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
           guards: ["src/server/receivables/actions.ts#updateReceivableAction", "src/server/receivables/actions.ts#addReceivableAttachmentAction"],
+          // Etapa CP/CR 5: exigida também na alteração em série (além de "Editar em série").
+          checkedIn: ["src/server/receivables/actions.ts#updateReceivableSeriesAction?sempre (edição em série)"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-receber.avulsos.editar-serie",
+          label: "Editar títulos a receber avulsos em série (\"Salvar este + N futuros\")",
+          verb: "editar-serie",
+          // Ação NOVA (etapa CP/CR 5). Padrão = o de "Editar título a receber avulso" (a action exige as DUAS chaves).
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/receivables/actions.ts#updateReceivableSeriesAction"],
+          recordCondition: "título aberto com futuros iguais (mesma série ou mesma descrição) sem recebimento",
           sensitive: true,
         },
         {
@@ -697,6 +709,18 @@ export const FINANCEIRO = {
           verb: "cancelar",
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
           guards: ["src/server/receivables/actions.ts#cancelReceivableAction"],
+          // Etapa CP/CR 5: exigida também no cancelamento em série (além de "Cancelar em série").
+          checkedIn: ["src/server/receivables/actions.ts#cancelReceivableSeriesAction?sempre (cancelamento em série)"],
+          recordCondition: "título aberto sem recebimento",
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-receber.avulsos.cancelar-serie",
+          label: "Cancelar títulos a receber avulsos em série (\"Cancelar este + N futuros\")",
+          verb: "cancelar-serie",
+          // Ação NOVA (etapa CP/CR 5). Padrão = o de "Cancelar título a receber avulso" (a action exige as DUAS chaves).
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/receivables/actions.ts#cancelReceivableSeriesAction"],
           recordCondition: "título aberto sem recebimento",
           sensitive: true,
         },
@@ -1054,6 +1078,19 @@ export const FINANCEIRO = {
           // Hoje: commissions/actions.ts:209 requireWith(canOperatePayables)
           rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
           guards: ["src/server/commissions/actions.ts#updatePayableAction"],
+          // Etapa CP/CR 5: exigida também na alteração em série (além de "Editar em série").
+          checkedIn: ["src/server/commissions/actions.ts#updatePayableSeriesAction?sempre (edição em série)"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-pagar.editar-serie",
+          label: "Editar em série (\"Salvar este + N futuros\")",
+          verb: "editar-serie",
+          // Ação NOVA (etapa CP/CR 5). Padrão = o de "Editar título" (a action exige as DUAS chaves). Os futuros seguem o
+          // fluxo de aprovação: o que a regra atual não deixa alterar fica fora, com o motivo.
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/commissions/actions.ts#updatePayableSeriesAction"],
+          recordCondition: "título manual fora da série recorrente, com futuros iguais (mesma série ou mesma descrição) sem baixa",
           sensitive: true,
         },
         {
@@ -1142,6 +1179,18 @@ export const FINANCEIRO = {
           // Hoje: commissions/actions.ts:197 requireWith(canOperatePayables)
           rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
           guards: ["src/server/commissions/actions.ts#cancelPayableAction"],
+          // Etapa CP/CR 5: exigida também no cancelamento em série (além de "Cancelar em série").
+          checkedIn: ["src/server/commissions/actions.ts#cancelPayableSeriesAction?sempre (cancelamento em série)"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contas-a-pagar.cancelar-serie",
+          label: "Cancelar em série (\"Cancelar este + N futuros\")",
+          verb: "cancelar-serie",
+          // Ação NOVA (etapa CP/CR 5). Padrão = o de "Cancelar título" (a action exige as DUAS chaves).
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/commissions/actions.ts#cancelPayableSeriesAction"],
+          recordCondition: "título sem baixa, fora da série recorrente e de comissão/bônus/estorno",
           sensitive: true,
         },
         {

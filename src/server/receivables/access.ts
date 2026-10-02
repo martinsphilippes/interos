@@ -2,8 +2,8 @@ import "server-only";
 /**
  * Autorização dos títulos a receber AVULSOS (etapa CP/CR 3). Catálogo: tela financeiro.contas-a-receber, seção
  * "Títulos avulsos" (financeiro.contas-a-receber.avulsos.ver, aba ?aba=avulsos) e ações
- * financeiro.contas-a-receber.avulsos.{criar,editar,receber,desfazer-recebimento,cancelar} — padrão = quem opera as
- * cobranças hoje (gestores, papel ou departamento Financeiro).
+ * financeiro.contas-a-receber.avulsos.{criar,editar,receber,desfazer-recebimento,cancelar} (+ editar-serie/cancelar-serie,
+ * etapa CP/CR 5) — padrão = quem opera as cobranças hoje (gestores, papel ou departamento Financeiro).
  *
  * Escopo: o título avulso não tem dono (não há contrato nem vendedor). Como os títulos de fornecedor em Contas a Pagar,
  * ele só aparece com o escopo "empresa" da tela Contas a Receber (padrão de todos os papéis hoje); escopo menor = nenhum
@@ -48,18 +48,25 @@ export interface ReceivableCapabilities {
   receive: boolean;
   undo: boolean;
   cancel: boolean;
+  /** Edição e cancelamento em série (etapa CP/CR 5): exigem também editar/cancelar o título. */
+  editSeries: boolean;
+  cancelSeries: boolean;
   /** "Visualizar valores" (A13): sem ela, quantias "Restrito" e nada de recebimento pela tela. */
   values: boolean;
 }
 
 export function receivableCapabilities(user: CurrentUser): ReceivableCapabilities {
   const values = canSeeFinanceValues(user);
+  const edit = can(user, "financeiro.contas-a-receber.avulsos.editar");
+  const cancel = can(user, "financeiro.contas-a-receber.avulsos.cancelar");
   return {
     create: can(user, "financeiro.contas-a-receber.avulsos.criar") && values,
-    edit: can(user, "financeiro.contas-a-receber.avulsos.editar"),
+    edit,
     receive: can(user, "financeiro.contas-a-receber.avulsos.receber") && values,
     undo: can(user, "financeiro.contas-a-receber.avulsos.desfazer-recebimento"),
-    cancel: can(user, "financeiro.contas-a-receber.avulsos.cancelar"),
+    cancel,
+    editSeries: edit && can(user, "financeiro.contas-a-receber.avulsos.editar-serie"),
+    cancelSeries: cancel && can(user, "financeiro.contas-a-receber.avulsos.cancelar-serie"),
     values,
   };
 }

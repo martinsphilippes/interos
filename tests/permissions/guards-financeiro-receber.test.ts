@@ -30,8 +30,9 @@ describe("títulos a receber avulsos — cobertura e função → chave", () => 
   const owners = new Map<string, string>();
   for (const s of SCREENS) for (const a of s.actions) for (const g of a.guards) if (g.startsWith(`${ACTIONS_FILE}#`)) owners.set(g.split("#")[1].split("?")[0], a.key);
 
-  it("as 9 funções exportadas exigem a chave dona (financeiro.contas-a-receber.avulsos.*) antes da validação", () => {
-    expect(functions.length).toBe(9);
+  // Etapa CP/CR 5: + editar/cancelar em série (a chave dona é a "-serie"; a do título vem logo depois, checkedIn).
+  it("as 11 funções exportadas exigem a chave dona (financeiro.contas-a-receber.avulsos.*) antes da validação", () => {
+    expect(functions.length).toBe(11);
     for (const fn of functions) {
       const first = fn.body.match(/requirePermission\("([^"]+)"\)/);
       expect(first?.[1], fn.name).toBe(owners.get(fn.name));

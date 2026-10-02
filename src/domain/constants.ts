@@ -478,6 +478,11 @@ export const EVENT_TYPES = [
   "receivable.settled_by_paid",
   "receivable.payment_undone",
   "receivable.cancelled",
+  // edição e cancelamento em série (etapa CP/CR 5): evento resumo da série (cada título também tem o seu)
+  "payable.series_updated",
+  "payable.series_cancelled",
+  "receivable.series_updated",
+  "receivable.series_cancelled",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

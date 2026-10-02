@@ -12,7 +12,7 @@ import type { ActionResult, CurrentUser, UserRef } from "@/domain/types";
 import { requireManualPaymentAccount } from "@/server/finance-registry/cash-entries";
 import { assertCanCreateReceivable, assertReceivableAccess } from "./access";
 import { cancelReceivableSchema, partialReceiveSchema, receivableAttachmentSchema, receivableCreateSchema, receivableUpdateSchema, receiveSchema, settleReceivableSchema, undoReceivablePaymentSchema, zodMessage } from "./schemas";
-import { addReceivableAttachment, cancelReceivable, createReceivables, receiveReceivable, settleReceivableByPaid, undoReceivablePayment, updateReceivable } from "./service";
+import { addReceivableAttachment, cancelReceivable, cancelReceivableSeries, createReceivables, receiveReceivable, settleReceivableByPaid, undoReceivablePayment, updateReceivable, updateReceivableSeries } from "./service";
 
 type Failure = { ok: false; error: string };
 
@@ -22,6 +22,11 @@ function fail(error: unknown, fallback: string): Failure {
 }
 
 const actorOf = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
+
+/** Edição/cancelamento em série (etapa CP/CR 5) exige também a chave do título. */
+const SERIES_EDIT_DENIED = "Seu perfil não altera este título";
+/** Edição/cancelamento em série (etapa CP/CR 5) exige também a chave do título. */
+const SERIES_CANCEL_DENIED = "Seu perfil não cancela este título";
 
 function revalidateReceivables() {
   revalidatePath("/financeiro/contas-a-receber");
@@ -52,6 +57,37 @@ export async function updateReceivableAction(input: unknown): Promise<ActionResu
     return { ok: true, data: undefined };
   } catch (error) {
     return fail(error, "Não foi possível alterar o título a receber");
+  }
+}
+
+/** "Salvar este + N futuros" (etapa CP/CR 5): exige "Editar título a receber avulso" E "Editar em série". */
+export async function updateReceivableSeriesAction(input: unknown): Promise<ActionResult<{ updated: number; skipped: { code: string; reason: string }[] }>> {
+  try {
+    const user = await requirePermission("financeiro.contas-a-receber.avulsos.editar-serie");
+    await requirePermission("financeiro.contas-a-receber.avulsos.editar", SERIES_EDIT_DENIED);
+    const data = receivableUpdateSchema.parse(input);
+    await assertReceivableAccess(user, data.receivableId);
+    const { receivableId, ...rest } = data;
+    const r = await updateReceivableSeries(receivableId, rest, actorOf(user));
+    revalidateReceivables();
+    return { ok: true, data: { updated: r.updated, skipped: r.skipped.map((s) => ({ code: s.code, reason: s.reason })) } };
+  } catch (error) {
+    return fail(error, "Não foi possível alterar os títulos a receber em série");
+  }
+}
+
+/** "Cancelar este + N futuros" (etapa CP/CR 5): exige "Cancelar título a receber avulso" E "Cancelar em série". */
+export async function cancelReceivableSeriesAction(input: unknown): Promise<ActionResult<{ cancelled: number; skipped: { code: string; reason: string }[] }>> {
+  try {
+    const user = await requirePermission("financeiro.contas-a-receber.avulsos.cancelar-serie");
+    await requirePermission("financeiro.contas-a-receber.avulsos.cancelar", SERIES_CANCEL_DENIED);
+    const data = cancelReceivableSchema.parse(input);
+    await assertReceivableAccess(user, data.receivableId);
+    const r = await cancelReceivableSeries(data.receivableId, data.reason, actorOf(user));
+    revalidateReceivables();
+    return { ok: true, data: { cancelled: r.updated, skipped: r.skipped.map((s) => ({ code: s.code, reason: s.reason })) } };
+  } catch (error) {
+    return fail(error, "Não foi possível cancelar os títulos a receber em série");
   }
 }
 

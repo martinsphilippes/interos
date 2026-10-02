@@ -1,4 +1,5 @@
 import {
+  Repeat,
   AlertTriangle,
   Archive,
   ArrowLeftRight,
@@ -268,6 +269,10 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "receivable.settled_by_paid": HandCoins,
   "receivable.payment_undone": Undo2,
   "receivable.cancelled": HandCoins,
+  "payable.series_updated": Repeat,
+  "payable.series_cancelled": Repeat,
+  "receivable.series_updated": Repeat,
+  "receivable.series_cancelled": Repeat,
 };
 
 export type EventTone = "success" | "warning" | "danger" | "info" | "brand" | "muted";
@@ -293,6 +298,8 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "receivable.settled_by_paid": "success",
   "receivable.payment_undone": "warning",
   "receivable.cancelled": "muted",
+  "payable.series_cancelled": "muted",
+  "receivable.series_cancelled": "muted",
   "cash_entry.deleted": "muted",
   "contract.sent_for_signature": "brand",
   "implementation.go_live": "success",

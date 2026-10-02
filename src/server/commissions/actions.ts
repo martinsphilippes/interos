@@ -11,10 +11,10 @@ import { z } from "zod";
 import { PermissionError, can, failAction, requirePermission } from "@/server/auth/session";
 import { getById } from "@/server/db";
 import { COLLECTIONS, type ActionResult, type CommissionRule, type CurrentUser, type UserRef } from "@/domain/types";
-import { addPayableAttachment, approvePayable, cancelPayable, createManualPayable, partialPayPayable, payPayable, payPayableWithResidual, schedulePayable, settlePayableByPaid, undoPayablePayment, updatePayable } from "./payables";
+import { addPayableAttachment, approvePayable, cancelPayable, cancelPayableSeries, createManualPayable, partialPayPayable, payPayable, payPayableWithResidual, schedulePayable, settlePayableByPaid, undoPayablePayment, updatePayable, updatePayableSeries } from "./payables";
 import { requireManualPaymentAccount } from "@/server/finance-registry/cash-entries";
 import { getSupplier, saveSupplier, setSupplierActive } from "./suppliers";
-import { assertCommissionAccess, assertCreditorInScope, assertPayableAccess, isCommissionPayable } from "./access";
+import { assertCommissionAccess, assertCreditorInScope, assertPayableAccess, isCommissionPayable, payableAllowed, payableVisibility } from "./access";
 import { ruleScope } from "./rules";
 import {
   cancelPayableSchema,
@@ -47,6 +47,11 @@ function fail(error: unknown, fallback: string): Failure {
 }
 
 const actorOf = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
+
+/** Edição/cancelamento em série (etapa CP/CR 5) exige também a chave do título. */
+const SERIES_EDIT_DENIED = "Seu perfil não altera este título";
+/** Edição/cancelamento em série (etapa CP/CR 5) exige também a chave do título. */
+const SERIES_CANCEL_DENIED = "Seu perfil não cancela este título";
 
 function revalidateCommissions() {
   revalidatePath("/financeiro", "layout");
@@ -295,11 +300,53 @@ export async function updatePayableAction(input: unknown): Promise<ActionResult<
     const user = await requirePermission("financeiro.contas-a-pagar.editar");
     const data = updatePayableSchema.parse(input);
     await assertPayableAccess(user, data.payableId);
+    await assertCreditorChange(user, data);
     await updatePayable(data.payableId, data, actorOf(user));
     revalidateCommissions();
     return { ok: true, data: undefined };
   } catch (error) {
     return fail(error, "Não foi possível alterar o título");
+  }
+}
+
+/** Credor novo (etapa CP/CR 5): com escopo menor que empresa, só colaborador dentro do escopo (como no lançamento). */
+async function assertCreditorChange(user: CurrentUser, data: { creditorType?: "colaborador" | "fornecedor"; creditorId?: string }): Promise<void> {
+  if (data.creditorType || data.creditorId) await assertCreditorInScope(user, { creditorType: data.creditorType ?? (data.creditorId ? "colaborador" : "fornecedor"), creditorId: data.creditorId });
+}
+
+/**
+ * "Salvar este + N futuros" (etapa CP/CR 5): exige "Editar título" E "Editar em série". Os futuros fora do escopo do
+ * usuário em Contas a Pagar nem entram; os que o fluxo de aprovação não deixa alterar voltam em `skipped` com o motivo.
+ */
+export async function updatePayableSeriesAction(input: unknown): Promise<ActionResult<{ updated: number; skipped: { code: string; reason: string }[] }>> {
+  try {
+    const user = await requirePermission("financeiro.contas-a-pagar.editar-serie");
+    await requirePermission("financeiro.contas-a-pagar.editar", SERIES_EDIT_DENIED);
+    const data = updatePayableSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
+    await assertCreditorChange(user, data);
+    const vis = await payableVisibility(user);
+    const r = await updatePayableSeries(data.payableId, data, actorOf(user), { allow: (p) => payableAllowed(vis, p) });
+    revalidateCommissions();
+    return { ok: true, data: { updated: r.updated, skipped: r.skipped.map((s) => ({ code: s.code, reason: s.reason })) } };
+  } catch (error) {
+    return fail(error, "Não foi possível alterar os títulos em série");
+  }
+}
+
+/** "Cancelar este + N futuros" (etapa CP/CR 5): exige "Cancelar título" E "Cancelar em série"; motivo obrigatório. */
+export async function cancelPayableSeriesAction(input: unknown): Promise<ActionResult<{ cancelled: number; skipped: { code: string; reason: string }[] }>> {
+  try {
+    const user = await requirePermission("financeiro.contas-a-pagar.cancelar-serie");
+    await requirePermission("financeiro.contas-a-pagar.cancelar", SERIES_CANCEL_DENIED);
+    const data = cancelPayableSchema.parse(input);
+    await assertPayableAccess(user, data.payableId);
+    const vis = await payableVisibility(user);
+    const r = await cancelPayableSeries(data.payableId, data.reason, actorOf(user), { allow: (p) => payableAllowed(vis, p) });
+    revalidateCommissions();
+    return { ok: true, data: { cancelled: r.updated, skipped: r.skipped.map((s) => ({ code: s.code, reason: s.reason })) } };
+  } catch (error) {
+    return fail(error, "Não foi possível cancelar os títulos em série");
   }
 }
 

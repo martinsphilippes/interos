@@ -12,8 +12,9 @@ import "server-only";
  */
 import { FieldValue } from "firebase-admin/firestore";
 import { firestore } from "@/server/firebase-admin";
-import { col, create, getById, getManyByIds, newId, nextNumber, nowIso, ORG_ID, prepareNextNumber, stripUndefined, txGetOwn, txNextNumber, txNextNumbers, update } from "@/server/db";
+import { col, create, getById, getManyByIds, list, newId, nextNumber, nowIso, ORG_ID, prepareNextNumber, stripUndefined, txGetOwn, txNextNumber, txNextNumbers, update } from "@/server/db";
 import { describeRepeat, planOccurrences } from "@/domain/title-repeat";
+import { applySeriesEdit, chunk, findFutureTitles, hasSettlement, RECEIVABLE_SERIES_FIELDS, SERIES_SKIP_SETTLED, seriesEditFrom, seriesMatchOf, summarizeSkipped, type SeriesMatch } from "@/domain/title-series";
 import { emitEvent } from "@/server/events";
 import { auditChanges } from "@/server/audit";
 import { BusinessError } from "@/server/auth/error-classes";
@@ -36,7 +37,7 @@ function history(actor: UserRef, action: string, extra: Partial<ReceivableHistor
   return cleanPatch({ at: at ?? nowIso(), by: actor.id, byName: actor.name, action, ...extra }) as unknown as ReceivableHistoryEntry;
 }
 
-async function emitReceivable(type: "receivable.created" | "receivable.updated" | "receivable.received" | "receivable.partially_received" | "receivable.residual_created" | "receivable.settled_by_paid" | "receivable.payment_undone" | "receivable.cancelled", actor: UserRef, r: Receivable, title: string, payload: Record<string, unknown>, description?: string) {
+async function emitReceivable(type: "receivable.created" | "receivable.updated" | "receivable.received" | "receivable.partially_received" | "receivable.residual_created" | "receivable.settled_by_paid" | "receivable.payment_undone" | "receivable.cancelled" | "receivable.series_updated" | "receivable.series_cancelled", actor: UserRef, r: Receivable, title: string, payload: Record<string, unknown>, description?: string) {
   await emitEvent({
     type,
     actor,
@@ -250,13 +251,29 @@ async function patchReceivable(id: string, allowed: readonly ReceivableStatus[],
   });
 }
 
-/**
- * Alteração auditada (motivo obrigatório): descrição, vencimento, competência, pagador, classificação, conta prevista,
- * nº do documento e observações; o VALOR só sem recebimentos (depois disso, o valor muda pelas baixas).
- */
-export async function updateReceivable(id: string, input: Omit<ReceivableUpdateInput, "receivableId">, actor: UserRef): Promise<Receivable> {
+interface ReceivableUpdatePlan {
+  reason: string;
+  next: Receivable;
+  readable: Record<string, { from: unknown; to: unknown }>;
+}
+
+const RECEIVABLE_UPDATE_FIELDS = ["description", "amount", "dueDate", "competence", "payerName", "categoryId", "costCenterId", "accountId", "documentNumber", "notes"] as const;
+
+/** Ids viram nomes legíveis na auditoria (nunca ids soltos). */
+function readableReceivableChanges(changes: Record<string, { from: unknown; to: unknown }>, names: Map<string, string>): Record<string, { from: unknown; to: unknown }> {
+  const readable: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [k, c] of Object.entries(changes)) {
+    if (k === "categoryId") readable.categoryName = { from: names.get(String(c.from)) ?? null, to: names.get(String(c.to)) ?? null };
+    else if (k === "costCenterId") readable.costCenterName = { from: names.get(String(c.from)) ?? null, to: names.get(String(c.to)) ?? null };
+    else if (k === "accountId") readable.plannedAccountName = { from: names.get(String(c.from)) ?? null, to: names.get(String(c.to)) ?? null };
+    else readable[k] = c;
+  }
+  return readable;
+}
+
+/** Valida e monta a alteração de UM título (null = nada mudou). */
+async function planReceivableUpdate(current: Receivable, input: Omit<ReceivableUpdateInput, "receivableId">): Promise<ReceivableUpdatePlan | null> {
   const reason = input.reason.trim();
-  const current = await loadReceivable(id);
   if (current.status !== "aberto") throw new BusinessError("Título recebido ou cancelado não pode ser alterado");
   if (input.amount !== undefined && roundCents(input.amount) !== roundCents(current.amount) && (current.payments?.length ?? 0) > 0) throw new BusinessError("O valor só muda sem recebimentos registrados (use quitar com desconto/juros ou quitar pelo já recebido)");
   // Ausente = mantém; "" = limpa (categoria, centro, conta prevista, nº do documento, observações).
@@ -282,38 +299,212 @@ export async function updateReceivable(id: string, input: Omit<ReceivableUpdateI
     documentNumber: keep(input.documentNumber, current.documentNumber),
     notes: keep(input.notes, current.notes),
   };
-  const fields = ["description", "amount", "dueDate", "competence", "payerName", "categoryId", "costCenterId", "accountId", "documentNumber", "notes"] as const;
-  const audit = auditChanges<Receivable>(current, next, [...fields], reason);
-  if (Object.keys(audit.changes).length === 0) return current;
-  // Nomes legíveis na auditoria (nunca ids soltos).
+  const audit = auditChanges<Receivable>(current, next, [...RECEIVABLE_UPDATE_FIELDS], reason);
+  if (Object.keys(audit.changes).length === 0 && (next.clientId ?? null) === (current.clientId ?? null)) return null;
   const names = await nameLookup([current.categoryId, next.categoryId], [current.costCenterId, next.costCenterId], [current.accountId, next.accountId]);
-  const readable: Record<string, { from: unknown; to: unknown }> = {};
-  for (const [k, c] of Object.entries(audit.changes)) {
-    if (k === "categoryId") readable.categoryName = { from: names.get(String(c.from)) ?? null, to: names.get(String(c.to)) ?? null };
-    else if (k === "costCenterId") readable.costCenterName = { from: names.get(String(c.from)) ?? null, to: names.get(String(c.to)) ?? null };
-    else if (k === "accountId") readable.plannedAccountName = { from: names.get(String(c.from)) ?? null, to: names.get(String(c.to)) ?? null };
-    else readable[k] = c;
-  }
+  return { reason, next, readable: readableReceivableChanges(audit.changes, names) };
+}
+
+/** O que gravar a partir do título novo (campos vazios saem do documento). */
+function receivableWrite(next: Receivable): Record<string, unknown> {
+  return {
+    description: next.description,
+    amount: next.amount,
+    dueDate: next.dueDate,
+    competence: next.competence,
+    clientId: next.clientId ?? deleteField(),
+    payerName: next.payerName,
+    categoryId: next.categoryId ?? deleteField(),
+    costCenterId: next.costCenterId ?? deleteField(),
+    accountId: next.accountId ?? deleteField(),
+    documentNumber: next.documentNumber ?? deleteField(),
+    notes: next.notes ?? deleteField(),
+  };
+}
+
+/**
+ * Alteração auditada (motivo obrigatório): descrição, vencimento, competência, pagador, classificação, conta prevista,
+ * nº do documento e observações; o VALOR só sem recebimentos (depois disso, o valor muda pelas baixas).
+ */
+export async function updateReceivable(id: string, input: Omit<ReceivableUpdateInput, "receivableId">, actor: UserRef): Promise<Receivable> {
+  const current = await loadReceivable(id);
+  const plan = await planReceivableUpdate(current, input);
+  if (!plan) return current;
+  const { next, readable, reason } = plan;
   const { after } = await patchReceivable(id, ["aberto"], (before) => {
     if ((before.payments?.length ?? 0) > 0 && roundCents(next.amount) !== roundCents(before.amount)) throw new BusinessError("O valor só muda sem recebimentos registrados");
-    return {
-      description: next.description,
-      amount: next.amount,
-      dueDate: next.dueDate,
-      competence: next.competence,
-      clientId: next.clientId ?? deleteField(),
-      payerName: next.payerName,
-      categoryId: next.categoryId ?? deleteField(),
-      costCenterId: next.costCenterId ?? deleteField(),
-      accountId: next.accountId ?? deleteField(),
-      documentNumber: next.documentNumber ?? deleteField(),
-      notes: next.notes ?? deleteField(),
-      updatedBy: actor.id,
-      history: [...(before.history ?? []), history(actor, "Alterado", { reason, changes: readable })],
-    };
+    return { ...receivableWrite(next), updatedBy: actor.id, history: [...(before.history ?? []), history(actor, "Alterado", { reason, changes: readable })] };
   });
   await emitReceivable("receivable.updated", actor, after, `Título a receber ${code(after)} alterado`, { changes: readable, reason }, reason);
   return after;
+}
+
+// ---------------------------------------------------------------------------
+// Edição e cancelamento em série (etapa CP/CR 5, regras puras em src/domain/title-series.ts)
+// ---------------------------------------------------------------------------
+
+export interface ReceivableSeriesResult {
+  receivable: Receivable;
+  /** Futuros alterados/cancelados (sem contar o próprio título). */
+  updated: number;
+  skipped: { id: string; code: string; reason: string }[];
+  match: SeriesMatch;
+}
+
+/** Futuros iguais do título a receber (mesma série, ou mesma descrição entre os sem série; sem recebimento). */
+export function receivableFutures(current: Receivable, all: readonly Receivable[]): Receivable[] {
+  return findFutureTitles(current, all);
+}
+
+/**
+ * "Salvar este + N futuros": a alteração do título (mesmas regras de `updateReceivable`) e, nos futuros iguais, só o que
+ * MUDOU — descrição com o sufixo de parcela de cada um refeito, valor, pagador, classificação, conta prevista,
+ * observações e o dia do vencimento no próprio mês. Cada futuro mantém vencimento (mês), competência, nº do documento e
+ * parcela. O título e os futuros na MESMA transação (lotes de 400), histórico em cada um, `receivable.updated` por título
+ * e o resumo `receivable.series_updated`.
+ */
+export async function updateReceivableSeries(id: string, input: Omit<ReceivableUpdateInput, "receivableId">, actor: UserRef): Promise<ReceivableSeriesResult> {
+  const current = await loadReceivable(id);
+  const plan = await planReceivableUpdate(current, input);
+  const all = await list<Receivable>(COLLECTIONS.receivables);
+  const futures = receivableFutures(current, all);
+  const match = seriesMatchOf(current);
+  if (!plan) return { receivable: current, updated: 0, skipped: [], match };
+  const edit = seriesEditFrom(current, plan.next, RECEIVABLE_SERIES_FIELDS);
+  const planned = futures.map((f) => {
+    const patch = applySeriesEdit(f, edit);
+    if ("dueDate" in patch) patch.dueDate = noonIso(String(patch.dueDate));
+    return { future: f, patch };
+  }).filter((x) => Object.keys(x.patch).length > 0);
+  const names = await nameLookup([current.categoryId, plan.next.categoryId, ...planned.map((x) => x.future.categoryId)], [current.costCenterId, plan.next.costCenterId, ...planned.map((x) => x.future.costCenterId)], [current.accountId, plan.next.accountId, ...planned.map((x) => x.future.accountId)]);
+  const now = nowIso();
+  const done: Receivable[] = [];
+  const doneChanges = new Map<string, Record<string, { from: unknown; to: unknown }>>();
+  const skipped: ReceivableSeriesResult["skipped"] = [];
+  let edited: Receivable = current;
+  const batches = chunk(planned);
+  if (batches.length === 0) batches.push([]);
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const out = await firestore.runTransaction(async (tx) => {
+      const editedRef = col(COLLECTIONS.receivables).doc(id);
+      const editedSnap = b === 0 ? await txGetOwn(tx, editedRef) : null;
+      const refs = batch.map((x) => col(COLLECTIONS.receivables).doc(x.future.id));
+      const snaps = await Promise.all(refs.map((r) => txGetOwn(tx, r)));
+      let editedAfter: Receivable | null = null;
+      const updated: { after: Receivable; changes: Record<string, { from: unknown; to: unknown }> }[] = [];
+      const late: ReceivableSeriesResult["skipped"] = [];
+      if (b === 0) {
+        if (!editedSnap) throw new BusinessError("Título a receber não encontrado");
+        const before = { ...(editedSnap.data() as Omit<Receivable, "id">), id } as Receivable;
+        if (before.status !== "aberto") throw new BusinessError(`Título ${RECEIVABLE_STATUS_LABELS[before.status].toLowerCase()} não permite esta ação`);
+        if ((before.payments?.length ?? 0) > 0 && roundCents(plan.next.amount) !== roundCents(before.amount)) throw new BusinessError("O valor só muda sem recebimentos registrados");
+        const data = cleanPatch({ ...receivableWrite(plan.next), updatedAt: now, updatedBy: actor.id, history: [...(before.history ?? []), history(actor, planned.length ? `Alterado em série (este + ${planned.length} futuro${planned.length === 1 ? "" : "s"})` : "Alterado", { reason: plan.reason, changes: plan.readable }, now)] });
+        tx.update(editedRef, data);
+        editedAfter = applyWrite(before, data);
+      }
+      batch.forEach((x, i) => {
+        const snap = snaps[i];
+        const before = snap ? ({ ...(snap.data() as Omit<Receivable, "id">), id: x.future.id } as Receivable) : null;
+        if (!before || hasSettlement(before)) {
+          late.push({ id: x.future.id, code: code(x.future), reason: SERIES_SKIP_SETTLED });
+          return;
+        }
+        const write: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(x.patch)) write[k] = v === null ? deleteField() : v;
+        const data = cleanPatch({ ...write, updatedAt: now, updatedBy: actor.id });
+        const after = applyWrite(before, data);
+        const audit = auditChanges<Receivable>(before, after, [...RECEIVABLE_UPDATE_FIELDS], plan.reason);
+        const changes = readableReceivableChanges(audit.changes, names);
+        tx.update(refs[i], { ...data, history: [...(before.history ?? []), history(actor, `Alterado em série (a partir de ${code(current)})`, { reason: plan.reason, changes }, now)] });
+        updated.push({ after, changes });
+      });
+      return { editedAfter, updated, late };
+    });
+    if (out.editedAfter) edited = out.editedAfter;
+    for (const u of out.updated) {
+      done.push(u.after);
+      doneChanges.set(u.after.id, u.changes);
+    }
+    skipped.push(...out.late);
+  }
+  await emitReceivable("receivable.updated", actor, edited, `Título a receber ${code(edited)} alterado`, { changes: plan.readable, reason: plan.reason, series: { role: "editado", futures: done.length } }, plan.reason);
+  for (const r of done) await emitReceivable("receivable.updated", actor, r, `Título a receber ${code(r)} alterado em série (a partir de ${code(current)})`, { changes: doneChanges.get(r.id) ?? {}, reason: plan.reason, series: { role: "futuro", editedId: current.id, editedCode: code(current) } }, plan.reason);
+  await emitReceivable("receivable.series_updated", actor, edited, `Série alterada a partir de ${code(edited)}: ${done.length} futuro${done.length === 1 ? "" : "s"} alterado${done.length === 1 ? "" : "s"}${skipped.length ? `, ${skipped.length} fora` : ""}`, { changes: { ...plan.readable, futuresUpdated: { from: null, to: done.length } }, reason: plan.reason, ...receivableSeriesPayload(match, current.seriesId, done, skipped) }, plan.reason);
+  return { receivable: edited, updated: done.length, skipped, match };
+}
+
+/** Título em memória depois do patch (FieldValue.delete remove o campo). */
+function applyWrite(before: Receivable, data: Record<string, unknown>): Receivable {
+  const after = { ...before } as Record<string, unknown>;
+  for (const [k, v] of Object.entries(data)) {
+    if (v instanceof FieldValue) delete after[k];
+    else after[k] = v;
+  }
+  return after as unknown as Receivable;
+}
+
+function receivableSeriesPayload(match: SeriesMatch, seriesId: string | undefined, titles: Receivable[], skipped: ReceivableSeriesResult["skipped"]): Record<string, unknown> {
+  return { match, seriesId: seriesId ?? null, titleIds: titles.map((t) => t.id), titleCodes: titles.map((t) => code(t)), skipped, skippedSummary: summarizeSkipped(skipped) };
+}
+
+/**
+ * "Cancelar este + N futuros" (cancelar em vez de excluir — decisão 4): o título e os futuros iguais ficam cancelados com
+ * o motivo, na mesma transação (lotes de 400). Título com recebimento não cancela (regra da etapa 3); futuro que recebeu
+ * entretanto fica FORA.
+ */
+export async function cancelReceivableSeries(id: string, reason: string, actor: UserRef): Promise<ReceivableSeriesResult> {
+  const trimmed = reason.trim();
+  if (trimmed.length < 5) throw new BusinessError("Descreva o motivo do cancelamento");
+  const current = await loadReceivable(id);
+  if (current.status !== "aberto") throw new BusinessError(`Título ${RECEIVABLE_STATUS_LABELS[current.status].toLowerCase()} não permite esta ação`);
+  if ((current.payments?.length ?? 0) > 0) throw new BusinessError("Este título tem recebimento registrado: desfaça os recebimentos antes de cancelar, ou quite pelo já recebido");
+  const all = await list<Receivable>(COLLECTIONS.receivables);
+  const futures = receivableFutures(current, all);
+  const match = seriesMatchOf(current);
+  const now = nowIso();
+  const cancelled: Receivable[] = [];
+  const skipped: ReceivableSeriesResult["skipped"] = [];
+  let edited: Receivable = current;
+  const batches = chunk(futures);
+  if (batches.length === 0) batches.push([]);
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const out = await firestore.runTransaction(async (tx) => {
+      const ids = b === 0 ? [id, ...batch.map((f) => f.id)] : batch.map((f) => f.id);
+      const refs = ids.map((x) => col(COLLECTIONS.receivables).doc(x));
+      const snaps = await Promise.all(refs.map((r) => txGetOwn(tx, r)));
+      const doneTx: Receivable[] = [];
+      const late: ReceivableSeriesResult["skipped"] = [];
+      snaps.forEach((snap, i) => {
+        const isEdited = b === 0 && i === 0;
+        const before = snap ? ({ ...(snap.data() as Omit<Receivable, "id">), id: ids[i] } as Receivable) : null;
+        if (isEdited) {
+          if (!before) throw new BusinessError("Título a receber não encontrado");
+          if (before.status !== "aberto") throw new BusinessError(`Título ${RECEIVABLE_STATUS_LABELS[before.status].toLowerCase()} não permite esta ação`);
+          if ((before.payments?.length ?? 0) > 0) throw new BusinessError("Este título tem recebimento registrado: desfaça os recebimentos antes de cancelar");
+        } else if (!before || hasSettlement(before)) {
+          const f = batch[b === 0 ? i - 1 : i];
+          late.push({ id: f.id, code: code(f), reason: SERIES_SKIP_SETTLED });
+          return;
+        }
+        const label = isEdited ? (futures.length ? `Cancelado em série (este + ${futures.length} futuro${futures.length === 1 ? "" : "s"})` : "Cancelado") : `Cancelado em série (a partir de ${code(current)})`;
+        const data = cleanPatch({ status: "cancelado", cancelledAt: now, cancelledBy: actor.id, cancelReason: trimmed, updatedAt: now, updatedBy: actor.id, history: [...(before!.history ?? []), history(actor, label, { from: "aberto", to: "cancelado", reason: trimmed }, now)] });
+        tx.update(refs[i], data);
+        doneTx.push(applyWrite(before!, data));
+      });
+      return { doneTx, late };
+    });
+    for (const r of out.doneTx) {
+      if (r.id === id) edited = r;
+      else cancelled.push(r);
+    }
+    skipped.push(...out.late);
+  }
+  await emitReceivable("receivable.cancelled", actor, edited, `Título a receber ${code(edited)} cancelado`, { ...(auditChanges<Receivable>(current, edited, ["status"], trimmed) as unknown as Record<string, unknown>), series: { role: "editado", futures: cancelled.length } }, trimmed);
+  for (const r of cancelled) await emitReceivable("receivable.cancelled", actor, r, `Título a receber ${code(r)} cancelado em série (a partir de ${code(current)})`, { changes: { status: { from: "aberto", to: "cancelado" } }, reason: trimmed, series: { role: "futuro", editedId: current.id, editedCode: code(current) } }, trimmed);
+  await emitReceivable("receivable.series_cancelled", actor, edited, `Série cancelada a partir de ${code(edited)}: este + ${cancelled.length} futuro${cancelled.length === 1 ? "" : "s"}${skipped.length ? `, ${skipped.length} fora` : ""}`, { changes: { status: { from: "aberto", to: "cancelado" }, futuresCancelled: { from: null, to: cancelled.length } }, reason: trimmed, ...receivableSeriesPayload(match, current.seriesId, cancelled, skipped) }, trimmed);
+  return { receivable: edited, updated: cancelled.length, skipped, match };
 }
 
 async function nameLookup(categoryIds: (string | undefined)[], centerIds: (string | undefined)[], accountIds: (string | undefined)[]): Promise<Map<string, string>> {

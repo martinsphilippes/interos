@@ -90,8 +90,9 @@ describe("repositório real", () => {
   // Etapa CP/CR 1: + página /financeiro/cadastros e 10 actions dos cadastros financeiros.
   // Etapa CP/CR 2: + undoPayablePaymentAction (desfazer pagamento) e listPaymentAccountsAction (contas do diálogo de baixa).
   // Etapa CP/CR 3: + 3 actions de Contas a Pagar (parcial, resíduo, quitar pelo já pago) e 9 dos títulos a receber avulsos.
-  it("inventário: 90 páginas (8 isentas), 265 funções 'use server' (3 isentas), 9 handlers de API (8 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 90, pagesExempt: 8, serverFunctions: 265, serverFunctionsExempt: 3, apiHandlers: 9, apiExempt: 8 });
+  // Etapa CP/CR 5: + editar/cancelar em série em Contas a Pagar e nos títulos a receber avulsos (4 actions).
+  it("inventário: 90 páginas (8 isentas), 269 funções 'use server' (3 isentas), 9 handlers de API (8 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 90, pagesExempt: 8, serverFunctions: 269, serverFunctionsExempt: 3, apiHandlers: 9, apiExempt: 8 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

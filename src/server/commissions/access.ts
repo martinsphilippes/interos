@@ -184,6 +184,9 @@ export interface PayableCapabilities {
   edit: boolean;
   attach: boolean;
   cancel: boolean;
+  /** Edição e cancelamento em série (etapa CP/CR 5): exigem também editar/cancelar o título. */
+  editSeries: boolean;
+  cancelSeries: boolean;
   create: boolean;
   /** Seção Fornecedores (link do cabeçalho). */
   suppliers: boolean;
@@ -213,6 +216,8 @@ export function payableCapabilities(user: CurrentUser): PayableCapabilities {
     edit,
     attach,
     cancel,
+    editSeries: edit && can(user, "financeiro.contas-a-pagar.editar-serie"),
+    cancelSeries: cancel && can(user, "financeiro.contas-a-pagar.cancelar-serie"),
     create,
     suppliers: can(user, "financeiro.contas-a-pagar.fornecedores.ver"),
     cashFlow: can(user, "financeiro.contas-a-pagar.fluxo-caixa.ver"),

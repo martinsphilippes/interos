@@ -105,6 +105,11 @@ export const updatePayableSchema = z.object({
   categoryId: clearable(80),
   costCenterId: clearable(80),
   accountId: clearable(80),
+  // Etapa CP/CR 5 — credor (título manual; ausente = mantém): colaborador, fornecedor cadastrado ou nome livre.
+  creditorType: z.enum(["colaborador", "fornecedor"], { message: "Tipo de credor inválido" }).optional(),
+  creditorId: clearable(80),
+  supplierId: clearable(80),
+  creditorName: clearable(160),
 });
 const categoryKey = z.string().trim().min(2, "Categoria inválida").max(40, "Categoria muito longa").regex(/^[a-z0-9][a-z0-9_]*$/, "Categoria inválida");
 const attachmentUrl = z.string().trim().url("Link do anexo inválido").max(500).optional().or(z.literal("").transform(() => undefined));

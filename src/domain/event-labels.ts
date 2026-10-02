@@ -185,6 +185,10 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "receivable.settled_by_paid": "Título a receber quitado pelo já recebido",
   "receivable.payment_undone": "Recebimento de título desfeito",
   "receivable.cancelled": "Título a receber cancelado",
+  "payable.series_updated": "Títulos a pagar alterados em série",
+  "payable.series_cancelled": "Títulos a pagar cancelados em série",
+  "receivable.series_updated": "Títulos a receber alterados em série",
+  "receivable.series_cancelled": "Títulos a receber cancelados em série",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
