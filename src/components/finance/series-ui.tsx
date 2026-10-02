@@ -46,13 +46,13 @@ export function SeriesNotice({ info, mode, className }: { info: SeriesFutureInfo
         <span>
           Este título tem <strong data-testid="series-count">{plural(info.count, "futuro", "futuros")}</strong> {how}, sem baixa e com vencimento a partir deste.{" "}
           {mode === "editar"
-            ? "“Salvar este + futuros” leva a descrição (com a parcela de cada um), o valor, o credor/pagador, a classificação, a conta prevista e as observações; cada um mantém vencimento, competência, parcela e nº do documento. Mudar o DIA do vencimento move cada futuro para esse dia no próprio mês."
-            : "“Cancelar este + futuros” cancela todos com o mesmo motivo (nada é excluído)."}
+            ? "Em “este + futuros” vão descrição (com a parcela de cada um), valor, credor/pagador, classificação, conta prevista e observações; cada um mantém vencimento, competência, parcela e nº do documento. Mudar o dia do vencimento leva cada futuro a esse dia no próprio mês."
+            : "Em “este + futuros” todos são cancelados com o mesmo motivo (nada é excluído)."}
         </span>
       </p>
       {mode === "editar" && info.amountLocked ? (
         <p className="mt-1 pl-6 text-xs" data-testid="series-amount-locked">
-          Se mudar o valor, {plural(info.amountLocked, "título já aprovado ou programado fica", "títulos já aprovados ou programados ficam")} fora (fluxo de aprovação: o valor só muda em título previsto).
+          Se mudar o valor, {plural(info.amountLocked, "título já aprovado ou programado fica", "títulos já aprovados ou programados ficam")} fora (o valor só muda em título previsto).
         </p>
       ) : null}
       <button type="button" className="mt-1 inline-flex min-h-[32px] items-center gap-1 pl-6 text-xs font-medium underline-offset-2 hover:underline" onClick={() => setOpen((v) => !v)} aria-expanded={open}>

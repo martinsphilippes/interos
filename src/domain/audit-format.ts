@@ -162,6 +162,10 @@ export const CHANGE_FIELD_LABELS: Record<string, string> = {
   creditorName: "Credor",
   costCenter: "Centro de custo",
   recurrence: "Recorrência",
+  // Edição e cancelamento em série (etapa CP/CR 5).
+  creditorType: "Tipo de credor",
+  futuresUpdated: "Futuros alterados",
+  futuresCancelled: "Futuros cancelados",
 };
 
 /** Campos que NUNCA aparecem em claro (defesa em profundidade: o serviço já grava mascarado). */
