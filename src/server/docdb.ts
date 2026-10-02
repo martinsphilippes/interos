@@ -32,13 +32,47 @@ type Runner = Sql | TxSql;
 const SCHEMA = "interos";
 
 /**
+ * Parâmetros de URL que pertencem a outros clientes (Prisma etc.) e que o painel do Supabase às vezes inclui
+ * (ex.: `?pgbouncer=true`). O postgres.js repassa parâmetro desconhecido ao servidor como parâmetro de sessão, e o
+ * Postgres recusa a conexão ("unrecognized configuration parameter").
+ */
+const CLIENT_ONLY_PARAMS = ["pgbouncer", "connection_limit", "pool_timeout", "schema", "statement_cache_size", "socket_timeout"];
+
+/** DATABASE_URL sem os parâmetros de outros clientes. Inválida ou sem query string: devolve como veio. */
+export function sanitizeDatabaseUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return raw;
+  }
+  if (!url.search) return raw;
+  for (const key of CLIENT_ONLY_PARAMS) url.searchParams.delete(key);
+  return url.toString();
+}
+
+/** Papel da conexão (`interos_app.<ref>` no pooler do Supabase → "interos_app"). */
+export function databaseRole(raw: string): string | null {
+  try {
+    return decodeURIComponent(new URL(raw).username).split(".")[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * DATABASE_URL: string de conexão do papel `interos_app`. Na Vercel use o pooler do Supabase em modo transação
  * (porta 6543); por isso `prepare: false` (o pooler não mantém prepared statements entre transações).
  */
 function connect(): Sql {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL não configurada. Veja .env.example.");
+  const raw = process.env.DATABASE_URL;
+  if (!raw) throw new Error("DATABASE_URL não configurada. Veja .env.example.");
+  const url = sanitizeDatabaseUrl(raw);
   const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  // Funciona, mas o superusuário ignora o isolamento do schema (RLS, auth.*): o servidor deve usar interos_app.
+  if (!local && databaseRole(url) === "postgres") {
+    console.warn("[docdb] DATABASE_URL usa o papel postgres; troque para interos_app.<ref> (menor privilégio).");
+  }
   return postgres(url, {
     prepare: false,
     max: Number(process.env.DATABASE_POOL_MAX ?? 5),
