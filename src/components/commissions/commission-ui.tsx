@@ -127,6 +127,8 @@ export function ReasonDialog({
   destructive,
   pending,
   onConfirm,
+  secondary,
+  children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -138,11 +140,18 @@ export function ReasonDialog({
   destructive?: boolean;
   pending?: boolean;
   onConfirm: (reason: string) => Promise<boolean>;
+  /** Segunda confirmação com o mesmo motivo (etapa CP/CR 5: "Cancelar este + N futuros"); fica por último no rodapé. */
+  secondary?: { label: string; onConfirm: (reason: string) => Promise<boolean> };
+  /** Conteúdo extra acima do motivo (ex.: aviso da série). */
+  children?: React.ReactNode;
 }) {
   const id = React.useId();
   const [reason, setReason] = React.useState("");
   const confirm = async () => {
     if (await onConfirm(reason.trim())) setReason("");
+  };
+  const confirmSecondary = async () => {
+    if (secondary && (await secondary.onConfirm(reason.trim()))) setReason("");
   };
   return (
     <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
@@ -151,7 +160,8 @@ export function ReasonDialog({
           <DialogTitle>{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}
         </DialogHeader>
-        <DialogBody>
+        <DialogBody className={children ? "flex flex-col gap-4" : undefined}>
+          {children}
           <FormField label={label} htmlFor={`${id}-reason`} required hint="Mínimo de 5 caracteres; fica registrado no histórico e na auditoria">
             <Textarea id={`${id}-reason`} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={placeholder} />
           </FormField>
@@ -160,9 +170,14 @@ export function ReasonDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             Voltar
           </Button>
-          <Button variant={destructive ? "destructive" : "primary"} onClick={confirm} loading={pending} disabled={reason.trim().length < 5}>
+          <Button variant={secondary ? "outline" : destructive ? "destructive" : "primary"} className={secondary && destructive ? "text-danger-fg" : undefined} onClick={confirm} loading={pending} disabled={reason.trim().length < 5}>
             {confirmLabel}
           </Button>
+          {secondary ? (
+            <Button variant={destructive ? "destructive" : "primary"} onClick={confirmSecondary} loading={pending} disabled={reason.trim().length < 5}>
+              {secondary.label}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

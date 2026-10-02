@@ -10,6 +10,7 @@ import { dateKey } from "@/lib/format";
 import { resolveEffectiveCostCenter } from "@/domain/finance-registry";
 import { classificationOptions, hasClassification, type ClassificationOptions } from "@/domain/title-classification";
 import { receivableSettlement, type SettlementStatus } from "@/domain/settlements";
+import { findFutureTitles, seriesMatchOf, type SeriesMatch } from "@/domain/title-series";
 import { COLLECTIONS, type Client, type CostCenter, type DomainEvent, type FinanceCategory, type FinancialAccount, type Receivable, type ReceivableStatus, type CurrentUser } from "@/domain/types";
 import { listPaymentAccountOptions } from "@/server/finance-registry/cash-entries";
 import { paymentMethodLabel } from "@/server/finance/schemas";
@@ -77,6 +78,8 @@ export interface ReceivableDetail extends ReceivableRow {
   attachments: { id: string; name: string; url: string; createdAt: string }[];
   history: { id: string; at: string; title: string; subtitle?: string; by?: string; tone: "neutral" | "success" | "warning" | "danger" | "info" | "brand" }[];
   siblings: { id: string; code: string; dueDate: string; amount: number | null; settlement: SettlementStatus }[];
+  /** Edição/cancelamento em série (etapa CP/CR 5), calculado ao abrir: futuros iguais sem recebimento (ausente = fechado). */
+  series?: { count: number; match: SeriesMatch; titles: { id: string; code: string; dueDate: string; amount: number | null }[] };
 }
 
 export interface ReceivablesWorkspace {
@@ -224,6 +227,13 @@ async function receivableDetail(r: Receivable, row: ReceivableRow, all: Receivab
     payments: ctx.hide ? [] : (r.payments ?? []).map((p) => ({ id: p.id, date: p.date, amount: p.amount, accountName: accountName(p.accountId) ?? "Conta removida", method: paymentMethodLabel(p.method), byName: p.byName })),
     attachments: attachments.map((d) => ({ id: d.id, name: d.name, url: d.url, createdAt: d.createdAt })),
     history,
+    series:
+      r.status === "aberto"
+        ? (() => {
+            const futures = findFutureTitles(r, all);
+            return { count: futures.length, match: seriesMatchOf(r), titles: futures.map((f) => ({ id: f.id, code: f.code ?? f.id, dueDate: f.dueDate, amount: ctx.hide ? null : f.amount })) };
+          })()
+        : undefined,
     siblings: r.seriesId
       ? all
           .filter((x) => x.seriesId === r.seriesId && x.id !== r.id)

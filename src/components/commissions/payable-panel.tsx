@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Ban, CalendarCheck, Calculator, CheckCircle2, CircleDollarSign, Copy, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Receipt, Repeat, Route, Scissors, Split, Undo2 } from "lucide-react";
 import type { PayableDetail } from "@/server/commissions/queries";
 import type { PayableCapabilities } from "@/server/commissions/access";
-import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, createManualPayableAction, partialPayPayableAction, payPayableAction, payPayableWithResidualAction, schedulePayableAction, settlePayableByPaidAction, undoPayablePaymentAction, updatePayableAction } from "@/server/commissions/actions";
+import { addPayableAttachmentAction, approvePayableAction, cancelPayableAction, cancelPayableSeriesAction, createManualPayableAction, partialPayPayableAction, payPayableAction, payPayableWithResidualAction, schedulePayableAction, settlePayableByPaidAction, undoPayablePaymentAction, updatePayableAction, updatePayableSeriesAction } from "@/server/commissions/actions";
 import { PAYOUT_METHOD_LABELS, PAYOUT_METHODS } from "@/server/commissions/schemas";
 import { PAYABLE_ORIGIN_LABELS, payableCategoryLabel } from "@/domain/commissions";
 import { dateKey, formatCompetence, formatCurrency, formatDate } from "@/lib/format";
@@ -25,13 +25,14 @@ import { hasClassification, splitCategoryOption, titleCategoryId, type Classific
 import { planOccurrences, stripInstallmentSuffix } from "@/domain/title-repeat";
 import { CalcMemory, CommissionStatusBadge, HistoryList, PayableStatusBadge, ReasonDialog, TraceChain } from "./commission-ui";
 import { PaymentsHistory, SettleByPaidDialog, SettlementBadge, SettlementSummary } from "@/components/finance/settlement-ui";
+import { SeriesNotice, SeriesResultNotice, seriesResultText, type SeriesFutureInfo, type SeriesResult } from "@/components/finance/series-ui";
 
 type Dialogs = null | "schedule" | "pay" | "pay-partial" | "pay-residual" | "settle-paid" | "cancel" | "edit" | "attach" | "undo" | "clone";
 
 type Opt = { value: string; label: string };
 
 /** Capacidades calculadas no servidor (payableCapabilities); a interface só esconde — as actions revalidam. */
-export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate"> & Partial<Pick<PayableCapabilities, "undoPayment" | "payPartial" | "payResidual" | "settleByPaid" | "create">>;
+export type PayableCan = Pick<PayableCapabilities, "approve" | "approveCommission" | "schedule" | "pay" | "edit" | "attach" | "cancel" | "operate"> & Partial<Pick<PayableCapabilities, "undoPayment" | "payPartial" | "payResidual" | "settleByPaid" | "create" | "editSeries" | "cancelSeries">>;
 
 /** Opções do formulário (etapa CP/CR 4): clonar abre o mesmo formulário de "Lançar título"; editar usa a classificação. */
 export type PayableFormOptions = Omit<ManualPayableButtonProps, "users"> & { users?: Opt[] };
@@ -44,6 +45,11 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [], form }: 
   const [dialog, setDialog] = React.useState<Dialogs>(null);
   // Baixa específica a desfazer (histórico de baixas, etapa CP/CR 3).
   const [undoPaymentId, setUndoPaymentId] = React.useState<string | null>(null);
+  // Edição/cancelamento em série (etapa CP/CR 5): N futuros calculados no servidor ao abrir; resultado fica no painel.
+  const [seriesResult, setSeriesResult] = React.useState<SeriesResult | null>(null);
+  const futures = p.series && p.series.count > 0 ? p.series : null;
+  const editSeries: SeriesFutureInfo | null = futures && can.editSeries ? futures : null;
+  const cancelSeries: SeriesFutureInfo | null = futures && can.cancelSeries ? futures : null;
   const open = p.status !== "pago" && p.status !== "cancelado";
   const payable = (p.status === "aprovado" || p.status === "a_pagar") && p.open > 0;
   // Baixa parcial/resíduo/quitar pelo já pago: nunca em título de comissão/bônus (pagamento integral).
@@ -70,6 +76,7 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [], form }: 
           <p className="break-words text-sm text-muted">{p.description}</p>
         </CardHeader>
         <CardContent className="pt-0">
+          {seriesResult ? <SeriesResultNotice className="mb-3" result={seriesResult} onClose={() => setSeriesResult(null)} /> : null}
           <p className={`mb-1 text-2xl font-semibold tabular-nums ${p.amount < 0 ? "text-danger-fg" : ""}`}>{formatCurrency(p.amount)}</p>
           <SettlementSummary className="mb-3" paid={p.paid} open={p.open} status={p.settlement} originalAmount={p.originalAmount} amount={p.amount} verb="pago" />
           <DataList
@@ -318,7 +325,28 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [], form }: 
       {dialog === "pay-partial" ? <PayDialog p={p} mode="parcial" accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => partialPayPayableAction({ payableId: p.id, ...v }), (d) => (d.settled ? "Baixa registrada · título quitado" : "Baixa parcial registrada")).then(close)} /> : null}
       {dialog === "pay-residual" ? <PayDialog p={p} mode="residuo" accounts={accounts} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => payPayableWithResidualAction({ payableId: p.id, ...v }), (d) => `Título pago com resíduo · ${d.residualCode ?? "resíduo"} criado`).then(close)} /> : null}
       {dialog === "settle-paid" ? <SettleByPaidDialog code={p.code ?? p.id} amount={p.amount} paid={p.paid} verb="pago" pending={pending} onClose={() => setDialog(null)} onConfirm={(reason) => run(() => settlePayableByPaidAction({ payableId: p.id, reason }), (d) => `Título quitado pelo já pago (${formatCurrency(d.amount)})`).then(close)} /> : null}
-      {dialog === "edit" ? <EditDialog p={p} costCenters={costCenters} classification={form?.classification ?? null} accounts={form?.accounts ?? []} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updatePayableAction({ payableId: p.id, ...v }), "Título alterado").then(close)} /> : null}
+      {dialog === "edit" ? (
+        <EditDialog
+          p={p}
+          costCenters={costCenters}
+          classification={form?.classification ?? null}
+          accounts={form?.accounts ?? []}
+          users={form?.users ?? []}
+          suppliers={form?.suppliers ?? []}
+          series={editSeries}
+          pending={pending}
+          onClose={() => setDialog(null)}
+          onSubmit={(v, scope) =>
+            scope === "futuros"
+              ? run(
+                  () => updatePayableSeriesAction({ payableId: p.id, ...v }),
+                  (d) => `Título alterado · ${seriesResultText({ kind: "alterados", count: d.updated, skipped: d.skipped })}`,
+                  (d) => setSeriesResult({ kind: "alterados", count: d.updated, skipped: d.skipped }),
+                ).then(close)
+              : run(() => updatePayableAction({ payableId: p.id, ...v }), "Título alterado").then(close)
+          }
+        />
+      ) : null}
       {dialog === "clone" && form ? <PayableFormDialog {...form} users={form.users ?? []} cloneOf={p.code} initial={cloneInitial(p)} onClose={() => setDialog(null)} /> : null}
       {dialog === "attach" ? <AttachDialog p={p} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => addPayableAttachmentAction({ payableId: p.id, ...v }), "Anexo adicionado").then(close)} /> : null}
       <ReasonDialog
@@ -326,11 +354,26 @@ export function PayablePanel({ p, can, costCenters = [], accounts = [], form }: 
         onOpenChange={(o) => setDialog(o ? "cancel" : null)}
         title={`Cancelar o título ${p.code}?`}
         description={p.origin === "comissao_automatica" ? "A comissão volta para \"Elegível\" (sem título) com este motivo; um novo título pode ser gerado depois na tela de Comissões." : "O título fica cancelado e não pode ser pago."}
-        confirmLabel="Cancelar título"
+        confirmLabel={cancelSeries ? "Cancelar só este" : "Cancelar título"}
         destructive
         pending={pending}
         onConfirm={(reason) => run(() => cancelPayableAction({ payableId: p.id, reason }), "Título cancelado").then(close)}
-      />
+        secondary={
+          cancelSeries
+            ? {
+                label: `Cancelar este + ${cancelSeries.count} futuro${cancelSeries.count === 1 ? "" : "s"}`,
+                onConfirm: (reason) =>
+                  run(
+                    () => cancelPayableSeriesAction({ payableId: p.id, reason }),
+                    (d) => `Título cancelado · ${seriesResultText({ kind: "cancelados", count: d.cancelled, skipped: d.skipped })}`,
+                    (d) => setSeriesResult({ kind: "cancelados", count: d.cancelled, skipped: d.skipped }),
+                  ).then(close),
+              }
+            : undefined
+        }
+      >
+        {cancelSeries ? <SeriesNotice info={cancelSeries} mode="cancelar" /> : null}
+      </ReasonDialog>
       <ReasonDialog
         open={dialog === "undo"}
         onOpenChange={(o) => {
@@ -491,7 +534,9 @@ function PayDialog({ p, mode, accounts, pending, onClose, onSubmit }: { p: Payab
   );
 }
 
-function EditDialog({ p, costCenters, classification, accounts, pending, onClose, onSubmit }: { p: PayableDetail; costCenters: string[]; classification: ClassificationOptions | null; accounts: Opt[]; pending: boolean; onClose: () => void; onSubmit: (v: { description?: string; dueDate?: string; amount?: number; notes?: string; costCenter?: string; recurrenceUntil?: string; reason: string; documentNumber?: string; categoryId?: string; costCenterId?: string; accountId?: string }) => Promise<boolean> }) {
+type EditPayload = { description?: string; dueDate?: string; amount?: number; notes?: string; costCenter?: string; recurrenceUntil?: string; reason: string; documentNumber?: string; categoryId?: string; costCenterId?: string; accountId?: string; creditorType?: "colaborador" | "fornecedor"; creditorId?: string; supplierId?: string; creditorName?: string };
+
+function EditDialog({ p, costCenters, classification, accounts, users, suppliers, series, pending, onClose, onSubmit }: { p: PayableDetail; costCenters: string[]; classification: ClassificationOptions | null; accounts: Opt[]; users: Opt[]; suppliers: Opt[]; series: SeriesFutureInfo | null; pending: boolean; onClose: () => void; onSubmit: (v: EditPayload, scope: "este" | "futuros") => Promise<boolean> }) {
   const id = React.useId();
   const [description, setDescription] = React.useState(p.description);
   const [dueDate, setDueDate] = React.useState(dateKey(p.dueDate));
@@ -506,6 +551,26 @@ function EditDialog({ p, costCenters, classification, accounts, pending, onClose
   const registry = hasClassification(classification) ? classification : null;
   const initialCls: ClassificationValue = registry ? { ...splitCategoryOption(p.categoryId, registry), costCenterId: p.costCenterId ?? "" } : EMPTY_CLASSIFICATION;
   const [cls, setCls] = React.useState<ClassificationValue>(initialCls);
+  // Etapa CP/CR 5: credor (só título manual; o de comissão/bônus/estorno segue o motor). O atual entra nas opções mesmo
+  // que esteja fora da lista (colaborador inativo, fornecedor desativado ou nome livre).
+  const creditorEditable = !p.integralOnly && (users.length > 0 || suppliers.length > 0);
+  const startSupplier = p.creditorType === "fornecedor" ? (p.supplierId ?? SUPPLIER_FREE) : (suppliers[0]?.value ?? SUPPLIER_FREE);
+  const [creditor, setCreditor] = React.useState({ type: p.creditorType, userId: p.creditorType === "colaborador" ? (p.creditorId ?? "") : "", supplierId: startSupplier, name: p.creditorType === "fornecedor" && !p.supplierId ? p.creditorName : "" });
+  const userOptions = p.creditorType === "colaborador" && p.creditorId && !users.some((u) => u.value === p.creditorId) ? [...users, { value: p.creditorId, label: p.creditorName }] : users;
+  const supplierOptions = [...(p.supplierId && !suppliers.some((x) => x.value === p.supplierId) ? [...suppliers, { value: p.supplierId, label: p.creditorName }] : suppliers), { value: SUPPLIER_FREE, label: "Outro (nome livre)" }];
+  const supplierFree = creditor.supplierId === SUPPLIER_FREE;
+  const creditorChanged =
+    creditor.type !== p.creditorType ||
+    (creditor.type === "colaborador" ? creditor.userId !== (p.creditorId ?? "") : supplierFree ? Boolean(p.supplierId) || creditor.name.trim() !== p.creditorName : creditor.supplierId !== (p.supplierId ?? ""));
+  const creditorOk = creditor.type === "colaborador" ? Boolean(creditor.userId) : supplierFree ? creditor.name.trim().length >= 2 : Boolean(creditor.supplierId);
+  const creditorPayload: Partial<EditPayload> =
+    creditorEditable && creditorChanged
+      ? creditor.type === "colaborador"
+        ? { creditorType: "colaborador", creditorId: creditor.userId }
+        : supplierFree
+          ? { creditorType: "fornecedor", supplierId: "", creditorName: creditor.name.trim() }
+          : { creditorType: "fornecedor", supplierId: creditor.supplierId }
+      : {};
   const amountEditable = p.origin === "manual" && p.status === "previsto";
   const nextCategory = titleCategoryId(cls) ?? "";
   // Só manda o que mudou (ausente = mantém): um cadastro arquivado depois de gravado não trava a edição de outros campos.
@@ -515,6 +580,20 @@ function EditDialog({ p, costCenters, classification, accounts, pending, onClose
         ...(cls.costCenterId !== (p.costCenterId ?? "") ? { costCenterId: cls.costCenterId } : {}),
       }
     : { costCenter: costCenter || undefined };
+  const payload = (): EditPayload => ({
+    description,
+    dueDate,
+    amount: amountEditable && amount !== null ? amount : undefined,
+    notes,
+    recurrenceUntil: recurrenceUntil || undefined,
+    reason,
+    ...classification_,
+    ...(documentNumber.trim() !== (p.documentNumber ?? "") ? { documentNumber: documentNumber.trim() } : {}),
+    ...(accountId !== (p.accountId ?? "") ? { accountId } : {}),
+    ...creditorPayload,
+  });
+  const disabled = reason.trim().length < 5 || (amountEditable && !(amount && amount > 0)) || (creditorEditable && !creditorOk);
+  const futuresLabel = series ? `Salvar este + ${series.count} futuro${series.count === 1 ? "" : "s"}` : "";
   return (
     <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
       <DialogContent size="md">
@@ -523,6 +602,31 @@ function EditDialog({ p, costCenters, classification, accounts, pending, onClose
           <DialogDescription>Toda alteração guarda o valor anterior, o novo e o motivo. O valor de título de comissão segue a memória de cálculo e não é editável.</DialogDescription>
         </DialogHeader>
         <DialogBody className="grid gap-4 sm:grid-cols-2">
+          {series ? <SeriesNotice info={series} mode="editar" className="sm:col-span-2" /> : null}
+          {creditorEditable ? (
+            <>
+              <FormField label="Credor" htmlFor={`${id}-ctype`}>
+                <Select id={`${id}-ctype`} value={creditor.type} onChange={(e) => setCreditor((c) => ({ ...c, type: e.target.value as "colaborador" | "fornecedor" }))}>
+                  <option value="colaborador">Colaborador</option>
+                  <option value="fornecedor">Fornecedor</option>
+                </Select>
+              </FormField>
+              {creditor.type === "colaborador" ? (
+                <FormField label="Colaborador" htmlFor={`${id}-cuser`}>
+                  <Select id={`${id}-cuser`} value={creditor.userId} onChange={(e) => setCreditor((c) => ({ ...c, userId: e.target.value }))} placeholder="Escolha" options={userOptions} />
+                </FormField>
+              ) : (
+                <FormField label="Fornecedor" htmlFor={`${id}-csup`}>
+                  <Select id={`${id}-csup`} value={creditor.supplierId} onChange={(e) => setCreditor((c) => ({ ...c, supplierId: e.target.value }))} options={supplierOptions} />
+                </FormField>
+              )}
+              {creditor.type === "fornecedor" && supplierFree ? (
+                <FormField label="Nome do fornecedor" htmlFor={`${id}-cname`} className="sm:col-span-2">
+                  <Input id={`${id}-cname`} value={creditor.name} onChange={(e) => setCreditor((c) => ({ ...c, name: e.target.value }))} />
+                </FormField>
+              ) : null}
+            </>
+          ) : null}
           <FormField label="Descrição" htmlFor={`${id}-desc`} className="sm:col-span-2">
             <Input id={`${id}-desc`} value={description} onChange={(e) => setDescription(e.target.value)} />
           </FormField>
@@ -542,7 +646,7 @@ function EditDialog({ p, costCenters, classification, accounts, pending, onClose
           <FormField label="Conta prevista" htmlFor={`${id}-acc`} hint="Pré-seleciona a conta no pagamento">
             <Select id={`${id}-acc`} value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="Sem conta prevista" options={accountId && !accounts.some((a) => a.value === accountId) ? [...accounts, { value: accountId, label: p.plannedAccountName ?? "Conta atual" }] : accounts} />
           </FormField>
-          <FormField label="Nº do documento" htmlFor={`${id}-doc`} hint="NF ou boleto do fornecedor">
+          <FormField label="Nº do documento" htmlFor={`${id}-doc`} hint={series ? "NF ou boleto do fornecedor (só deste título)" : "NF ou boleto do fornecedor"}>
             <Input id={`${id}-doc`} value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} maxLength={60} />
           </FormField>
           {p.recurrence ? (
@@ -561,25 +665,14 @@ function EditDialog({ p, costCenters, classification, accounts, pending, onClose
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Voltar
           </Button>
-          <Button
-            onClick={() =>
-              onSubmit({
-                description,
-                dueDate,
-                amount: amountEditable && amount !== null ? amount : undefined,
-                notes,
-                recurrenceUntil: recurrenceUntil || undefined,
-                reason,
-                ...classification_,
-                ...(documentNumber.trim() !== (p.documentNumber ?? "") ? { documentNumber: documentNumber.trim() } : {}),
-                ...(accountId !== (p.accountId ?? "") ? { accountId } : {}),
-              })
-            }
-            loading={pending}
-            disabled={reason.trim().length < 5 || (amountEditable && !(amount && amount > 0))}
-          >
-            Salvar alteração
+          <Button variant={series ? "outline" : "primary"} onClick={() => onSubmit(payload(), "este")} loading={pending} disabled={disabled}>
+            {series ? "Salvar só este" : "Salvar alteração"}
           </Button>
+          {series ? (
+            <Button onClick={() => onSubmit(payload(), "futuros")} loading={pending} disabled={disabled}>
+              <Repeat /> {futuresLabel}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

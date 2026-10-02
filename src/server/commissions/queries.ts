@@ -42,6 +42,7 @@ import { loadClassificationContext, optionsFor, type ClassificationContext } fro
 import { classificationLabel, hasClassification, resolveClassification, type ClassificationOptions } from "@/domain/title-classification";
 import { resolveEffectiveCostCenter } from "@/domain/finance-registry";
 import { isCommissionLinkedPayable, payablePaymentUndoBlock, payableSettlement, type SettlementStatus } from "@/domain/settlements";
+import { findPayableFutures, payableAmountLockedCount, payableSeriesUnavailable, seriesMatchOf, type SeriesMatch } from "@/domain/title-series";
 import { can } from "@/server/auth/permissions";
 import type { CommissionScope } from "./permissions";
 import {
@@ -699,6 +700,12 @@ export interface PayableDetail extends PayableRow {
   recurrence?: Payable["recurrence"];
   /** Outros títulos da mesma série/parcelamento. */
   siblings: { id: string; code: string; competence: string; dueDate: string; status: PayableStatus; amount: number }[];
+  /**
+   * Edição/cancelamento em série (etapa CP/CR 5), calculado no servidor ao abrir: futuros iguais (mesma série ou mesma
+   * descrição sem série; sem baixa; vencimento ≥ o deste), quantos ficariam fora se o valor mudar (fluxo de aprovação) e
+   * por que não há "este + futuros" (comissão/bônus/estorno, série recorrente). Ausente = título pago/cancelado.
+   */
+  series?: { count: number; match: SeriesMatch; amountLocked: number; titles: { id: string; code: string; dueDate: string; amount: number; status: PayableStatus }[]; unavailable?: string };
 }
 
 /** Fluxo de caixa simplificado (D28): a receber (cobranças abertas/vencidas) × a pagar (títulos abertos) por mês. */
@@ -820,8 +827,9 @@ export async function getPayablesWorkspace(viewer: CurrentUser, filters: Payable
   const links: TraceAccess = { suppliers: caps.suppliers, rules: can(viewer, "financeiro.comissoes.regras.ver"), commissions: can(viewer, "financeiro.comissoes.ver") };
   // Lançamento manual: credores colaboradores dentro do escopo (empresa = todos os ativos).
   const [users, suppliers, settings, cashFlow, accountOptions, registry] = await Promise.all([
-    caps.create ? list<User>(COLLECTIONS.users).then((us) => us.filter((u) => u.active !== false && (full || vis.creditorIds!.has(u.id))).map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"))) : Promise.resolve([] as Opt[]),
-    caps.create && full ? listSuppliers({ activeOnly: true }).then((ss) => ss.map((s) => ({ value: s.id, label: s.name }))) : Promise.resolve([] as Opt[]),
+    // Etapa CP/CR 5: quem edita também troca o credor (colaborador/fornecedor) no "Alterar".
+    caps.create || caps.edit ? list<User>(COLLECTIONS.users).then((us) => us.filter((u) => u.active !== false && (full || vis.creditorIds!.has(u.id))).map((u) => ({ value: u.id, label: u.name })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"))) : Promise.resolve([] as Opt[]),
+    (caps.create || caps.edit) && full ? listSuppliers({ activeOnly: true }).then((ss) => ss.map((s) => ({ value: s.id, label: s.name }))) : Promise.resolve([] as Opt[]),
     getPayablesSettings(),
     // Fluxo de caixa: seção própria e só com escopo empresa (soma cobranças e títulos da empresa inteira).
     caps.cashFlow && full ? buildCashFlow(all, today) : Promise.resolve({ overdue: emptyCashMonth("atraso", "Em atraso"), months: [] }),
@@ -948,11 +956,26 @@ async function payableDetail(p: Payable, row: PayableRow, all: Payable[], links:
     scheduledAt: p.scheduledAt,
     attachments: attachments.map((d) => ({ id: d.id, name: d.name, url: d.url, createdAt: d.createdAt })),
     recurrence: p.recurrence,
+    series: seriesInfo(p, all),
     siblings: p.seriesId
       ? all
           .filter((x) => x.seriesId === p.seriesId && x.id !== p.id)
           .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
           .map((x) => ({ id: x.id, code: x.code ?? x.id, competence: x.competence, dueDate: x.dueDate, status: x.status, amount: x.amount }))
       : [],
+  };
+}
+
+/** Futuros iguais do título (etapa CP/CR 5) para os botões "este + N futuros" do painel. */
+function seriesInfo(p: Payable, all: Payable[]): PayableDetail["series"] {
+  if (p.status === "pago" || p.status === "cancelado") return undefined;
+  const unavailable = payableSeriesUnavailable(p, all) ?? undefined;
+  const futures = unavailable ? [] : findPayableFutures(p, all);
+  return {
+    count: futures.length,
+    match: seriesMatchOf(p),
+    amountLocked: payableAmountLockedCount(futures),
+    titles: futures.map((f) => ({ id: f.id, code: f.code ?? f.id, dueDate: f.dueDate, amount: f.amount, status: f.status })),
+    unavailable,
   };
 }

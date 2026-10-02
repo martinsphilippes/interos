@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Ban, CircleDollarSign, Copy, ExternalLink, FileText, History, Landmark, Paperclip, Pencil, Plus, Receipt, Repeat, Scissors, Split } from "lucide-react";
 import type { ReceivableDetail } from "@/server/receivables/queries";
 import type { ReceivableCapabilities } from "@/server/receivables/access";
-import { addReceivableAttachmentAction, cancelReceivableAction, createReceivableAction, partialReceiveReceivableAction, receiveReceivableAction, receiveWithResidualAction, settleReceivableByPaidAction, undoReceivablePaymentAction, updateReceivableAction } from "@/server/receivables/actions";
+import { addReceivableAttachmentAction, cancelReceivableAction, cancelReceivableSeriesAction, createReceivableAction, partialReceiveReceivableAction, receiveReceivableAction, receiveWithResidualAction, settleReceivableByPaidAction, undoReceivablePaymentAction, updateReceivableAction, updateReceivableSeriesAction } from "@/server/receivables/actions";
 import { RECEIPT_METHODS } from "@/server/receivables/schemas";
 import { paymentMethodLabel } from "@/server/finance/schemas";
 import { residualDescription } from "@/domain/settlements";
@@ -20,6 +20,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useFinanceAction } from "@/components/finance/use-finance-action";
 import { PaymentsHistory, SettleByPaidDialog, SettlementBadge, SettlementSummary } from "@/components/finance/settlement-ui";
+import { SeriesNotice, SeriesResultNotice, seriesResultText, type SeriesFutureInfo, type SeriesResult } from "@/components/finance/series-ui";
 import { HistoryList, ReasonDialog } from "@/components/commissions/commission-ui";
 import { MoneyInput } from "@/components/ui/money-input";
 import { ClassificationFields, EMPTY_CLASSIFICATION, NoClassificationNotice, type ClassificationValue } from "@/components/finance/classification-fields";
@@ -55,6 +56,11 @@ export function ReceivablePanel({ r, can, options }: { r: ReceivableDetail; can:
   const isOpen = r.status === "aberto";
   const receivable = isOpen && r.open !== null && r.open > 0;
   const undoTarget = undoId ? r.payments.find((x) => x.id === undoId) : undefined;
+  // Edição/cancelamento em série (etapa CP/CR 5): N futuros calculados no servidor ao abrir; resultado fica no painel.
+  const [seriesResult, setSeriesResult] = React.useState<SeriesResult | null>(null);
+  const futures = r.series && r.series.count > 0 ? r.series : null;
+  const editSeries: SeriesFutureInfo | null = futures && can.editSeries ? futures : null;
+  const cancelSeries: SeriesFutureInfo | null = futures && can.cancelSeries ? futures : null;
   const close = (ok: boolean) => {
     if (ok) setDialog(null);
     return ok;
@@ -70,6 +76,7 @@ export function ReceivablePanel({ r, can, options }: { r: ReceivableDetail; can:
           <p className="break-words text-sm text-muted">{r.description}</p>
         </CardHeader>
         <CardContent className="pt-0">
+          {seriesResult ? <SeriesResultNotice className="mb-3" result={seriesResult} onClose={() => setSeriesResult(null)} /> : null}
           <p className="mb-1 text-2xl font-semibold tabular-nums">{money(r.amount)}</p>
           {r.amount !== null && r.paid !== null && r.open !== null ? <SettlementSummary className="mb-3" paid={r.paid} open={r.open} status={r.settlement} amount={r.amount} originalAmount={r.originalAmount} verb="recebido" /> : null}
           <DataList
@@ -228,10 +235,52 @@ export function ReceivablePanel({ r, can, options }: { r: ReceivableDetail; can:
         />
       ) : null}
       {dialog === "settle" && r.amount !== null && r.paid !== null ? <SettleByPaidDialog code={r.code} amount={r.amount} paid={r.paid} verb="recebido" pending={pending} onClose={() => setDialog(null)} onConfirm={(reason) => run(() => settleReceivableByPaidAction({ receivableId: r.id, reason }), (d) => `Título quitado pelo já recebido (${formatCurrency(d.amount)})`).then(close)} /> : null}
-      {dialog === "edit" ? <EditReceivableDialog r={r} options={options} values={can.values} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => updateReceivableAction({ receivableId: r.id, ...v }), "Título alterado").then(close)} /> : null}
+      {dialog === "edit" ? (
+        <EditReceivableDialog
+          r={r}
+          options={options}
+          values={can.values}
+          series={editSeries}
+          pending={pending}
+          onClose={() => setDialog(null)}
+          onSubmit={(v, scope) =>
+            scope === "futuros"
+              ? run(
+                  () => updateReceivableSeriesAction({ receivableId: r.id, ...v }),
+                  (d) => `Título alterado · ${seriesResultText({ kind: "alterados", count: d.updated, skipped: d.skipped })}`,
+                  (d) => setSeriesResult({ kind: "alterados", count: d.updated, skipped: d.skipped }),
+                ).then(close)
+              : run(() => updateReceivableAction({ receivableId: r.id, ...v }), "Título alterado").then(close)
+          }
+        />
+      ) : null}
       {dialog === "clone" ? <ReceivableFormDialog options={options} cloneOf={r.code} initial={cloneInitial(r)} onClose={() => setDialog(null)} /> : null}
       {dialog === "attach" ? <AttachDialog code={r.code} pending={pending} onClose={() => setDialog(null)} onSubmit={(v) => run(() => addReceivableAttachmentAction({ receivableId: r.id, ...v }), "Anexo adicionado").then(close)} /> : null}
-      <ReasonDialog open={dialog === "cancel"} onOpenChange={(o) => setDialog(o ? "cancel" : null)} title={`Cancelar o título ${r.code}?`} description="O título fica cancelado (não é excluído) e não pode mais ser recebido. O motivo fica no histórico e na auditoria." confirmLabel="Cancelar título" destructive pending={pending} onConfirm={(reason) => run(() => cancelReceivableAction({ receivableId: r.id, reason }), "Título cancelado").then(close)} />
+      <ReasonDialog
+        open={dialog === "cancel"}
+        onOpenChange={(o) => setDialog(o ? "cancel" : null)}
+        title={`Cancelar o título ${r.code}?`}
+        description="O título fica cancelado (não é excluído) e não pode mais ser recebido. O motivo fica no histórico e na auditoria."
+        confirmLabel={cancelSeries ? "Cancelar só este" : "Cancelar título"}
+        destructive
+        pending={pending}
+        onConfirm={(reason) => run(() => cancelReceivableAction({ receivableId: r.id, reason }), "Título cancelado").then(close)}
+        secondary={
+          cancelSeries
+            ? {
+                label: `Cancelar este + ${cancelSeries.count} futuro${cancelSeries.count === 1 ? "" : "s"}`,
+                onConfirm: (reason) =>
+                  run(
+                    () => cancelReceivableSeriesAction({ receivableId: r.id, reason }),
+                    (d) => `Título cancelado · ${seriesResultText({ kind: "cancelados", count: d.cancelled, skipped: d.skipped })}`,
+                    (d) => setSeriesResult({ kind: "cancelados", count: d.cancelled, skipped: d.skipped }),
+                  ).then(close),
+              }
+            : undefined
+        }
+      >
+        {cancelSeries ? <SeriesNotice info={cancelSeries} mode="cancelar" /> : null}
+      </ReasonDialog>
       <ReasonDialog
         open={dialog === "undo"}
         onOpenChange={(o) => {
@@ -416,7 +465,7 @@ function initialClassification(options: ReceivableOptions, categoryId?: string, 
   return { ...(known ? split : { categoryId: "", subcategoryId: "" }), costCenterId: costCenterId && registry.centers.some((c) => c.value === costCenterId) ? costCenterId : "" };
 }
 
-function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }: { r: ReceivableDetail; options: ReceivableOptions; values: boolean; pending: boolean; onClose: () => void; onSubmit: (v: Record<string, unknown>) => Promise<boolean> }) {
+function EditReceivableDialog({ r, options, values, series, pending, onClose, onSubmit }: { r: ReceivableDetail; options: ReceivableOptions; values: boolean; series: SeriesFutureInfo | null; pending: boolean; onClose: () => void; onSubmit: (v: Record<string, unknown>, scope: "este" | "futuros") => Promise<boolean> }) {
   const id = React.useId();
   const [f, setF] = React.useState({
     description: r.description,
@@ -441,7 +490,7 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
     // Categoria/centro gravados fora das opções (arquivados): mantém os ids para não limpar sem querer.
     return { ...start, ...(r.categoryId && !start.categoryId ? { categoryId: r.categoryId } : {}), ...(r.costCenterId && !start.costCenterId ? { costCenterId: r.costCenterId } : {}) };
   });
-  const submit = () =>
+  const submit = (scope: "este" | "futuros") =>
     onSubmit({
       description: f.description,
       ...(amountEditable && f.amount !== null ? { amount: f.amount } : {}),
@@ -453,7 +502,8 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
       documentNumber: f.documentNumber,
       notes: f.notes,
       reason: f.reason,
-    });
+    }, scope);
+  const disabled = f.reason.trim().length < 5 || (f.clientId === FREE && f.payerName.trim().length < 2) || (amountEditable && !(f.amount && f.amount > 0));
   return (
     <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
       <DialogContent size="md">
@@ -462,6 +512,7 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
           <DialogDescription>Toda alteração guarda o valor anterior, o novo e o motivo. O valor só muda sem recebimentos registrados.</DialogDescription>
         </DialogHeader>
         <DialogBody className="grid gap-4 sm:grid-cols-2">
+          {series ? <SeriesNotice info={series} mode="editar" className="sm:col-span-2" /> : null}
           <FormField label="Descrição" htmlFor={`${id}-desc`} className="sm:col-span-2">
             <Input id={`${id}-desc`} value={f.description} onChange={(e) => set("description", e.target.value)} />
           </FormField>
@@ -489,9 +540,14 @@ function EditReceivableDialog({ r, options, values, pending, onClose, onSubmit }
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Voltar
           </Button>
-          <Button onClick={submit} loading={pending} disabled={f.reason.trim().length < 5 || (f.clientId === FREE && f.payerName.trim().length < 2) || (amountEditable && !(f.amount && f.amount > 0))}>
-            Salvar alteração
+          <Button variant={series ? "outline" : "primary"} onClick={() => submit("este")} loading={pending} disabled={disabled}>
+            {series ? "Salvar só este" : "Salvar alteração"}
           </Button>
+          {series ? (
+            <Button onClick={() => submit("futuros")} loading={pending} disabled={disabled}>
+              <Repeat /> Salvar este + {series.count} futuro{series.count === 1 ? "" : "s"}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
