@@ -96,32 +96,38 @@ export function ChurnReasonsDonut({ reasons }: { reasons: ChurnMetrics["byReason
   if (total === 0) return <p className="py-8 text-center text-sm text-muted">Nenhum cancelamento no período.</p>;
   const data = reasons.map((r, i) => ({ name: CHURN_REASON_LABELS[r.key], value: r.count, lost: r.lostMrr, color: REASON_COLORS[i % REASON_COLORS.length] }));
   return (
-    <div className="flex flex-col items-center gap-4 sm:flex-row">
-      <div className="h-44 w-44 shrink-0">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie data={data} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="95%" paddingAngle={2} stroke="none" isAnimationActive={false}>
-              {data.map((d) => (
-                <Cell key={d.name} fill={d.color} />
-              ))}
-            </Pie>
-            <Tooltip content={({ active, payload }) => (active && payload?.[0] ? <TooltipBox title={String(payload[0].name)} rows={[{ label: "Cancelamentos", value: String(payload[0].value) }]} /> : null)} />
-          </PieChart>
-        </ResponsiveContainer>
+    // Container query: o layout depende da largura do card (não da tela). Card estreito → donut em cima, legenda embaixo.
+    <div className="@container">
+      <div className="flex flex-col items-center gap-4 @md:flex-row">
+        <div className="h-44 w-44 shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={data} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="95%" paddingAngle={2} stroke="none" isAnimationActive={false}>
+                {data.map((d) => (
+                  <Cell key={d.name} fill={d.color} />
+                ))}
+              </Pie>
+              <Tooltip content={({ active, payload }) => (active && payload?.[0] ? <TooltipBox title={String(payload[0].name)} rows={[{ label: "Cancelamentos", value: String(payload[0].value) }]} /> : null)} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <ul className="flex w-full min-w-0 flex-col gap-2 text-sm">
+          {data.map((d) => (
+            <li key={d.name} className="flex items-start justify-between gap-3">
+              <span className="flex min-w-0 items-start gap-2">
+                <span className="mt-1.5 size-2.5 shrink-0 rounded-full" style={{ backgroundColor: d.color }} aria-hidden />
+                <span className="min-w-0 break-words">{d.name}</span>
+              </span>
+              <span className="shrink-0 text-right tabular-nums text-muted">
+                <span className="whitespace-nowrap">
+                  {d.value} · {formatPercent(d.value / total)}
+                </span>
+                <span className="block whitespace-nowrap">{formatCurrency(d.lost)}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
-      <ul className="flex w-full flex-col gap-1.5 text-sm">
-        {data.map((d) => (
-          <li key={d.name} className="flex items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-2">
-              <span className="size-2.5 rounded-full" style={{ backgroundColor: d.color }} aria-hidden />
-              {d.name}
-            </span>
-            <span className="tabular-nums text-muted">
-              {d.value} · {formatPercent(d.value / total)} · {formatCurrency(d.lost)}
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
