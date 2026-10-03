@@ -70,8 +70,9 @@ export interface SidebarProps {
 }
 
 /**
- * Sidebar escura: logo, seções recolhíveis (a seção do item ativo fica sempre aberta), item ativo em
- * laranja preenchido, "Recolher menu", marca Intercert e versão no rodapé.
+ * Sidebar escura: logo, seções recolhíveis, item ativo em laranja preenchido, "Recolher menu", marca Intercert e
+ * versão no rodapé. A seção do item ativo abre sozinha a cada navegação (o item atual nunca fica escondido sem o
+ * usuário pedir), mas também pode ser recolhida pela seta; recolhida, o título fica destacado.
  */
 export function Sidebar({ user, sections, userLinks = [], variant = "desktop", collapsed = false, onToggleCollapsed, onNavigate, className }: SidebarProps) {
   const pathname = usePathname();
@@ -81,7 +82,16 @@ export function Sidebar({ user, sections, userLinks = [], variant = "desktop", c
   const closedRaw = React.useSyncExternalStore(subscribeSections, readSections, () => "");
   const closed = React.useMemo(() => new Set(closedRaw.split(",").filter(Boolean)), [closedRaw]);
 
-  const toggleSection = (key: string) => {
+  // Seção do item ativo recolhida pelo usuário NESTA rota: a preferência não vai para o localStorage e se desfaz ao
+  // navegar, para a seção da tela atual voltar a abrir sozinha.
+  const [activeClosed, setActiveClosed] = React.useState<{ key: string; path: string } | null>(null);
+  const isActiveClosed = (key: string) => activeClosed?.key === key && activeClosed.path === pathname;
+
+  const toggleSection = (key: string, hasActive: boolean) => {
+    if (hasActive) {
+      setActiveClosed(isActiveClosed(key) ? null : { key, path: pathname });
+      return;
+    }
     const next = new Set(closed);
     if (next.has(key)) next.delete(key);
     else next.add(key);
@@ -110,7 +120,7 @@ export function Sidebar({ user, sections, userLinks = [], variant = "desktop", c
       <nav aria-label="Menu principal" className="flex-1 overflow-y-auto overflow-x-hidden py-3 scrollbar-none">
         {sections.map((section, index) => {
           const hasActive = section.items.some((i) => i.href === activeHref);
-          const open = isCollapsed || hasActive || !closed.has(section.key);
+          const open = isCollapsed || (hasActive ? !isActiveClosed(section.key) : !closed.has(section.key));
           const listId = `nav-section-${section.key}`;
           return (
             <div key={section.key} className={cn("px-3", index > 0 && "mt-2")}>
@@ -119,14 +129,16 @@ export function Sidebar({ user, sections, userLinks = [], variant = "desktop", c
               ) : (
                 <button
                   type="button"
-                  onClick={() => toggleSection(section.key)}
+                  onClick={() => toggleSection(section.key, hasActive)}
                   aria-expanded={open}
                   aria-controls={listId}
-                  disabled={hasActive}
-                  className="flex h-8 w-full items-center justify-between rounded-md px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-sidebar-muted transition-colors hover:text-sidebar-fg disabled:cursor-default disabled:hover:text-sidebar-muted"
+                  className={cn(
+                    "flex h-8 w-full items-center justify-between rounded-md px-3 text-[11px] font-semibold uppercase tracking-[0.08em] transition-colors hover:text-sidebar-fg",
+                    hasActive && !open ? "text-sidebar-active" : "text-sidebar-muted",
+                  )}
                 >
                   {section.label}
-                  {!hasActive ? <ChevronDown className={cn("size-3.5 transition-transform", !open && "-rotate-90")} aria-hidden /> : null}
+                  <ChevronDown className={cn("size-3.5 transition-transform", !open && "-rotate-90")} aria-hidden />
                 </button>
               )}
               {open ? (
