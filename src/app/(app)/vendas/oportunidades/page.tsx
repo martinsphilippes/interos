@@ -62,7 +62,7 @@ export default async function OportunidadesPage({ searchParams }: { searchParams
                   </Link>
                 </Button>
               ) : null}
-              {options ? <NewOpportunityButton options={options} currentUserId={user.id} currentUserName={user.name} canChooseOwner={caps.opportunities.assign} openOnUrlFlag /> : null}
+              {options ? <NewOpportunityButton options={options} currentUserId={user.id} currentUserName={user.name} canChooseOwner={caps.opportunities.assign} canCreateClient={can(user, "operacao.clientes.criar")} openOnUrlFlag /> : null}
             </>
           }
         />

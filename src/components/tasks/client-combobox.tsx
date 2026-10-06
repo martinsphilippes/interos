@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Building2, Check, ChevronsUpDown, X } from "lucide-react";
+import Link from "next/link";
+import { Building2, Check, ChevronsUpDown, Plus, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,11 @@ export interface ClientComboboxProps {
   size?: "sm" | "md";
   className?: string;
   id?: string;
+  /**
+   * Mostra "Cadastrar novo cliente" no rodapé da lista, levando ao endereço devolvido (recebe o texto buscado, que
+   * vira o nome do cliente no cadastro). Sem a prop, o botão não aparece (ex.: usuário sem permissão de cadastrar).
+   */
+  createHref?: (query: string) => string;
 }
 
 function normalize(text: string): string {
@@ -26,7 +32,7 @@ function normalize(text: string): string {
 }
 
 /** Seleção de cliente com busca simples por nome (lista carregada do servidor). */
-export function ClientCombobox({ clients, value, onChange, placeholder = "Sem cliente", disabled, size = "md", className, id }: ClientComboboxProps) {
+export function ClientCombobox({ clients, value, onChange, placeholder = "Sem cliente", disabled, size = "md", className, id, createHref }: ClientComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
   const selected = value ? clients.find((c) => c.id === value) : undefined;
@@ -113,6 +119,18 @@ export function ClientCombobox({ clients, value, onChange, placeholder = "Sem cl
           ))}
           {matches.length === 0 ? <li className="px-2 py-6 text-center text-sm text-muted">Nenhum cliente encontrado</li> : null}
         </ul>
+        {createHref ? (
+          <div className="mt-2 border-t border-border pt-2">
+            <Link
+              href={createHref(query.trim())}
+              onClick={() => setOpen(false)}
+              className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-sm font-medium text-brand-fg hover:bg-surface-hover md:min-h-[34px]"
+            >
+              <Plus className="size-4 shrink-0" aria-hidden />
+              <span className="truncate">{query.trim() ? `Cadastrar “${query.trim()}” como novo cliente` : "Cadastrar novo cliente"}</span>
+            </Link>
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

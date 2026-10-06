@@ -65,7 +65,7 @@ export default async function CentralDeVendasPage({ searchParams }: { searchPara
           {view && sections.workspace && sections.painel ? <CentralViewToggle view={view} /> : null}
           {view && teamView ? <ScopeToggle scope={scopeKind} view={view} /> : null}
           {caps.sweep && view === "painel" ? <SweepButton /> : null}
-          {formOptions ? <NewOpportunityButton options={formOptions} currentUserId={user.id} currentUserName={user.name} canChooseOwner={caps.opportunities.assign} /> : null}
+          {formOptions ? <NewOpportunityButton options={formOptions} currentUserId={user.id} currentUserName={user.name} canChooseOwner={caps.opportunities.assign} canCreateClient={can(user, "operacao.clientes.criar")} /> : null}
         </>
       }
     />

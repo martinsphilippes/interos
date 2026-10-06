@@ -166,11 +166,16 @@ export interface ClientFormProps {
   onCancel?: () => void;
   /** "page" usa cards com seções; "drawer" é mais compacto. */
   layout?: "page" | "drawer";
+  /**
+   * Cadastro aberto de outra tela (ex.: Nova oportunidade): ao cadastrar, volta para `href` com `param=<id do cliente>`
+   * em vez de abrir o cliente; "Cancelar" volta para `href`.
+   */
+  returnTo?: { href: string; param: string };
   className?: string;
 }
 
 /** Formulário completo de cliente (cadastro e edição) com validação zod e aviso de duplicidade. */
-export function ClientForm({ mode, clientId, initial, options, onSuccess, onCancel, layout = "page", className }: ClientFormProps) {
+export function ClientForm({ mode, clientId, initial, options, onSuccess, onCancel, layout = "page", className, returnTo }: ClientFormProps) {
   const router = useRouter();
   const [values, setValues] = React.useState<ClientFormValues>({ ...EMPTY_CLIENT_FORM, ...initial });
   const [errors, setErrors] = React.useState<Record<string, string>>({});
@@ -224,7 +229,8 @@ export function ClientForm({ mode, clientId, initial, options, onSuccess, onCanc
       }
       const id = result.data.id;
       toast.success(mode === "create" ? "Cliente cadastrado" : "Cliente atualizado");
-      if (mode === "create") router.push(`/clientes/${id}`);
+      if (mode === "create" && returnTo) router.push(`${returnTo.href}${returnTo.href.includes("?") ? "&" : "?"}${returnTo.param}=${encodeURIComponent(id)}`);
+      else if (mode === "create") router.push(`/clientes/${id}`);
       else router.refresh();
       onSuccess?.(id);
     });
@@ -373,7 +379,7 @@ export function ClientForm({ mode, clientId, initial, options, onSuccess, onCanc
           </Button>
         ) : mode === "create" ? (
           <Button asChild type="button" variant="outline" size="lg">
-            <Link href="/clientes">Cancelar</Link>
+            <Link href={returnTo?.href ?? "/clientes"}>Cancelar</Link>
           </Button>
         ) : null}
         {duplicates && duplicates.length > 0 ? (

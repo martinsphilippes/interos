@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DateInput, dateValueToIso, isoToDateTimeLocal } from "@/components/ui/date-input";
@@ -14,7 +14,7 @@ import { toast } from "@/components/ui/toast";
 import { ClientCombobox } from "@/components/tasks/client-combobox";
 import { createOpportunityAction } from "@/server/sales/actions";
 import type { SalesFormOptions } from "@/server/sales/queries";
-import { OPPORTUNITY_KIND_LABELS } from "./model";
+import { NEW_OPPORTUNITY_CLIENT_PARAM, OPPORTUNITY_KIND_LABELS } from "./model";
 import { ProductsEditor, toPayloadLines, type EditableLine } from "./products-editor";
 import { useSalesUrl } from "./use-sales-url";
 import { useUrlFlag } from "@/lib/use-url-flag";
@@ -28,15 +28,18 @@ export interface NewOpportunityButtonProps {
   canChooseOwner?: boolean;
   /** Abre com ?novo=1 (ações rápidas). */
   openOnUrlFlag?: boolean;
+  /** Mostra "Cadastrar novo cliente" no seletor (operacao.clientes.criar). */
+  canCreateClient?: boolean;
 }
 
 /**
  * Botão + diálogo "Nova oportunidade" (entra em Qualificação com próxima ação obrigatória). A página só o renderiza
  * com vendas.oportunidades.criar; sem a chave de atribuição o vendedor fica fixo no próprio usuário.
  */
-export function NewOpportunityButton({ options, currentUserId, currentUserName, canChooseOwner = true, openOnUrlFlag }: NewOpportunityButtonProps) {
+export function NewOpportunityButton({ options, currentUserId, currentUserName, canChooseOwner = true, openOnUrlFlag, canCreateClient = false }: NewOpportunityButtonProps) {
   const router = useRouter();
-  const { navigate } = useSalesUrl();
+  const pathname = usePathname();
+  const { navigate, searchParams } = useSalesUrl();
   const id = React.useId();
   const [open, setOpen] = React.useState(false);
   const [clientId, setClientId] = React.useState<string | undefined>();
@@ -72,10 +75,31 @@ export function NewOpportunityButton({ options, currentUserId, currentUserName, 
     setUrlSeen(urlOpen);
     if (urlOpen) openDialog();
   }
+  // Volta do cadastro de cliente (?oportunidadeCliente=<id>): reabre o formulário com o cliente novo escolhido.
+  const returnedClientId = searchParams.get(NEW_OPPORTUNITY_CLIENT_PARAM) ?? undefined;
+  const [returnSeen, setReturnSeen] = React.useState<string | undefined>(undefined);
+  if (returnedClientId !== returnSeen) {
+    setReturnSeen(returnedClientId);
+    if (returnedClientId) {
+      openDialog();
+      setClientId(returnedClientId);
+    }
+  }
+
   const changeOpen = (next: boolean) => {
     setOpen(next);
-    if (!next && urlOpen) flag.clear();
+    if (!next && returnedClientId) navigate({ [NEW_OPPORTUNITY_CLIENT_PARAM]: null, novo: null }, { replace: true });
+    else if (!next && urlOpen) flag.clear();
   };
+
+  /** Cadastro de cliente com volta para esta tela; o texto buscado vira o nome do cliente. */
+  const createClientHref = canCreateClient
+    ? (query: string) => {
+        const params = new URLSearchParams({ voltar: pathname });
+        if (query) params.set("nome", query);
+        return `/clientes/novo?${params.toString()}`;
+      }
+    : undefined;
 
   const submit = () => {
     const at = dateValueToIso(nextActionAt);
@@ -101,7 +125,7 @@ export function NewOpportunityButton({ options, currentUserId, currentUserName, 
       setTitle("");
       setLines([]);
       setNeed("");
-      navigate(urlOpen ? { oportunidade: result.data.id, novo: null } : { oportunidade: result.data.id });
+      navigate({ oportunidade: result.data.id, [NEW_OPPORTUNITY_CLIENT_PARAM]: null, ...(urlOpen ? { novo: null } : {}) });
       router.refresh();
     });
   };
@@ -119,7 +143,7 @@ export function NewOpportunityButton({ options, currentUserId, currentUserName, 
           </DialogHeader>
           <DialogBody className="flex flex-col gap-4">
             <FormField label="Cliente" htmlFor={`${id}-c`} required>
-              <ClientCombobox id={`${id}-c`} clients={options.clients} value={clientId} onChange={setClientId} placeholder="Escolha o cliente" />
+              <ClientCombobox id={`${id}-c`} clients={options.clients} value={clientId} onChange={setClientId} placeholder="Escolha o cliente" createHref={createClientHref} />
             </FormField>
             <FormField label="Título" htmlFor={`${id}-t`} hint={client ? `Padrão: ${OPPORTUNITY_KIND_LABELS[kind]} — ${client.tradeName}` : undefined}>
               <Input id={`${id}-t`} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: ERP + TEF para 3 caixas" />
@@ -152,7 +176,7 @@ export function NewOpportunityButton({ options, currentUserId, currentUserName, 
             </div>
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={pending}>
+            <Button variant="outline" onClick={() => changeOpen(false)} disabled={pending}>
               Cancelar
             </Button>
             <Button onClick={submit} loading={pending} disabled={!clientId || !ownerId || nextAction.trim().length < 3 || !nextActionAt}>
