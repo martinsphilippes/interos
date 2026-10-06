@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { List } from "lucide-react";
 import { COLLECTIONS } from "@/domain/types";
-import { ACCESS_DENIED_REDIRECT, requireScreen } from "@/server/auth/session";
+import { ACCESS_DENIED_REDIRECT, can, requireScreen } from "@/server/auth/session";
 import { recordExists, salesCapabilities } from "@/server/sales/access";
 import { currentCompetence, getOpportunityDetail, getSalesFormOptions, listOpportunities } from "@/server/sales/queries";
 import { PageContainer } from "@/components/layout/page-container";
@@ -53,7 +53,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Sea
                   </Link>
                 </Button>
               ) : null}
-              {options ? <NewOpportunityButton options={options} currentUserId={user.id} currentUserName={user.name} canChooseOwner={caps.opportunities.assign} /> : null}
+              {options ? <NewOpportunityButton options={options} currentUserId={user.id} currentUserName={user.name} canChooseOwner={caps.opportunities.assign} canCreateClient={can(user, "operacao.clientes.criar")} /> : null}
             </>
           }
         />

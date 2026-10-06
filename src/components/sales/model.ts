@@ -181,3 +181,9 @@ export const opportunityHref = (id: string, base = "/vendas/oportunidades") => `
 export const workspaceHref = (id: string) => `/vendas?oportunidade=${id}`;
 export const proposalHref = (id: string) => `/vendas/propostas?proposta=${id}`;
 export const visitHref = (id: string) => `/vendas/visitas?visita=${id}`;
+
+/**
+ * Volta do cadastro de cliente para a "Nova oportunidade": /clientes/novo?voltar=<tela> devolve para
+ * <tela>?oportunidadeCliente=<id>, e o formulário reabre com o cliente recém-criado já escolhido.
+ */
+export const NEW_OPPORTUNITY_CLIENT_PARAM = "oportunidadeCliente";
