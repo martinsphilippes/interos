@@ -12,7 +12,7 @@ import { Select } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { normalizeText } from "./admin-model";
-import { KIND_TEXT, ORIGIN_TEXT, SCOPE_TEXT, treeIndex } from "./access-model";
+import { KIND_TEXT, SCOPE_TEXT, draftDecision, enclosingIndex, originText, pathKeysOf, treeIndex, type DraftContext, type DraftSource } from "./access-model";
 
 type TriState = "padrao" | "permitir" | "negar";
 
@@ -44,6 +44,13 @@ export interface AccessTreeProps {
   /** Chaves em que "Negar" não é aceito (protegidas; o servidor também recusa). */
   denyLocked?: string[];
   effective?: AccessEffectiveData;
+  /**
+   * Exceções de um usuário: explica em cada nó de onde vem a decisão do rascunho (marcado, papel, caminho até um item
+   * marcado ou bloqueado pelo modo «Só o que eu marcar»). `exemptModules` seguem sempre o papel.
+   */
+  inherit?: { roleLabel: string; restricted: boolean; exemptModules: string[] };
+  /** Papel da pessoa, para a origem "papel X" na visão somente leitura. */
+  roleLabel?: string;
   /** Prefixo dos ids (várias árvores na mesma página). */
   idPrefix: string;
 }
@@ -58,8 +65,25 @@ function baselineWord(value: DefaultValue | undefined): string {
  * a decisão e as regras de segurança ficam no servidor (actions + invariantes).
  */
 export function AccessTree(props: AccessTreeProps) {
-  const { tree, scopes, inactiveModules, mode, grants = {}, scopeValues = {}, baseline = {}, baselineScopes = {} } = props;
+  const { tree, scopes, inactiveModules, mode, grants = {}, scopeValues = {}, baseline = {}, baselineScopes = {}, inherit } = props;
   const index = React.useMemo(() => treeIndex(tree), [tree]);
+  const moduleOf = React.useMemo(() => new Map(tree.map((n) => [n.key, n.module])), [tree]);
+  const enclosing = React.useMemo(() => enclosingIndex(tree, index.ancestors), [tree, index]);
+  const restricted = Boolean(inherit?.restricted);
+  const exemptModules = inherit?.exemptModules;
+  const pathKeys = React.useMemo(() => (restricted ? pathKeysOf(grants, index.ancestors) : new Set<string>()), [restricted, grants, index]);
+  const draftCtx = React.useMemo((): DraftContext | null => {
+    if (!inherit) return null;
+    const exempt = new Set(exemptModules);
+    return {
+      grants,
+      restricted,
+      roleValue: (key) => (baseline[key] === "s" ? true : baseline[key] === "n" ? false : undefined),
+      enclosing,
+      pathKeys,
+      exempt: (key) => exempt.has(moduleOf.get(key) ?? ""),
+    };
+  }, [inherit, exemptModules, grants, restricted, baseline, enclosing, pathKeys, moduleOf]);
   const scopeByView = React.useMemo(() => new Map(scopes.map((s) => [s.viewKey, s])), [scopes]);
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set());
   const [query, setQuery] = React.useState("");
@@ -97,8 +121,9 @@ export function AccessTree(props: AccessTreeProps) {
   const expandAll = () => setExpanded(new Set(tree.filter((n) => (index.children.get(n.key)?.length ?? 0) > 0).map((n) => n.key)));
   const collapseAll = () => setExpanded(new Set());
 
-  /** Valor decidido (aproximação do rascunho): exceção/ajuste ?? nível mais geral. */
+  /** Valor decidido (aproximação do rascunho): exceção/ajuste ?? nível mais geral (ou o modo restrito). */
   const decided = (key: string): boolean | undefined => {
+    if (draftCtx) return draftDecision(key, draftCtx).value;
     if (Object.hasOwn(grants, key)) return grants[key];
     const b = baseline[key];
     return b === "s" ? true : b === "n" ? false : undefined;
@@ -144,6 +169,7 @@ export function AccessTree(props: AccessTreeProps) {
                 moduleInactive={inactive.has(n.module)}
                 ancestorDenied={ancestorDenied}
                 ancestorBlocked={ancestorBlocked}
+                draft={draftCtx ? draftDecision(n.key, draftCtx) : undefined}
                 scope={n.kind === "tela" ? scopeByView.get(n.key) : undefined}
                 baselineScope={n.kind === "tela" ? (baselineScopes[n.key.replace(/\.ver$/, "")] ?? null) : null}
               />
@@ -165,12 +191,25 @@ interface AccessRowProps {
   moduleInactive: boolean;
   ancestorDenied: boolean;
   ancestorBlocked: boolean;
+  draft?: { value: boolean | undefined; source: DraftSource };
   scope?: AccessScreenScope;
   baselineScope: ScopeKind | null;
 }
 
-function AccessRow({ node, props, hasChildren, open, onToggle, descendants, moduleInactive, ancestorDenied, ancestorBlocked, scope, baselineScope }: AccessRowProps) {
-  const { mode, grants = {}, scopeValues = {}, baseline = {}, baseLabel = "Padrão", readOnly, onGrantChange, onScopeChange, denyLocked = [], effective, showRuleText, idPrefix } = props;
+/** De onde vem a decisão do rascunho, em linguagem de negócio. */
+function draftText(draft: { value: boolean | undefined; source: DraftSource }, roleLabel: string, restricted: boolean): string {
+  const { value, source } = draft;
+  if (source === "marcado") return value ? "Marcado por você: liberado" : "Marcado por você: bloqueado";
+  if (source === "caminho") return "Liberado: caminho até um item que você marcou";
+  if (source === "restrito") return "Bloqueado: não marcado";
+  const role = value === true ? `o papel ${roleLabel} libera` : value === false ? `o papel ${roleLabel} bloqueia` : `o papel ${roleLabel} decide pelo departamento`;
+  if (source === "dentro") return `Dentro do que você liberou: ${role}`;
+  const text = value === true ? `Liberado pelo papel ${roleLabel}` : value === false ? `Bloqueado pelo papel ${roleLabel}` : `Papel ${roleLabel}: depende do departamento`;
+  return restricted ? `${text} (o Início segue sempre o papel)` : text;
+}
+
+function AccessRow({ node, props, hasChildren, open, onToggle, descendants, moduleInactive, ancestorDenied, ancestorBlocked, draft, scope, baselineScope }: AccessRowProps) {
+  const { mode, grants = {}, scopeValues = {}, baseline = {}, baseLabel = "Padrão", readOnly, onGrantChange, onScopeChange, denyLocked = [], effective, showRuleText, idPrefix, inherit, roleLabel } = props;
   const own = Object.hasOwn(grants, node.key) ? grants[node.key] : undefined;
   const state: TriState = own === true ? "permitir" : own === false ? "negar" : "padrao";
   const screenKey = node.key.replace(/\.ver$/, "");
@@ -182,7 +221,7 @@ function AccessRow({ node, props, hasChildren, open, onToggle, descendants, modu
   const setState = (next: TriState) => onGrantChange?.(node.key, next === "padrao" ? undefined : next === "permitir");
 
   return (
-    <li role="treeitem" data-key={node.key} aria-selected={false} aria-expanded={hasChildren ? open : undefined} aria-level={node.depth + 1} className={cn("min-w-0 px-3 py-2.5", node.kind === "modulo" && "bg-surface-muted/60", ancestorDenied && "opacity-60")}>
+    <li role="treeitem" data-key={node.key} aria-selected={false} aria-expanded={hasChildren ? open : undefined} aria-level={node.depth + 1} className={cn("min-w-0 px-3 py-2.5", node.kind === "modulo" && "bg-surface-muted/60", (ancestorDenied || draft?.source === "restrito") && "opacity-60")}>
       <div className="flex min-w-0 flex-col gap-2 md:flex-row md:items-start md:justify-between" style={{ paddingLeft: `${indent * 14}px` }}>
         <div className="flex min-w-0 flex-1 items-start gap-1.5">
           {hasChildren ? (
@@ -221,14 +260,19 @@ function AccessRow({ node, props, hasChildren, open, onToggle, descendants, modu
                 </Badge>
               ) : null}
             </div>
-            {mode === "edit" ? (
+            {mode === "edit" && draft && inherit ? (
+              <p className={cn("mt-0.5 text-xs", draft.value === true ? "text-success-fg" : "text-muted")}>
+                {draftText(draft, inherit.roleLabel, inherit.restricted)}
+                {showRuleText ? <span className="text-muted-light"> · {node.ruleText}</span> : null}
+              </p>
+            ) : mode === "edit" ? (
               <p className="mt-0.5 text-xs text-muted">
                 {baseLabel}: {baselineWord(baseline[node.key])}
                 {showRuleText ? <span className="text-muted-light"> · {node.ruleText}</span> : null}
               </p>
             ) : effective ? (
               <p className="mt-0.5 text-xs text-muted">
-                {effective.values[node.key] ? "Pode" : "Não pode"} · origem: {ORIGIN_TEXT[effective.origins[node.key] ?? "padrao"]}
+                {effective.values[node.key] ? "Pode" : "Não pode"} · origem: {originText(effective.origins[node.key] ?? "padrao", roleLabel)}
                 {scope && effective.values[node.key] && effective.scopes[screenKey] ? <span> · dados: {SCOPE_TEXT[effective.scopes[screenKey]]}</span> : null}
               </p>
             ) : null}

@@ -241,6 +241,10 @@ export interface UserAccessView {
   /** Exceções gravadas. */
   grants: Record<string, boolean>;
   scopes: Record<string, ScopeKind>;
+  /** Modo restrito gravado: só vale o que foi marcado como Permitir. */
+  restricted: boolean;
+  /** Papel da pessoa ("Gestor"), para dizer de onde vem o que não foi marcado. */
+  roleLabel: string;
   reason?: string;
   updatedAt?: string;
   updatedByName?: string;
@@ -283,6 +287,8 @@ export async function getUserAccessView(actor: CurrentUser, target: User, caps: 
     isSelf: target.id === actor.id,
     grants: caps.exceptions ? ({ ...(override?.grants ?? {}) } as Record<string, boolean>) : {},
     scopes: caps.exceptions ? ({ ...(override?.scopes ?? {}) } as Record<string, ScopeKind>) : {},
+    restricted: caps.exceptions || caps.effective ? override?.restricted === true : false,
+    roleLabel: ROLE_LABELS[target.role],
     reason: caps.exceptions ? doc?.reason : undefined,
     updatedAt: caps.exceptions && override ? doc?.updatedAt : undefined,
     updatedByName: caps.exceptions ? doc?.updatedBy?.name : undefined,

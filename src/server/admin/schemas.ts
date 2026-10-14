@@ -100,9 +100,15 @@ export const saveUserOverridesSchema = z.object({
   userId: idSchema,
   grants: z.unknown(),
   scopes: z.unknown(),
+  /** Modo restrito: liberar só o que foi marcado como Permitir. */
+  restricted: z.boolean().optional(),
   reason: z.string("Informe o motivo").trim().min(5, "Informe o motivo da exceção (mínimo de 5 caracteres)").max(500, "Motivo muito longo (máx. 500)"),
 });
-export type SaveUserOverridesInput = { userId: string; grants: Record<string, boolean>; scopes: Record<string, string>; reason: string };
+export type SaveUserOverridesInput = { userId: string; grants: Record<string, boolean>; scopes: Record<string, string>; restricted?: boolean; reason: string };
+
+/** Prévia antes de salvar: os mesmos ajustes, sem motivo. */
+export const previewUserOverridesSchema = saveUserOverridesSchema.omit({ reason: true });
+export type PreviewUserOverridesInput = Omit<SaveUserOverridesInput, "reason">;
 
 export const saveActiveModulesSchema = z.object({
   /** Módulos DESATIVADOS (ausente/vazio = todos ativos; módulo novo nasce ligado). */

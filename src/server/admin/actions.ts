@@ -20,9 +20,12 @@ import {
   inactiveModulesFrom,
   roleDefaultScopes,
   roleDefaults,
+  summarizeAccessPreview,
   validateAdjustments,
   validateInactiveModules,
+  type AccessPreview,
   type AdjustmentDiff,
+  type CleanAdjustments,
 } from "@/server/auth/access-admin";
 import {
   checkAccessInvariants,
@@ -43,6 +46,7 @@ import {
   createProductSchema,
   createUserSchema,
   moveProductSchema,
+  previewUserOverridesSchema,
   resetPasswordSchema,
   saveActiveModulesSchema,
   savePermissionProfileSchema,
@@ -510,8 +514,8 @@ export async function deleteUser(input: unknown): Promise<ActionResult<{ id: str
 // Perfis, exceções individuais e módulos da empresa (A6/A8/A9/A16)
 // ---------------------------------------------------------------------------
 
-function isEmptyAdjustments(adj: { grants: Record<string, boolean>; scopes: Record<string, unknown> }): boolean {
-  return Object.keys(adj.grants).length === 0 && Object.keys(adj.scopes).length === 0;
+function isEmptyAdjustments(adj: { grants: Record<string, boolean>; scopes: Record<string, unknown>; restricted?: boolean }): boolean {
+  return !adj.restricted && Object.keys(adj.grants).length === 0 && Object.keys(adj.scopes).length === 0;
 }
 
 function adjustmentsOrThrow(input: { grants?: unknown; scopes?: unknown }) {
@@ -570,12 +574,40 @@ export async function savePermissionProfile(input: unknown): Promise<ActionResul
   }
 }
 
+/** Exceções do usuário validadas, com o modo restrito (liberar só o que foi marcado). */
+function userAdjustmentsOrThrow(data: { grants?: unknown; scopes?: unknown; restricted?: boolean }): CleanAdjustments {
+  return { ...adjustmentsOrThrow(data), restricted: data.restricted === true };
+}
+
+/**
+ * Prévia antes de salvar as exceções: o que a pessoa passaria a abrir e quanto disso vem do papel sem marcação
+ * (aviso "além do que você marcou, o papel libera…"). Só leitura; a gravação refaz tudo e checa os invariantes.
+ */
+export async function previewUserPermissionOverrides(input: unknown): Promise<ActionResult<AccessPreview & { roleLabel: string }>> {
+  try {
+    const user = await requirePermission("admin.acessos.gerir");
+    const data = previewUserOverridesSchema.parse(input);
+    const adjustments = userAdjustmentsOrThrow(data);
+    const targetUser = await loadUser(data.userId);
+    await requireUserInScope(user, targetUser);
+    const loaded = await loadAccessState();
+    const perms = resolvePermissions(targetUser, {
+      roleProfile: loaded.state.roleProfiles[targetUser.role] ?? null,
+      userOverride: adjustments,
+      organization: { activeModules: loaded.state.activeModules },
+    });
+    return { ok: true, data: { ...summarizeAccessPreview(perms, Boolean(adjustments.restricted)), roleLabel: ROLE_LABELS[targetUser.role] } };
+  } catch (error) {
+    return fail(error, "Não foi possível calcular o resumo do acesso");
+  }
+}
+
 /** Grava as exceções individuais de um usuário (motivo obrigatório). Sem nenhuma exceção, o documento é removido. */
 export async function saveUserPermissionOverrides(input: unknown): Promise<ActionResult<{ userId: string; changes: number }>> {
   try {
     const user = await requirePermission("admin.acessos.gerir");
     const data = saveUserOverridesSchema.parse(input);
-    const adjustments = adjustmentsOrThrow(data);
+    const adjustments = userAdjustmentsOrThrow(data);
     const targetUser = await loadUser(data.userId);
     await requireUserInScope(user, targetUser);
     const loaded = await loadAccessState();
@@ -586,7 +618,8 @@ export async function saveUserPermissionOverrides(input: unknown): Promise<Actio
     const diff = diffAdjustments(
       loaded.state.userOverrides[targetUser.id],
       adjustments,
-      (key) => defaultValueText(profilePerms.has(key as PermissionKey), "Padrão do perfil"),
+      // No modo restrito, item sem marcação não segue o perfil: a auditoria diz só "Não marcado".
+      (key) => (adjustments.restricted || loaded.state.userOverrides[targetUser.id]?.restricted ? "Não marcado" : defaultValueText(profilePerms.has(key as PermissionKey), "Padrão do perfil")),
       (screen) => {
         const kind = profilePerms.scopes[screen as keyof typeof profilePerms.scopes];
         return kind ? `Padrão do perfil (${SCOPE_LABELS[kind]})` : "Padrão do perfil";
@@ -604,11 +637,21 @@ export async function saveUserPermissionOverrides(input: unknown): Promise<Actio
       const existing = loaded.profiles.get(docId);
       await create<PermissionProfile>(
         COLLECTIONS.permissionProfiles,
-        { kind: "user", userId: targetUser.id, grants: adjustments.grants, scopes: adjustments.scopes, reason: data.reason, updatedBy: actor(user), createdAt: existing?.createdAt, createdBy: existing?.createdBy ?? user.id },
+        {
+          kind: "user",
+          userId: targetUser.id,
+          grants: adjustments.grants,
+          scopes: adjustments.scopes,
+          ...(adjustments.restricted ? { restricted: true } : {}),
+          reason: data.reason,
+          updatedBy: actor(user),
+          createdAt: existing?.createdAt,
+          createdBy: existing?.createdBy ?? user.id,
+        },
         docId,
       );
     }
-    await emitAccessUpdated(user, target, diff, data.reason, { userId: targetUser.id, cleared: empty });
+    await emitAccessUpdated(user, target, diff, data.reason, { userId: targetUser.id, cleared: empty, restricted: Boolean(adjustments.restricted) });
 
     revalidateUsers();
     revalidateAccess();

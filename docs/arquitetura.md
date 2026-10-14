@@ -333,6 +333,9 @@ permissões são uma camada sobre ele; não há segundo sistema de usuários, de
    tela nega todas as suas seções e ações; conceder uma ação não abre a tela.
 3. **Valor próprio de cada nó** = exceção do usuário (`permission_profiles/user_<uid>`) ?? ajuste do perfil do papel
    (`permission_profiles/role_<papel>`) ?? regra padrão. Em cada nível há um só valor por chave: o mais específico vence.
+   Com a exceção em **modo restrito** (`restricted: true`), um nó não marcado vale: `true` se está no caminho até um
+   item marcado como Permitir; o valor do perfil/regra se está dentro de um item marcado; `false` nos demais casos
+   (o módulo Início segue sempre o perfil).
 4. **Escopo por tela** = exceção ?? perfil ?? padrão do papel (`scope.defaultByRole` + `overrides`), sempre dentro de
    `scope.allowed` (`clampScope`); telas com `sameAs` herdam o escopo da tela indicada (ex.: Visão Geral, Assinaturas,
    Cobranças, Contas a Receber e Recorrência seguem **Contratos**; Kanban/Treinamentos/Go-live seguem **Projetos**).
@@ -403,9 +406,17 @@ layout: o menu muda na próxima navegação.
   Drawer do usuário: **Exceções de acesso** (motivo obrigatório; bloqueada para o próprio usuário), **Acesso efetivo**
   (origem de cada decisão) e **Histórico de acesso**. As abas aparecem para quem tem a seção `.ver` e ficam somente
   leitura sem `admin.acessos.gerir` (padrão: só admin).
+- **Exceções do usuário, dois modos** (`permission_profiles/user_<uid>.restricted`):
+  - «Papel + exceções» (padrão): a pessoa recebe tudo o que o papel libera; Permitir/Negar ajustam itens.
+  - «Só o que eu marcar» (`restricted: true`): tudo começa bloqueado (origem `restrito`). Permitir num item libera o
+    caminho até ele (origem `caminho`) e, dentro dele, o que o papel dá; tela aberta por mais de um módulo fica dentro
+    de qualquer um deles. O módulo Início segue sempre o papel. O caminho entra na anti-escalada (I6).
+  - Cada nó do editor diz de onde vem a decisão ("Liberado pelo papel Gestor", "caminho até um item que você
+    marcou", "Bloqueado: não marcado"). Antes de salvar, `previewUserPermissionOverrides` devolve a prévia exata
+    (telas por módulo e quanto vem do papel sem marcação) e a interface pede confirmação.
 - Leituras em `src/server/admin/access.ts`; helpers puros (árvore, validação, diff "de → para") em
   `src/server/auth/access-admin.ts`; actions `savePermissionProfile`, `saveUserPermissionOverrides`,
-  `saveActiveModules` em `src/server/admin/actions.ts` (só chaves do catálogo com valor booleano e escopos permitidos;
+  `previewUserPermissionOverrides`, `saveActiveModules` em `src/server/admin/actions.ts` (só chaves do catálogo com valor booleano e escopos permitidos;
   `__proto__` recusado). `saveActiveModules` grava `inactiveModules` e `activeModules` (compatibilidade).
 
 ### Invariantes (A9 — `src/server/auth/invariants.ts`, puro)

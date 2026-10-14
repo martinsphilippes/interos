@@ -228,6 +228,7 @@ export const ADMIN = {
           guards: [
             "src/server/admin/actions.ts#savePermissionProfile",
             "src/server/admin/actions.ts#saveUserPermissionOverrides",
+            "src/server/admin/actions.ts#previewUserPermissionOverrides",
             "src/server/admin/actions.ts#saveActiveModules",
           ],
           sensitive: true,
