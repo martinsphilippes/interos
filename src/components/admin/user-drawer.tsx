@@ -24,7 +24,7 @@ import { FormError } from "./form-error";
 import { KeyValueEditor, recordToRows, rowsToRecord, type KeyValueRow } from "./key-value-editor";
 import { ActiveIndicator, RoleBadge } from "./users-table";
 import { useAdminUrl } from "./use-admin-url";
-import { UserAccessPanel } from "./user-access-panel";
+import { UserAccessPanel, type AccessEditorHandle } from "./user-access-panel";
 
 /** O que o perfil pode fazer no drawer (calculado no servidor; as actions revalidam cada item). */
 export interface UserAbilities {
@@ -62,16 +62,56 @@ export interface UserDrawerProps {
   access?: UserAccessData | null;
 }
 
-/** Drawer de edição de usuário (?usuario=<id>). Sem permissão de editar (gestor/diretoria, no padrão) só exibe os dados. */
+/** O que ainda não foi salvo no drawer (cadastro e/ou acessos). */
+interface Unsaved {
+  form: boolean;
+  access: boolean;
+}
+
+/**
+ * Drawer de edição de usuário (?usuario=<id>). Sem permissão de editar (gestor/diretoria, no padrão) só exibe os dados.
+ * Fechar com alterações não salvas (cadastro ou acessos) pede confirmação, e sair da página avisa pelo navegador.
+ */
 export function UserDrawer({ user, users, departments, abilities, currentUserId, access }: UserDrawerProps) {
   const { navigate } = useAdminUrl();
-  const close = () => navigate({ usuario: null }, { replace: true });
+  const [unsaved, setUnsaved] = React.useState<Unsaved>({ form: false, access: false });
+  const [confirmClose, setConfirmClose] = React.useState(false);
+  const hasUnsaved = unsaved.form || unsaved.access;
+  const forceClose = () => {
+    setConfirmClose(false);
+    setUnsaved({ form: false, access: false });
+    navigate({ usuario: null }, { replace: true });
+  };
+  const close = () => (hasUnsaved ? setConfirmClose(true) : forceClose());
+
+  React.useEffect(() => {
+    if (!hasUnsaved) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsaved]);
+
+  const what = unsaved.form && unsaved.access ? "no cadastro e nos acessos" : unsaved.access ? "nos acessos" : "no cadastro";
   return (
-    <Drawer open={Boolean(user)} onOpenChange={(open) => !open && close()}>
-      <DrawerContent size="lg">
-        {user ? <DrawerInner key={`${user.id}-${user.updatedAt}`} user={user} users={users} departments={departments} abilities={abilities} currentUserId={currentUserId} access={access} onClose={close} /> : null}
-      </DrawerContent>
-    </Drawer>
+    <>
+      <Drawer open={Boolean(user)} onOpenChange={(open) => !open && close()}>
+        <DrawerContent size="lg">
+          {user ? (
+            <DrawerInner key={`${user.id}-${user.updatedAt}`} user={user} users={users} departments={departments} abilities={abilities} currentUserId={currentUserId} access={access} onClose={close} onUnsavedChange={setUnsaved} />
+          ) : null}
+        </DrawerContent>
+      </Drawer>
+      <ConfirmDialog
+        open={confirmClose}
+        onOpenChange={setConfirmClose}
+        title="Sair sem salvar?"
+        description={`Você alterou ${user?.name ?? "este usuário"} ${what} e ainda não salvou. Se fechar agora, essas alterações serão perdidas.`}
+        cancelLabel="Continuar editando"
+        confirmLabel="Descartar e fechar"
+        destructive
+        onConfirm={forceClose}
+      />
+    </>
   );
 }
 
@@ -94,13 +134,13 @@ function goalSuggestions(users: UserRow[]): string[] {
   return Array.from(keys).sort();
 }
 
-function DrawerInner({ user, users, departments, abilities, currentUserId, access, onClose }: UserDrawerProps & { user: UserRow; onClose: () => void }) {
+function DrawerInner({ user, users, departments, abilities, currentUserId, access, onClose, onUnsavedChange }: UserDrawerProps & { user: UserRow; onClose: () => void; onUnsavedChange: (value: Unsaved) => void }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
   const [confirm, setConfirm] = React.useState<"deactivate" | "reactivate" | "delete" | null>(null);
   const [passwordOpen, setPasswordOpen] = React.useState(false);
-  const [form, setForm] = React.useState<FormState>({
+  const [initialForm] = React.useState<FormState>(() => ({
     name: user.name,
     role: user.role,
     departmentId: user.departmentId,
@@ -110,7 +150,14 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
     active: user.active !== false,
     goals: recordToRows(user.monthlyGoals),
     baseSalary: user.baseSalary === undefined || user.baseSalary === null ? "" : String(user.baseSalary),
-  });
+  }));
+  const [form, setForm] = React.useState<FormState>(initialForm);
+  const formDirty = React.useMemo(() => JSON.stringify(form) !== JSON.stringify(initialForm), [form, initialForm]);
+  const [accessDirty, setAccessDirty] = React.useState(false);
+  const accessEditor = React.useRef<AccessEditorHandle>(null);
+  React.useEffect(() => {
+    onUnsavedChange({ form: formDirty && abilities.edit, access: accessDirty });
+  }, [formDirty, accessDirty, abilities.edit, onUnsavedChange]);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
   const isSelf = user.id === currentUserId;
   const canEdit = abilities.edit;
@@ -134,20 +181,19 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
       router.refresh();
     });
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+  /** Cadastro validado para gravar, ou null (erro já exibido). */
+  const buildInput = (): UpdateUserInput | null => {
     const goals = rowsToRecord(form.goals, "meta");
     if (!goals.ok) {
       setError(goals.error);
-      return;
+      return null;
     }
     const salary = form.baseSalary.trim() === "" ? undefined : Number(form.baseSalary.replace(",", "."));
     if (salary !== undefined && (!Number.isFinite(salary) || salary < 0)) {
       setError("Salário base inválido");
-      return;
+      return null;
     }
-    const input: UpdateUserInput = {
+    return {
       id: user.id,
       name: form.name,
       role: form.role,
@@ -159,6 +205,9 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
       monthlyGoals: goals.value,
       baseSalary: abilities.seeSalary ? salary : undefined,
     };
+  };
+
+  const saveProfile = (input: UpdateUserInput) =>
     startTransition(async () => {
       const result = await updateUser(input);
       if (!result.ok) {
@@ -168,6 +217,25 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
       toast.success("Usuário salvo");
       router.refresh();
     });
+
+  /**
+   * Um botão só: salva o cadastro (se mudou) e as exceções de acesso (se mudaram). Com acessos alterados, primeiro abre
+   * a revisão dos acessos (motivo + prévia) e, confirmada, grava o cadastro em seguida.
+   */
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const input = formDirty ? buildInput() : null;
+    if (formDirty && !input) return;
+    if (accessDirty && accessEditor.current) {
+      accessEditor.current.save(input ? () => saveProfile(input) : undefined);
+      return;
+    }
+    if (!input) {
+      toast.info("Nenhuma alteração para salvar.");
+      return;
+    }
+    saveProfile(input);
   };
 
   return (
@@ -297,11 +365,18 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
             </div>
           ) : null}
 
-          {access ? <UserAccessPanel userName={user.name} view={access.view} catalog={access.catalog} caps={access.caps} neverDenied={access.neverDenied} /> : null}
+          {access ? (
+            <UserAccessPanel userName={user.name} view={access.view} catalog={access.catalog} caps={access.caps} neverDenied={access.neverDenied} onDirtyChange={setAccessDirty} editorRef={accessEditor} />
+          ) : null}
         </DrawerBody>
 
-        {canEdit ? (
+        {canEdit || accessDirty ? (
           <DrawerFooter>
+            {formDirty || accessDirty ? (
+              <span className="mr-auto self-center text-xs text-muted">
+                Não salvo: {formDirty && accessDirty ? "cadastro e acessos" : accessDirty ? "acessos" : "cadastro"}
+              </span>
+            ) : null}
             <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
               Fechar
             </Button>
