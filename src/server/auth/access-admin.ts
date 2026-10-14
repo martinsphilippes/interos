@@ -21,12 +21,11 @@ import {
   type EffectivePermissions,
   type ModuleKey,
   type NodeKind,
-  type PermissionKey,
   type PermissionOrigin,
   type ScopeDef,
   type ScopeKind,
 } from "@/domain/permissions";
-import { defaultScopeFor, resolvePermissions, type PermissionAdjustments } from "./permissions";
+import { defaultScopeFor, displayParentOf, resolvePermissions, type PermissionAdjustments } from "./permissions";
 
 // ---------------------------------------------------------------------------
 // Rótulos
@@ -55,6 +54,8 @@ export const ORIGIN_LABELS: Record<PermissionOrigin, string> = {
   excecao: "Exceção individual",
   "modulo-inativo": "Módulo desativado",
   hierarquia: "Nível acima negado",
+  caminho: "Caminho até item liberado",
+  restrito: "Não marcado (modo restrito)",
 };
 
 const SCOPE_ORDER: Record<ScopeKind, number> = { meus: 0, equipe: 1, departamento: 2, unidades: 3, empresa: 4 };
@@ -108,6 +109,8 @@ export interface AccessTreeNode {
   module: ModuleKey;
   /** Observação de negócio exibida abaixo do nó (ex.: efeito de negar uma aprovação "de qualquer um"). */
   note?: string;
+  /** Tela que também abre por outros módulos (chaves `<modulo>.acessar` além do pai). */
+  openedBy?: string[];
 }
 
 export interface AccessScopeOption {
@@ -140,13 +143,6 @@ const NODE_NOTES: Partial<Record<string, string>> = {
   "admin.usuarios.editar": "Protegido: sempre precisa existir ao menos um usuário ativo com este acesso.",
 };
 
-function displayParent(key: PermissionKey): string | null {
-  const node = NODE_BY_KEY.get(key);
-  if (!node || node.kind === "modulo") return null;
-  if (node.kind === "tela") return `${node.module}.acessar`;
-  return node.requires.keys[0] ?? `${node.module}.acessar`;
-}
-
 let treeCache: AccessTreeNode[] | null = null;
 
 /** Árvore completa do catálogo, em ordem (módulo, telas, seções, ações). */
@@ -155,9 +151,10 @@ export function buildAccessTree(): AccessTreeNode[] {
   const depthOf = new Map<string, number>();
   const nodes: AccessTreeNode[] = [];
   for (const n of PERMISSION_NODES) {
-    const parent = displayParent(n.key);
+    const parent = displayParentOf(n.key);
     const depth = parent ? (depthOf.get(parent) ?? 0) + 1 : 0;
     depthOf.set(n.key, depth);
+    const openedBy = n.kind === "tela" && n.requires.mode === "any" ? n.requires.keys.filter((k) => k !== parent) : [];
     nodes.push({
       key: n.key,
       kind: n.kind,
@@ -169,6 +166,7 @@ export function buildAccessTree(): AccessTreeNode[] {
       sensitive: n.sensitive,
       module: n.module,
       note: NODE_NOTES[n.key],
+      ...(openedBy.length ? { openedBy: [...openedBy] } : {}),
     });
   }
   treeCache = nodes;
@@ -254,6 +252,8 @@ export function effectiveValues(perms: EffectivePermissions): Record<string, boo
 export interface CleanAdjustments {
   grants: Record<string, boolean>;
   scopes: Record<string, ScopeKind>;
+  /** Só nas exceções do usuário: liberar só o que foi marcado (modo restrito). */
+  restricted?: boolean;
 }
 
 /** Objeto simples (não array, não null, protótipo padrão ou nulo). */
@@ -345,6 +345,9 @@ export function inactiveModulesFrom(activeModules: readonly string[] | undefined
 // ---------------------------------------------------------------------------
 
 const VALUE_TEXT = { true: "Permitido", false: "Negado" } as const;
+const RESTRICTED_TEXT = { true: "Só o que foi marcado", false: "Papel + exceções" } as const;
+/** Chave da auditoria para a troca do modo de liberação das exceções. */
+export const RESTRICTED_CHANGE_KEY = "modo:restrito";
 
 export function defaultValueText(value: DefaultValue | boolean | undefined, base = "Padrão"): string {
   if (value === undefined) return base;
@@ -371,6 +374,10 @@ export function diffAdjustments(
 ): AdjustmentDiff {
   const changes: AdjustmentDiff["changes"] = {};
   const labels: AdjustmentDiff["labels"] = {};
+  if (Boolean(before?.restricted) !== Boolean(after.restricted)) {
+    changes[RESTRICTED_CHANGE_KEY] = { from: RESTRICTED_TEXT[String(Boolean(before?.restricted)) as "true" | "false"], to: RESTRICTED_TEXT[String(Boolean(after.restricted)) as "true" | "false"] };
+    labels[RESTRICTED_CHANGE_KEY] = "Modo de liberação";
+  }
   const bg = before?.grants ?? {};
   const bs = before?.scopes ?? {};
   const grantKeys = new Set([...Object.keys(bg), ...Object.keys(after.grants)]);
@@ -408,3 +415,67 @@ export function describeDiff(diff: AdjustmentDiff, max = 12): string {
 
 /** Chaves protegidas (A9), como lista de strings (para o cliente e as mensagens). */
 export const PROTECTED_KEY_LIST: readonly string[] = PROTECTED_KEYS;
+
+// ---------------------------------------------------------------------------
+// Resumo antes de salvar exceções (o que a pessoa passa a ter e de onde vem)
+// ---------------------------------------------------------------------------
+
+export interface AccessPreviewModule {
+  key: ModuleKey;
+  label: string;
+  /** Telas que a pessoa abre neste módulo. */
+  screens: number;
+  /** Telas e itens (seções/ações) liberados pelo papel sem nada marcado. */
+  inheritedScreens: number;
+  inheritedItems: number;
+}
+
+export interface AccessPreview {
+  restricted: boolean;
+  /** Telas e módulos que a pessoa abre com os ajustes. */
+  screens: number;
+  modules: AccessPreviewModule[];
+  /** Liberados porque foram marcados como Permitir (ou estão no caminho até um item marcado). */
+  marked: { screens: number; items: number };
+  /** Liberados pelo papel (regra padrão ou ajuste do perfil), sem marcação. */
+  inherited: { screens: number; items: number };
+}
+
+const INHERITED_ORIGINS = new Set<PermissionOrigin>(["padrao", "perfil"]);
+const MARKED_ORIGINS = new Set<PermissionOrigin>(["excecao", "caminho"]);
+
+/**
+ * Resumo das permissões efetivas para o aviso antes de salvar: quantas telas a pessoa abre, por módulo, e quanto
+ * disso vem do papel (sem marcação) ou do que foi marcado. Só conta o que está liberado de fato.
+ */
+export function summarizeAccessPreview(perms: EffectivePermissions, restricted: boolean): AccessPreview {
+  const byModule = new Map<ModuleKey, AccessPreviewModule>();
+  const marked = { screens: 0, items: 0 };
+  const inherited = { screens: 0, items: 0 };
+  let screens = 0;
+  for (const n of PERMISSION_NODES) {
+    if (n.kind === "modulo" || !perms.has(n.key)) continue;
+    const entry = byModule.get(n.module) ?? { key: n.module, label: MODULE_BY_KEY.get(n.module)?.label ?? n.module, screens: 0, inheritedScreens: 0, inheritedItems: 0 };
+    byModule.set(n.module, entry);
+    const origin = perms.origin[n.key];
+    const isScreen = n.kind === "tela";
+    if (isScreen) {
+      screens += 1;
+      entry.screens += 1;
+    }
+    if (INHERITED_ORIGINS.has(origin)) {
+      if (isScreen) {
+        inherited.screens += 1;
+        entry.inheritedScreens += 1;
+      } else {
+        inherited.items += 1;
+        entry.inheritedItems += 1;
+      }
+    } else if (MARKED_ORIGINS.has(origin)) {
+      if (isScreen) marked.screens += 1;
+      else marked.items += 1;
+    }
+  }
+  const modules = MODULES.map((m) => byModule.get(m.key)).filter((m): m is AccessPreviewModule => Boolean(m && m.screens > 0));
+  return { restricted, screens, modules, marked, inherited };
+}

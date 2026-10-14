@@ -185,6 +185,8 @@ export interface PermissionProfile extends BaseEntity {
   userId?: string;
   grants: Partial<Record<PermissionKey, boolean>>;
   scopes: Partial<Record<ScreenKey, ScopeKind>>;
+  /** Só nas exceções (`user_<uid>`): liberar só o que foi marcado como Permitir (modo restrito). */
+  restricted?: boolean;
   /** Motivo (obrigatório nas exceções individuais). */
   reason?: string;
   updatedBy?: UserRef;

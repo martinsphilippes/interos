@@ -8,6 +8,12 @@
  *   3. Valor próprio de cada nó = exceção individual ?? ajuste do perfil ?? regra padrão do catálogo.
  *   4. Escopo por tela = exceção ?? perfil ?? padrão da tela para o papel, sempre dentro de `scope.allowed`.
  *   5. Sem curto-circuito de administrador: o admin tem tudo porque as regras padrão o incluem.
+ *   6. Modo restrito das exceções (`restricted`): o valor próprio de um nó NÃO marcado deixa de vir do perfil e passa
+ *      a ser: liberado quando está no caminho até um item marcado como Permitir ("caminho"); o do perfil quando fica
+ *      dentro de um item marcado como Permitir; bloqueado nos demais casos ("restrito"). O módulo Início segue sempre
+ *      o perfil (Meu Dia é o destino de todo acesso negado). "Caminho" e "dentro" seguem a árvore exibida na
+ *      administração (módulo › tela › seção › ação; ver displayParentOf); tela aberta por mais de um módulo fica
+ *      "dentro" de qualquer um deles (enclosingKeysOf).
  *
  * Módulo sem dependências de servidor (testável isoladamente). A leitura dos perfis fica em permission-store.ts e a
  * anexação ao usuário em session.ts.
@@ -39,6 +45,8 @@ import { compileRoute, findRoute, hrefTab, sortRoutes, type RoutePattern } from 
 export interface PermissionAdjustments {
   grants?: Readonly<Partial<Record<string, boolean>>>;
   scopes?: Readonly<Partial<Record<string, ScopeKind>>>;
+  /** Só nas exceções do usuário: liberar só o que foi marcado como Permitir (ver precedência, item 6). */
+  restricted?: boolean;
 }
 
 export interface ResolveOptions {
@@ -60,6 +68,55 @@ export interface PermissionSubjectInput {
 }
 
 const ALWAYS_ACTIVE: readonly ModuleKey[] = MODULE_KEYS.filter((m) => !MODULE_BY_KEY.get(m)?.deactivatable);
+
+/** Módulos que seguem o perfil mesmo no modo restrito (Meu Dia, notificações, menu e barra superior). */
+export const RESTRICTED_EXEMPT_MODULES: readonly ModuleKey[] = ["inicio"];
+
+/**
+ * Pai de cada chave na árvore exibida na administração: módulo → tela → seção → ação. A tela fica sob o próprio
+ * módulo mesmo quando abre por outros (`modules`) ou só exige o módulo ativo (`moduleGate`).
+ */
+export function displayParentOf(key: string): string | null {
+  const node = NODE_BY_KEY.get(key);
+  if (!node || node.kind === "modulo") return null;
+  if (node.kind === "tela") return `${node.module}.acessar`;
+  return node.requires.keys[0] ?? `${node.module}.acessar`;
+}
+
+const displayAncestorsCache = new Map<string, readonly string[]>();
+
+const enclosingCache = new Map<string, readonly string[]>();
+
+/**
+ * Itens que "contêm" a chave no modo restrito: os ancestrais na árvore exibida e, quando a chave é (ou fica sob) uma
+ * tela aberta por mais de um módulo (`modules`, ex.: Comissões por Vendas ou Financeiro), também esses módulos.
+ */
+export function enclosingKeysOf(key: string): readonly string[] {
+  let out = enclosingCache.get(key);
+  if (!out) {
+    const ancestors = displayAncestorsOf(key);
+    const list = [...ancestors];
+    for (const k of [key, ...ancestors]) {
+      const node = NODE_BY_KEY.get(k);
+      if (node?.kind === "tela" && node.requires.mode === "any") for (const r of node.requires.keys) if (!list.includes(r)) list.push(r);
+    }
+    out = list;
+    enclosingCache.set(key, out);
+  }
+  return out;
+}
+
+/** Ancestrais de uma chave na árvore exibida, do pai ao módulo. */
+export function displayAncestorsOf(key: string): readonly string[] {
+  let out = displayAncestorsCache.get(key);
+  if (!out) {
+    const list: string[] = [];
+    for (let p = displayParentOf(key); p && list.length < 8; p = displayParentOf(p)) list.push(p);
+    out = list;
+    displayAncestorsCache.set(key, out);
+  }
+  return out;
+}
 
 function asDepartment(value: string | undefined): DepartmentKey | undefined {
   return value && (DEPARTMENT_KEYS as readonly string[]).includes(value) ? (value as DepartmentKey) : undefined;
@@ -118,7 +175,7 @@ export function defaultScopeFor(scope: ScopeDef, subject: RuleSubject): ScopeKin
  * a chave "__proto__" vira protótipo no SDK do Firestore e não pode conceder nada), só chaves do catálogo com valor
  * booleano e só escopos válidos de telas existentes. Devolve objetos sem protótipo.
  */
-export function sanitizeAdjustments(adjustments: PermissionAdjustments | null | undefined): { grants: Record<string, boolean>; scopes: Record<string, ScopeKind> } {
+export function sanitizeAdjustments(adjustments: PermissionAdjustments | null | undefined): { grants: Record<string, boolean>; scopes: Record<string, ScopeKind>; restricted: boolean } {
   const grants = Object.create(null) as Record<string, boolean>;
   const scopes = Object.create(null) as Record<string, ScopeKind>;
   const rawGrants = adjustments?.grants;
@@ -135,7 +192,7 @@ export function sanitizeAdjustments(adjustments: PermissionAdjustments | null | 
       if (SCREEN_BY_KEY.has(key) && isScopeKind(value)) scopes[key] = value;
     }
   }
-  return { grants, scopes };
+  return { grants, scopes, restricted: adjustments?.restricted === true };
 }
 
 /** Resolve as permissões efetivas de um usuário (puro). */
@@ -146,6 +203,12 @@ export function resolvePermissions(user: PermissionSubjectInput, options: Resolv
   const profile = sanitizeAdjustments(options.roleProfile);
   const exceptionGrants = exception.grants;
   const profileGrants = profile.grants;
+  const restricted = exception.restricted;
+  // Modo restrito: tudo que está no caminho até um item marcado como Permitir.
+  const pathKeys = new Set<string>();
+  if (restricted) {
+    for (const key of Object.keys(exceptionGrants)) if (exceptionGrants[key] === true) for (const a of displayAncestorsOf(key)) pathKeys.add(a);
+  }
 
   const values = new Map<string, boolean>();
   const origins = new Map<string, PermissionOrigin>();
@@ -153,6 +216,14 @@ export function resolvePermissions(user: PermissionSubjectInput, options: Resolv
 
   const own = (key: string): { value: boolean; origin: PermissionOrigin } => {
     if (Object.hasOwn(exceptionGrants, key)) return { value: exceptionGrants[key], origin: "excecao" };
+    if (restricted) {
+      const moduleKey = NODE_BY_KEY.get(key)?.module;
+      if (moduleKey && !RESTRICTED_EXEMPT_MODULES.includes(moduleKey)) {
+        if (pathKeys.has(key)) return { value: true, origin: "caminho" };
+        const inside = enclosingKeysOf(key).some((a) => exceptionGrants[a] === true);
+        if (!inside) return { value: false, origin: "restrito" };
+      }
+    }
     if (Object.hasOwn(profileGrants, key)) return { value: profileGrants[key], origin: "perfil" };
     const node = NODE_BY_KEY.get(key);
     return { value: node ? evaluateRule(node.rule, subject, { can: effective }) : false, origin: "padrao" };

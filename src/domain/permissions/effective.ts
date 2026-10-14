@@ -7,9 +7,11 @@ import type { ModuleKey, ScopeKind } from "./types";
 
 /**
  * Origem de cada decisão (para a visão "acesso efetivo"): regra padrão, ajuste do perfil, exceção individual,
- * módulo desativado na empresa ou negado por um nível de cima (tela/seção/módulo) — "hierarquia".
+ * módulo desativado na empresa ou negado por um nível de cima (tela/seção/módulo) — "hierarquia". No modo restrito
+ * das exceções: "caminho" = liberado por estar no caminho até um item marcado como Permitir; "restrito" = bloqueado
+ * por não ter sido marcado.
  */
-export type PermissionOrigin = "padrao" | "perfil" | "excecao" | "modulo-inativo" | "hierarquia";
+export type PermissionOrigin = "padrao" | "perfil" | "excecao" | "modulo-inativo" | "hierarquia" | "caminho" | "restrito";
 
 export interface EffectivePermissions {
   /** A chave está concedida (efetiva, já com a hierarquia e os módulos ativos). */

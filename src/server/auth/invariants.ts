@@ -213,6 +213,14 @@ export function checkAccessInvariants({ actorId, before, after, change }: Invari
       const to = ownValue(afterAdj, key);
       if (to === true && ownValue(beforeAdj, key) !== true && !actorHas(key)) add("I6", `Você só pode conceder acessos que você mesmo tem: ${label(key)}.`, key);
     }
+    // Modo restrito: o caminho até um item marcado também é concedido (ex.: o módulo de uma tela marcada).
+    const targetAfter = change.kind === "override" && afterAdj?.restricted ? after.users.find((u) => u.id === change.userId) : undefined;
+    if (targetAfter) {
+      const perms = permissionsInState(after, targetAfter);
+      for (const key of perms.keys) {
+        if (perms.origin[key] === "caminho" && !actorHas(key)) add("I6", `Você só pode conceder acessos que você mesmo tem: ${label(key)} (caminho até um item marcado).`, key);
+      }
+    }
     for (const screen of Object.keys(afterAdj?.scopes ?? {})) {
       const to = ownScope(afterAdj, screen);
       if (!to || ownScope(beforeAdj, screen) === to) continue;
