@@ -20,6 +20,12 @@ import { RESTRICTED_EXEMPT_MODULE_KEYS, sameAdjustments } from "./access-model";
 import { AccessTree } from "./access-tree";
 import { FormError } from "./form-error";
 
+/** Controle das exceções pelo drawer: o "Salvar alterações" do rodapé também salva os acessos alterados. */
+export interface AccessEditorHandle {
+  /** Abre a revisão (motivo + prévia) e salva; `then` roda depois de salvar com sucesso. */
+  save: (then?: () => void) => void;
+}
+
 export interface UserAccessPanelProps {
   userName: string;
   view: UserAccessView;
@@ -27,11 +33,42 @@ export interface UserAccessPanelProps {
   caps: UserAccessCapabilities;
   /** Nunca negadas (Meu Dia). */
   neverDenied: string[];
+  /** Avisado quando o rascunho das exceções passa a ter (ou deixa de ter) alterações não salvas. */
+  onDirtyChange?: (dirty: boolean) => void;
+  editorRef?: React.Ref<AccessEditorHandle>;
 }
 
-/** Seção recolhível do drawer (estado controlado no cliente, sem atributo `open` antes da hidratação). */
-function Section({ id, title, icon, badge, defaultOpen = false, children }: { id: string; title: string; icon: React.ReactNode; badge?: React.ReactNode; defaultOpen?: boolean; children: React.ReactNode }) {
-  const [open, setOpen] = React.useState(defaultOpen);
+/**
+ * Seção recolhível do drawer (estado controlado no cliente, sem atributo `open` antes da hidratação). Recolhida, o
+ * conteúdo só fica oculto: o rascunho das exceções não se perde ao recolher.
+ */
+function Section({
+  id,
+  title,
+  icon,
+  badge,
+  defaultOpen = false,
+  open: openProp,
+  onOpenChange,
+  children,
+}: {
+  id: string;
+  title: string;
+  icon: React.ReactNode;
+  badge?: React.ReactNode;
+  defaultOpen?: boolean;
+  /** Controlado (opcional): o drawer abre a seção para mostrar o motivo ao salvar pelo rodapé. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  const [openState, setOpenState] = React.useState(defaultOpen);
+  const open = openProp ?? openState;
+  const setOpen = (fn: (v: boolean) => boolean) => {
+    const next = fn(open);
+    setOpenState(next);
+    onOpenChange?.(next);
+  };
   return (
     <section className="rounded-lg border border-border" aria-labelledby={`${id}-title`}>
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-controls={`${id}-body`} className="flex w-full min-w-0 items-center gap-2 px-3 py-2.5 text-left hover:bg-surface-hover/60">
@@ -42,11 +79,9 @@ function Section({ id, title, icon, badge, defaultOpen = false, children }: { id
         </span>
         {badge}
       </button>
-      {open ? (
-        <div id={`${id}-body`} className="border-t border-border p-3">
-          {children}
-        </div>
-      ) : null}
+      <div id={`${id}-body`} hidden={!open} className="border-t border-border p-3">
+        {children}
+      </div>
     </section>
   );
 }
@@ -57,7 +92,24 @@ function Section({ id, title, icon, badge, defaultOpen = false, children }: { id
  * servidor, motivo obrigatório, bloqueadas para o próprio usuário), Acesso efetivo (somente leitura, com a origem de
  * cada decisão) e Histórico de acesso. Cada bloco só chega do servidor quando o perfil pode vê-lo.
  */
-export function UserAccessPanel({ userName, view, catalog, caps, neverDenied }: UserAccessPanelProps) {
+export function UserAccessPanel({ userName, view, catalog, caps, neverDenied, onDirtyChange, editorRef }: UserAccessPanelProps) {
+  const [dirty, setDirty] = React.useState(false);
+  const [exceptionsOpen, setExceptionsOpen] = React.useState(false);
+  const innerEditor = React.useRef<AccessEditorHandle>(null);
+  // O rodapé do drawer salva por aqui: abre a seção (o motivo precisa estar visível) e repassa ao editor.
+  React.useImperativeHandle(editorRef, () => ({
+    save: (then?: () => void) => {
+      setExceptionsOpen(true);
+      innerEditor.current?.save(then);
+    },
+  }));
+  const handleDirty = React.useCallback(
+    (value: boolean) => {
+      setDirty(value);
+      onDirtyChange?.(value);
+    },
+    [onDirtyChange],
+  );
   const exceptionsCount = Object.keys(view.grants).length + Object.keys(view.scopes).length;
   const seenScreens = view.effective ? catalog.tree.filter((n) => n.kind === "tela" && view.effective!.values[n.key]).length : 0;
   const seenModules = view.effective ? catalog.tree.filter((n) => n.kind === "modulo" && view.effective!.values[n.key]).length : 0;
@@ -69,9 +121,16 @@ export function UserAccessPanel({ userName, view, catalog, caps, neverDenied }: 
         <Section
           id="ua-excecoes"
           title="Exceções de acesso"
+          open={exceptionsOpen}
+          onOpenChange={setExceptionsOpen}
           icon={<ShieldCheck />}
           badge={
             <span className="flex shrink-0 items-center gap-1">
+              {dirty ? (
+                <Badge variant="danger" size="sm">
+                  Alterações não salvas
+                </Badge>
+              ) : null}
               {view.restricted ? (
                 <Badge variant="warning" size="sm">
                   Só o marcado
@@ -83,7 +142,16 @@ export function UserAccessPanel({ userName, view, catalog, caps, neverDenied }: 
             </span>
           }
         >
-          <ExceptionsEditor key={`${view.userId}-${view.updatedAt ?? "sem"}`} userName={userName} view={view} catalog={catalog} canManage={caps.manage} neverDenied={neverDenied} />
+          <ExceptionsEditor
+            key={`${view.userId}-${view.updatedAt ?? "sem"}`}
+            userName={userName}
+            view={view}
+            catalog={catalog}
+            canManage={caps.manage}
+            neverDenied={neverDenied}
+            onDirtyChange={handleDirty}
+            editorRef={innerEditor}
+          />
         </Section>
       ) : null}
       {caps.effective && view.effective ? (
@@ -124,7 +192,17 @@ export function UserAccessPanel({ userName, view, catalog, caps, neverDenied }: 
 
 type PreviewData = AccessPreview & { roleLabel: string };
 
-function ExceptionsEditor({ userName, view, catalog, canManage, neverDenied }: { userName: string; view: UserAccessView; catalog: AccessCatalogView; canManage: boolean; neverDenied: string[] }) {
+interface ExceptionsEditorProps {
+  userName: string;
+  view: UserAccessView;
+  catalog: AccessCatalogView;
+  canManage: boolean;
+  neverDenied: string[];
+  onDirtyChange: (dirty: boolean) => void;
+  editorRef?: React.Ref<AccessEditorHandle>;
+}
+
+function ExceptionsEditor({ userName, view, catalog, canManage, neverDenied, onDirtyChange, editorRef }: ExceptionsEditorProps) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [grants, setGrants] = React.useState<Record<string, boolean>>(view.grants);
@@ -132,12 +210,18 @@ function ExceptionsEditor({ userName, view, catalog, canManage, neverDenied }: {
   const [restricted, setRestricted] = React.useState(view.restricted);
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
-  const [preview, setPreview] = React.useState<{ data: PreviewData; clear: boolean } | null>(null);
+  const [preview, setPreview] = React.useState<{ data: PreviewData; clear: boolean; then?: () => void } | null>(null);
+  const reasonRef = React.useRef<HTMLTextAreaElement>(null);
   const [saving, setSaving] = React.useState(false);
   const readOnly = view.isSelf || !canManage;
   const dirty = !sameAdjustments(grants, view.grants) || !sameAdjustments(scopes, view.scopes) || restricted !== view.restricted;
   const count = Object.keys(grants).length + Object.keys(scopes).length;
   const hasSaved = Object.keys(view.grants).length + Object.keys(view.scopes).length > 0 || view.restricted;
+
+  React.useEffect(() => {
+    onDirtyChange(dirty && !readOnly);
+  }, [dirty, readOnly, onDirtyChange]);
+  React.useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   const baseline = React.useMemo(() => {
     const out: Record<string, DefaultValue> = {};
@@ -174,10 +258,17 @@ function ExceptionsEditor({ userName, view, catalog, canManage, neverDenied }: {
   const draftFor = (clear: boolean) => (clear ? { grants: {}, scopes: {}, restricted: false } : { grants, scopes, restricted });
 
   /** Antes de salvar: pede ao servidor a prévia exata e mostra o que a pessoa passa a abrir e o que vem do papel. */
-  const review = (clear = false) => {
+  const review = (clear = false, then?: () => void) => {
     setError(null);
     if (reason.trim().length < 5) {
-      setError("Informe o motivo da exceção (mínimo de 5 caracteres).");
+      const message = "Informe o motivo da alteração de acesso (mínimo de 5 caracteres).";
+      setError(message);
+      toast.error(message);
+      // O campo fica no fim da lista de acessos (e a seção pode estar abrindo agora): leva a pessoa até ele.
+      window.setTimeout(() => {
+        reasonRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        reasonRef.current?.focus({ preventScroll: true });
+      }, 50);
       return;
     }
     startTransition(async () => {
@@ -187,9 +278,11 @@ function ExceptionsEditor({ userName, view, catalog, canManage, neverDenied }: {
         toast.error(result.error);
         return;
       }
-      setPreview({ data: result.data, clear });
+      setPreview({ data: result.data, clear, then });
     });
   };
+
+  React.useImperativeHandle(editorRef, () => ({ save: (then?: () => void) => review(false, then) }));
 
   const confirmSave = async () => {
     if (!preview) return;
@@ -203,8 +296,10 @@ function ExceptionsEditor({ userName, view, catalog, canManage, neverDenied }: {
         return;
       }
       toast.success(result.data.changes ? "Acessos salvos" : "Nada mudou");
+      const then = preview.then;
       setPreview(null);
       setReason("");
+      then?.();
       router.refresh();
     } finally {
       setSaving(false);
@@ -278,7 +373,7 @@ function ExceptionsEditor({ userName, view, catalog, canManage, neverDenied }: {
       {!readOnly ? (
         <div className="flex flex-col gap-3 border-t border-border pt-3">
           <FormField label="Motivo" htmlFor={`ux-reason-${view.userId}`} required hint="Obrigatório: fica registrado no histórico de acesso.">
-            <Textarea id={`ux-reason-${view.userId}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} className="min-h-[64px]" placeholder="Ex.: cobre as férias da coordenação financeira até 30/10" />
+            <Textarea ref={reasonRef} id={`ux-reason-${view.userId}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} className="min-h-[64px]" placeholder="Ex.: cobre as férias da coordenação financeira até 30/10" />
           </FormField>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {hasSaved ? (
