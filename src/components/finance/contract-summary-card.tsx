@@ -28,9 +28,12 @@ export interface ContractSummaryCardProps {
   /**
    * "essential": só o que resume o contratado (mensalidade, adesão, vencimento, forma, prazo, implantação, assinatura,
    * financeiro, venda, vendedor) — Visão geral do Cliente 360º. "client": o essencial SEM o que é interno (venda,
-   * vendedor, situação financeira interna, cancelamento) — Portal do Cliente (D31).
+   * vendedor, situação financeira interna, cancelamento) — Portal do Cliente (D31). "overview": o mínimo para o
+   * cartão "Contrato vigente" da Visão geral (mensalidade, adesão, vencimento, prazo e situação financeira).
    */
-  rows?: "all" | "essential" | "client";
+  rows?: "all" | "essential" | "client" | "overview";
+  /** Lista os produtos do contrato (padrão: sim; a Visão geral já tem o cartão de produtos). */
+  showItems?: boolean;
   /** Link extra no rodapé (ex.: "Abrir contrato" no Cliente 360º). */
   footer?: ReactNode;
   className?: string;
@@ -46,9 +49,12 @@ interface Row {
 
 /** Linhas internas: nunca aparecem para o cliente (portal). */
 const INTERNAL_ROWS = new Set(["Venda", "Vendedor", "Financeiro", "Cancelamento", "Contato do cliente", "Observações comerciais", "Observações para implantação"]);
+/** Linhas do modo "overview" (cartão compacto da Visão geral do Cliente 360º). */
+const OVERVIEW_ROWS = new Set(["Mensalidade", "Adesão", "Vencimento", "Prazo", "Financeiro", "Cancelamento"]);
 
-function rowsOf(s: ContractSummaryData, print: boolean, mode: "all" | "essential" | "client" = "all"): Row[] {
+function rowsOf(s: ContractSummaryData, print: boolean, mode: "all" | "essential" | "client" | "overview" = "all"): Row[] {
   const all = allRowsOf(s, print);
+  if (mode === "overview") return all.filter((r) => OVERVIEW_ROWS.has(r.label));
   if (mode === "client") return all.filter((r) => r.essential && !INTERNAL_ROWS.has(r.label));
   return mode === "essential" ? all.filter((r) => r.essential) : all;
 }
@@ -130,7 +136,7 @@ function Grid({ rows, columns }: { rows: Row[]; columns: 1 | 2 }) {
  * vencimento, forma de pagamento, prazo, condições, implantação, assinatura, situação financeira, venda (VEN),
  * vendedor e contato. Reutilizado na página do contrato, no painel lateral, no documento e na implantação.
  */
-export function ContractSummaryCard({ summary, variant = "card", title = "Resumo do contratado", description, showDocumentLink, rows: rowsMode = "all", footer, className }: ContractSummaryCardProps) {
+export function ContractSummaryCard({ summary, variant = "card", title = "Resumo do contratado", description, showDocumentLink, rows: rowsMode = "all", showItems = true, footer, className }: ContractSummaryCardProps) {
   const print = variant === "print";
   const rows = rowsOf(summary, print, rowsMode);
   const docLink =
@@ -166,7 +172,7 @@ export function ContractSummaryCard({ summary, variant = "card", title = "Resumo
           </h3>
           {docLink}
         </div>
-        <Items summary={summary} compact />
+        {showItems ? <Items summary={summary} compact /> : null}
         <Grid rows={rows} columns={1} />
       </section>
     );

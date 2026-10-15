@@ -170,7 +170,8 @@ export function ClientKpis({ data, sections = ALL_CLIENT_SECTIONS, showValues = 
           value={
             health !== undefined ? (
               <span className="inline-flex items-baseline gap-2">
-                {health}
+                {/* Pontuação de 0 a 100, exibida como percentual. */}
+                {health}%
                 {level ? <span className={cn("rounded-md px-1.5 py-0.5 text-xs font-medium", healthTone === "success" ? "bg-success-soft text-success-fg" : healthTone === "warning" ? "bg-warning-soft text-warning-fg" : "bg-danger-soft text-danger-fg")}>{HEALTH_LABELS[level]}</span> : null}
               </span>
             ) : (

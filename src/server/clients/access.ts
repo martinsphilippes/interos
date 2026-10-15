@@ -54,6 +54,7 @@ export function clientCapabilities(user: CurrentUser): ClientCapabilities {
     attachDocument: can(user, "operacao.clientes.documentos.anexar"),
     createOpportunity: can(user, "operacao.clientes.criar-oportunidade"),
     createTask: can(user, "operacao.tarefas.criar"),
+    completeTask: can(user, "operacao.tarefas.concluir"),
     openWorkflow: canSeeHref(user, "/workflow/jornada"),
   };
 }
