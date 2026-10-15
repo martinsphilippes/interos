@@ -42,6 +42,7 @@ import type { Tone } from "@/components/ui/tone";
 import { eventIconComponent, eventTone } from "@/components/timeline/event-icon";
 import { cn } from "@/lib/utils";
 import { ContactsCard } from "./contacts-card";
+import { TaskRowMenu, TicketRowMenu } from "./overview-row-menu";
 import { ALL_CLIENT_CAPABILITIES, ALL_CLIENT_SECTIONS, type ClientCapabilities, type ClientSectionAccess } from "./access-model";
 import { BILLING_TYPE_LABELS, CLIENT_PRODUCT_STATUS_LABELS, TICKET_STATUS_LABELS, TICKET_STATUS_VARIANT } from "./labels";
 import { buildPendencies, buildUpcoming, contractSummaryOf, currentContract, productRenewalDate, type Pendency, type UpcomingItem } from "./overview-model";
@@ -89,10 +90,18 @@ function ActionLink({ href, children }: { href: string; children: React.ReactNod
   );
 }
 
-/** Avatar + primeiro nome (tabelas estreitas da Visão geral). */
-function ShortUser({ users, id }: { users: Client360["users"]; id?: string }) {
+/** Avatar + primeiro nome (tabelas estreitas da Visão geral); `avatarOnly` deixa só a foto, com o nome no título. */
+function ShortUser({ users, id, avatarOnly }: { users: Client360["users"]; id?: string; avatarOnly?: boolean }) {
   const u = id ? users[id] : undefined;
   if (!u) return <span className="text-sm text-muted-light">—</span>;
+  if (avatarOnly) {
+    return (
+      <span className="inline-flex" title={u.name}>
+        <Avatar name={u.name} src={u.avatarUrl} size="xs" />
+        <span className="sr-only">{u.name}</span>
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-2 whitespace-nowrap text-sm" title={u.name}>
       <Avatar name={u.name} src={u.avatarUrl} size="xs" />
@@ -183,7 +192,9 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
                   <li key={p.id} className="flex items-center gap-3 rounded-lg border border-border bg-surface-muted px-3 py-2.5">
                     <IconTile icon={<Icon />} tone={visual.tone} size="sm" />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{p.productName}</p>
+                      <p className="line-clamp-2 break-words text-sm font-medium leading-snug" title={p.productName}>
+                        {p.productName}
+                      </p>
                       <p className="truncate text-xs text-muted">{[category ? PRODUCT_CATEGORY_LABELS[category] : null, p.plan].filter(Boolean).join(" · ") || "—"}</p>
                     </div>
                     <div className="shrink-0 text-right">
@@ -224,56 +235,24 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
         </SectionCard>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_minmax(0,1.1fr)]">
-        <SectionCard hidden={!sections.financeiro} title="Contrato vigente" icon={<FileSignature />} action={contract ? <CardLink href={`${base}?aba=financeiro`} /> : undefined} contentClassName="flex flex-col gap-3" className="lg:col-span-2 2xl:col-span-1">
-          {contract && summary ? (
-            <div data-testid="contrato-vigente">
-              <ContractSummaryCard
-                summary={summary}
-                variant="compact"
-                rows="essential"
-                title={`Resumo do contratado · ${contract.number}`}
-                showDocumentLink={false}
-                footer={
-                  <Link href={`/financeiro/contratos/${contract.id}`} className="text-sm font-medium text-brand-fg hover:underline">
-                    Abrir contrato
-                  </Link>
-                }
-              />
-              <div className="mt-3 border-t border-border pt-3">
-                <p className="text-xs text-muted">Último pagamento</p>
-                <p className="text-sm">
-                  {lastPayment ? (
-                    <>
-                      {formatDate(lastPayment.paidAt)} · <span className="font-medium tabular-nums">{money(lastPayment.amount, data.financial.valuesHidden)}</span>
-                      {lastPayment.method ? ` · ${lastPayment.method}` : ""} · {BILLING_TYPE_LABELS[lastPayment.type]}
-                      {lastPayment.installment ? ` ${lastPayment.installment}` : ""}
-                    </>
-                  ) : (
-                    <span className="text-muted">Nenhum pagamento identificado ainda.</span>
-                  )}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <Empty>Nenhum contrato vigente. O contrato nasce da venda ganha e passa pelo Financeiro.</Empty>
-          )}
-        </SectionCard>
-
+      {/* Linha 2: o dia a dia do cliente (tarefas e atendimentos) com largura para todas as colunas. */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
         <SectionCard hidden={!sections.tarefas} title="Tarefas em aberto" icon={<ClipboardList />} action={can.createTask ? <ActionLink href={`/tarefas?novo=1&cliente=${client.id}`}>Adicionar tarefa</ActionLink> : undefined} contentClassName="px-0 pb-2">
           {openTasks.length === 0 ? (
             <div className="px-5 pb-3">
               <Empty>Nenhuma tarefa em aberto para este cliente.</Empty>
             </div>
           ) : (
-            <Table className="min-w-[500px]">
+            <Table className="min-w-[440px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="pl-5">Tarefa</TableHead>
-                  <TableHead>Responsável</TableHead>
+                  <TableHead>
+                    <span className="sr-only">Responsável</span>
+                  </TableHead>
                   <TableHead>Prazo</TableHead>
                   <TableHead>SLA</TableHead>
-                  <TableHead className="pr-5">Status</TableHead>
+                  <TableHead className="pr-3">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -287,8 +266,8 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
                           {t.title}
                         </Link>
                       </TableCell>
-                      <TableCell>
-                        <ShortUser users={users} id={t.assigneeId} />
+                      <TableCell className="px-1">
+                        <ShortUser users={users} id={t.assigneeId} avatarOnly />
                       </TableCell>
                       <TableCell className={cn("whitespace-nowrap text-sm tabular-nums", overdue ? "text-danger-fg" : "text-muted")}>{t.dueAt ? formatDate(t.dueAt) : "—"}</TableCell>
                       <TableCell>
@@ -302,10 +281,13 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
                           <span className="text-muted-light">—</span>
                         )}
                       </TableCell>
-                      <TableCell className="pr-5">
-                        <Badge variant={TASK_STATUS_VARIANT[t.status]} size="sm">
-                          {TASK_STATUS_LABELS[t.status]}
-                        </Badge>
+                      <TableCell className="pr-3">
+                        <span className="flex items-center justify-between gap-1">
+                          <Badge variant={TASK_STATUS_VARIANT[t.status]} size="sm">
+                            {TASK_STATUS_LABELS[t.status]}
+                          </Badge>
+                          <TaskRowMenu taskId={t.id} title={t.title} clientId={client.id} canComplete={can.completeTask} />
+                        </span>
                       </TableCell>
                     </TableRow>
                   );
@@ -341,15 +323,17 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
               <Empty>Nenhum chamado registrado.</Empty>
             </div>
           ) : (
-            <Table className="min-w-[540px]">
+            <Table className="min-w-[520px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="pl-5">Chamado</TableHead>
                   <TableHead>Assunto</TableHead>
-                  <TableHead>Responsável</TableHead>
+                  <TableHead>
+                    <span className="sr-only">Responsável</span>
+                  </TableHead>
                   <TableHead>Abertura</TableHead>
                   <TableHead>SLA</TableHead>
-                  <TableHead className="pr-5">Status</TableHead>
+                  <TableHead className="pr-3">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -360,13 +344,13 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
                         {t.number}
                       </Link>
                     </TableCell>
-                    <TableCell className="max-w-[180px]">
+                    <TableCell className="max-w-[140px]">
                       <p className="truncate text-sm" title={t.subject}>
                         {t.subject}
                       </p>
                     </TableCell>
-                    <TableCell>
-                      <ShortUser users={users} id={t.assigneeId} />
+                    <TableCell className="px-1">
+                      <ShortUser users={users} id={t.assigneeId} avatarOnly />
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs tabular-nums text-muted">
                       {formatDate(t.openedAt)}
@@ -374,10 +358,13 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
                       {formatDate(t.openedAt, "HH:mm")}
                     </TableCell>
                     <TableCell>{t.sla ? <SlaBadge state={t.sla.state} /> : <span className="text-muted-light">—</span>}</TableCell>
-                    <TableCell className="pr-5">
-                      <Badge variant={TICKET_STATUS_VARIANT[t.status]} size="sm">
-                        {TICKET_STATUS_LABELS[t.status]}
-                      </Badge>
+                    <TableCell className="pr-3">
+                      <span className="flex items-center justify-between gap-1">
+                        <Badge variant={TICKET_STATUS_VARIANT[t.status]} size="sm" className="whitespace-nowrap">
+                          {TICKET_STATUS_LABELS[t.status]}
+                        </Badge>
+                        <TicketRowMenu ticketId={t.id} number={t.number} clientId={client.id} />
+                      </span>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -387,7 +374,44 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
         </SectionCard>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
+      {/* Linha 3: dinheiro e pendências. Linha 4: relacionamento (visitas e contatos). */}
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        <SectionCard hidden={!sections.financeiro} title="Contrato vigente" icon={<FileSignature />} action={contract ? <CardLink href={`${base}?aba=financeiro`} /> : undefined} contentClassName="flex flex-col gap-3" className="lg:col-span-2 xl:col-span-1">
+          {contract && summary ? (
+            <div data-testid="contrato-vigente">
+              <ContractSummaryCard
+                summary={summary}
+                variant="compact"
+                rows="overview"
+                showItems={false}
+                title={`Contrato ${contract.number}`}
+                showDocumentLink={false}
+                footer={
+                  <Link href={`/financeiro/contratos/${contract.id}`} className="text-sm font-medium text-brand-fg hover:underline">
+                    Abrir contrato
+                  </Link>
+                }
+              />
+              <div className="mt-3 border-t border-border pt-3">
+                <p className="text-xs text-muted">Último pagamento</p>
+                <p className="text-sm">
+                  {lastPayment ? (
+                    <>
+                      {formatDate(lastPayment.paidAt)} · <span className="font-medium tabular-nums">{money(lastPayment.amount, data.financial.valuesHidden)}</span>
+                      {lastPayment.method ? ` · ${lastPayment.method}` : ""} · {BILLING_TYPE_LABELS[lastPayment.type]}
+                      {lastPayment.installment ? ` ${lastPayment.installment}` : ""}
+                    </>
+                  ) : (
+                    <span className="text-muted">Nenhum pagamento identificado ainda.</span>
+                  )}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <Empty>Nenhum contrato vigente. O contrato nasce da venda ganha e passa pelo Financeiro.</Empty>
+          )}
+        </SectionCard>
+
         <SectionCard title="Pendências" icon={<AlertTriangle />}>
           {pendencies.length === 0 ? (
             <p className="flex items-center gap-2 rounded-lg bg-success-soft/40 px-3 py-4 text-sm text-success-fg">
@@ -431,6 +455,9 @@ export function TabVisao({ data, originName, ticketOptions, sections = ALL_CLIEN
           )}
         </SectionCard>
 
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
         <SectionCard hidden={!sections.comercial} title="Visitas" icon={<MapPin />} action={<CardLink href={`${base}?aba=comercial`} />}>
           {shownVisits.length === 0 ? (
             <Empty>Nenhuma visita registrada.</Empty>

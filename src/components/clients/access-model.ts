@@ -22,6 +22,8 @@ export interface ClientCapabilities {
   createOpportunity: boolean;
   /** Criar tarefa (Central de Tarefas). */
   createTask: boolean;
+  /** Concluir tarefa direto da Visão geral. */
+  completeTask: boolean;
   /** Abrir a jornada no Workflow. */
   openWorkflow: boolean;
 }
@@ -50,5 +52,6 @@ export const ALL_CLIENT_CAPABILITIES: ClientCapabilities = {
   attachDocument: true,
   createOpportunity: true,
   createTask: true,
+  completeTask: true,
   openWorkflow: true,
 };
