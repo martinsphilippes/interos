@@ -106,6 +106,13 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   entidades (tarefa, etapa de workflow, chamado). Estado calculado na leitura por `computeSlaState()`:
   `dentro_do_prazo | em_atencao | em_risco | violado | pausado | concluido`.
 - Horário comercial: seg–sex 08:00–18:00 (America/Sao_Paulo), feriados em `settings`.
+- A regra vale pela CHAVE (quem inicia o SLA a referencia); o campo `department` da regra só identifica a regra nos
+  relatórios. Chaves usadas: `suporte.<prioridade>` (chamados), `implantacao.projeto`, a regra da etapa ou
+  `workflow.<etapa>` (jornada), `tarefa.padrao` (passo de fluxo com horas).
+- **SLA padrão por departamento** (`tarefa.<departamento>`, `src/domain/sla-defaults.ts`): toda tarefa criada aberta e
+  sem SLA próprio (`createTaskInternal`: manual, recorrente, automática, passo de fluxo sem horas) inicia o SLA da
+  regra do seu departamento, se ativa e de tarefas; sem data de entrega, a tarefa recebe o vencimento do SLA. Quem
+  inicia SLA próprio passa `departmentSla: false`. Configurado em Administração › Configurações › Regras de SLA.
 
 ## UI
 - Identidade: fundo claro na área de conteúdo, sidebar escura (navy `#0B1F3A`), acento laranja Intercert

@@ -6,6 +6,7 @@
  * scripts/seed/catalog.ts: outros módulos leem esses documentos via getSetting().
  */
 import { z } from "zod";
+import { departmentOfTaskSlaKey } from "@/domain/sla-defaults";
 import { DEFAULT_GAMIFICATION, DEFAULT_SALES_PRIZES } from "@/server/performance/schemas";
 import { DEFAULT_STREAK, STREAK_CRITERIA } from "@/server/performance/streak-rules";
 import { DEPARTMENT_KEYS, PRODUCT_CATEGORIES, ROLE_KEYS } from "@/domain/constants";
@@ -572,7 +573,15 @@ export const slaRuleSchema = z
     active: z.boolean(),
   })
   .refine((v) => v.attentionPct < v.riskPct, { message: "O percentual de atenção deve ser menor que o de risco", path: ["riskPct"] })
-  .refine((v) => v.responseHours === undefined || v.responseHours <= v.resolutionHours, { message: "A resposta não pode demorar mais que a resolução", path: ["responseHours"] });
+  .refine((v) => v.responseHours === undefined || v.responseHours <= v.resolutionHours, { message: "A resposta não pode demorar mais que a resolução", path: ["responseHours"] })
+  // SLA padrão por departamento (`tarefa.<departamento>`): vale para tarefas daquele departamento.
+  .refine(
+    (v) => {
+      const department = departmentOfTaskSlaKey(v.key);
+      return !department || (v.appliesTo === "tarefa" && v.department === department);
+    },
+    { message: "A chave tarefa.<departamento> é o SLA padrão das tarefas do departamento: use «Aplica-se a» Tarefa e o mesmo departamento", path: ["key"] },
+  );
 export type SlaRuleInput = z.input<typeof slaRuleSchema>;
 
 export const slaRuleIdSchema = z.object({ id: idSchema });

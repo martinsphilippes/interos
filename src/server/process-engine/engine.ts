@@ -170,6 +170,8 @@ async function createNodeTask(
       processId: processTaskId(run.id, node.id),
       origin: "workflow",
       tags: ["processo", def.key],
+      // Passo com horas próprias inicia o SLA dele logo abaixo; sem horas, vale o SLA padrão do departamento.
+      departmentSla: !(node.data.slaHours > 0),
     },
     actor,
   );

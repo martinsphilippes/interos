@@ -1,6 +1,7 @@
 import { create, getById, list, update, nowIso } from "./db";
 import { COLLECTIONS, type SlaInstance, type SlaRule, type SlaView } from "@/domain/types";
 import type { DepartmentKey, SlaState } from "@/domain/constants";
+import { departmentTaskSlaKey } from "@/domain/sla-defaults";
 
 /**
  * Motor de SLA reutilizável (tarefas, workflow, chamados, implantação, CS, oportunidades).
@@ -105,6 +106,24 @@ export interface StartSlaInput {
   resolutionHours?: number;
   responseHours?: number;
   businessHoursOnly?: boolean;
+}
+
+/**
+ * SLA padrão do departamento para uma tarefa criada sem SLA próprio: inicia pela regra `tarefa.<departamento>` quando
+ * ela existe, está ativa e se aplica a tarefas. Sem regra, devolve null (a tarefa segue só com a data de entrega).
+ */
+export async function startDepartmentTaskSla(task: { id: string; departmentId: DepartmentKey; clientId?: string; assigneeId?: string; createdAt?: string }): Promise<SlaInstance | null> {
+  const rule = await getSlaRule(departmentTaskSlaKey(task.departmentId));
+  if (!rule || !rule.active || rule.appliesTo !== "tarefa") return null;
+  return startSla({
+    ruleKey: rule.key,
+    entityType: "tarefa",
+    entityId: task.id,
+    clientId: task.clientId,
+    ownerId: task.assigneeId,
+    department: task.departmentId,
+    startedAt: task.createdAt,
+  });
 }
 
 /** Inicia uma instância de SLA a partir de uma regra (ou de horas informadas). */
