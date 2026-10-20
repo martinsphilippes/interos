@@ -32,6 +32,7 @@ import {
   reopenTaskInternal,
   reorderTasksInternal,
   setTaskStatusInternal,
+  syncTaskSlaOwner,
 } from "./service";
 import { canSeeTask } from "./access";
 import { deleteTaskKeys, statusChangeKeys } from "./permission-keys";
@@ -166,6 +167,7 @@ export async function updateTask(input: unknown): Promise<ActionResult<{ id: str
         current = await assignTaskInternal(current, patch.assigneeId, actor);
       } else {
         await clearTaskFields(id, ["assigneeId", "assigneeName"]);
+        await syncTaskSlaOwner(current, undefined);
         changed.push("responsável (removido)");
       }
     }

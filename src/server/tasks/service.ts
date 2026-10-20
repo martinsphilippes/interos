@@ -11,7 +11,7 @@ import { batchSet, col, create, getById, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { completeSla, startDepartmentTaskSla } from "@/server/sla";
 import { formatDateTime } from "@/lib/format";
-import { COLLECTIONS, type ChecklistItem, type Client, type Comment, type Task, type User, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type ChecklistItem, type Client, type Comment, type SlaInstance, type Task, type User, type UserRef } from "@/domain/types";
 import type { DepartmentKey, Priority, TaskStatus } from "@/domain/constants";
 import { TASK_STATUS_LABELS } from "@/domain/constants";
 import { shortId } from "@/lib/utils";
@@ -297,12 +297,23 @@ export async function setTaskStatusInternal(task: Task, status: TaskStatus, acto
   return { task: { ...current, ...patch }, next: null };
 }
 
-/** Atribui responsável e emite task.assigned (o handler de notificações avisa o novo responsável). */
+/**
+ * Mantém o dono do SLA da tarefa igual ao responsável (relatório de SLA, Meu Dia e painel do gestor leem `ownerId`).
+ * SLA de tarefa concluída ou cancelada fica com quem a encerrou. Sem responsável, o SLA fica sem dono.
+ */
+export async function syncTaskSlaOwner(task: Pick<Task, "slaInstanceId" | "status">, ownerId: string | undefined): Promise<void> {
+  if (!task.slaInstanceId || task.status === "concluida" || task.status === "cancelada") return;
+  if (ownerId) await update<SlaInstance>(COLLECTIONS.slaInstances, task.slaInstanceId, { ownerId });
+  else await col(COLLECTIONS.slaInstances).doc(task.slaInstanceId).update({ ownerId: FieldValue.delete(), updatedAt: nowIso() });
+}
+
+/** Atribui responsável (e o dono do SLA da tarefa) e emite task.assigned (o handler de notificações avisa o novo responsável). */
 export async function assignTaskInternal(task: Task, assigneeId: string, actor: UserRef): Promise<Task> {
   const assignee = await getById<User>(COLLECTIONS.users, assigneeId);
   if (!assignee || assignee.active === false) throw new Error("Responsável não encontrado ou inativo");
   if (task.assigneeId === assignee.id) return task;
   await update<Task>(COLLECTIONS.tasks, task.id, { assigneeId: assignee.id, assigneeName: assignee.name });
+  await syncTaskSlaOwner(task, assignee.id);
   await emitEvent({
     type: "task.assigned",
     actor,
