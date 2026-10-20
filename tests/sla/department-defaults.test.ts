@@ -1,6 +1,7 @@
 /**
  * SLA padrão por departamento (regra `tarefa.<departamento>`): chaves, validação da regra e aplicação na criação de
- * tarefas (só tarefa aberta, sem SLA próprio, com regra ativa de tarefas; quem inicia SLA próprio pode recusar).
+ * tarefas (só tarefa aberta, sem SLA próprio, com regra ativa de tarefas; quem inicia SLA próprio pode recusar) e dono
+ * do SLA acompanhando o responsável da tarefa.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEPARTMENT_KEYS } from "@/domain/constants";
@@ -10,7 +11,7 @@ import { slaRuleSchema } from "@/server/admin/schemas";
 // ---------------------------------------------------------------------------
 // Banco e eventos em memória
 // ---------------------------------------------------------------------------
-const store = vi.hoisted(() => ({ data: new Map<string, Record<string, unknown>[]>(), seq: 0, events: [] as Record<string, unknown>[] }));
+const store = vi.hoisted(() => ({ data: new Map<string, Record<string, unknown>[]>(), seq: 0, events: [] as Record<string, unknown>[], DELETE: Symbol("delete") }));
 
 vi.mock("@/server/db", () => {
   type Row = Record<string, unknown>;
@@ -34,15 +35,24 @@ vi.mock("@/server/db", () => {
       if (row) Object.assign(row, patch);
     },
     batchSet: async () => undefined,
-    col: () => {
-      throw new Error("col() não disponível no teste");
-    },
+    col: (name: string) => ({
+      doc: (id: string) => ({
+        update: async (patch: Row) => {
+          const row = rows(name).find((r) => r.id === id);
+          if (!row) return;
+          for (const [k, v] of Object.entries(patch)) {
+            if (v === store.DELETE) delete row[k];
+            else row[k] = v;
+          }
+        },
+      }),
+    }),
   };
 });
-vi.mock("@/server/docdb", () => ({ FieldValue: {} }));
+vi.mock("@/server/docdb", () => ({ FieldValue: { delete: () => store.DELETE } }));
 vi.mock("@/server/events", () => ({ emitEvent: async (e: Record<string, unknown>) => void store.events.push(e) }));
 
-const { createTaskInternal } = await import("@/server/tasks/service");
+const { assignTaskInternal, createTaskInternal, syncTaskSlaOwner } = await import("@/server/tasks/service");
 
 const ACTOR = { id: "user_hercules", name: "Hércules" };
 const rule = (department: string, extra: Record<string, unknown> = {}) => ({
@@ -62,7 +72,16 @@ const tasks = () => store.data.get("tasks") ?? [];
 const instances = () => store.data.get("sla_instances") ?? [];
 
 beforeEach(() => {
-  store.data = new Map([["sla_rules", [rule("suporte"), rule("vendas", { active: false })]]]);
+  store.data = new Map<string, Record<string, unknown>[]>([
+    ["sla_rules", [rule("suporte"), rule("vendas", { active: false })]],
+    [
+      "users",
+      [
+        { id: "user_rafael", name: "Rafael", active: true },
+        { id: "user_larissa", name: "Larissa", active: true },
+      ],
+    ],
+  ]);
   store.events = [];
 });
 
@@ -113,5 +132,26 @@ describe("aplicação na criação de tarefas", () => {
     store.data.set("sla_rules", [rule("suporte", { appliesTo: "chamado" })]);
     await createTaskInternal({ title: "Tarefa", departmentId: "suporte" }, ACTOR);
     expect(instances()).toHaveLength(0);
+  });
+});
+
+describe("dono do SLA acompanha o responsável", () => {
+  it("reatribuir a tarefa passa o SLA para o novo responsável", async () => {
+    const task = await createTaskInternal({ title: "Chamado", departmentId: "suporte", assigneeId: "user_rafael" }, ACTOR);
+    expect(instances()[0].ownerId).toBe("user_rafael");
+    await assignTaskInternal(task, "user_larissa", ACTOR);
+    expect(instances()[0].ownerId).toBe("user_larissa");
+  });
+
+  it("tirar o responsável deixa o SLA sem dono", async () => {
+    const task = await createTaskInternal({ title: "Chamado", departmentId: "suporte", assigneeId: "user_rafael" }, ACTOR);
+    await syncTaskSlaOwner(task, undefined);
+    expect(instances()[0]).not.toHaveProperty("ownerId");
+  });
+
+  it("SLA de tarefa concluída fica com quem a encerrou", async () => {
+    const task = await createTaskInternal({ title: "Chamado", departmentId: "suporte", assigneeId: "user_rafael" }, ACTOR);
+    await assignTaskInternal({ ...task, status: "concluida" }, "user_larissa", ACTOR);
+    expect(instances()[0].ownerId).toBe("user_rafael");
   });
 });
