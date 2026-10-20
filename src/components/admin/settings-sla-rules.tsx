@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Plus, Timer, Trash2 } from "lucide-react";
+import { Network, Pencil, Plus, Timer, Trash2 } from "lucide-react";
 import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
 import type { ActionResult, SlaRule } from "@/domain/types";
+import { departmentOfTaskSlaKey, departmentTaskSlaKey } from "@/domain/sla-defaults";
 import { SLA_APPLIES_TO, type SlaRuleInput } from "@/server/admin/schemas";
 import { deleteSlaRule, upsertSlaRule } from "@/server/admin/actions";
 import { Badge } from "@/components/ui/badge";
@@ -29,12 +30,24 @@ function hoursLabel(hours: number | undefined): string {
   return `${numberToInput(hours)} h`;
 }
 
-/** Tabela editável das regras de SLA (sla_rules): cada linha salva pela própria action. */
-/** `canEdit`/`canDelete` vêm do servidor (admin.configuracoes.sla.editar/excluir); as actions revalidam. */
-export function SettingsSlaRules({ rules, canEdit = true, canDelete = true }: { rules: SlaRule[]; canEdit?: boolean; canDelete?: boolean }) {
+/** Dados fixos de uma regra nova (SLA padrão de departamento: chave, alvo e departamento travados). */
+type RulePreset = Pick<SlaRule, "key" | "name" | "appliesTo" | "department">;
+
+/**
+ * SLA padrão por departamento (regras `tarefa.<departamento>`) e tabela editável das demais regras de SLA
+ * (sla_rules): cada linha salva pela própria action. `canEdit`/`canDelete` vêm do servidor
+ * (admin.configuracoes.sla.editar/excluir); as actions revalidam.
+ */
+export function SettingsSlaRules({ rules: allRules, canEdit = true, canDelete = true }: { rules: SlaRule[]; canEdit?: boolean; canDelete?: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
-  const [editing, setEditing] = React.useState<{ rule: SlaRule | null } | null>(null);
+  const [editing, setEditing] = React.useState<{ rule: SlaRule | null; preset?: RulePreset } | null>(null);
+  // As regras padrão de departamento ficam no cartão próprio; a tabela mostra as demais.
+  const departmentRules = new Map(allRules.flatMap((r) => {
+    const department = departmentOfTaskSlaKey(r.key);
+    return department ? [[department, r] as const] : [];
+  }));
+  const rules = allRules.filter((r) => !departmentOfTaskSlaKey(r.key));
   const [toDelete, setToDelete] = React.useState<SlaRule | null>(null);
 
   const run = (action: () => Promise<ActionResult<unknown>>, successMessage: string, after?: () => void) =>
@@ -69,133 +82,190 @@ export function SettingsSlaRules({ rules, canEdit = true, canDelete = true }: { 
     );
 
   return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between gap-3">
-        <div className="min-w-0">
-          <CardTitle>Regras de SLA</CardTitle>
-          <CardDescription>Prazos de resposta e resolução por tipo de entidade. A chave é referenciada por workflows, chamados e tarefas (ex.: suporte.critico).</CardDescription>
-        </div>
-        {canEdit ? (
-          <Button size="sm" onClick={() => setEditing({ rule: null })} className="shrink-0">
-            <Plus /> Nova regra
-          </Button>
-        ) : (
-          <Badge variant="muted" size="sm" className="shrink-0">
-            Somente leitura
-          </Badge>
-        )}
-      </CardHeader>
-      <CardContent className="px-0 pb-0">
-        {rules.length === 0 ? (
-          <EmptyState icon={<Timer />} title="Nenhuma regra de SLA" description="Sem regras, os prazos usam o padrão de 24 horas úteis." size="sm" />
-        ) : (
-          <>
-            {/* Desktop */}
-            <div className="hidden md:block">
-              <Table className="min-w-[1080px]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Regra</TableHead>
-                    <TableHead>Aplica-se a</TableHead>
-                    <TableHead>Departamento</TableHead>
-                    <TableHead className="text-right">Resposta</TableHead>
-                    <TableHead className="text-right">Resolução</TableHead>
-                    <TableHead>Horário</TableHead>
-                    <TableHead className="text-right">Atenção</TableHead>
-                    <TableHead className="text-right">Risco</TableHead>
-                    <TableHead>Ativa</TableHead>
-                    <TableHead className="text-right">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rules.map((r) => (
-                    <TableRow key={r.id} className={cn(!r.active && "opacity-70")}>
-                      <TableCell className="max-w-[300px]">
-                        <span className="block truncate font-medium">{r.name}</span>
-                        <span className="block truncate font-mono text-xs text-muted">{r.key}</span>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">{SLA_APPLIES_TO_LABELS[r.appliesTo]}</TableCell>
-                      <TableCell className="whitespace-nowrap">{r.department ? DEPARTMENT_LABELS[r.department] : <span className="text-muted-light">—</span>}</TableCell>
-                      <TableCell className="whitespace-nowrap text-right tabular-nums">{hoursLabel(r.responseHours)}</TableCell>
-                      <TableCell className="whitespace-nowrap text-right tabular-nums">{hoursLabel(r.resolutionHours)}</TableCell>
-                      <TableCell>
-                        <Badge variant={r.businessHoursOnly ? "info" : "warning"} size="sm">
-                          {r.businessHoursOnly ? "Horas úteis" : "24×7"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{r.attentionPct}%</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.riskPct}%</TableCell>
-                      <TableCell>
-                        <Switch size="sm" checked={r.active} onCheckedChange={(next) => toggle(r, next)} disabled={pending || !canEdit} aria-label={r.active ? `Desativar ${r.name}` : `Ativar ${r.name}`} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {canEdit ? (
-                            <Button variant="outline" size="sm" onClick={() => setEditing({ rule: r })}>
-                              <Pencil /> Editar
-                            </Button>
-                          ) : null}
-                          {canDelete ? (
-                            <Button variant="ghost" size="icon" className="size-8 text-danger hover:bg-danger-soft hover:text-danger-fg" aria-label={`Excluir ${r.name}`} onClick={() => setToDelete(r)}>
-                              <Trash2 />
-                            </Button>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-
-            {/* Mobile */}
-            <ul className="flex flex-col gap-2 px-4 pb-4 md:hidden">
-              {rules.map((r) => (
-                <li key={r.id} className={cn("rounded-lg border border-border p-3", !r.active && "opacity-70")}>
-                  <div className="flex items-start gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{r.name}</p>
-                      <p className="truncate font-mono text-xs text-muted">{r.key}</p>
-                      <p className="mt-1 text-xs text-muted">
-                        {SLA_APPLIES_TO_LABELS[r.appliesTo]}
-                        {r.department ? ` · ${DEPARTMENT_LABELS[r.department]}` : ""} · resposta {hoursLabel(r.responseHours)} · resolução {hoursLabel(r.resolutionHours)} · {r.businessHoursOnly ? "horas úteis" : "24×7"}
-                      </p>
-                    </div>
-                    <Switch size="sm" checked={r.active} onCheckedChange={(next) => toggle(r, next)} disabled={pending || !canEdit} aria-label={r.active ? `Desativar ${r.name}` : `Ativar ${r.name}`} />
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Network className="size-4 text-muted" aria-hidden /> SLA padrão por departamento
+          </CardTitle>
+          <CardDescription>
+            Prazo que vale para toda tarefa do departamento criada sem SLA próprio: tarefas manuais, recorrentes, automáticas e passos de fluxo sem horas definidas. Sem padrão, a tarefa segue só com a data de entrega. Passos de fluxo com horas, etapas da jornada e chamados continuam com as regras deles.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
+          <ul className="divide-y divide-border border-t border-border">
+            {DEPARTMENT_KEYS.map((d) => {
+              const rule = departmentRules.get(d);
+              return (
+                <li key={d} className={cn("flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-6", rule && !rule.active && "opacity-70")}>
+                  <div className="min-w-0">
+                    <p className="font-medium">{DEPARTMENT_LABELS[d]}</p>
+                    <p className="text-xs text-muted">
+                      {rule ? (
+                        <>
+                          Resolução em <span className="tabular-nums text-foreground">{hoursLabel(rule.resolutionHours)}</span>
+                          {rule.responseHours !== undefined ? <> · resposta em {hoursLabel(rule.responseHours)}</> : null} · {rule.businessHoursOnly ? "horas úteis" : "24×7"} · atenção {rule.attentionPct}% · risco {rule.riskPct}%
+                          {rule.active ? "" : " · desativado"}
+                        </>
+                      ) : (
+                        "Sem SLA padrão: as tarefas ficam só com a data de entrega."
+                      )}
+                    </p>
                   </div>
-                  <div className="mt-2 flex items-center justify-end gap-2">
-                    {canDelete ? (
-                      <Button variant="ghost" size="sm" className="h-9 text-danger" onClick={() => setToDelete(r)}>
-                        <Trash2 /> Excluir
-                      </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {rule ? (
+                      <Switch size="sm" checked={rule.active} onCheckedChange={(next) => toggle(rule, next)} disabled={pending || !canEdit} aria-label={rule.active ? `Desativar o SLA padrão de ${DEPARTMENT_LABELS[d]}` : `Ativar o SLA padrão de ${DEPARTMENT_LABELS[d]}`} />
                     ) : null}
                     {canEdit ? (
-                      <Button variant="outline" size="sm" className="h-9" onClick={() => setEditing({ rule: r })}>
-                        <Pencil /> Editar
+                      <Button
+                        variant={rule ? "outline" : "secondary"}
+                        size="sm"
+                        onClick={() => setEditing(rule ? { rule } : { rule: null, preset: { key: departmentTaskSlaKey(d), name: `Tarefas — ${DEPARTMENT_LABELS[d]}`, appliesTo: "tarefa", department: d } })}
+                      >
+                        {rule ? <Pencil /> : <Plus />} {rule ? "Editar" : "Definir prazo"}
+                      </Button>
+                    ) : null}
+                    {rule && canDelete ? (
+                      <Button variant="ghost" size="icon" className="size-8 text-danger hover:bg-danger-soft hover:text-danger-fg" aria-label={`Remover o SLA padrão de ${DEPARTMENT_LABELS[d]}`} onClick={() => setToDelete(rule)}>
+                        <Trash2 />
                       </Button>
                     ) : null}
                   </div>
                 </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </CardContent>
+              );
+            })}
+          </ul>
+        </CardContent>
+      </Card>
 
-      <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent size="lg">{editing ? <SlaRuleForm key={editing.rule?.id ?? "new"} rule={editing.rule} onClose={() => setEditing(null)} /> : null}</DialogContent>
-      </Dialog>
+      <Card>
+        <CardHeader className="flex-row items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle>Regras de SLA</CardTitle>
+            <CardDescription>Prazos de resposta e resolução por tipo de entidade. A chave é referenciada por workflows, chamados e tarefas (ex.: suporte.critico).</CardDescription>
+          </div>
+          {canEdit ? (
+            <Button size="sm" onClick={() => setEditing({ rule: null })} className="shrink-0">
+              <Plus /> Nova regra
+            </Button>
+          ) : (
+            <Badge variant="muted" size="sm" className="shrink-0">
+              Somente leitura
+            </Badge>
+          )}
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
+          {rules.length === 0 ? (
+            <EmptyState icon={<Timer />} title="Nenhuma regra de SLA" description="Sem regras, os prazos usam o padrão de 24 horas úteis." size="sm" />
+          ) : (
+            <>
+              {/* Desktop */}
+              <div className="hidden md:block">
+                <Table className="min-w-[1080px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Regra</TableHead>
+                      <TableHead>Aplica-se a</TableHead>
+                      <TableHead>Departamento</TableHead>
+                      <TableHead className="text-right">Resposta</TableHead>
+                      <TableHead className="text-right">Resolução</TableHead>
+                      <TableHead>Horário</TableHead>
+                      <TableHead className="text-right">Atenção</TableHead>
+                      <TableHead className="text-right">Risco</TableHead>
+                      <TableHead>Ativa</TableHead>
+                      <TableHead className="text-right">Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rules.map((r) => (
+                      <TableRow key={r.id} className={cn(!r.active && "opacity-70")}>
+                        <TableCell className="max-w-[300px]">
+                          <span className="block truncate font-medium">{r.name}</span>
+                          <span className="block truncate font-mono text-xs text-muted">{r.key}</span>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">{SLA_APPLIES_TO_LABELS[r.appliesTo]}</TableCell>
+                        <TableCell className="whitespace-nowrap">{r.department ? DEPARTMENT_LABELS[r.department] : <span className="text-muted-light">—</span>}</TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">{hoursLabel(r.responseHours)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">{hoursLabel(r.resolutionHours)}</TableCell>
+                        <TableCell>
+                          <Badge variant={r.businessHoursOnly ? "info" : "warning"} size="sm">
+                            {r.businessHoursOnly ? "Horas úteis" : "24×7"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{r.attentionPct}%</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.riskPct}%</TableCell>
+                        <TableCell>
+                          <Switch size="sm" checked={r.active} onCheckedChange={(next) => toggle(r, next)} disabled={pending || !canEdit} aria-label={r.active ? `Desativar ${r.name}` : `Ativar ${r.name}`} />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            {canEdit ? (
+                              <Button variant="outline" size="sm" onClick={() => setEditing({ rule: r })}>
+                                <Pencil /> Editar
+                              </Button>
+                            ) : null}
+                            {canDelete ? (
+                              <Button variant="ghost" size="icon" className="size-8 text-danger hover:bg-danger-soft hover:text-danger-fg" aria-label={`Excluir ${r.name}`} onClick={() => setToDelete(r)}>
+                                <Trash2 />
+                              </Button>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
 
-      <ConfirmDialog
-        open={Boolean(toDelete)}
-        onOpenChange={(open) => !open && setToDelete(null)}
-        title="Excluir regra de SLA?"
-        description={toDelete ? `Instâncias já iniciadas com "${toDelete.name}" mantêm seus prazos; novas instâncias que referenciem a chave ${toDelete.key} usarão o padrão. Prefira desativar se a regra puder voltar.` : undefined}
-        confirmLabel="Excluir"
-        destructive
-        onConfirm={() => (toDelete ? run(() => deleteSlaRule({ id: toDelete.id }), "Regra excluída") : undefined)}
-      />
-    </Card>
+              {/* Mobile */}
+              <ul className="flex flex-col gap-2 px-4 pb-4 md:hidden">
+                {rules.map((r) => (
+                  <li key={r.id} className={cn("rounded-lg border border-border p-3", !r.active && "opacity-70")}>
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium">{r.name}</p>
+                        <p className="truncate font-mono text-xs text-muted">{r.key}</p>
+                        <p className="mt-1 text-xs text-muted">
+                          {SLA_APPLIES_TO_LABELS[r.appliesTo]}
+                          {r.department ? ` · ${DEPARTMENT_LABELS[r.department]}` : ""} · resposta {hoursLabel(r.responseHours)} · resolução {hoursLabel(r.resolutionHours)} · {r.businessHoursOnly ? "horas úteis" : "24×7"}
+                        </p>
+                      </div>
+                      <Switch size="sm" checked={r.active} onCheckedChange={(next) => toggle(r, next)} disabled={pending || !canEdit} aria-label={r.active ? `Desativar ${r.name}` : `Ativar ${r.name}`} />
+                    </div>
+                    <div className="mt-2 flex items-center justify-end gap-2">
+                      {canDelete ? (
+                        <Button variant="ghost" size="sm" className="h-9 text-danger" onClick={() => setToDelete(r)}>
+                          <Trash2 /> Excluir
+                        </Button>
+                      ) : null}
+                      {canEdit ? (
+                        <Button variant="outline" size="sm" className="h-9" onClick={() => setEditing({ rule: r })}>
+                          <Pencil /> Editar
+                        </Button>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </CardContent>
+
+        <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
+          <DialogContent size="lg">{editing ? <SlaRuleForm key={editing.rule?.id ?? editing.preset?.key ?? "new"} rule={editing.rule} preset={editing.preset} onClose={() => setEditing(null)} /> : null}</DialogContent>
+        </Dialog>
+
+        <ConfirmDialog
+          open={Boolean(toDelete)}
+          onOpenChange={(open) => !open && setToDelete(null)}
+          title="Excluir regra de SLA?"
+          description={toDelete ? `Instâncias já iniciadas com "${toDelete.name}" mantêm seus prazos; novas instâncias que referenciem a chave ${toDelete.key} usarão o padrão. Prefira desativar se a regra puder voltar.` : undefined}
+          confirmLabel="Excluir"
+          destructive
+          onConfirm={() => (toDelete ? run(() => deleteSlaRule({ id: toDelete.id }), "Regra excluída") : undefined)}
+        />
+      </Card>
+    </div>
   );
 }
 
@@ -212,15 +282,18 @@ interface FormState {
   active: boolean;
 }
 
-function SlaRuleForm({ rule, onClose }: { rule: SlaRule | null; onClose: () => void }) {
+function SlaRuleForm({ rule, preset, onClose }: { rule: SlaRule | null; preset?: RulePreset; onClose: () => void }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
+  const base = rule ?? preset;
+  // SLA padrão de departamento: chave, alvo e departamento são a identidade da regra (não se editam).
+  const departmentDefault = base ? departmentOfTaskSlaKey(base.key) : null;
   const [form, setForm] = React.useState<FormState>({
-    key: rule?.key ?? "",
-    name: rule?.name ?? "",
-    appliesTo: rule?.appliesTo ?? "tarefa",
-    department: rule?.department ?? "",
+    key: base?.key ?? "",
+    name: base?.name ?? "",
+    appliesTo: base?.appliesTo ?? "tarefa",
+    department: base?.department ?? "",
     responseHours: numberToInput(rule?.responseHours),
     resolutionHours: numberToInput(rule?.resolutionHours),
     businessHoursOnly: rule?.businessHoursOnly ?? true,
@@ -269,19 +342,24 @@ function SlaRuleForm({ rule, onClose }: { rule: SlaRule | null; onClose: () => v
   return (
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
       <DialogHeader>
-        <DialogTitle>{rule ? "Editar regra de SLA" : "Nova regra de SLA"}</DialogTitle>
+        <DialogTitle>{departmentDefault ? `SLA padrão — ${DEPARTMENT_LABELS[departmentDefault]}` : rule ? "Editar regra de SLA" : "Nova regra de SLA"}</DialogTitle>
         <DialogDescription>Horas em tempo útil (quando &ldquo;só horário comercial&rdquo; está ligado) ou corrido. Use fração para minutos: 0,25 h = 15 min.</DialogDescription>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-4 py-3">
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Chave" htmlFor="sr-key" required hint={rule ? "A chave identifica a regra; alterar exige atualizar quem a referencia." : "Ex.: suporte.critico, workflow.vendas."}>
-            <Input id="sr-key" value={form.key} onChange={(e) => set("key", e.target.value)} required minLength={2} maxLength={60} className="font-mono" placeholder="area.nome" autoFocus={!rule} />
+          <FormField
+            label="Chave"
+            htmlFor="sr-key"
+            required
+            hint={departmentDefault ? "Chave do SLA padrão do departamento (fixa)." : rule ? "A chave identifica a regra; alterar exige atualizar quem a referencia." : "Ex.: suporte.critico, workflow.vendas."}
+          >
+            <Input id="sr-key" value={form.key} onChange={(e) => set("key", e.target.value)} required minLength={2} maxLength={60} className="font-mono" placeholder="area.nome" autoFocus={!base} readOnly={Boolean(departmentDefault)} />
           </FormField>
           <FormField label="Nome" htmlFor="sr-name" required>
             <Input id="sr-name" value={form.name} onChange={(e) => set("name", e.target.value)} required minLength={2} maxLength={120} placeholder="Ex.: Suporte — Crítico (sistema parado)" />
           </FormField>
           <FormField label="Aplica-se a" htmlFor="sr-applies" required>
-            <Select id="sr-applies" value={form.appliesTo} onChange={(e) => set("appliesTo", e.target.value as SlaRule["appliesTo"])}>
+            <Select id="sr-applies" value={form.appliesTo} onChange={(e) => set("appliesTo", e.target.value as SlaRule["appliesTo"])} disabled={Boolean(departmentDefault)}>
               {SLA_APPLIES_TO.map((a) => (
                 <option key={a} value={a}>
                   {SLA_APPLIES_TO_LABELS[a]}
@@ -289,8 +367,12 @@ function SlaRuleForm({ rule, onClose }: { rule: SlaRule | null; onClose: () => v
               ))}
             </Select>
           </FormField>
-          <FormField label="Departamento" htmlFor="sr-department">
-            <Select id="sr-department" value={form.department} onChange={(e) => set("department", e.target.value)}>
+          <FormField
+            label="Departamento"
+            htmlFor="sr-department"
+            hint={departmentDefault ? undefined : "Só identifica a regra nos relatórios: quem usa a regra é quem referencia a chave. Para o prazo das tarefas de um departamento, use «SLA padrão por departamento»."}
+          >
+            <Select id="sr-department" value={form.department} onChange={(e) => set("department", e.target.value)} disabled={Boolean(departmentDefault)}>
               <option value="">Qualquer departamento</option>
               {DEPARTMENT_KEYS.map((d) => (
                 <option key={d} value={d}>
@@ -323,7 +405,7 @@ function SlaRuleForm({ rule, onClose }: { rule: SlaRule | null; onClose: () => v
           Cancelar
         </Button>
         <Button type="submit" loading={pending}>
-          {rule ? "Salvar" : "Criar regra"}
+          {rule ? "Salvar" : departmentDefault ? "Definir prazo" : "Criar regra"}
         </Button>
       </DialogFooter>
     </form>

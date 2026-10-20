@@ -9,7 +9,8 @@ import { FieldValue } from "@/server/docdb";
 import { addDays, addMonths, addWeeks } from "date-fns";
 import { batchSet, col, create, getById, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
-import { completeSla } from "@/server/sla";
+import { completeSla, startDepartmentTaskSla } from "@/server/sla";
+import { formatDateTime } from "@/lib/format";
 import { COLLECTIONS, type ChecklistItem, type Client, type Comment, type Task, type User, type UserRef } from "@/domain/types";
 import type { DepartmentKey, Priority, TaskStatus } from "@/domain/constants";
 import { TASK_STATUS_LABELS } from "@/domain/constants";
@@ -33,6 +34,11 @@ export interface CreateTaskInternalInput {
   origin?: Task["origin"];
   sourceEventId?: string;
   slaInstanceId?: string;
+  /**
+   * Aplica o SLA padrão do departamento (regra `tarefa.<departamento>`) quando a tarefa nasce sem SLA próprio.
+   * Padrão: sim. Quem inicia um SLA específico logo depois (ex.: passo de fluxo com horas) passa false.
+   */
+  departmentSla?: boolean;
   /** Padrão: o ator. */
   creatorId?: string;
   status?: TaskStatus;
@@ -52,7 +58,7 @@ export async function createTaskInternal(input: CreateTaskInternalInput, actor: 
   );
   const origin = input.origin ?? "manual";
 
-  const task = await create<Task>(COLLECTIONS.tasks, {
+  let task = await create<Task>(COLLECTIONS.tasks, {
     title: input.title,
     description: input.description,
     clientId: client?.id,
@@ -78,6 +84,15 @@ export async function createTaskInternal(input: CreateTaskInternalInput, actor: 
     order: Date.now(),
   });
 
+  // SLA padrão do departamento: só para tarefa aberta, sem SLA próprio e quando o departamento tem regra ativa.
+  const open = task.status !== "concluida" && task.status !== "cancelada";
+  const departmentSla = open && !task.slaInstanceId && input.departmentSla !== false ? await startDepartmentTaskSla(task) : null;
+  if (departmentSla) {
+    const dueAt = task.dueAt ?? departmentSla.dueAt;
+    await update<Task>(COLLECTIONS.tasks, task.id, { slaInstanceId: departmentSla.id, dueAt });
+    task = { ...task, slaInstanceId: departmentSla.id, dueAt };
+  }
+
   await emitEvent({
     type: "task.created",
     actor,
@@ -96,6 +111,20 @@ export async function createTaskInternal(input: CreateTaskInternalInput, actor: 
       recurring: Boolean(task.recurrence),
     },
   });
+
+  if (departmentSla) {
+    await emitEvent({
+      type: "sla.started",
+      actor,
+      clientId: task.clientId,
+      entity: { type: "task", id: task.id },
+      title: `SLA padrão de ${departmentSla.ruleName} iniciado para "${task.title}"`,
+      description: `Prazo: ${formatDateTime(departmentSla.dueAt)}`,
+      department: task.departmentId,
+      payload: { slaInstanceId: departmentSla.id, dueAt: departmentSla.dueAt, ownerId: task.assigneeId, ruleKey: departmentSla.ruleKey },
+      timeline: false,
+    });
+  }
 
   if (task.assigneeId && task.assigneeId !== actor.id) {
     await emitEvent({
