@@ -12,6 +12,9 @@ import { MobileNav } from "./mobile-nav";
 import type { ShellLinks, ShellUser } from "./user-menu";
 import { cn } from "@/lib/utils";
 import { Softphone } from "@/components/telephony/softphone";
+import { FocusBar, useFocusMode } from "./focus-mode";
+import { NotificationsBell } from "./notifications-bell";
+import { PresenceSelect } from "./presence-select";
 
 export type { ShellLinks, ShellUser } from "./user-menu";
 
@@ -72,7 +75,19 @@ export function AppShell({ user, sections, mobileNav = [], links, unreadCount, q
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [prevPathname, setPrevPathname] = React.useState(pathname);
 
-  const toggleCollapsed = () => writeCollapsed(!collapsed);
+  const toggleCollapsed = React.useCallback(() => writeCollapsed(!readCollapsed()), []);
+  const focus = useFocusMode();
+
+  // Ctrl+B (⌘B no Mac): recolhe/expande o menu lateral de qualquer tela.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "b") return;
+      e.preventDefault();
+      toggleCollapsed();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleCollapsed]);
 
   // Fecha o drawer ao navegar (ajuste de estado durante a renderização).
   if (pathname !== prevPathname) {
@@ -84,7 +99,7 @@ export function AppShell({ user, sections, mobileNav = [], links, unreadCount, q
     <AccessProvider access={user.access}>
     <TooltipProvider delayDuration={300}>
       <div className="min-h-dvh bg-canvas">
-        <Sidebar user={user} sections={sections} variant="desktop" collapsed={collapsed} onToggleCollapsed={toggleCollapsed} className="hidden md:flex" />
+        <Sidebar user={user} sections={sections} variant="desktop" collapsed={collapsed} onToggleCollapsed={toggleCollapsed} className={focus ? "hidden" : "hidden md:flex"} />
 
         {/* Menu mobile (drawer à esquerda) */}
         <DialogPrimitive.Root open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -98,8 +113,14 @@ export function AppShell({ user, sections, mobileNav = [], links, unreadCount, q
           </DialogPrimitive.Portal>
         </DialogPrimitive.Root>
 
-        <div className={cn("flex min-h-dvh flex-col transition-[padding] duration-200", collapsed ? "md:pl-sidebar-collapsed" : "md:pl-sidebar")}>
-          <TopBar user={user} unreadCount={unreadCount} onOpenMenu={() => setMobileOpen(true)} sections={sections} mobileNav={mobileNav} links={links} showPresence={showPresence} />
+        <div className={cn("flex min-h-dvh flex-col transition-[padding] duration-200", focus ? "md:pl-0" : collapsed ? "md:pl-sidebar-collapsed" : "md:pl-sidebar")}>
+          <TopBar user={user} unreadCount={unreadCount} onOpenMenu={() => setMobileOpen(true)} sections={sections} mobileNav={mobileNav} links={links} showPresence={showPresence} className={focus ? "md:hidden" : undefined} />
+          {focus ? (
+            <FocusBar>
+              {showPresence ? <PresenceSelect value={user.presence} pauseReasonKey={user.pauseReasonKey} pauseReasons={user.pauseReasons} /> : null}
+              <NotificationsBell unreadCount={unreadCount} />
+            </FocusBar>
+          ) : null}
           <main id="conteudo" className="flex flex-1 flex-col pb-[calc(var(--spacing-mobile-nav)+env(safe-area-inset-bottom)+12px)] md:pb-0">
             {children}
           </main>

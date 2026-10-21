@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronDown, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { ChevronDown, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { CURRENT_WAVE, type NavSection, type ShellLink } from "@/domain/constants";
 import { Tooltip } from "@/components/ui/tooltip";
 import { NavIcon } from "./nav-icon";
@@ -70,7 +70,7 @@ export interface SidebarProps {
 }
 
 /**
- * Sidebar escura: logo, seções recolhíveis, item ativo em laranja preenchido, "Recolher menu", marca Intercert e
+ * Sidebar escura: logo com o botão de recolher (topo; Ctrl+B), seções recolhíveis, item ativo em laranja, marca Intercert e
  * versão no rodapé. A seção do item ativo abre sozinha a cada navegação (o item atual nunca fica escondido sem o
  * usuário pedir), mas também pode ser recolhida pela seta; recolhida, o título fica destacado.
  */
@@ -109,11 +109,26 @@ export function Sidebar({ user, sections, userLinks = [], variant = "desktop", c
         className,
       )}
     >
-      {/* Cabeçalho: logo */}
-      <div className={cn("flex h-topbar shrink-0 items-center border-b border-sidebar-border", isCollapsed ? "justify-center px-0" : "px-5")}>
-        <Link href="/meu-dia" onClick={onNavigate} className="rounded-md focus-visible:outline-brand" aria-label="INTEROS · ir para Meu Dia">
-          <InterosLogo collapsed={isCollapsed} />
-        </Link>
+      {/* Cabeçalho: logo e o botão de recolher/expandir o menu (Ctrl+B) */}
+      <div className={cn("flex h-topbar shrink-0 items-center border-b border-sidebar-border", isCollapsed ? "justify-center px-0" : "justify-between gap-2 pl-5 pr-3")}>
+        {isCollapsed ? null : (
+          <Link href="/meu-dia" onClick={onNavigate} className="rounded-md focus-visible:outline-brand" aria-label="INTEROS · ir para Meu Dia">
+            <InterosLogo collapsed={false} />
+          </Link>
+        )}
+        {variant === "desktop" ? (
+          <Tooltip content={isCollapsed ? "Expandir menu (Ctrl+B)" : "Recolher menu (Ctrl+B)"} side="right">
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-label={isCollapsed ? "Expandir menu" : "Recolher menu"}
+              aria-expanded={!isCollapsed}
+              className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-white"
+            >
+              {isCollapsed ? <PanelLeftOpen className="size-[18px]" /> : <PanelLeftClose className="size-[18px]" />}
+            </button>
+          </Tooltip>
+        ) : null}
       </div>
 
       {/* Navegação */}
@@ -184,27 +199,14 @@ export function Sidebar({ user, sections, userLinks = [], variant = "desktop", c
         })}
       </nav>
 
-      {/* Rodapé: recolher, marca e versão (desktop) · usuário (drawer mobile) */}
+      {/* Rodapé: marca e versão (desktop expandida) · usuário (drawer mobile) */}
+      {isCollapsed ? null : (
       <div className={cn("shrink-0 border-t border-sidebar-border p-3", variant === "drawer" && "safe-bottom")}>
         {variant === "drawer" ? <UserMenu user={user} links={userLinks} variant="sidebar" /> : null}
         {variant === "desktop" ? (
           <>
-            <Tooltip content={isCollapsed ? "Expandir menu" : null} side="right" enabled={isCollapsed}>
-              <button
-                type="button"
-                onClick={onToggleCollapsed}
-                aria-label={isCollapsed ? "Expandir menu" : "Recolher menu"}
-                className={cn(
-                  "flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-sidebar-fg transition-colors hover:bg-sidebar-hover hover:text-white",
-                  isCollapsed && "justify-center px-0",
-                )}
-              >
-                {isCollapsed ? <ChevronsRight className="size-[18px]" /> : <ChevronsLeft className="size-[18px] text-sidebar-muted" />}
-                {!isCollapsed ? <span className="flex-1 text-left">Recolher menu</span> : null}
-              </button>
-            </Tooltip>
             {!isCollapsed ? (
-              <div className="mt-2 border-t border-sidebar-border px-3 pt-3">
+              <div className="px-3 pt-1">
                 <p className="flex items-baseline justify-between gap-2">
                   <span className="text-sm font-bold tracking-[0.14em] text-white">
                     INTER<span className="text-brand">CERT</span>
@@ -217,6 +219,7 @@ export function Sidebar({ user, sections, userLinks = [], variant = "desktop", c
           </>
         ) : null}
       </div>
+      )}
     </aside>
   );
 }
