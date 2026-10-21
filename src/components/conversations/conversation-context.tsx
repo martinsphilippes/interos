@@ -100,7 +100,7 @@ export function ConversationContext({ detail, onIdentify, className }: { detail:
                 Perfil no {CHANNEL_LABELS[conversation.channel]}: <span className="font-medium text-foreground">{conversation.displayName}</span>.{" "}
               </>
             ) : null}
-            Este {conversation.channel === "whatsapp" ? "número" : "e-mail"} não está cadastrado.
+            {conversation.channel === "whatsapp" ? "Este número não está cadastrado." : conversation.channel === "email" ? "Este e-mail não está cadastrado." : `Contato do ${CHANNEL_LABELS[conversation.channel]} ainda não identificado: use «Quem é?» para ligar a um cliente ou lead (as próximas conversas já vêm identificadas).`}
           </p>
           {capabilities.identify && onIdentify ? (
             <Button size="sm" variant="outline" className="mt-3 w-full" onClick={onIdentify}>

@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, Eye, Hand, Mail, MessageCircle, MonitorPlay, Send, X } from "lucide-react";
+import { AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, Eye, Hand, MonitorPlay, Send, X } from "lucide-react";
 import { escalateConversationAction, monitorConversationAction, superviseAssumeAction, whisperAction } from "@/server/conversations/supervision-actions";
 import type { CommandCenter, MonitoredConversation, OperatorRow } from "@/server/conversations/supervision";
 import type { OperatorState } from "@/domain/central-ops";
@@ -18,6 +18,8 @@ import { StatusDot, type StatusTone } from "@/components/ui/status-dot";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
 import { toThreadItems } from "./model";
+import { CHANNEL_LABELS } from "./model";
+import { ChannelGlyph } from "./channel-icon";
 
 const REFRESH_MS = 10_000;
 const MONITOR_HEARTBEAT_MS = 60_000;
@@ -198,7 +200,7 @@ function OperatorLine({ o, expanded, onToggle, now, canMonitor, onMonitor, monit
               <ul className="flex flex-col gap-1 py-1">
                 {o.conversations.map((c) => (
                   <li key={c.id} className="flex flex-wrap items-center gap-2 text-sm">
-                    {c.channel === "whatsapp" ? <MessageCircle className="size-4 text-success-fg" aria-hidden /> : <Mail className="size-4 text-info-fg" aria-hidden />}
+                    <ChannelGlyph channel={c.channel} colored className="size-4" />
                     <span className="font-medium">{c.name}</span>
                     <span className="text-xs text-muted">{c.number}</span>
                     {c.escalated ? (
@@ -258,7 +260,7 @@ function MonitorPanel({ c, caps, onClose }: { c: MonitoredConversation; caps: Co
               Acompanhando: {c.assigneeName ?? "sem responsável"} · {c.name}
             </h2>
             <p className="text-xs text-muted">
-              {c.number} · {c.channel === "whatsapp" ? "WhatsApp" : "E-mail"} · {c.queueName ? `fila ${c.queueName} · ` : ""}ao vivo · o cliente não vê o supervisor
+              {c.number} · {CHANNEL_LABELS[c.channel]} · {c.queueName ? `fila ${c.queueName} · ` : ""}ao vivo · o cliente não vê o supervisor
             </p>
           </div>
           <Button size="icon" variant="ghost" aria-label="Parar de acompanhar" onClick={onClose}>

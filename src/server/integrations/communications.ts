@@ -55,7 +55,7 @@ export function communicationStatusLabel(status: string | undefined): string {
 // sendOrRecord: envia pelo provedor quando o canal está conectado; senão registra
 // ---------------------------------------------------------------------------
 
-export type SendChannel = "whatsapp" | "email";
+export type SendChannel = "whatsapp" | "email" | "instagram" | "messenger" | "telegram" | "chat";
 export type SendDelivery = "enviada" | "falha" | "manual" | "nao_enviada";
 
 export interface SendOrRecordInput {
@@ -98,6 +98,8 @@ export interface SendOrRecordInput {
    * Meta aceita). `text` deve ser o modelo já preenchido — é o que fica gravado e o que vai no wa.me sem conexão.
    */
   whatsappTemplate?: { name: string; language: string; params: string[] };
+  /** Instagram/Messenger entre 24 h e 7 dias da última mensagem do cliente: etiqueta de atendimento humano. */
+  metaHumanAgentTag?: boolean;
   /** E-mail: Message-ID da mensagem do cliente que esta responde (o cliente de e-mail encadeia na mesma conversa). */
   inReplyTo?: string;
 }
@@ -107,7 +109,7 @@ export interface SendOrRecordResult {
   /** false quando o `id` já existia (nada foi enviado nem gravado). */
   created: boolean;
   delivery: SendDelivery;
-  provider: "meta" | "resend" | "manual";
+  provider: "meta" | "resend" | "manual" | "telegram" | "interos";
   externalId?: string;
   error?: string;
   /** Link para o usuário enviar pelo próprio aparelho (wa.me com texto / mailto), quando faz sentido. */
@@ -117,11 +119,13 @@ export interface SendOrRecordResult {
   optedOut: boolean;
 }
 
-const CHANNEL_LABEL: Record<SendChannel, string> = { whatsapp: "WhatsApp", email: "e-mail" };
+const CHANNEL_LABEL: Record<SendChannel, string> = { whatsapp: "WhatsApp", email: "e-mail", instagram: "Instagram", messenger: "Messenger", telegram: "Telegram", chat: "chat do site" };
 
 /** URL de envio manual: wa.me com o texto pronto ou mailto com assunto e corpo. */
 export function manualSendUrl(channel: SendChannel, to: string | undefined, subject: string, text: string): string | null {
   if (!to) return null;
+  // Instagram, Messenger, Telegram e chat: sem link de envio pelo aparelho (o endereço é um id do provedor).
+  if (channel !== "whatsapp" && channel !== "email") return null;
   if (channel === "whatsapp") {
     const base = whatsappHref(to);
     return base ? `${base}?text=${encodeURIComponent(text)}` : null;
@@ -132,9 +136,9 @@ export function manualSendUrl(channel: SendChannel, to: string | undefined, subj
 export async function sendOrRecord(input: SendOrRecordInput): Promise<SendOrRecordResult> {
   const channel = input.channel;
   const subject = input.subject?.trim() || "Intercert";
-  const connected = isConnected(channel === "whatsapp" ? "whatsapp" : "email");
+  const connected = await channelConnected(channel);
   const client = input.respectOptOut !== false && input.clientId ? await getById<Client>(COLLECTIONS.clients, input.clientId) : null;
-  const optedOut = Boolean(client?.communicationOptOut?.[channel]);
+  const optedOut = channel === "whatsapp" || channel === "email" ? Boolean(client?.communicationOptOut?.[channel]) : false;
   const manualUrl = optedOut ? null : manualSendUrl(channel, input.to, subject, input.text);
 
   const base: Omit<CommunicationInput, "status" | "provider"> = {
@@ -168,15 +172,11 @@ export async function sendOrRecord(input: SendOrRecordInput): Promise<SendOrReco
   if (optedOut) {
     outcome = { status: "nao_enviada", provider: "manual", error: `Cliente optou por não receber ${CHANNEL_LABEL[channel]}`, delivery: "nao_enviada" };
   } else if (connected && input.to && !input.forceManual) {
-    const r =
-      channel === "whatsapp"
-        ? input.whatsappTemplate
-          ? await sendWhatsappTemplate(input.to, input.whatsappTemplate)
-          : await sendWhatsappText(input.to, input.text)
-        : await sendEmail({ to: input.to, subject, text: input.text, inReplyTo: input.inReplyTo });
-    outcome = r.ok ? { status: "enviada", provider: channel === "whatsapp" ? "meta" : "resend", externalId: r.externalId, delivery: "enviada" } : { status: "falha", provider: channel === "whatsapp" ? "meta" : "resend", error: r.error, delivery: "falha" };
+    const r = await deliver(channel, input.to, input, subject);
+    const provider = PROVIDER[channel];
+    outcome = r.ok ? { status: "enviada", provider, externalId: r.externalId, delivery: "enviada" } : { status: "falha", provider, error: r.error, delivery: "falha" };
   } else if (input.whenNotConnected === "nao_enviada") {
-    outcome = { status: "nao_enviada", provider: "manual", error: !input.to ? `Destinatário sem ${channel === "whatsapp" ? "telefone" : "e-mail"} cadastrado` : `${CHANNEL_LABEL[channel]} não conectado`, delivery: "nao_enviada" };
+    outcome = { status: "nao_enviada", provider: "manual", error: !input.to ? `Destinatário sem ${channel === "whatsapp" ? "telefone" : channel === "email" ? "e-mail" : "endereço"} cadastrado` : `${CHANNEL_LABEL[channel]} não conectado`, delivery: "nao_enviada" };
   } else {
     outcome = { ...MANUAL, delivery: "manual" };
   }
@@ -191,6 +191,33 @@ export async function sendOrRecord(input: SendOrRecordInput): Promise<SendOrReco
     communication = await recordCommunication({ ...base, ...data } as CommunicationInput);
   }
   return { communication, created: true, delivery: outcome.delivery, provider: outcome.provider, externalId: outcome.externalId, error: outcome.error, manualUrl, connected, optedOut };
+}
+
+const PROVIDER: Record<SendChannel, SendOrRecordResult["provider"]> = { whatsapp: "meta", email: "resend", instagram: "meta", messenger: "meta", telegram: "telegram", chat: "interos" };
+
+/** O canal está conectado agora (WhatsApp/e-mail por variável; Meta e Telegram pela tela; o chat do site é do INTEROS). */
+export async function channelConnected(channel: SendChannel): Promise<boolean> {
+  if (channel === "whatsapp" || channel === "email") return isConnected(channel);
+  if (channel === "chat") return true;
+  if (channel === "telegram") return (await import("./telegram")).telegramConnected();
+  return (await import("./meta-social")).metaConnected(channel);
+}
+
+async function deliver(channel: SendChannel, to: string, input: SendOrRecordInput, subject: string): Promise<{ ok: true; externalId?: string } | { ok: false; error: string }> {
+  switch (channel) {
+    case "whatsapp":
+      return input.whatsappTemplate ? sendWhatsappTemplate(to, input.whatsappTemplate) : sendWhatsappText(to, input.text);
+    case "email":
+      return sendEmail({ to, subject, text: input.text, inReplyTo: input.inReplyTo });
+    case "instagram":
+    case "messenger":
+      return (await import("./meta-social")).sendMetaMessage(channel, to, input.text, Boolean(input.metaHumanAgentTag));
+    case "telegram":
+      return (await import("./telegram")).sendTelegramMessage(to, input.text);
+    case "chat":
+      // O visitante busca as respostas na janela do chat: gravar já é entregar.
+      return { ok: true };
+  }
 }
 
 async function clearCommunicationError(id: string): Promise<void> {

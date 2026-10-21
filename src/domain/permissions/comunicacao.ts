@@ -18,7 +18,7 @@ export const COMUNICACAO = {
       key: "comunicacao.central",
       module: "comunicacao",
       label: "Central de Atendimento",
-      description: "Conversas de WhatsApp e e-mail numa tela só: filas, conversa com nota interna e o contexto do cliente (Cliente 360). Ações: assumir, responder, transferir, encerrar, iniciar atendimento e identificar o contato.",
+      description: "Conversas de todos os canais (WhatsApp, e-mail, Instagram, Messenger, Telegram e chat do site) numa tela só: filas, conversa com nota interna e o contexto do cliente (Cliente 360). Ações: assumir, responder, transferir, encerrar, iniciar atendimento e identificar o contato.",
       routes: ["/comunicacao"],
       rule: "all",
       nav: {
@@ -194,6 +194,9 @@ export const COMUNICACAO = {
         { key: "comunicacao.canais.registros.ver", label: "Registros técnicos", rule: { manager: true }, tab: "registros" },
         { key: "comunicacao.canais.pausas.ver", label: "Motivos de pausa", rule: { manager: true }, tab: "pausas" },
         { key: "comunicacao.canais.alertas.ver", label: "Alertas do gerente", rule: { manager: true }, tab: "alertas" },
+        { key: "comunicacao.canais.social.ver", label: "Instagram e Messenger", rule: { manager: true }, tab: "social" },
+        { key: "comunicacao.canais.telegram.ver", label: "Telegram", rule: { manager: true }, tab: "telegram" },
+        { key: "comunicacao.canais.chat.ver", label: "Chat do site", rule: { manager: true }, tab: "chat" },
       ],
       actions: [
         {
@@ -237,6 +240,27 @@ export const COMUNICACAO = {
           verb: "editar",
           rule: { manager: true },
           guards: ["src/server/conversations/supervision-actions.ts#saveManagerAlertsAction"],
+        },
+        {
+          key: "comunicacao.canais.social.editar",
+          label: "Conectar e desconectar o Instagram e o Messenger (login da Meta)",
+          verb: "editar",
+          rule: { manager: true },
+          guards: ["src/server/conversations/channel-setup-actions.ts#startMetaLoginAction", "src/server/conversations/channel-setup-actions.ts#chooseMetaPageAction", "src/server/conversations/channel-setup-actions.ts#disconnectMetaAction", "src/app/api/integrations/meta/callback/route.ts#GET"],
+        },
+        {
+          key: "comunicacao.canais.telegram.editar",
+          label: "Conectar e desconectar o Telegram (token do bot)",
+          verb: "editar",
+          rule: { manager: true },
+          guards: ["src/server/conversations/channel-setup-actions.ts#connectTelegramAction", "src/server/conversations/channel-setup-actions.ts#disconnectTelegramAction"],
+        },
+        {
+          key: "comunicacao.canais.chat.editar",
+          label: "Configurar o chat do site (aparência, formulário, sites permitidos e código para o site)",
+          verb: "editar",
+          rule: { manager: true },
+          guards: ["src/server/conversations/site-chat-actions.ts#saveSiteChatAction"],
         },
       ],
       scope: null,

@@ -6,7 +6,7 @@ import { Pencil, Plus, Users } from "lucide-react";
 import { saveQueueAction } from "@/server/conversations/actions";
 import type { QueuesAdmin, QueueAdminRow } from "@/server/conversations/queries";
 import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
-import { QUEUE_STRATEGIES, type ConversationChannel, type QueueStrategy } from "@/domain/types";
+import { CONVERSATION_CHANNELS, QUEUE_STRATEGIES, type ConversationChannel, type QueueStrategy } from "@/domain/types";
 import { QUEUE_STRATEGY_LABELS } from "@/domain/conversations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
+import { CHANNEL_LABELS } from "./model";
 
 interface Draft {
   id?: string;
@@ -194,8 +195,9 @@ export function QueuesAdminView({ data, canEdit }: { data: QueuesAdmin; canEdit:
               </div>
               <fieldset className="flex flex-wrap gap-4 text-sm">
                 <legend className="mb-1 text-xs text-muted">Canais</legend>
-                <Checkbox checked={draft.channels.includes("whatsapp")} onCheckedChange={() => set("channels", toggle(draft.channels, "whatsapp"))} label="WhatsApp" />
-                <Checkbox checked={draft.channels.includes("email")} onCheckedChange={() => set("channels", toggle(draft.channels, "email"))} label="E-mail" />
+                {CONVERSATION_CHANNELS.map((ch) => (
+                  <Checkbox key={ch} checked={draft.channels.includes(ch)} onCheckedChange={() => set("channels", toggle(draft.channels, ch))} label={CHANNEL_LABELS[ch]} />
+                ))}
               </fieldset>
               <fieldset>
                 <legend className="mb-2 text-xs text-muted">Operadores ({draft.memberIds.length})</legend>

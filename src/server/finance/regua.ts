@@ -284,7 +284,7 @@ export async function runBillingReminders(now: Date = new Date()): Promise<Regua
           if (r.delivery === "enviada") result.sent += 1;
           else if (r.delivery === "falha" || r.delivery === "nao_enviada") {
             result.notSent += 1;
-            const optOut = Boolean(ctx.client.communicationOptOut?.[r.channel]);
+            const optOut = (r.channel === "whatsapp" || r.channel === "email") && Boolean(ctx.client.communicationOptOut?.[r.channel]);
             if (!optOut) {
               // Canal não conectado (ou falha): o Financeiro envia pelo próprio aparelho — com o texto e o link prontos.
               const made = await ensureReminderTask(executed.tasks, {

@@ -24,7 +24,7 @@ import { useSalesAccess } from "../sales-access";
 // Linha do tempo em formato de conversa (componente único: @/components/ui/conversation-thread)
 // ---------------------------------------------------------------------------
 
-const CHANNEL_LABEL = { whatsapp: "WhatsApp", email: "E-mail", interno: "Interno" } as const;
+const CHANNEL_LABEL = { whatsapp: "WhatsApp", email: "E-mail", interno: "Interno", instagram: "Instagram", messenger: "Messenger", telegram: "Telegram", chat: "Chat do site" } as const;
 
 function toThreadItem(item: ConversationItem, currentUserName: string, contactLabel: string): ThreadItem {
   switch (item.kind) {

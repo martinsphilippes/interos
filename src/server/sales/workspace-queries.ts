@@ -245,7 +245,7 @@ export type ConversationItem =
       id: string;
       at: string;
       direction: "entrada" | "saida";
-      channel: "whatsapp" | "email" | "interno";
+      channel: "whatsapp" | "email" | "interno" | "instagram" | "messenger" | "telegram" | "chat";
       body: string;
       authorName: string;
       /** Registro manual (nenhuma integração conectada). */
@@ -314,7 +314,7 @@ async function transferTargetsFor(sellers: Awaited<ReturnType<typeof listSalesUs
   return candidates.filter((_, i) => perms[i]?.has("vendas.acessar")).map(toLite);
 }
 
-const CONTACT_EVENT_TYPES = new Set<EventType>(["whatsapp.message.sent", "whatsapp.message.received", "call.completed", "email.sent", "email.received"]);
+const CONTACT_EVENT_TYPES = new Set<EventType>(["whatsapp.message.sent", "whatsapp.message.received", "call.completed", "email.sent", "email.received", "conversation.message.received"]);
 
 function isRelevantEvent(e: DomainEvent, ctx: { oppId: string; leadId?: string; proposalIds: Set<string>; visitIds: Set<string> }): boolean {
   const payloadOpp = typeof e.payload?.opportunityId === "string" ? e.payload.opportunityId : undefined;

@@ -1,4 +1,4 @@
-import { Globe, Mail, MessageCircle, Phone, Wrench } from "lucide-react";
+import { Camera, Globe, Mail, MessageCircle, MessageSquareText, MessagesSquare, Phone, Send, Wrench } from "lucide-react";
 import type { SupportTicket } from "@/domain/types";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -33,7 +33,7 @@ export function TicketStatusBadge({ status, size = "sm", className }: { status: 
   );
 }
 
-const CHANNEL_ICON: Record<SupportTicket["channel"], typeof Phone> = { whatsapp: MessageCircle, telefone: Phone, email: Mail, portal: Globe, interno: Wrench };
+const CHANNEL_ICON: Record<SupportTicket["channel"], typeof Phone> = { whatsapp: MessageCircle, telefone: Phone, email: Mail, portal: Globe, interno: Wrench, instagram: Camera, messenger: MessagesSquare, telegram: Send, chat: MessageSquareText };
 
 /** Ícone do canal com rótulo acessível (texto visível opcional). */
 export function ChannelIcon({ channel, showLabel, className }: { channel: SupportTicket["channel"]; showLabel?: boolean; className?: string }) {

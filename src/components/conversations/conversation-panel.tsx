@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRightLeft, CheckCircle2, Hand, Mail, MessageCircle, UserCog, UserPlus } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, CheckCircle2, Hand, UserCog, UserPlus } from "lucide-react";
 import { assignConversationAction, assumeConversationAction } from "@/server/conversations/actions";
 import type { ConversationDetail } from "@/server/conversations/queries";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import { ConversationContext } from "./conversation-context";
 import { IdentifyDialog } from "./identify-dialog";
 import { CHANNEL_LABELS, toThreadItems } from "./model";
 import { TransferDialog, type TransferOptions } from "./transfer-dialog";
+import { CHANNEL_TONE, ChannelGlyph } from "./channel-icon";
 
 export interface ConversationPanelProps {
   detail: ConversationDetail;
@@ -68,11 +69,11 @@ export function ConversationPanel({ detail, transferOptions, currentUserId, now,
             <Link href={backHref} className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-hover lg:hidden" aria-label="Voltar para a lista">
               <ArrowLeft className="size-4" />
             </Link>
-            <IconTile icon={c.channel === "whatsapp" ? <MessageCircle /> : <Mail />} tone={c.channel === "whatsapp" ? "success" : "secondary"} />
+            <IconTile icon={<ChannelGlyph channel={c.channel} />} tone={CHANNEL_TONE[c.channel]} />
             <div className="min-w-0">
               <h2 className="truncate text-base font-semibold">{row.name}</h2>
               <p className="truncate text-xs text-muted">
-                {row.subtitle} · {CHANNEL_LABELS[c.channel]} {c.channel === "whatsapp" ? displayPhone(c.address) : c.address} · <span className="font-mono">{c.number}</span>
+                {row.subtitle} · {CHANNEL_LABELS[c.channel]}{c.channel === "whatsapp" ? ` ${displayPhone(c.address)}` : c.channel === "email" ? ` ${c.address}` : ""} · <span className="font-mono">{c.number}</span>
               </p>
             </div>
           </div>

@@ -47,8 +47,19 @@ export function emailIdentity(value: string | undefined | null): string {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? v : "";
 }
 
-/** Chave de contato da conversa: `p:<telefone canônico>` ou `e:<e-mail>`. */
-export function contactKeyOf(channel: "whatsapp" | "email", address: string): string {
+/** Prefixo da chave de contato dos canais em que quem escreve é um id do provedor (fase 5). */
+const ID_CHANNEL_PREFIX: Record<string, string> = { instagram: "ig", messenger: "fb", telegram: "tg", chat: "ch" };
+
+/**
+ * Chave de contato da conversa: `p:<telefone canônico>`, `e:<e-mail>` ou `<canal>:<id>` (Instagram, Messenger,
+ * Telegram e chat do site, em que o provedor identifica a pessoa por um id próprio).
+ */
+export function contactKeyOf(channel: "whatsapp" | "email" | "instagram" | "messenger" | "telegram" | "chat", address: string): string {
+  const prefix = ID_CHANNEL_PREFIX[channel];
+  if (prefix) {
+    const id = (address ?? "").trim();
+    return /^[A-Za-z0-9_.:-]{1,128}$/.test(id) ? `${prefix}:${id}` : "";
+  }
   if (channel === "email") {
     const e = emailIdentity(address);
     return e ? `e:${e}` : "";

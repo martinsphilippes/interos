@@ -186,6 +186,41 @@ export const EXEMPTIONS = [
     reason: "Telefonia (Twilio): Gravação concluída. Guarda por assinatura.",
   },
   {
+    target: "src/app/api/webhooks/meta/route.ts#GET",
+    kind: "api",
+    reason: "Instagram/Messenger (Meta): verificação do webhook (hub.verify_token = META_VERIFY_TOKEN, comparação em tempo constante). Sem dados.",
+  },
+  {
+    target: "src/app/api/webhooks/meta/route.ts#POST",
+    kind: "api",
+    // X-Hub-Signature-256 (HMAC-SHA256 do corpo com o App Secret) → 401; sem App Secret, 503 em produção.
+    reason: "Instagram/Messenger (Meta): avisos de mensagens. Guarda por assinatura.",
+  },
+  {
+    target: "src/app/api/webhooks/telegram/route.ts#POST",
+    kind: "api",
+    // X-Telegram-Bot-Api-Secret-Token = segredo gerado ao conectar o bot (cifrado no banco) → 401.
+    reason: "Telegram: avisos do bot. Guarda pelo segredo do webhook.",
+  },
+  {
+    target: "src/app/api/chat/start/route.ts#POST",
+    kind: "api",
+    // Chave pública do chat + chat ligado + site permitido + limite de novas conversas por IP (hash).
+    reason: "Chat do site (público por natureza): primeira mensagem do visitante. Só cria visitante e conversa; não lê dados.",
+  },
+  {
+    target: "src/app/api/chat/messages/route.ts#GET",
+    kind: "api",
+    // Token HMAC do visitante (30 dias): só as mensagens do canal «chat» das conversas dele; nota interna nunca sai.
+    reason: "Chat do site: o visitante lê a própria conversa. Guarda pelo token assinado do visitante.",
+  },
+  {
+    target: "src/app/api/chat/messages/route.ts#POST",
+    kind: "api",
+    // Token HMAC do visitante + limite de mensagens por minuto; id da mensagem evita duplicar.
+    reason: "Chat do site: o visitante envia mensagem na própria conversa. Guarda pelo token assinado do visitante.",
+  },
+  {
     target: "src/app/api/voice/monitor-end/route.ts#POST",
     kind: "api",
     // Assinatura X-Twilio-Signature (HMAC-SHA1 com TWILIO_AUTH_TOKEN) → 401; sem a env ACEITA fora de produção e

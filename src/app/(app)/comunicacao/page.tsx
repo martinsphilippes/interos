@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { CentralWorkspace } from "@/components/conversations/central-workspace";
 import { NewConversationDialog } from "@/components/conversations/new-conversation-dialog";
+import { CONVERSATION_CHANNELS } from "@/domain/types";
 
 export const metadata: Metadata = { title: "Central de Atendimento" };
 
@@ -33,7 +34,7 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
     getCentralOverview(user, {
       tab: isCentralTab(ver) ? ver : undefined,
       queueId: first(sp.filaId) || undefined,
-      channel: canal === "whatsapp" || canal === "email" ? canal : undefined,
+      channel: CONVERSATION_CHANNELS.find((c) => c === canal),
       q: first(sp.q) || undefined,
     }),
     getTransferOptions(),
@@ -52,7 +53,7 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
     <PageContainer size="full" className="lg:pb-4">
       <PageHeader
         title="Central de Atendimento"
-        description="WhatsApp e e-mail numa tela só, com filas, nota interna e o contexto do cliente."
+        description="Todos os canais numa tela só (WhatsApp, e-mail, Instagram, Messenger, Telegram e chat do site), com filas, nota interna e o contexto do cliente."
         className={chosen && detail ? "hidden lg:flex" : undefined}
         actions={
           <>

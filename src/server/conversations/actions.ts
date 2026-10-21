@@ -11,6 +11,7 @@ import { resolveDataScope, scopeAllows } from "@/server/auth/scope";
 import { BusinessError, PermissionError } from "@/server/auth/errors";
 import { getById, list } from "@/server/db";
 import { COLLECTIONS, type ActionResult, type Client, type Contact, type Conversation, type CurrentUser, type Lead, type UserRef } from "@/domain/types";
+import { CHANNEL_NAMES } from "@/domain/channels";
 import { emailIdentity, phoneIdentity } from "@/domain/phone";
 import {
   addConversationNote,
@@ -358,7 +359,7 @@ export async function reopenConversationAction(input: unknown): Promise<ActionRe
   }
 }
 
-const CHANNEL_NAME = { whatsapp: "WhatsApp", email: "E-mail" } as const;
+const CHANNEL_NAME = CHANNEL_NAMES;
 
 export async function exportHistoryAction(input: unknown): Promise<ActionResult<{ filename: string; csv: string; truncated: boolean }>> {
   try {

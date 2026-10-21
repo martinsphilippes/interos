@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Globe, Inbox, Mail, MessageCircle, Phone, Repeat, SlidersHorizontal, Wrench } from "lucide-react";
+import { Camera, Globe, Inbox, Mail, MessageCircle, MessageSquareText, MessagesSquare, Phone, Repeat, Send, SlidersHorizontal, Wrench } from "lucide-react";
 import type { SupportTicket } from "@/domain/types";
 import type { TicketRow } from "@/server/support/queries";
 import { TICKET_CHANNEL_LABELS } from "@/server/support/schemas";
@@ -21,6 +21,10 @@ const CHANNEL_ICON: Record<SupportTicket["channel"], { icon: React.ReactNode; to
   email: { icon: <Mail />, tone: "secondary" },
   portal: { icon: <Globe />, tone: "neutral" },
   interno: { icon: <Wrench />, tone: "neutral" },
+  instagram: { icon: <Camera />, tone: "secondary" },
+  messenger: { icon: <MessagesSquare />, tone: "info" },
+  telegram: { icon: <Send />, tone: "info" },
+  chat: { icon: <MessageSquareText />, tone: "neutral" },
 };
 
 /** Filtro de cada aba da fila (estado do SLA recalculado no relógio do navegador). */

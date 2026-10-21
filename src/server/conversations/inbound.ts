@@ -14,7 +14,8 @@ import { create, createIfAbsent, getById, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { notify } from "@/server/notifications";
 import { isConnected } from "@/server/integrations/status";
-import { findOpenTicketForClient, recordInboundOnTicket } from "@/server/support/service";
+import { findOpenTicketForClient, receivedEventOf, recordInboundOnTicket } from "@/server/support/service";
+import { CHANNEL_NAMES } from "@/domain/channels";
 import { COLLECTIONS, type Communication, type Conversation, type ConversationChannel } from "@/domain/types";
 import { resolveIdentity } from "./identity";
 import { applyInbound, conversationHref, displayNameOf, findOrOpenConversation, routeNewConversation } from "./service";
@@ -36,6 +37,8 @@ export interface InboundMessage {
   /** E-mail: assunto (vira o assunto da conversa) e Message-ID (a resposta sai encadeada nele). */
   subject?: string;
   messageId?: string;
+  /** Chat do site: e-mail e telefone que o visitante informou (ajudam a reconhecer quem é). */
+  hints?: { email?: string; phone?: string };
 }
 
 export interface InboundResult {
@@ -54,6 +57,14 @@ export function inboundCommunicationId(channel: ConversationChannel, externalId:
   return `cmin_${createHash("sha256").update(`${channel}|${externalId}`).digest("hex").slice(0, 32)}`;
 }
 
+function inboundProvider(channel: ConversationChannel): Communication["provider"] {
+  if (channel === "whatsapp") return isConnected("whatsapp") ? "meta" : "outro";
+  if (channel === "email") return "resend";
+  if (channel === "instagram" || channel === "messenger") return "meta";
+  if (channel === "telegram") return "telegram";
+  return "interos";
+}
+
 export async function receiveInboundMessage(input: InboundMessage): Promise<InboundResult> {
   const started = Date.now();
   const at = input.at ?? nowIso();
@@ -63,7 +74,7 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
     return { duplicate: true, communicationId: commId };
   }
 
-  const identity = await resolveIdentity(input.channel, input.from);
+  const identity = await resolveIdentity(input.channel, input.from, input.hints);
   const ticket = identity.clientId ? await findOpenTicketForClient(identity.clientId) : undefined;
   const { conversation, created } = await findOrOpenConversation({ channel: input.channel, address: input.from, identity, displayName: input.displayName, ticketId: ticket?.id, at });
   // E-mail: o assunto entra no texto só na mensagem que abre a conversa (nas respostas ele se repete à toa).
@@ -89,7 +100,7 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
     body,
     status: "recebida" as const,
     externalId: input.externalId,
-    provider: (input.channel === "whatsapp" && isConnected("whatsapp") ? "meta" : input.channel === "email" ? "resend" : "outro") as Communication["provider"],
+    provider: inboundProvider(input.channel),
     conversationId: conversation.id,
     address: input.from,
     createdAt: at,
@@ -138,7 +149,7 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
       actor: { id: CUSTOMER.id, name: who },
       clientId: current.clientId,
       entity: { type: "conversation", id: current.id },
-      title: `${who} iniciou um atendimento por ${input.channel === "whatsapp" ? "WhatsApp" : "e-mail"} (${current.number})`,
+      title: `${who} iniciou um atendimento por ${CHANNEL_NAMES[input.channel]} (${current.number})`,
       payload: { conversationId: current.id, channel: input.channel, origin: "cliente", identity: identity.identity },
       timeline: false,
     });
@@ -159,11 +170,11 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
     await recordInboundOnTicket(ticket, { channel: input.channel, body, who, communicationId: communication.id, from: input.from, conversationId: current.id });
   } else {
     await emitEvent({
-      type: input.channel === "email" ? "email.received" : "whatsapp.message.received",
+      type: receivedEventOf(input.channel),
       actor: { id: CUSTOMER.id, name: who },
       clientId: identity.clientId,
       entity: identity.leadId && !identity.clientId ? { type: "lead", id: identity.leadId } : { type: "communication", id: communication.id },
-      title: input.channel === "email" ? `E-mail recebido de ${who}${input.subject ? `: ${input.subject}` : ""}` : `WhatsApp recebido de ${who}`,
+      title: input.channel === "email" ? `E-mail recebido de ${who}${input.subject ? `: ${input.subject}` : ""}` : `${CHANNEL_NAMES[input.channel]}: mensagem recebida de ${who}`,
       description: body,
       department: "marketing",
       payload: { communicationId: communication.id, from: input.from, conversationId: current.id, leadId: identity.leadId },

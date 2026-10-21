@@ -38,9 +38,9 @@ export const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
 /** Chamados que ainda exigem ação do suporte. */
 export const OPEN_TICKET_STATUSES: readonly TicketStatus[] = ["aberto", "em_atendimento", "aguardando_cliente", "reaberto"];
 
-export const TICKET_CHANNELS = ["whatsapp", "telefone", "email", "portal", "interno"] as const satisfies readonly SupportTicket["channel"][];
+export const TICKET_CHANNELS = ["whatsapp", "telefone", "email", "portal", "interno", "instagram", "messenger", "telegram", "chat"] as const satisfies readonly SupportTicket["channel"][];
 export type TicketChannel = (typeof TICKET_CHANNELS)[number];
-export const TICKET_CHANNEL_LABELS: Record<TicketChannel, string> = { whatsapp: "WhatsApp", telefone: "Telefone", email: "E-mail", portal: "Portal", interno: "Interno" };
+export const TICKET_CHANNEL_LABELS: Record<TicketChannel, string> = { whatsapp: "WhatsApp", telefone: "Telefone", email: "E-mail", portal: "Portal", interno: "Interno", instagram: "Instagram", messenger: "Messenger", telegram: "Telegram", chat: "Chat do site" };
 
 /** Canais pelos quais o atendente responde (o telefone é registrado como ligação). */
 export const REPLY_CHANNELS = ["whatsapp", "email", "portal"] as const;

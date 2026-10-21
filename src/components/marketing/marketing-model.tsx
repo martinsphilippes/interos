@@ -61,7 +61,7 @@ export type ContactChannel = keyof typeof CONTACT_CHANNEL_LABELS;
 export const ATTEMPT_RESULT_LABELS = { sem_resposta: "Sem resposta", respondeu: "Respondeu", interessado: "Interessado", descartado: "Descartado" } as const;
 export type AttemptResult = keyof typeof ATTEMPT_RESULT_LABELS;
 
-export const COMMUNICATION_CHANNEL_LABELS: Record<Communication["channel"], string> = { whatsapp: "WhatsApp", email: "E-mail", voip: "Ligação", interno: "Interno" };
+export const COMMUNICATION_CHANNEL_LABELS: Record<Communication["channel"], string> = { whatsapp: "WhatsApp", email: "E-mail", voip: "Ligação", interno: "Interno", instagram: "Instagram", messenger: "Messenger", telegram: "Telegram", chat: "Chat do site" };
 
 // ---------------------------------------------------------------------------
 // Período

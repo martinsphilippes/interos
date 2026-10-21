@@ -12,7 +12,7 @@ import { emitEvent } from "@/server/events";
 import { resolveDataScope } from "@/server/auth/scope";
 import { computeSlaState } from "@/server/sla";
 import { BusinessError } from "@/server/auth/error-classes";
-import { COLLECTIONS, type BaseEntity, type CollectionName, type Communication, type Conversation, type ConversationChannel, type CurrentUser, type Department, type ServiceQueue, type SlaInstance, type SupervisionLog, type User, type UserRef } from "@/domain/types";
+import { COLLECTIONS, CONVERSATION_CHANNELS, type BaseEntity, type CollectionName, type Communication, type Conversation, type ConversationChannel, type CurrentUser, type Department, type ServiceQueue, type SlaInstance, type SupervisionLog, type User, type UserRef } from "@/domain/types";
 import { isOpenConversation } from "@/domain/conversations";
 import { evaluateAlerts, minutesInState, operatorState, OPERATOR_STATE_LABELS, type ManagerAlert, type OperatorState } from "@/domain/central-ops";
 import { listQueues } from "./queues";
@@ -171,7 +171,7 @@ export async function getCommandCenter(user: CurrentUser, filters: { queueId?: s
     kpis: {
       operators: { total: operators.length, disponivel: count("disponivel"), ocupado: count("ocupado"), pausa: count("pausa"), ausente: count("ausente"), offline: count("offline") },
       active: assigned.length,
-      activeByChannel: { whatsapp: assigned.filter((c) => c.channel === "whatsapp").length, email: assigned.filter((c) => c.channel === "email").length },
+      activeByChannel: Object.fromEntries(CONVERSATION_CHANNELS.map((ch) => [ch, assigned.filter((c) => c.channel === ch).length])) as Record<ConversationChannel, number>,
       waiting: waiting.length,
       oldestWaitingSince: waiting.map((c) => c.queuedAt ?? c.openedAt).sort()[0],
       slaFirstResponsePct: withSla.length ? Math.round((slaOk / withSla.length) * 100) : undefined,

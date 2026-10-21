@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Download, ExternalLink, Mail, MessageCircle, RotateCcw, UserRound } from "lucide-react";
+import { Download, ExternalLink, RotateCcw, UserRound } from "lucide-react";
 import { exportHistoryAction, reopenConversationAction } from "@/server/conversations/actions";
 import type { HistoryFilters, HistoryPreview, HistoryResult, HistoryRow } from "@/server/conversations/history";
 import { CONVERSATION_CLOSE_REASONS } from "@/domain/types";
@@ -19,6 +19,8 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
+import { CHANNEL_LABELS } from "./model";
+import { ChannelGlyph } from "./channel-icon";
 
 const PARAM: Record<string, string> = { q: "q", channel: "canal", queueId: "filaId", assigneeId: "operador", reason: "motivo", sla: "sla", days: "dias" };
 
@@ -42,8 +44,8 @@ function Highlight({ text, term }: { text: string; term?: string }) {
 function ChannelLabel({ channel }: { channel: HistoryRow["channel"] }) {
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm">
-      {channel === "whatsapp" ? <MessageCircle className="size-4 text-success-fg" aria-hidden /> : <Mail className="size-4 text-info-fg" aria-hidden />}
-      {channel === "whatsapp" ? "WhatsApp" : "E-mail"}
+      <ChannelGlyph channel={channel} colored className="size-4" />
+      {CHANNEL_LABELS[channel]}
     </span>
   );
 }
@@ -129,8 +131,7 @@ export function HistoryView({ data, filters, preview, canExport }: { data: Histo
             onChange={(e) => setParam("channel", e.target.value)}
             options={[
               { value: "", label: "Todos" },
-              { value: "whatsapp", label: "WhatsApp" },
-              { value: "email", label: "E-mail" },
+              ...Object.entries(CHANNEL_LABELS).map(([value, label]) => ({ value, label })),
             ]}
           />
         </FilterField>
@@ -246,7 +247,7 @@ export function HistoryView({ data, filters, preview, canExport }: { data: Histo
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="text-base font-semibold">{preview.row.name}</h2>
               <span className="text-xs text-muted">
-                {preview.row.channel === "whatsapp" ? "WhatsApp" : "E-mail"} · {preview.messageCount} mensage{preview.messageCount === 1 ? "m" : "ns"}
+                {CHANNEL_LABELS[preview.row.channel]} · {preview.messageCount} mensage{preview.messageCount === 1 ? "m" : "ns"}
               </span>
             </div>
             <p className="text-xs text-muted">

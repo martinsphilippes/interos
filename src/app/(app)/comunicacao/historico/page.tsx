@@ -6,6 +6,7 @@ import { historyDays } from "@/domain/conversation-history";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { HistoryView } from "@/components/conversations/history-view";
+import { CONVERSATION_CHANNELS } from "@/domain/types";
 
 export const metadata: Metadata = { title: "Histórico de atendimentos" };
 
@@ -24,7 +25,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Sear
   const sla = first(sp.sla);
   const filters: HistoryFilters = {
     q: first(sp.q)?.trim() || undefined,
-    channel: canal === "whatsapp" || canal === "email" ? canal : undefined,
+    channel: CONVERSATION_CHANNELS.find((c) => c === canal),
     queueId: first(sp.filaId) || undefined,
     assigneeId: first(sp.operador) || undefined,
     reason: (CONVERSATION_CLOSE_REASONS as readonly string[]).includes(motivo ?? "") ? (motivo as ConversationCloseReason) : undefined,

@@ -30,6 +30,7 @@ export function registerMarketingHandlers(registerHandler: typeof RegisterFn): v
   registerHandler("opportunity.won", convertLeadOnWin);
   registerHandler("prospect.contacted", refreshProspectListTotals);
   registerHandler("whatsapp.message.received", notifyOnIncomingMessage);
+  registerHandler("conversation.message.received", notifyOnIncomingMessage);
   registerHandler("email.received", notifyOnIncomingMessage);
 }
 

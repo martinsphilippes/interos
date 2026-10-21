@@ -12,6 +12,7 @@ import { FilterBar, FilterField } from "@/components/ui/filter-bar";
 import { SearchInput } from "@/components/ui/search-input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { CHANNEL_LABELS } from "./model";
 
 const RESULT: Record<ChannelEventResult, { label: string; variant: "success" | "info" | "danger" | "warning" | "muted" }> = {
   processado: { label: "Processado", variant: "success" },
@@ -67,8 +68,7 @@ export function ChannelEventsLog({ data }: { data: ChannelEventsAdmin }) {
             onChange={(e) => setParam("canal", e.target.value)}
             options={[
               { value: "", label: "Todos" },
-              { value: "whatsapp", label: "WhatsApp" },
-              { value: "email", label: "E-mail" },
+              ...Object.entries(CHANNEL_LABELS).map(([value, label]) => ({ value, label })),
               { value: "voz", label: "Telefonia" },
             ]}
           />
