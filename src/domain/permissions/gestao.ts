@@ -253,6 +253,18 @@ export const GESTAO = {
           rule: { any: [{ manager: true }, { department: "suporte" }] },
         },
         {
+          key: "gestao.relatorios.atendimentos.ver",
+          label: "Relatório de Atendimentos por fila (Central de Atendimento)",
+          // Onde: /gestao/relatorios?tipo=atendimentos (prévia) · fase 4 da Central (src/server/reports/central.ts)
+          rule: { any: [{ manager: true }, { department: "suporte" }] },
+        },
+        {
+          key: "gestao.relatorios.ligacoes.ver",
+          label: "Relatório de Ligações e custo de telefonia",
+          // Onde: /gestao/relatorios?tipo=ligacoes (prévia) · fase 4 da Central (src/server/reports/central.ts)
+          rule: { any: [{ manager: true }, { department: "suporte" }] },
+        },
+        {
           key: "gestao.relatorios.clientes.ver",
           label: "Relatório de Clientes",
           // Onde: /gestao/relatorios?tipo=clientes (prévia) · Hoje: canAccessReport
@@ -297,6 +309,14 @@ export const GESTAO = {
           // 307).
           rule: "all",
           guards: ["src/app/api/relatorios/[tipo]/route.ts#GET"],
+        },
+        {
+          key: "gestao.relatorios.agendar",
+          label: "Agendar envio de relatórios por e-mail (para pessoas do INTEROS; cada uma recebe com o próprio acesso)",
+          verb: "agendar",
+          // Fase 4 da Central: o serviço exige também ver e exportar o tipo; quem recebe precisa poder ver o relatório.
+          rule: { manager: true },
+          guards: ["src/server/reports/schedule-actions.ts#saveReportScheduleAction", "src/server/reports/schedule-actions.ts#toggleReportScheduleAction", "src/server/reports/schedule-actions.ts#deleteReportScheduleAction", "src/server/reports/schedule-actions.ts#runReportScheduleNowAction"],
         },
         {
           key: "gestao.relatorios.marketing.exportar",
@@ -400,6 +420,22 @@ export const GESTAO = {
           rule: { any: [{ manager: true }, { department: "suporte" }] },
           guards: [],
           checkedIn: ["src/app/api/relatorios/[tipo]/route.ts#GET?tipo=chamados"],
+        },
+        {
+          key: "gestao.relatorios.atendimentos.exportar",
+          label: "Exportar relatório de Atendimentos por fila",
+          verb: "exportar",
+          rule: { any: [{ manager: true }, { department: "suporte" }] },
+          guards: [],
+          checkedIn: ["src/app/api/relatorios/[tipo]/route.ts#GET?tipo=atendimentos"],
+        },
+        {
+          key: "gestao.relatorios.ligacoes.exportar",
+          label: "Exportar relatório de Ligações e custo de telefonia",
+          verb: "exportar",
+          rule: { any: [{ manager: true }, { department: "suporte" }] },
+          guards: [],
+          checkedIn: ["src/app/api/relatorios/[tipo]/route.ts#GET?tipo=ligacoes"],
         },
         {
           key: "gestao.relatorios.clientes.exportar",

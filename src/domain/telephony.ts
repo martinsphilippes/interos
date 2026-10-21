@@ -2,7 +2,7 @@
  * Telefonia da Central (fase 3): número no formato internacional, resultado da ligação, configuração do PABX e TwiML
  * (as instruções que o provedor executa). Puro: sem servidor.
  */
-import type { CallStatus, Communication } from "./types";
+import type { CallMonitorMode, CallStatus, Communication } from "./types";
 import { digitsOnly, nationalNumber, withNinthDigit } from "./phone";
 
 // ---------------------------------------------------------------------------
@@ -99,7 +99,20 @@ export interface PabxConfig {
   voicemail: boolean;
   closedMessage: string;
   noAgentMessage: string;
+  /** Tarifas do provedor (R$ por minuto iniciado) para o custo estimado das ligações. 0 = não informado. */
+  rates: CallRates;
 }
+
+export interface CallRates {
+  /** Ligação feita para fixo. */
+  fixo: number;
+  /** Ligação feita para celular. */
+  movel: number;
+  /** Ligação recebida (o número também paga por minuto). */
+  entrada: number;
+}
+
+export const DEFAULT_RATES: CallRates = { fixo: 0, movel: 0, entrada: 0 };
 
 export const DEFAULT_PABX: PabxConfig = {
   numbers: [],
@@ -108,7 +121,30 @@ export const DEFAULT_PABX: PabxConfig = {
   voicemail: true,
   closedMessage: "Nosso horário é de segunda a sexta, das 8h às 18h. Deixe seu recado após o sinal que retornamos.",
   noAgentMessage: "No momento todos estão ocupados. Deixe seu recado após o sinal que retornamos assim que possível.",
+  rates: DEFAULT_RATES,
 };
+
+/** Celular brasileiro (+55 DD 9XXXX-XXXX). */
+export function isBrMobile(e164: string | undefined | null): boolean {
+  return /^\+55\d{2}9\d{8}$/.test(e164 ?? "");
+}
+
+export function hasRates(r: CallRates | undefined): boolean {
+  return Boolean(r && (r.fixo > 0 || r.movel > 0 || r.entrada > 0));
+}
+
+/**
+ * Custo estimado: minutos iniciados × tarifa (recebida, celular ou fixo). Só para ligações pelo provedor; as registradas
+ * à mão (aparelho da pessoa) não têm custo conhecido (null). Sem tarifas configuradas: null.
+ */
+export function callCost(c: Pick<Communication, "provider" | "direction" | "durationSeconds" | "toNumber" | "address">, rates: CallRates | undefined): number | null {
+  if (c.provider !== "twilio" || !hasRates(rates)) return null;
+  const seconds = c.durationSeconds ?? 0;
+  if (seconds <= 0) return 0;
+  const minutes = Math.ceil(seconds / 60);
+  const rate = c.direction === "entrada" ? rates!.entrada : isBrMobile(c.toNumber ?? c.address) ? rates!.movel : rates!.fixo;
+  return Math.round(minutes * rate * 100) / 100;
+}
 
 // ---------------------------------------------------------------------------
 // TwiML
@@ -170,4 +206,52 @@ export function transferTwiml(target: { client?: string; number?: string }, call
 
 export function hangupTwiml(message?: string): string {
   return wrap(`${message ? say(message) : ""}<Hangup/>`);
+}
+
+// ---------------------------------------------------------------------------
+// Supervisão de ligações (fase 4): a ligação passa para uma conferência
+// ---------------------------------------------------------------------------
+
+export const CALL_MONITOR_LABELS: Record<CallMonitorMode, string> = { ouvir: "Ouvindo", sussurrar: "Falando só com o atendente", intervir: "Na ligação" };
+
+/** O que o atendente vê no softphone quando o gerente está na ligação. */
+export const CALL_MONITOR_AGENT_NOTICE: Record<CallMonitorMode, string> = {
+  ouvir: "está ouvindo esta ligação",
+  sussurrar: "está falando só com você (o cliente não ouve)",
+  intervir: "entrou na ligação (o cliente ouve)",
+};
+
+export function conferenceName(callId: string): string {
+  return `sup_${callId}`;
+}
+
+export interface ConferenceTwimlInput {
+  name: string;
+  /** Cliente e atendente encerram a conferência ao sair; o gerente não. */
+  endOnExit: boolean;
+  muted?: boolean;
+  /** Grava a conferência (a política de gravação manda) — só numa das pernas. */
+  recordingCallback?: string;
+  /** Retorno quando a perna sai da conferência. */
+  action?: string;
+}
+
+/** Entra na conferência da supervisão (sem bipe e sem música de espera). */
+export function conferenceTwiml(i: ConferenceTwimlInput): string {
+  const rec = i.recordingCallback ? ` record="record-from-start" recordingStatusCallback="${xmlEscape(i.recordingCallback)}" recordingStatusCallbackEvent="completed"` : "";
+  const attrs = `beep="false" waitUrl="" startConferenceOnEnter="true" endConferenceOnExit="${i.endOnExit ? "true" : "false"}"${i.muted ? ' muted="true"' : ""}${rec}`;
+  return wrap(`<Dial${i.action ? ` action="${xmlEscape(i.action)}"` : ""}><Conference ${attrs}>${xmlEscape(i.name)}</Conference></Dial>`);
+}
+
+/** Participante do gerente na conferência para cada modo (API de participantes do provedor). */
+export function monitorParticipantState(mode: CallMonitorMode, agentLegSid: string): { muted: boolean; coaching: boolean; callSidToCoach?: string } {
+  if (mode === "ouvir") return { muted: true, coaching: false };
+  if (mode === "sussurrar") return { muted: false, coaching: true, callSidToCoach: agentLegSid };
+  return { muted: false, coaching: false };
+}
+
+/** Duração total de uma ligação que passou pela conferência: antes + depois de mover. */
+export function monitoredDuration(m: { movedAt?: string; partialSeconds?: number }, now: number = Date.now()): number {
+  const after = m.movedAt ? Math.max(0, Math.round((now - new Date(m.movedAt).getTime()) / 1000)) : 0;
+  return (m.partialSeconds ?? 0) + after;
 }

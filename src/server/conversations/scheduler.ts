@@ -137,6 +137,11 @@ export async function runCentralSweep(now: Date = new Date()): Promise<CentralSw
     return `${await runManagerAlerts(t)} alerta(s) enviado(s)`;
   });
 
+  await step(report, "relatórios agendados", async () => {
+    const { runDueReportSchedules } = await import("@/server/reports/schedules");
+    return `${await runDueReportSchedules(t)} envio(s) processado(s)`;
+  });
+
   await step(report, "registro da execução", async () => {
     const docs = await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", STATE_SETTING]] });
     const value = { ...(docs[0]?.value ?? {}), lastRunAt: now.toISOString(), lastRunOk: report.steps.every((s) => s.ok) };

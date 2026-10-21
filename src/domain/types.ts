@@ -127,6 +127,8 @@ export const COLLECTIONS = {
   quickReplies: "quick_replies",
   supervisionLogs: "supervision_logs",
   recordingAccessLogs: "recording_access_logs",
+  /** Envios agendados de relatórios (Central de Relatórios). */
+  reportSchedules: "report_schedules",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -1951,6 +1953,31 @@ export interface Communication extends BaseEntity {
   recordingSid?: string;
   /** A gravação foi apagada pelo prazo da política de gravação. */
   recordingDeletedAt?: string;
+  /** Partes seguintes da gravação (a ligação passou para a conferência da supervisão). */
+  recordingParts?: string[];
+  /** Supervisão da ligação (fase 4): a ligação vira conferência para o gerente ouvir, sussurrar ou entrar. */
+  monitor?: CallMonitor;
+}
+
+export const CALL_MONITOR_MODES = ["ouvir", "sussurrar", "intervir"] as const;
+export type CallMonitorMode = (typeof CALL_MONITOR_MODES)[number];
+
+export interface CallMonitor {
+  /** Nome da conferência no provedor. */
+  conference: string;
+  /** movendo = as pernas estão entrando na conferência; ativa = em conferência; encerrada = ligação terminou. */
+  state: "movendo" | "ativa" | "encerrada";
+  supervisorId: string;
+  supervisorName: string;
+  mode: CallMonitorMode;
+  since: string;
+  /** Perna do atendente (quem recebe o sussurro). */
+  agentLegSid: string;
+  /** Perna do gerente na conferência (enquanto está nela). */
+  supervisorCallSid?: string;
+  /** Quando a ligação passou para a conferência e quanto já tinha durado antes. */
+  movedAt?: string;
+  partialSeconds?: number;
 }
 
 export const CALL_STATUSES = ["em_andamento", "atendida", "perdida", "sem_resposta", "ocupado", "falha"] as const;
@@ -2039,12 +2066,42 @@ export interface RecordingAccessLog extends BaseEntity {
   at: string;
 }
 
+export const REPORT_SCHEDULE_FREQUENCIES = ["diaria", "semanal", "mensal"] as const;
+export type ReportScheduleFrequency = (typeof REPORT_SCHEDULE_FREQUENCIES)[number];
+export const REPORT_SCHEDULE_PERIODS = ["ontem", "ultimos_7", "semana_anterior", "mes_atual", "mes_anterior", "ultimos_3_meses", "ultimos_6_meses", "atual"] as const;
+export type ReportSchedulePeriod = (typeof REPORT_SCHEDULE_PERIODS)[number];
+
+/** Envio agendado de um relatório por e-mail para pessoas do INTEROS (cada uma recebe com o próprio acesso). */
+export interface ReportSchedule extends BaseEntity {
+  reportKey: string;
+  ownerId: string;
+  recipientIds: string[];
+  /** Filtros fixos do relatório (colaborador, status, cliente…); o período vem de `period`. */
+  filters: Record<string, string>;
+  period: ReportSchedulePeriod;
+  format: "xlsx" | "pdf" | "csv";
+  frequency: ReportScheduleFrequency;
+  /** Semanal: dia da semana (0 = domingo). */
+  weekday?: number;
+  /** Mensal: dia do mês (1 a 28). */
+  monthDay?: number;
+  /** Hora do envio (horário de Brasília). */
+  hour: number;
+  active: boolean;
+  nextRunAt: string;
+  lastRunAt?: string;
+  lastOk?: boolean;
+  lastResult?: string;
+}
+
 /** Registro de supervisão: quem acompanhou, sussurrou, assumiu ou escalou qual conversa, e por quanto tempo. */
 export interface SupervisionLog extends BaseEntity {
   supervisorId: string;
   operatorId?: string;
-  conversationId: string;
-  action: "acompanhar" | "sussurro" | "assumir" | "transferir" | "escalar";
+  /** Conversa digital supervisionada (ou communicationId, quando é ligação). */
+  conversationId?: string;
+  communicationId?: string;
+  action: "acompanhar" | "sussurro" | "assumir" | "transferir" | "escalar" | "ligacao_ouvir" | "ligacao_sussurrar" | "ligacao_intervir";
   startedAt: string;
   /** Acompanhar: última vez que a tela do gerente estava aberta na conversa. */
   endedAt?: string;

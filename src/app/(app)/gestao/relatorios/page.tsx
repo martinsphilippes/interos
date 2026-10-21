@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Lock } from "lucide-react";
-import { can, canSeeHref, requireScreen } from "@/server/auth/session";
+import { can, canSeeHref, currentUserFor, requireScreen } from "@/server/auth/session";
 import { buildReport, canAccessReport, getReportFilterOptions, listReportsForUser, reportAllowedUserIds, reportExportKey } from "@/server/reports/build";
 import { isReportKey, readReportFilters, type ReportKey } from "@/server/reports/definitions";
 import { PageContainer } from "@/components/layout/page-container";
@@ -10,6 +10,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ReportCatalog } from "@/components/reports/report-catalog";
 import { ReportFiltersForm } from "@/components/reports/report-filters";
 import { ExportButtons, ReportPreview } from "@/components/reports/report-preview";
+import { ScheduleButton, ScheduleList, type SchedulePerson } from "@/components/reports/report-schedules";
+import { canScheduleReport, listReportSchedules, periodKindOf } from "@/server/reports/schedules";
+import { isConnected } from "@/server/integrations/status";
+import { list } from "@/server/db";
+import { COLLECTIONS, type User } from "@/domain/types";
 
 export const metadata: Metadata = { title: "Relatórios" };
 
@@ -48,6 +53,14 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
   const canExport = can(user, "gestao.relatorios.exportar") && can(user, reportExportKey(selected));
   const users = def.group === "departamental" && def.department ? options.users.filter((u) => u.departmentId === def.department) : options.users;
 
+  // Envio agendado: quem pode agendar vê o botão e os próprios envios; os destinatários oferecidos são só quem vê o tipo.
+  const canSchedule = canScheduleReport(user, selected);
+  const [schedules, people] = await Promise.all([
+    can(user, "gestao.relatorios.agendar") ? listReportSchedules(user) : Promise.resolve([]),
+    canSchedule ? schedulePeople(selected) : Promise.resolve([] as SchedulePerson[]),
+  ]);
+  const fixedFilters = Object.fromEntries(Object.entries(data.effective).filter(([k, v]) => k !== "de" && k !== "ate" && v)) as Record<string, string>;
+
   return (
     <PageContainer size="full" className="max-w-[1600px]">
       <PageHeader title="Relatórios" description="Os mesmos números dos dashboards, prontos para exportar." breadcrumbs={[{ label: "Gestão", href: canSeeHref(user, "/gestao") ? "/gestao" : undefined }, { label: "Relatórios" }]} />
@@ -66,7 +79,12 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
                   {def.description} {data.filters.map((f) => `${f.label}: ${f.value}`).join(" · ")}
                 </CardDescription>
               </div>
-              {canExport ? <ExportButtons data={data} /> : null}
+              {canExport || canSchedule ? (
+                <div className="flex flex-wrap gap-2">
+                  {canExport ? <ExportButtons data={data} /> : null}
+                  {canSchedule ? <ScheduleButton reportKey={selected} title={def.title} periodKind={periodKindOf(selected)} filters={fixedFilters} people={people} emailReady={isConnected("email")} /> : null}
+                </div>
+              ) : null}
             </CardHeader>
             <CardContent className="border-t border-border pt-4">
               <ReportFiltersForm
@@ -92,8 +110,28 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
               <ReportPreview data={data} />
             </CardContent>
           </Card>
+
+          {schedules.length ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Envios agendados</CardTitle>
+                <CardDescription>{user.isAdmin ? "Todos os envios agendados da empresa." : "Os relatórios que você agendou."}</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <ScheduleList rows={schedules} />
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
       </div>
     </PageContainer>
   );
+}
+
+/** Pessoas ativas que podem ver o relatório (destinatários possíveis do envio agendado). */
+async function schedulePeople(key: ReportKey): Promise<SchedulePerson[]> {
+  const all = (await list<User>(COLLECTIONS.users)).filter((u) => u.active !== false);
+  const out: SchedulePerson[] = [];
+  for (const u of all) if (canAccessReport(await currentUserFor(u), key)) out.push({ id: u.id, name: u.name, email: Boolean(u.email) });
+  return out.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 }

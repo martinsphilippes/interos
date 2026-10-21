@@ -17,6 +17,9 @@ const ACTION: Record<SupervisionLogRow["action"], { label: string; variant: "inf
   assumir: { label: "Assumiu", variant: "secondary" },
   transferir: { label: "Transferiu", variant: "muted" },
   escalar: { label: "Escalou", variant: "danger" },
+  ligacao_ouvir: { label: "Ouviu a ligação", variant: "info" },
+  ligacao_sussurrar: { label: "Sussurrou na ligação", variant: "warning" },
+  ligacao_intervir: { label: "Entrou na ligação", variant: "danger" },
 };
 
 /** Registro de supervisão: quem acompanhou quem, quando e por quanto tempo (e sussurros, assumir, escalar). */
@@ -82,9 +85,13 @@ export function SupervisionLogView({ rows, supervisors, days }: { rows: Supervis
                 </TableCell>
                 <TableCell className="text-sm">{r.operatorName ?? <span className="text-muted">—</span>}</TableCell>
                 <TableCell className="text-sm">
-                  <Link href={`/comunicacao?conversa=${r.conversationId}`} className="font-medium text-brand-fg hover:underline">
-                    {r.conversationNumber ?? "abrir"}
-                  </Link>
+                  {r.href ? (
+                    <Link href={r.href} className="font-medium text-brand-fg hover:underline">
+                      {r.target}
+                    </Link>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="max-w-[320px] truncate text-sm" title={r.detail}>
                   {r.durationMs !== undefined ? formatDurationShort(Math.max(r.durationMs, 60_000)) : (r.detail ?? "—")}
@@ -94,7 +101,7 @@ export function SupervisionLogView({ rows, supervisors, days }: { rows: Supervis
           </TableBody>
         </Table>
       </div>
-      <p className="text-xs text-muted">Mostra até 300 registros. O tempo de «Acompanhou» conta enquanto a tela do gerente fica aberta na conversa.</p>
+      <p className="text-xs text-muted">Mostra até 300 registros. O tempo de «Acompanhou» conta enquanto a tela do gerente fica aberta na conversa; nas ligações, enquanto o gerente está na ligação.</p>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { can, requireScreen } from "@/server/auth/session";
 import { getPabx, pabxHistory } from "@/server/telephony/service";
-import { pabxQuality } from "@/server/telephony/queries";
+import { pabxQuality, recordingAccessLog } from "@/server/telephony/queries";
 import { listQueues } from "@/server/conversations/queues";
 import { getIntegration, isConnected } from "@/server/integrations/status";
 import { list } from "@/server/db";
@@ -12,7 +12,7 @@ import { DEPARTMENT_LABELS } from "@/domain/constants";
 import { PageContainer } from "@/components/layout/page-container";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
-import { ChangesView, ExtensionsAdmin, PabxConfigAdmin, ProviderStatus, QualityView } from "@/components/telephony/pabx-view";
+import { ChangesView, ExtensionsAdmin, PabxConfigAdmin, ProviderStatus, QualityView, RecordingAccessView } from "@/components/telephony/pabx-view";
 import { PABX_TABS, type PabxTab } from "@/components/telephony/model";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +20,7 @@ export const metadata: Metadata = { title: "PABX" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-const LABEL: Record<PabxTab, string> = { ramais: "Ramais", numeros: "Números", horarios: "Horários e correio de voz", provedor: "Provedor", qualidade: "Qualidade", mudancas: "Histórico de mudanças" };
+const LABEL: Record<PabxTab, string> = { ramais: "Ramais", numeros: "Números", horarios: "Horários e correio de voz", provedor: "Provedor", qualidade: "Qualidade", mudancas: "Histórico de mudanças", gravacoes: "Acessos às gravações" };
 
 /** PABX (catálogo comunicacao.pabx): uma aba por seção; edição com comunicacao.pabx.editar. */
 export default async function PabxPage({ searchParams }: { searchParams: SearchParams }) {
@@ -51,16 +51,29 @@ export default async function PabxPage({ searchParams }: { searchParams: SearchP
     const h = await headers();
     const base = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("x-forwarded-host") ?? h.get("host") ?? "<dominio>"}`;
     const voip = getIntegration("voip");
-    content = <ProviderStatus base={base} connected={isConnected("voip")} vars={voip.envVars.filter((v) => v.name.startsWith("TWILIO_")).map((v) => ({ name: v.name, present: v.present, description: v.description ?? "" }))} />;
+    const { stored, ...config } = await getPabx();
+    void stored;
+    content = (
+      <div className="flex flex-col gap-6">
+        <ProviderStatus base={base} connected={isConnected("voip")} vars={voip.envVars.filter((v) => v.name.startsWith("TWILIO_")).map((v) => ({ name: v.name, present: v.present, description: v.description ?? "" }))} />
+        <PabxConfigAdmin part="tarifas" config={config} canEdit={canEdit} queues={[]} />
+      </div>
+    );
   } else if (tab === "qualidade") {
     content = <QualityView q={await pabxQuality()} />;
   } else if (tab === "mudancas") {
     content = <ChangesView events={(await pabxHistory()).map((e) => ({ id: e.id, at: e.occurredAt, title: e.title, description: e.description }))} />;
+  } else if (tab === "gravacoes") {
+    const daysRaw = Number(Array.isArray(sp.dias) ? sp.dias[0] : sp.dias);
+    const days = [7, 30, 90, 365].includes(daysRaw) ? daysRaw : 90;
+    const pessoa = Array.isArray(sp.pessoa) ? sp.pessoa[0] : sp.pessoa;
+    const { rows, users } = await recordingAccessLog({ days, userId: pessoa || undefined });
+    content = <RecordingAccessView rows={rows} users={users} days={days} />;
   }
 
   return (
     <PageContainer>
-      <PageHeader title="PABX" description="Ramais, números, horário e correio de voz, provedor e qualidade das ligações." breadcrumbs={[{ label: "Central de Atendimento", href: "/comunicacao" }, { label: "PABX" }]} />
+      <PageHeader title="PABX" description="Ramais, números, horário e correio de voz, provedor e tarifas, qualidade e acessos às gravações." breadcrumbs={[{ label: "Central de Atendimento", href: "/comunicacao" }, { label: "PABX" }]} />
       {!tab ? (
         <EmptyState title="Sem acesso às seções" description="Seu perfil não inclui as seções do PABX." />
       ) : (

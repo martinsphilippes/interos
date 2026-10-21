@@ -132,14 +132,42 @@ export interface RecordingAccessRow {
   action: RecordingAccessLog["action"];
   reason?: string;
   communicationId: string;
+  /** A ligação: com quem, quando e quem atendeu. */
+  callLabel: string;
+  callAt?: string;
+  agentName?: string;
 }
 
-/** Registro de acesso às gravações (fase 4: tela própria; aqui, os últimos de uma ligação ou de todas). */
-export async function recordingAccessLog(communicationId?: string, limit = 200): Promise<RecordingAccessRow[]> {
-  const logs = await list<RecordingAccessLog>(COLLECTIONS.recordingAccessLogs, communicationId ? { where: [["communicationId", "==", communicationId]] } : {});
-  const sorted = logs.sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, limit);
-  const users = await getManyByIds<User>(COLLECTIONS.users, sorted.map((l) => l.userId));
-  return sorted.map((l) => ({ id: l.id, at: l.at, userName: users.get(l.userId)?.name ?? "Usuário removido", action: l.action, reason: l.reason, communicationId: l.communicationId }));
+/** Registro de acesso às gravações (aba do PABX): quem ouviu ou baixou, quando, por quê e qual ligação. */
+export async function recordingAccessLog(filters: { days?: number; userId?: string; communicationId?: string } = {}, limit = 300): Promise<{ rows: RecordingAccessRow[]; users: { id: string; name: string }[] }> {
+  const since = new Date(Date.now() - (filters.days ?? 90) * 86_400_000).toISOString();
+  const all = (await list<RecordingAccessLog>(COLLECTIONS.recordingAccessLogs, filters.communicationId ? { where: [["communicationId", "==", filters.communicationId]] } : {})).filter((l) => l.at >= since);
+  const listeners = Array.from(new Set(all.map((l) => l.userId)));
+  const logs = all.filter((l) => !filters.userId || l.userId === filters.userId).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, limit);
+  const calls = await getManyByIds<Communication>(COLLECTIONS.communications, logs.map((l) => l.communicationId));
+  const [users, contacts, clients] = await Promise.all([
+    getManyByIds<User>(COLLECTIONS.users, [...listeners, ...Array.from(calls.values()).map((c) => c.userId ?? "")].filter(Boolean)),
+    getManyByIds<Contact>(COLLECTIONS.contacts, Array.from(calls.values()).map((c) => c.contactId ?? "").filter(Boolean)),
+    getManyByIds<Client>(COLLECTIONS.clients, Array.from(calls.values()).map((c) => c.clientId ?? "").filter(Boolean)),
+  ]);
+  return {
+    rows: logs.map((l) => {
+      const c = calls.get(l.communicationId);
+      const who = c ? ((c.contactId ? contacts.get(c.contactId)?.name : undefined) ?? (c.clientId ? clients.get(c.clientId)?.tradeName : undefined) ?? (displayPhone(c.direction === "entrada" ? c.fromNumber : c.toNumber) || "Número oculto")) : "Ligação removida";
+      return {
+        id: l.id,
+        at: l.at,
+        userName: users.get(l.userId)?.name ?? "Usuário removido",
+        action: l.action,
+        reason: l.reason,
+        communicationId: l.communicationId,
+        callLabel: c ? `${c.direction === "entrada" ? "De" : "Para"} ${who}` : who,
+        callAt: c?.createdAt,
+        agentName: c?.userId ? users.get(c.userId)?.name : undefined,
+      };
+    }),
+    users: listeners.map((id) => ({ id, name: users.get(id)?.name ?? "Usuário removido" })).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+  };
 }
 
 // ---------------------------------------------------------------------------

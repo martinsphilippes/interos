@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 12 módulos, 74 telas, 149 seções e 273 ações (508 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 16 abas, 23 ações)", () => {
+  it("tem 12 módulos, 74 telas, 152 seções e 277 ações (515 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 17 abas, 24 ações); fase 4: + 2 relatórios, agendar envio", () => {
     expect(MODULES.length).toBe(12);
     expect(SCREENS.length).toBe(74);
-    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(149);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(273);
-    expect(PERMISSION_KEYS.length).toBe(508);
+    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(152);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(277);
+    expect(PERMISSION_KEYS.length).toBe(515);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 

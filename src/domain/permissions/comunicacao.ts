@@ -245,7 +245,7 @@ export const COMUNICACAO = {
       key: "comunicacao.supervisao",
       module: "comunicacao",
       label: "Central de Comando",
-      description: "Painel do gerente ao vivo: operadores (estado, pausa, carga), filas e gargalos, atendimentos em andamento; acompanhar conversa com sussurro ao operador, assumir e escalar; registro de supervisão e painel para TV.",
+      description: "Painel do gerente ao vivo: operadores (estado, pausa, carga), filas e gargalos, atendimentos e ligações em andamento; acompanhar conversa com sussurro ao operador, assumir e escalar; ouvir, sussurrar e entrar em ligações; registro de supervisão e painel para TV.",
       routes: ["/comunicacao/supervisao", "/comunicacao/supervisao/tv"],
       rule: { manager: true },
       nav: {
@@ -292,6 +292,14 @@ export const COMUNICACAO = {
           rule: { manager: true },
           guards: ["src/server/conversations/supervision-actions.ts#escalateConversationAction"],
           recordCondition: "conversa de operador dentro do escopo da tela",
+        },
+        {
+          key: "comunicacao.supervisao.ligacoes",
+          label: "Acompanhar ligações: ouvir, sussurrar ao atendente e entrar na ligação (o atendente vê; fica no registro)",
+          verb: "acompanhar",
+          rule: { manager: true },
+          guards: ["src/server/telephony/monitor-actions.ts#startCallMonitorAction", "src/server/telephony/monitor-actions.ts#setCallMonitorModeAction", "src/server/telephony/monitor-actions.ts#stopCallMonitorAction"],
+          recordCondition: "ligação em andamento de atendente dentro do escopo da tela",
         },
       ],
       // Proposta aprovada (Painel do Gerente): o gerente vê as equipes que lidera; a direção vê a empresa.
@@ -367,7 +375,7 @@ export const COMUNICACAO = {
           label: "Ligar e atender pelo softphone (transferir, marcar retorno)",
           verb: "ligar",
           rule: "all",
-          guards: ["src/server/telephony/actions.ts#claimCallAction", "src/server/telephony/actions.ts#transferCallAction", "src/server/telephony/actions.ts#transferTargetsAction", "src/server/telephony/actions.ts#markCallReturnedAction"],
+          guards: ["src/server/telephony/actions.ts#claimCallAction", "src/server/telephony/actions.ts#transferCallAction", "src/server/telephony/actions.ts#transferTargetsAction", "src/server/telephony/actions.ts#markCallReturnedAction", "src/server/telephony/monitor-actions.ts#callMonitorNoticeAction"],
         },
         {
           key: "comunicacao.ligacoes.gravacoes.ouvir",
@@ -455,7 +463,7 @@ export const COMUNICACAO = {
       key: "comunicacao.pabx",
       module: "comunicacao",
       label: "PABX",
-      description: "Ramais, números e para qual fila vão, horário e correio de voz, provedor, qualidade das ligações e histórico de mudanças.",
+      description: "Ramais, números e para qual fila vão, horário e correio de voz, provedor e tarifas, qualidade das ligações, histórico de mudanças e acessos às gravações.",
       routes: ["/comunicacao/pabx"],
       rule: { manager: true },
       nav: {
@@ -473,6 +481,7 @@ export const COMUNICACAO = {
         { key: "comunicacao.pabx.provedor.ver", label: "Provedor", rule: { manager: true }, tab: "provedor" },
         { key: "comunicacao.pabx.qualidade.ver", label: "Qualidade das ligações", rule: { manager: true }, tab: "qualidade" },
         { key: "comunicacao.pabx.mudancas.ver", label: "Histórico de mudanças", rule: { manager: true }, tab: "mudancas" },
+        { key: "comunicacao.pabx.gravacoes.ver", label: "Acessos às gravações (quem ouviu ou baixou, quando e por quê)", rule: { role: ["admin", "diretoria"] }, tab: "gravacoes" },
       ],
       actions: [
         {

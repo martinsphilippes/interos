@@ -149,18 +149,28 @@ export async function createWhatsappTemplate(input: { name: string; language: st
   }
 }
 
-export async function sendEmail(input: { to: string; subject: string; text: string; inReplyTo?: string }): Promise<ProviderResult> {
+export interface EmailAttachment {
+  filename: string;
+  content: Uint8Array;
+}
+
+/**
+ * Envio pelo Resend. `internal`: e-mail para a equipe (relatórios) — sem o reply-to da Central, para a resposta não virar
+ * conversa de cliente.
+ */
+export async function sendEmail(input: { to: string; subject: string; text: string; inReplyTo?: string; attachments?: EmailAttachment[]; internal?: boolean }): Promise<ProviderResult> {
   const key = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM;
   if (!key || !from) return { ok: false, error: "E-mail não configurado" };
   // Respostas da Central: o cliente responde para a caixa de entrada (EMAIL_REPLY_TO) e o e-mail cai na mesma conversa.
-  const replyTo = process.env.EMAIL_REPLY_TO?.trim();
+  const replyTo = input.internal ? undefined : process.env.EMAIL_REPLY_TO?.trim();
+  const attachments = input.attachments?.map((a) => ({ filename: a.filename, content: Buffer.from(a.content).toString("base64") }));
   const headers = input.inReplyTo ? { "In-Reply-To": `<${input.inReplyTo}>`, References: `<${input.inReplyTo}>` } : undefined;
   try {
     const { status, json } = await post(
       "https://api.resend.com/emails",
       { authorization: `Bearer ${key}` },
-      { from, to: [input.to], subject: input.subject, text: input.text, ...(replyTo ? { reply_to: replyTo } : {}), ...(headers ? { headers } : {}) },
+      { from, to: [input.to], subject: input.subject, text: input.text, ...(replyTo ? { reply_to: replyTo } : {}), ...(headers ? { headers } : {}), ...(attachments?.length ? { attachments } : {}) },
     );
     const id = (json as { id?: string } | null)?.id;
     if (status >= 200 && status < 300 && id) return { ok: true, externalId: id };
