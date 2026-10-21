@@ -151,7 +151,7 @@ describe("cliente da API v3", () => {
     expect(calls).toHaveLength(3);
   });
 
-  it("tempo-limite/falha de rede: leitura repete, criação não (evita documento ou e-mail duplicado)", async () => {
+  it("tempo-limite/falha de rede: leitura e mudança de estado repetem, criação não (evita documento ou e-mail duplicado)", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
       calls.push({ url, init });
@@ -167,6 +167,13 @@ describe("cliente da API v3", () => {
     calls = [];
     await expect(clicksignApi("/envelopes/e1/notifications", { method: "POST", body: {} })).rejects.toThrow(/não respondeu a tempo/);
     expect(calls).toHaveLength(1);
+    // Mudança de estado (cancelar documento) pode repetir sem duplicar.
+    vi.useFakeTimers();
+    calls = [];
+    const cancel = clicksignApi("/envelopes/e1/documents/d1", { method: "PATCH", body: {} });
+    await vi.runAllTimersAsync();
+    expect((await cancel).data.id).toBe("ok");
+    expect(calls).toHaveLength(2);
   });
 
   it("sem token não chama a API", async () => {

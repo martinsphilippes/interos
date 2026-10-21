@@ -613,10 +613,12 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   prazo) confere se o contrato precisa ser concluído/anunciado.
 - **Envio robusto**: falha antes de ativar apaga o rascunho; depois de ativar, o envio fica gravado mesmo se o e-mail
   falhar (o lembrete reenvia); a gravação final é em transação, relendo o contrato — se ele foi assinado ou reenviado
-  enquanto o envelope novo era criado, o envio novo é cancelado na Clicksign e o usuário é avisado; o documento anterior
+  enquanto o envelope novo era criado (ou cancelado, alterado para nova versão), o envio novo é cancelado na
+  Clicksign e o usuário é avisado; o documento anterior
   é cancelado só depois de gravar o envio (ou a versão) novo; o modelo enviado é o mesmo que fica gravado. Chamadas à
-  API têm tempo-limite de 20 s; 429/5xx repetem, mas tempo-limite/falha de rede só repete leitura (criar, ativar ou
-  mandar e-mail de novo poderia duplicar).
+  API têm tempo-limite de 20 s; 429/5xx repetem; tempo-limite/falha de rede repete tudo menos POST (criar ou mandar
+  e-mail de novo poderia duplicar). Todo cancelamento de envio na Clicksign (reenvio, nova versão, contrato cancelado,
+  conflito) que a Clicksign não confirma vira nota no contrato com o envelope a cancelar lá (`cancelClicksignSend`).
 - **PDF assinado** (`signed_files`, um por envio: `contract_<id>_<envelope>`; aditivo mantém o envelope): ao finalizar, o PDF assinado é baixado (link da API ou do aviso; https, até 20 MB)
   e guardado no INTEROS, porque os links da Clicksign expiram. `GET /api/financeiro/contratos/[id]/assinado` (mesmo
   acesso do documento; se ainda não guardado, busca na hora) e `GET /api/financeiro/assinaturas/entrada/[id]/arquivo`

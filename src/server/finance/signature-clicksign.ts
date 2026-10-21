@@ -118,8 +118,17 @@ export const clicksignSignatureProvider: SignatureProvider = {
   },
 };
 
-/** Cancela na Clicksign o documento de um envio anterior (o contrato foi gerado de novo). Melhor esforço. */
-export async function cancelPreviousClicksignDocument(contract: Pick<Contract, "signatureProvider" | "signatureEnvelopeId" | "signatureDocumentId">): Promise<void> {
-  if (contract.signatureProvider !== "clicksign" || !contract.signatureEnvelopeId || !contract.signatureDocumentId || !clicksignConfigured()) return;
-  await cancelDocument(contract.signatureEnvelopeId, contract.signatureDocumentId).catch((error) => console.error("[assinatura] não cancelou o documento anterior na Clicksign", error));
+/**
+ * Cancela na Clicksign o documento de um envio que deixou de valer (contrato gerado de novo, nova versão, cancelado).
+ * Melhor esforço: false quando havia o que cancelar e a Clicksign não confirmou (o chamador pode registrar a pendência).
+ */
+export async function cancelPreviousClicksignDocument(contract: Pick<Contract, "signatureProvider" | "signatureEnvelopeId" | "signatureDocumentId">): Promise<boolean> {
+  if (contract.signatureProvider !== "clicksign" || !contract.signatureEnvelopeId || !contract.signatureDocumentId || !clicksignConfigured()) return true;
+  try {
+    await cancelDocument(contract.signatureEnvelopeId, contract.signatureDocumentId);
+    return true;
+  } catch (error) {
+    console.error("[assinatura] não cancelou o documento na Clicksign", error);
+    return false;
+  }
 }

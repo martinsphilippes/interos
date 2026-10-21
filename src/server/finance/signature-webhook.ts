@@ -172,7 +172,7 @@ async function applyToContract(contract: Contract, hook: ClicksignWebhook): Prom
     const result = await markSigners(contract.id, envelopeId, () => false, "assinado", hook.occurredAt);
     if (result.stale) return { ...base, message: "Aviso de um envio anterior deste contrato: ignorado" };
     await ensureSignedAnnounced(contract.id);
-    if (contract.signedAt || result.signers.every((s) => s.status === "assinado")) return { ...base, message: "Contrato já assinado: aviso ignorado" };
+    if (contract.signedAt || (result.signers.length > 0 && result.signers.every((s) => s.status === "assinado"))) return { ...base, message: "Contrato já assinado: aviso ignorado" };
     const title = hook.event === "cancel" ? `Documento do contrato ${contract.number} cancelado na Clicksign` : `Prazo de assinatura do contrato ${contract.number} venceu na Clicksign`;
     const body = "Gere o documento de novo para reenviar aos signatários.";
     await emitEvent({ type: "note.added", actor: ACTOR, clientId: contract.clientId, entity: { type: "contract", id: contract.id }, title, description: body, department: "financeiro", payload: { contractId: contract.id, provider: "clicksign", event: hook.event } });

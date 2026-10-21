@@ -114,6 +114,24 @@ async function clearFields(name: typeof COLLECTIONS.contracts | typeof COLLECTIO
   await col(name).doc(id).update(patch);
 }
 
+/**
+ * Cancela na Clicksign o documento de um envio que deixou de valer. Sem confirmação da Clicksign, registra uma nota no
+ * contrato com o envelope: os avisos dele passam a ser ignorados, então alguém precisa cancelar lá.
+ */
+async function cancelClicksignSend(contract: Pick<Contract, "id" | "number" | "clientId">, send: Pick<Contract, "signatureProvider" | "signatureEnvelopeId" | "signatureDocumentId">, actor: UserRef, why: string): Promise<void> {
+  if (await cancelPreviousClicksignDocument(send)) return;
+  await emitEvent({
+    type: "note.added",
+    actor,
+    clientId: contract.clientId,
+    entity: { type: "contract", id: contract.id },
+    title: `Cancele na Clicksign o envelope ${send.signatureEnvelopeId} do contrato ${contract.number}`,
+    description: `${why} A Clicksign não confirmou o cancelamento: cancele o envelope lá para ninguém assinar por ele.`,
+    department: "financeiro",
+    payload: { contractId: contract.id, envelopeId: send.signatureEnvelopeId, documentId: send.signatureDocumentId, provider: "clicksign" },
+  });
+}
+
 /** Próximo número "CT-AAAA-NNNN" no ano corrente: contador transacional (parte do maior número já gravado). */
 function nextContractNumber(): Promise<string> {
   return nextNumber("CT", { pad: 4, initFrom: { collection: COLLECTIONS.contracts } });
@@ -437,7 +455,7 @@ export async function updateContractItems(contractId: string, items: ContractIte
   const patch: Partial<Contract> = { ...version.patch, items: normalized, setupTotal: totals.setupTotal, monthlyTotal: totals.monthlyTotal, hardwareTotal: totals.hardwareTotal };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
   await clearFields(COLLECTIONS.contracts, contract.id, version.clear);
-  if (version.versioned) await cancelPreviousClicksignDocument(contract);
+  if (version.versioned) await cancelClicksignSend(contract, contract, actor, "O contrato ganhou uma versão nova (itens alterados).");
   const next: Contract = { ...contract, ...patch };
   const audit = auditChanges<Contract>(contract, next, ["items", "setupTotal", "monthlyTotal", "hardwareTotal"]);
   // D4: produtos do cliente acompanham os itens do contrato de venda enquanto não estão ativos.
@@ -512,7 +530,7 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
   if (!input.firstDueDate && contract.firstDueDate) clear.push("firstDueDate");
   if (!input.paymentCondition && contract.paymentCondition) clear.push("paymentCondition");
   await clearFields(COLLECTIONS.contracts, contract.id, clear);
-  if (version.versioned) await cancelPreviousClicksignDocument(contract);
+  if (version.versioned) await cancelClicksignSend(contract, contract, actor, "O contrato ganhou uma versão nova (condições alteradas).");
   const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
   // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão).
   if (hasChanges(audit)) {
@@ -678,7 +696,14 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
   const conflict = await docdb.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const current = snap.data() as Contract | undefined;
-    if (!current || (current.signatureEnvelopeId ?? "") !== (contract.signatureEnvelopeId ?? "") || (current.signedAt ?? "") !== (contract.signedAt ?? "")) return true;
+    const changed =
+      !current ||
+      (current.signatureEnvelopeId ?? "") !== (contract.signatureEnvelopeId ?? "") ||
+      (current.signedAt ?? "") !== (contract.signedAt ?? "") ||
+      current.version !== contract.version ||
+      current.status === "cancelado" ||
+      current.status === "liberado";
+    if (changed) return true;
     const write: Record<string, unknown> = { ...stripUndefined(patch), updatedAt: nowIso() };
     // Sempre limpa (FieldValue.delete em campo ausente não faz nada): não depende da leitura do início.
     for (const f of ["signedAt", "signedAnnouncedAt", "signedAnnounceClaimAt"]) write[f] = FieldValue.delete();
@@ -688,12 +713,14 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
     return false;
   });
   if (conflict) {
-    if (envelope.provider === "clicksign") await cancelPreviousClicksignDocument({ signatureProvider: "clicksign", signatureEnvelopeId: envelope.envelopeId, signatureDocumentId: envelope.documentId });
-    throw new Error("O contrato mudou durante o envio (foi assinado ou reenviado). Atualize a página e confira antes de enviar de novo.");
+    if (envelope.provider === "clicksign") {
+      await cancelClicksignSend(contract, { signatureProvider: "clicksign", signatureEnvelopeId: envelope.envelopeId, signatureDocumentId: envelope.documentId }, actor, "O contrato mudou enquanto o envio era criado e o envio novo foi desfeito no INTEROS.");
+    }
+    throw new Error("O contrato mudou durante o envio (foi assinado, reenviado, alterado ou cancelado). Atualize a página e confira antes de enviar de novo.");
   }
   // Documento do envio anterior pela Clicksign deixa de valer: cancela lá (melhor esforço) DEPOIS de gravar o envio
   // novo, para os avisos do anterior já chegarem como "envio anterior".
-  if (contract.signatureEnvelopeId && contract.signatureEnvelopeId !== envelope.envelopeId) await cancelPreviousClicksignDocument(contract);
+  if (contract.signatureEnvelopeId && contract.signatureEnvelopeId !== envelope.envelopeId) await cancelClicksignSend(contract, contract, actor, "O contrato foi reenviado para assinatura.");
   await emitEvent({
     type: "contract.sent_for_signature",
     actor,
@@ -1845,7 +1872,7 @@ export async function cancelContract(input: { contractId: string; reason: string
   const patch: Partial<Contract> = { status: "cancelado", cancelledAt, cancelReason: reason, cancelledBy: actor.id };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
   // Ainda em assinatura na Clicksign: cancela lá também.
-  if (!contract.signedAt) await cancelPreviousClicksignDocument(contract);
+  if (!contract.signedAt) await cancelClicksignSend(contract, contract, actor, "O contrato foi cancelado.");
 
   // Cobranças em aberto/vencidas deixam de ser devidas (pagas ficam como estão). Emitidas no provedor conectado
   // são canceladas lá também (falha do provedor não impede o cancelamento local: fica na nota do evento).

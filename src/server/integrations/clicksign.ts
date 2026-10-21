@@ -63,7 +63,8 @@ interface JsonApiResource {
 
 /**
  * Chamada à API v3. Repete em 429/5xx (até 3 vezes, espera crescente; a Clicksign responde sem gravar nesses casos);
- * tempo-limite/falha de rede só repete GET. Erro do provedor vira ClicksignError legível.
+ * tempo-limite/falha de rede repete tudo menos POST (criação/e-mail não são repetidos às cegas). Erro do provedor vira
+ * ClicksignError legível.
  */
 export async function clicksignApi<T = { data: JsonApiResource }>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const token = env("CLICKSIGN_API_TOKEN");
@@ -97,9 +98,10 @@ export async function clicksignApi<T = { data: JsonApiResource }>(path: string, 
     } catch (error) {
       if (error instanceof ClicksignError) throw error;
       lastError = error;
-      // Tempo-limite ou falha de rede: só repete leitura. Criar/ativar/enviar e-mail pode ter dado certo do lado da
-      // Clicksign mesmo sem resposta; repetir criaria duplicado (documento, signatário, e-mail).
-      if (method !== "GET") throw new ClicksignError(`Clicksign não respondeu a tempo (${error instanceof Error ? error.message : "falha de rede"}). Confira na Clicksign antes de tentar de novo.`, 0);
+      // Tempo-limite ou falha de rede: repete só o que pode ser repetido sem efeito duplicado (leitura e mudança de
+      // estado: PATCH/DELETE/PUT). POST (criar envelope, documento, signatário, requisito, e-mail) pode ter dado certo
+      // do lado da Clicksign mesmo sem resposta; repetir criaria duplicado.
+      if (method === "POST") throw new ClicksignError(`Clicksign não respondeu a tempo (${error instanceof Error ? error.message : "falha de rede"}). Confira na Clicksign antes de tentar de novo.`, 0);
       if (attempt < RETRIES) {
         await sleep(500 * 2 ** attempt);
         continue;

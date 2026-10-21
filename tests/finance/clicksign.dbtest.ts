@@ -34,12 +34,15 @@ const calls: { method: string; path: string; body?: Record<string, unknown> }[] 
 let seq = 0;
 /** Gancho do teste: roda quando a API recebe uma chamada (ex.: ler o banco no momento do cancelamento). */
 let onCall: ((method: string, path: string) => Promise<void>) | null = null;
+/** Simula a Clicksign recusando o cancelamento de documento. */
+let failPatch = false;
 async function fakeFetch(url: string, init: RequestInit = {}): Promise<Response> {
   if (url.startsWith("https://files.clicksign.test/")) return new Response(new Uint8Array(PDF), { status: 200, headers: { "content-type": "application/pdf" } });
   const path = url.replace("https://sandbox.clicksign.com/api/v3", "");
   const method = init.method ?? "GET";
   calls.push({ method, path, body: init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined });
   if (onCall) await onCall(method, path);
+  if (failPatch && method === "PATCH" && path.includes("/documents/")) return new Response(JSON.stringify({ errors: [{ title: "Falha simulada" }] }), { status: 422 });
   const json = (data: unknown, status = 201) => Promise.resolve(new Response(JSON.stringify({ data }), { status }));
   if (method === "POST" && path === "/envelopes") return json({ id: `${RUN}-env-${++seq}`, type: "envelopes" });
   if (method === "POST" && /\/documents$/.test(path)) return json({ id: `${RUN}-doc-${++seq}`, type: "documents" });
@@ -324,6 +327,37 @@ describe("Clicksign: envio e avisos", () => {
     const newEnvelope = calls.find((c) => c.method === "POST" && c.path === "/envelopes");
     expect(calls.some((c) => c.method === "PATCH" && c.path.includes("/documents/") && !c.path.includes(first.signatureEnvelopeId!))).toBe(true);
     expect(newEnvelope).toBeTruthy();
+  });
+
+  it("envio que termina depois de o contrato ser cancelado é desfeito; sem confirmação da Clicksign fica a nota para cancelar lá", async () => {
+    const first = await sendForSignature((await newContract()).id, ACTOR);
+    onCall = async (method, path) => {
+      if (method === "POST" && path.endsWith("/documents")) {
+        onCall = null;
+        await update<Contract>(COLLECTIONS.contracts, first.id, { status: "cancelado" });
+      }
+    };
+    failPatch = true;
+    calls.length = 0;
+    await expect(sendForSignature(first.id, ACTOR)).rejects.toThrow(/mudou durante o envio/);
+    onCall = null;
+    failPatch = false;
+    const after = (await getById<Contract>(COLLECTIONS.contracts, first.id))!;
+    expect(after.status).toBe("cancelado");
+    expect(after.signatureEnvelopeId).toBe(first.signatureEnvelopeId);
+    const newEnvelope = calls.find((c) => c.method === "POST" && c.path === "/envelopes");
+    expect(newEnvelope).toBeTruthy();
+    const notes = (await eventsOf(first.id, "note.added")).filter((e) => e.title.startsWith("Cancele na Clicksign o envelope"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0].title).not.toContain(first.signatureEnvelopeId!);
+  });
+
+  it("cancelamento/prazo com o contrato sem signatários: não diz que está assinado, avisa para reenviar", async () => {
+    const c = await sendForSignature((await newContract()).id, ACTOR);
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signers: [] });
+    const document = { key: c.signatureDocumentId, metadata: { interos_contract_id: c.id, interos_version: c.version, interos_envelope_id: c.signatureEnvelopeId } };
+    expect((await processClicksignWebhook(hook({ event: { name: "deadline" }, document }))).message).toBe("Prazo vencido registrado");
+    expect((await getById<Contract>(COLLECTIONS.contracts, c.id))?.signedAt).toBeUndefined();
   });
 
   it("contrato de outro INTEROS (id que não existe aqui) é ignorado e não vai para a caixa de entrada", async () => {
