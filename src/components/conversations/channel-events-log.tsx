@@ -69,6 +69,7 @@ export function ChannelEventsLog({ data }: { data: ChannelEventsAdmin }) {
               { value: "", label: "Todos" },
               { value: "whatsapp", label: "WhatsApp" },
               { value: "email", label: "E-mail" },
+              { value: "voz", label: "Telefonia" },
             ]}
           />
         </FilterField>
@@ -112,7 +113,7 @@ export function ChannelEventsLog({ data }: { data: ChannelEventsAdmin }) {
                       </button>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-sm tabular-nums">{formatDateTime(e.occurredAt)}</TableCell>
-                    <TableCell className="text-sm">{e.channel === "whatsapp" ? "WhatsApp" : "E-mail"}</TableCell>
+                    <TableCell className="text-sm">{e.channel === "whatsapp" ? "WhatsApp" : e.channel === "voz" ? "Telefonia" : "E-mail"}</TableCell>
                     <TableCell className="text-sm">{KIND[e.kind]}</TableCell>
                     <TableCell className="font-mono text-[13px]">{e.contactMasked ?? "—"}</TableCell>
                     <TableCell>

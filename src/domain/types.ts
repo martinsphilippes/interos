@@ -126,6 +126,7 @@ export const COLLECTIONS = {
   /** Respostas rápidas da Central («/atalho» no campo de resposta). */
   quickReplies: "quick_replies",
   supervisionLogs: "supervision_logs",
+  recordingAccessLogs: "recording_access_logs",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -243,6 +244,8 @@ export interface UserCentralSettings {
   channels?: ConversationChannel[];
   /** Assinatura acrescentada às respostas por e-mail. */
   emailSignature?: string;
+  /** Ramal (telefonia): quem tem ramal recebe as ligações das filas em que está. */
+  extension?: string;
 }
 
 export const USER_PRESENCES = ["online", "ausente", "ocupado", "pausa"] as const;
@@ -1927,7 +1930,31 @@ export interface Communication extends BaseEntity {
   conversationId?: string;
   /** Telefone ou e-mail do outro lado (de quem veio ou para quem foi), como o provedor informou. */
   address?: string;
+  // --- Ligações (channel "voip"; fase 3 da Central) ---
+  /** Resultado da ligação. Registros antigos sem o campo: deduzido de durationSeconds (ver callStatusOf). */
+  callStatus?: CallStatus;
+  /** Id da ligação no provedor (Twilio CallSid da ligação principal). */
+  callSid?: string;
+  fromNumber?: string;
+  toNumber?: string;
+  /** Fila do número que recebeu a ligação. */
+  queueId?: string;
+  /** Recado deixado no correio de voz. */
+  voicemail?: boolean;
+  /** Recado ouvido/tratado (correio de voz). */
+  handledAt?: string;
+  handledById?: string;
+  /** Ligação perdida já retornada (por quem e quando). */
+  returnedAt?: string;
+  returnedById?: string;
+  /** Gravação no provedor (o áudio é servido pelo INTEROS, com registro de acesso). */
+  recordingSid?: string;
+  /** A gravação foi apagada pelo prazo da política de gravação. */
+  recordingDeletedAt?: string;
 }
+
+export const CALL_STATUSES = ["em_andamento", "atendida", "perdida", "sem_resposta", "ocupado", "falha"] as const;
+export type CallStatus = (typeof CALL_STATUSES)[number];
 
 // ---------------------------------------------------------------------------
 // Central de Atendimento (módulo Comunicação)
@@ -2003,6 +2030,15 @@ export interface Conversation extends BaseEntity {
   escalatedById?: string;
 }
 
+/** Acesso a gravação de ligação: quem ouviu ou baixou, quando e por quê (política de gravação). */
+export interface RecordingAccessLog extends BaseEntity {
+  userId: string;
+  communicationId: string;
+  action: "ouvir" | "baixar";
+  reason?: string;
+  at: string;
+}
+
 /** Registro de supervisão: quem acompanhou, sussurrou, assumiu ou escalou qual conversa, e por quanto tempo. */
 export interface SupervisionLog extends BaseEntity {
   supervisorId: string;
@@ -2050,7 +2086,8 @@ export type ChannelEventResult = "processado" | "duplicado" | "ignorado" | "falh
 
 /** Registro técnico de um aviso do provedor (mensagem, status de entrega, assinatura inválida, erro de envio). */
 export interface ChannelEvent extends BaseEntity {
-  channel: ConversationChannel;
+  /** "voz" = telefonia (avisos da Twilio). */
+  channel: ConversationChannel | "voz";
   kind: "mensagem_recebida" | "status" | "envio" | "autenticacao";
   result: ChannelEventResult;
   /** Explicação em português do que aconteceu. */

@@ -645,6 +645,15 @@ pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`sr
 - **Alertas do gerente** (`central_alertas`, desligados por padrão; passo do agendador): fila cheia, SLA em risco,
   cliente sem resposta e pausa longa, como notificação ao gestor do operador ou do departamento da fila (sem gestor,
   admins), cada um no máximo a cada `repeatMinutes` (estado em `central_alertas_estado`).
+- **Telefonia** (fase 3, `src/server/telephony/*`, adaptador `src/server/integrations/twilio.ts`): ligação = comunicação
+  `voip` com id `call_<hash do CallSid>` (avisos repetidos não duplicam), `callStatus`, números, fila, gravação e
+  recado. Rotas da Twilio em `/api/voice/{incoming,outgoing,dial-result,voicemail,recording}` (assinatura
+  X-Twilio-Signature conferida). Recebida: no horário e com alguém disponível (ramal + online + atende na Central, nas
+  filas do número) toca em todos; senão, correio de voz. Softphone no navegador (`@twilio/voice-sdk`, token em
+  `/api/voice/token`; links `tel:` do INTEROS ligam por ele), transferência direta para ramal ou número. Gravações
+  servidas por `/api/voice/recordings/<acesso>` depois de `openRecordingAction` (escopo, política, motivo e registro em
+  `recording_access_logs`); o agendador apaga as vencidas. Telas: Ligações, Correio de voz e PABX (ramais, números,
+  horários, provedor, qualidade, histórico de mudanças).
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.

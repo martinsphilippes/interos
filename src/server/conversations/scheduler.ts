@@ -127,6 +127,11 @@ export async function runCentralSweep(now: Date = new Date()): Promise<CentralSw
     return r.ok ? `${r.total} modelo(s) lido(s) da Meta` : `falha: ${r.error}`;
   });
 
+  await step(report, "gravações vencidas", async () => {
+    const { purgeExpiredRecordings } = await import("@/server/telephony/retention");
+    return `${await purgeExpiredRecordings(now)} gravação(ões) apagada(s)`;
+  });
+
   await step(report, "alertas do gerente", async () => {
     const { runManagerAlerts } = await import("./supervision");
     return `${await runManagerAlerts(t)} alerta(s) enviado(s)`;

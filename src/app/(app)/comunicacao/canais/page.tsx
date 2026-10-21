@@ -123,7 +123,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Sea
           ) : (
             <ChannelEventsLog
               data={await getChannelEventsAdmin({
-                channel: (["whatsapp", "email"] as ConversationChannel[]).find((c) => c === first(sp.canal)),
+                channel: (["whatsapp", "email", "voz"] as (ConversationChannel | "voz")[]).find((c) => c === first(sp.canal)),
                 result: EVENT_RESULTS.find((r) => r === first(sp.resultado)),
                 q: first(sp.q),
               })}

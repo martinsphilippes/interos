@@ -1,9 +1,10 @@
 import { HELP_LINKS, SEARCH_CREATE_LINKS, SEARCH_SHORTCUTS, USER_MENU_LINKS, type RoleKey } from "@/domain/constants";
-import { requireUser } from "@/server/auth/session";
+import { can, requireUser } from "@/server/auth/session";
 import { filterMobileNav, filterNavigation, filterQuickActions, filterShellLinks, hrefAccessMap } from "@/server/auth/navigation";
 import { listNotifications } from "@/server/notifications";
 import { AppShell, type ShellLinks, type ShellUser } from "@/components/layout/app-shell";
 import { getPauseReasons } from "@/server/conversations/ops-settings";
+import { twilioConfigured } from "@/server/integrations/twilio";
 
 /** Papéis que veem o seletor de presença na top bar (telas operacionais), além dos gestores. */
 const PRESENCE_ROLES: readonly RoleKey[] = ["vendas", "suporte", "cs", "implantacao"];
@@ -55,7 +56,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   };
 
   return (
-    <AppShell user={shellUser} sections={sections} mobileNav={mobileNav} links={links} unreadCount={unreadCount} quickActions={quickActions} showPresence={showPresence}>
+    <AppShell user={shellUser} sections={sections} mobileNav={mobileNav} links={links} unreadCount={unreadCount} quickActions={quickActions} showPresence={showPresence} softphone={twilioConfigured() && can(user, "comunicacao.ligacoes.ligar")}>
       {children}
     </AppShell>
   );

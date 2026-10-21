@@ -16,6 +16,8 @@ import { saveUserCentral } from "@/server/conversations/queues";
 import { escalate, runManagerAlerts, touchMonitoring, whisper } from "@/server/conversations/supervision";
 import { ALERTS_SETTING, writeSetting } from "@/server/conversations/ops-settings";
 import { buildThread } from "@/server/conversations/queries";
+import { applyCallResult, applyRecording, availableAgents, callId, getPabx, pabxHistory, recordIncomingCall, recordOutgoingCall, savePabx } from "@/server/telephony/service";
+import { needsCallback } from "@/domain/telephony";
 import { runCentralSweep } from "@/server/conversations/scheduler";
 import { quickRepliesFor, saveQuickReply, listQuickReplies } from "@/server/conversations/quick-replies";
 import { patchFields } from "@/server/conversations/store";
@@ -31,6 +33,8 @@ const OP = { id: `${RUN}_op`, name: "Operadora Teste" };
 const QUEUE_ID = `${RUN}_fila`;
 
 let savedQueues: { id: string; data: unknown }[] = [];
+/** Configuração do PABX antes dos testes (null = não existia; undefined = os testes de telefonia não rodaram). */
+let pabxBackup: unknown = undefined;
 const conversationIds = new Set<string>();
 const leadIds = new Set<string>();
 
@@ -62,6 +66,9 @@ afterAll(async () => {
   await sql`delete from interos.quick_replies where data->>'shortcut' like ${RUN + "%"}`;
   if (ids.length) await sql`delete from interos.supervision_logs where data->>'conversationId' = any(${ids})`;
   await sql`delete from interos.settings where data->>'key' in ('central_alertas', 'central_alertas_estado')`;
+  await sql`delete from interos.communications where data->>'callSid' like ${RUN + "%"}`;
+  if (pabxBackup === null) await sql`delete from interos.settings where data->>'key' = 'pabx'`;
+  else if (pabxBackup) await sql`update interos.settings set data = ${sql.json(pabxBackup as never)} where data->>'key' = 'pabx'`;
   await sql`delete from interos.service_queues`;
   for (const q of savedQueues) await sql`insert into interos.service_queues (id, data) values (${q.id}, ${sql.json(q.data as never)})`;
   await closeDocdb();
@@ -340,5 +347,64 @@ describe("fase 2: supervisão", () => {
     const first = await runManagerAlerts();
     expect(first).toBeGreaterThanOrEqual(1);
     expect(await runManagerAlerts()).toBe(0);
+  });
+});
+
+describe("fase 3: telefonia", () => {
+  const CALL_IN = `${RUN}CAin`;
+  const CALL_IN2 = `${RUN}CAin2`;
+  const CALL_OUT = `${RUN}CAout`;
+  const CALLER = `+5591${String(Date.now() + 71).slice(-8)}`;
+
+  beforeAll(async () => {
+    const [row] = (await docdb.sql()`select data from interos.settings where data->>'key' = 'pabx'`) as unknown as { data: unknown }[];
+    pabxBackup = row ? row.data : null;
+  });
+
+  it("ligação recebida: registro idempotente, perdida sem retorno, recado e retorno ao ligar de volta", async () => {
+    const a = await recordIncomingCall({ callSid: CALL_IN, from: CALLER, to: "+558835700001", queueId: QUEUE_ID });
+    const b = await recordIncomingCall({ callSid: CALL_IN, from: CALLER, to: "+558835700001", queueId: QUEUE_ID });
+    expect(b.id).toBe(a.id);
+    expect(a.id).toBe(callId(CALL_IN));
+    const missed = await applyCallResult(CALL_IN, "no-answer", 0);
+    expect(missed?.callStatus).toBe("perdida");
+    expect(needsCallback(missed!)).toBe(true);
+    await applyRecording(CALL_IN, `${RUN}RE1`, 14, true);
+    const vm = await getById<Communication>(COLLECTIONS.communications, a.id);
+    expect(vm).toMatchObject({ voicemail: true, recordingSid: `${RUN}RE1`, durationSeconds: 14 });
+
+    // Ligar de volta pelo softphone marca a perdida como retornada.
+    await recordOutgoingCall({ callSid: CALL_OUT, userId: OP.id, to: CALLER.replace("+55", "") });
+    expect((await getById<Communication>(COLLECTIONS.communications, a.id))?.returnedById).toBe(OP.id);
+    const done = await applyCallResult(CALL_OUT, "completed", 95);
+    expect(done).toMatchObject({ callStatus: "atendida", durationSeconds: 95, direction: "saida" });
+  });
+
+  it("atendida: resultado com duração; o aviso repetido não muda nada", async () => {
+    await recordIncomingCall({ callSid: CALL_IN2, from: CALLER, to: "+558835700001", queueId: QUEUE_ID });
+    const r = await applyCallResult(CALL_IN2, "completed", 40);
+    expect(r?.callStatus).toBe("atendida");
+    const saved = await getById<Communication>(COLLECTIONS.communications, callId(CALL_IN2));
+    await applyCallResult(CALL_IN2, "completed", 40);
+    expect((await getById<Communication>(COLLECTIONS.communications, callId(CALL_IN2)))?.updatedAt).toBe(saved?.updatedAt);
+  });
+
+  it("quem toca: ramal + online + atende na Central", async () => {
+    await update<User>(COLLECTIONS.users, OP.id, { presence: "online", central: { attends: true } });
+    expect((await availableAgents(QUEUE_ID)).map((u) => u.id)).not.toContain(OP.id);
+    await update<User>(COLLECTIONS.users, OP.id, { central: { attends: true, extension: "1077" } });
+    expect((await availableAgents(QUEUE_ID)).map((u) => u.id)).toContain(OP.id);
+    await update<User>(COLLECTIONS.users, OP.id, { presence: "pausa" });
+    expect((await availableAgents(QUEUE_ID)).map((u) => u.id)).not.toContain(OP.id);
+  });
+
+  it("PABX: número inválido recusado; número salvo em E.164 e mudança no histórico", async () => {
+    const base = await getPabx();
+    const { stored, ...config } = base;
+    void stored;
+    await expect(savePabx({ ...config, numbers: [{ number: "123", label: "x", active: true }] }, OP)).rejects.toThrow(/Número inválido/);
+    await savePabx({ ...config, numbers: [{ number: "(88) 3570-0001", label: "Principal", active: true, queueId: QUEUE_ID }] }, OP);
+    expect((await getPabx()).numbers[0].number).toBe("+558835700001");
+    expect((await pabxHistory()).some((e) => e.description?.includes("números"))).toBe(true);
   });
 });
