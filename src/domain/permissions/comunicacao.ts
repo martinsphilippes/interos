@@ -81,10 +81,10 @@ export const COMUNICACAO = {
         },
         {
           key: "comunicacao.central.distribuir",
-          label: "Atribuir conversa a outro operador",
+          label: "Atribuir conversa a outro operador e gerir a equipe na Central (redistribuir, devolver à fila, liberar atendente)",
           verb: "distribuir",
           rule: { manager: true },
-          guards: ["src/server/conversations/actions.ts#assignConversationAction"],
+          guards: ["src/server/conversations/actions.ts#assignConversationAction", "src/server/conversations/actions.ts#redistributeConversationAction", "src/server/conversations/actions.ts#releaseOperatorAction"],
         },
       ],
       scope: {
@@ -396,10 +396,10 @@ export const COMUNICACAO = {
       actions: [
         {
           key: "comunicacao.ligacoes.ligar",
-          label: "Ligar e atender pelo softphone (transferir, marcar retorno)",
+          label: "Ligar e atender pelo softphone (transferir, marcar retorno) e ligar da conversa da Central",
           verb: "ligar",
           rule: "all",
-          guards: ["src/server/telephony/actions.ts#claimCallAction", "src/server/telephony/actions.ts#transferCallAction", "src/server/telephony/actions.ts#transferTargetsAction", "src/server/telephony/actions.ts#markCallReturnedAction", "src/server/telephony/monitor-actions.ts#callMonitorNoticeAction"],
+          guards: ["src/server/conversations/actions.ts#registerConversationCallAction", "src/server/telephony/actions.ts#claimCallAction", "src/server/telephony/actions.ts#transferCallAction", "src/server/telephony/actions.ts#transferTargetsAction", "src/server/telephony/actions.ts#markCallReturnedAction", "src/server/telephony/monitor-actions.ts#callMonitorNoticeAction"],
         },
         {
           key: "comunicacao.ligacoes.gravacoes.ouvir",

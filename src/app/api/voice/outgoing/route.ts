@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { readVoiceRequest, twiml } from "@/server/telephony/webhook";
 import { getPabx, recordOutgoingCall } from "@/server/telephony/service";
 import { joinMonitorTwiml } from "@/server/telephony/monitor";
+import { loadConversationInScope } from "@/server/conversations/queries";
 import { currentUserFor } from "@/server/auth/session";
 import { can } from "@/server/auth/permissions";
 import { getRecordingPolicy } from "@/server/conversations/ops-settings";
@@ -14,6 +15,7 @@ import { hangupTwiml, outgoingTwiml, toE164 } from "@/domain/telephony";
  * Ligação feita pelo softphone (Voice URL do TwiML App): From = "client:<id do usuário>", To = número. Liga com a bina
  * do PABX e grava pela política. Assinatura da Twilio conferida; usuário inativo ou sem ramal não liga.
  * Com o parâmetro `monitor` (id da ligação), é o gerente entrando na supervisão: confere a permissão e quem pediu.
+ * Com o parâmetro `conversation`, a ligação saiu do botão «Ligar» de uma conversa da Central e fica registrada nela.
  */
 export async function POST(request: NextRequest) {
   const req = await readVoiceRequest(request);
@@ -31,6 +33,8 @@ export async function POST(request: NextRequest) {
   const [pabx, policy] = await Promise.all([getPabx(), getRecordingPolicy()]);
   const callerId = pabx.numbers.find((n) => n.active)?.number ?? defaultCallerId();
   if (!callerId) return twiml(hangupTwiml("O PABX ainda não tem número para ligar."));
-  await recordOutgoingCall({ callSid: params.CallSid, userId: user.id, to, from: callerId });
+  // Ligação feita a partir de uma conversa da Central: só liga a conversa se ela estiver no escopo de quem liga.
+  const conversation = params.conversation ? await loadConversationInScope(await currentUserFor(user), params.conversation) : null;
+  await recordOutgoingCall({ callSid: params.CallSid, userId: user.id, to, from: callerId, conversation: conversation ?? undefined });
   return twiml(outgoingTwiml({ to, callerId, record: policy.enabled, dialAction: `${base}/api/voice/dial-result`, recordingCallback: `${base}/api/voice/recording` }));
 }

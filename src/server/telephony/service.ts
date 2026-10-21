@@ -9,7 +9,7 @@ import { create, createIfAbsent, getById, getManyByIds, list, nowIso, update } f
 import { emitEvent } from "@/server/events";
 import { notify } from "@/server/notifications";
 import { BusinessError } from "@/server/auth/error-classes";
-import { COLLECTIONS, type Communication, type DomainEvent, type Settings, type User, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type Communication, type Conversation, type DomainEvent, type Settings, type User, type UserRef } from "@/domain/types";
 import { CALL_STATUS_LABELS, DEFAULT_PABX, DEFAULT_RATES, callStatusFromProvider, needsCallback, toE164, type PabxConfig } from "@/domain/telephony";
 import { displayPhone } from "@/domain/phone";
 import { formatCallDuration } from "@/lib/format";
@@ -119,8 +119,10 @@ export async function recordIncomingCall(input: { callSid: string; from: string;
 }
 
 /** Ligação feita pelo softphone. Idempotente pelo CallSid. */
-export async function recordOutgoingCall(input: { callSid: string; userId: string; to: string; from?: string }): Promise<Communication> {
-  const who = await identityFor(input.to);
+export async function recordOutgoingCall(input: { callSid: string; userId: string; to: string; from?: string; conversation?: Pick<Conversation, "id" | "clientId" | "contactId" | "leadId"> }): Promise<Communication> {
+  // Ligação feita a partir de uma conversa da Central: fica na conversa e com a identidade dela.
+  const c = input.conversation;
+  const who = c && (c.clientId || c.contactId || c.leadId) ? { clientId: c.clientId, contactId: c.contactId, leadId: c.leadId } : await identityFor(input.to);
   const { doc } = await createIfAbsent<Communication>(COLLECTIONS.communications, callId(input.callSid), {
     channel: "voip",
     direction: "saida",
@@ -137,6 +139,7 @@ export async function recordOutgoingCall(input: { callSid: string; userId: strin
     fromNumber: input.from,
     toNumber: input.to,
     address: input.to,
+    ...(c ? { conversationId: c.id } : {}),
   });
   // Retorno de uma perdida: a perdida mais recente desse número passa a «retornada».
   if (who.clientId || who.contactId || who.leadId || input.to) await markReturnedByNumber(input.to, input.userId);

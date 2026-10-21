@@ -36,7 +36,8 @@ import {
   type User,
   type UserRef,
 } from "@/domain/types";
-import { contactKeyOf, withNinthDigit } from "@/domain/phone";
+import { contactKeyOf, nationalNumber, withNinthDigit } from "@/domain/phone";
+import type { ManualCallOutcome } from "@/domain/conversation-call";
 import { CHANNEL_INFO, CHANNEL_NAMES, metaReplyWindow } from "@/domain/channels";
 import { replySubject } from "@/domain/email-inbound";
 import { CLOSE_REASON_LABELS, isOpenConversation, pickAssignee, whatsappWindow, type QueueCandidate } from "@/domain/conversations";
@@ -527,6 +528,95 @@ export async function addConversationNote(id: string, body: string, actor: UserR
     status: "enviada",
     provider: "outro",
     createdBy: actor.id,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Gestão da equipe pela Central (aba Equipe): redistribuir e liberar atendente
+// ---------------------------------------------------------------------------
+
+/** Fila para onde volta uma conversa: a dela (se ativa e atende o canal) ou a fila padrão. */
+async function returnQueueFor(c: Conversation): Promise<ServiceQueue> {
+  const queues = await listActiveQueues();
+  const own = c.queueId ? queues.find((q) => q.id === c.queueId && q.channels.includes(c.channel)) : undefined;
+  const target = own ?? queues.find((q) => q.isDefault && q.channels.includes(c.channel)) ?? queues.find((q) => q.channels.includes(c.channel));
+  if (!target) throw new BusinessError(`Nenhuma fila ativa atende ${CHANNEL_LABEL[c.channel]}: passe para uma pessoa`);
+  return target;
+}
+
+/** O gestor passa a conversa para outra pessoa ou a devolve para a fila (fica nota na conversa). */
+export async function redistributeConversation(id: string, target: { toUserId?: string; toQueue?: boolean }, actor: UserRef): Promise<Conversation> {
+  const c = await loadConversation(id);
+  requireOpen(c);
+  if (target.toUserId) return transferConversation(c.id, { toUserId: target.toUserId, note: `redistribuída por ${actor.name} (Equipe)` }, actor);
+  if (!c.assigneeId) throw new BusinessError("A conversa já está na fila");
+  const queue = await returnQueueFor(c);
+  await transferConversation(c.id, { toQueueId: queue.id, note: `devolvida para a fila por ${actor.name} (Equipe)` }, actor);
+  // A fila já foi distribuída: devolve como ficou (com alguém livre ou esperando).
+  return loadConversation(c.id);
+}
+
+/**
+ * Libera um atendente: todas as conversas abertas dele voltam para a fila (cada uma para a sua) e, se pedido, ele sai
+ * da distribuição (fica «Ausente»). Em seguida a fila é distribuída entre quem está disponível.
+ */
+export async function releaseOperator(operatorId: string, options: { away: boolean }, actor: UserRef): Promise<{ returned: number; failed: number }> {
+  const operator = await getById<User>(COLLECTIONS.users, operatorId);
+  if (!operator) throw new BusinessError("Atendente não encontrado");
+  const mine = (await list<Conversation>(COLLECTIONS.conversations, { where: [["assigneeId", "==", operatorId]] })).filter(isOpenConversation);
+  if (options.away && operator.presence !== "ausente") {
+    await patchFields<User>(COLLECTIONS.users, operatorId, { presence: "ausente", presenceUpdatedAt: nowIso(), pauseReasonKey: undefined });
+  }
+  let returned = 0;
+  let failed = 0;
+  for (const c of mine) {
+    try {
+      const queue = await returnQueueFor(c);
+      await transferConversation(c.id, { toQueueId: queue.id, note: `devolvida para a fila por ${actor.name} (liberação de ${operator.name})` }, actor);
+      returned += 1;
+    } catch (error) {
+      console.error("[conversas] falha ao devolver conversa para a fila", c.id, error);
+      failed += 1;
+    }
+  }
+  await emitEvent({
+    type: "user.updated",
+    actor,
+    entity: { type: "user", id: operatorId },
+    title: `${operator.name} liberado da Central por ${actor.name}`,
+    description: `${returned} conversa(s) devolvida(s) para a fila${options.away ? " · ficou ausente (fora da distribuição)" : ""}`,
+    department: operator.departmentId,
+    payload: { changed: options.away ? ["presença"] : [], operatorId, returned, failed, away: options.away },
+    timeline: false,
+  });
+  if (returned > 0) await distributeWaitingSafely();
+  return { returned, failed };
+}
+
+/**
+ * Ligação feita pelo aparelho do atendente (sem a telefonia do INTEROS), registrada à mão na conversa: número,
+ * resultado e uma anotação. Entra no histórico do cliente/lead como as demais ligações.
+ */
+export async function registerConversationCall(id: string, input: { number: string; outcome: ManualCallOutcome; note?: string }, actor: UserRef): Promise<Communication> {
+  const c = await loadConversation(id);
+  const number = nationalNumber(input.number);
+  if (number.length < 10 || number.length > 11) throw new BusinessError("Informe o número com DDD");
+  return recordCommunication({
+    channel: "voip",
+    direction: "saida",
+    userId: actor.id,
+    createdBy: actor.id,
+    clientId: c.clientId,
+    contactId: c.contactId,
+    conversationId: c.id,
+    entityType: c.leadId && !c.clientId ? "lead" : "conversation",
+    entityId: c.leadId && !c.clientId ? c.leadId : c.id,
+    status: "manual",
+    provider: "manual",
+    callStatus: input.outcome,
+    toNumber: number,
+    address: number,
+    body: input.note?.trim() || undefined,
   });
 }
 

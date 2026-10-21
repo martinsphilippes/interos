@@ -10,12 +10,16 @@ import { can, failAction, requirePermission } from "@/server/auth/session";
 import { resolveDataScope, scopeAllows } from "@/server/auth/scope";
 import { BusinessError, PermissionError } from "@/server/auth/errors";
 import { getById, list } from "@/server/db";
-import { COLLECTIONS, type ActionResult, type Client, type Contact, type Conversation, type CurrentUser, type Lead, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type ActionResult, type Client, type Contact, type Conversation, type CurrentUser, type Lead, type User, type UserRef } from "@/domain/types";
 import { CHANNEL_NAMES } from "@/domain/channels";
+import { MANUAL_CALL_OUTCOMES } from "@/domain/conversation-call";
 import { emailIdentity, phoneIdentity } from "@/domain/phone";
 import {
   addConversationNote,
   assignConversation,
+  registerConversationCall,
+  redistributeConversation,
+  releaseOperator,
   distributeWaitingSafely,
   assumeConversation,
   closeConversation,
@@ -179,6 +183,27 @@ export async function linkConversationIdentityAction(input: unknown): Promise<Ac
   }
 }
 
+const callSchema = z.object({
+  conversationId: z.string().min(1),
+  number: z.string().trim().min(8, "Informe o número com DDD").max(30),
+  outcome: z.enum(MANUAL_CALL_OUTCOMES, { message: "Escolha como foi a ligação" }),
+  note: z.string().trim().max(1000).optional(),
+});
+
+/** Ligação feita pelo aparelho (sem a telefonia do INTEROS), registrada na conversa com o resultado. */
+export async function registerConversationCallAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const user = await requirePermission("comunicacao.ligacoes.ligar");
+    const data = callSchema.parse(input);
+    const c = await assertConversationAccess(user, data.conversationId);
+    const call = await registerConversationCall(c.id, { number: data.number, outcome: data.outcome, note: data.note }, actor(user));
+    revalidateCentral(c.clientId);
+    return { ok: true, data: { id: call.id } };
+  } catch (error) {
+    return fail(error, "Não foi possível registrar a ligação");
+  }
+}
+
 export async function assignConversationAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   try {
     const user = await requirePermission("comunicacao.central.distribuir");
@@ -189,6 +214,40 @@ export async function assignConversationAction(input: unknown): Promise<ActionRe
     return { ok: true, data: { id: c.id } };
   } catch (error) {
     return fail(error, "Não foi possível atribuir a conversa");
+  }
+}
+
+const redistributeSchema = z
+  .object({ conversationId: z.string().min(1), toUserId: z.string().min(1).optional(), toQueue: z.boolean().optional() })
+  .refine((d) => Boolean(d.toUserId) !== Boolean(d.toQueue), { message: "Escolha uma pessoa ou a fila" });
+
+/** Aba Equipe: o gestor passa a conversa para outra pessoa ou a devolve para a fila. */
+export async function redistributeConversationAction(input: unknown): Promise<ActionResult<{ id: string; assigneeName?: string }>> {
+  try {
+    const user = await requirePermission("comunicacao.central.distribuir");
+    const data = redistributeSchema.parse(input);
+    const c = await assertConversationAccess(user, data.conversationId);
+    const next = await redistributeConversation(c.id, { toUserId: data.toUserId, toQueue: data.toQueue }, actor(user));
+    const assignee = next.assigneeId ? await getById<User>(COLLECTIONS.users, next.assigneeId) : null;
+    revalidateCentral(c.clientId);
+    return { ok: true, data: { id: c.id, assigneeName: assignee?.name } };
+  } catch (error) {
+    return fail(error, "Não foi possível redistribuir a conversa");
+  }
+}
+
+/** Aba Equipe: devolve todas as conversas do atendente para a fila e, se pedido, o tira da distribuição (ausente). */
+export async function releaseOperatorAction(input: unknown): Promise<ActionResult<{ returned: number; failed: number }>> {
+  try {
+    const user = await requirePermission("comunicacao.central.distribuir");
+    const data = z.object({ operatorId: z.string().min(1), away: z.boolean() }).parse(input);
+    const scope = await resolveDataScope(user, "comunicacao.central");
+    if (!scopeAllows(scope, [data.operatorId])) throw new PermissionError("Este atendente está fora da sua equipe");
+    const result = await releaseOperator(data.operatorId, { away: data.away }, actor(user));
+    revalidateCentral();
+    return { ok: true, data: result };
+  } catch (error) {
+    return fail(error, "Não foi possível liberar o atendente");
   }
 }
 

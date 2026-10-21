@@ -16,6 +16,7 @@ import { toast } from "@/components/ui/toast";
 import { displayPhone } from "@/domain/phone";
 import { cn } from "@/lib/utils";
 import { CloseDialog } from "./close-dialog";
+import { ConversationCallButton } from "./call-button";
 import { ConversationComposer } from "./conversation-composer";
 import { ConversationContext } from "./conversation-context";
 import { IdentifyDialog } from "./identify-dialog";
@@ -83,6 +84,7 @@ export function ConversationPanel({ detail, transferOptions, currentUserId, now,
                 <Hand /> Assumir
               </Button>
             ) : null}
+            <ConversationCallButton detail={detail} />
             {caps.identify && c.identity === "desconhecido" ? (
               <Button size="sm" variant="outline" onClick={() => setDialog("identify")} className="min-h-[40px] md:min-h-8">
                 <UserPlus /> Quem é?

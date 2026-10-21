@@ -16,6 +16,7 @@ import { isOpenTicket } from "@/server/support/service";
 import {
   CONVERSATION_CHANNELS,
   COLLECTIONS,
+  type ChatVisitor,
   type Client,
   type Communication,
   type Contact,
@@ -34,6 +35,7 @@ import {
 } from "@/domain/types";
 import type { SlaState } from "@/domain/constants";
 import { displayPhone } from "@/domain/phone";
+import { callNumbers, callThreadText, type CallNumber } from "@/domain/conversation-call";
 import { CLOSE_REASON_LABELS, CONVERSATION_STATUS_LABELS, isOpenConversation, whatsappWindow, type WindowState } from "@/domain/conversations";
 import { listQueues, queuesOf } from "./queues";
 import { NOTE_TEMPLATE_KEY, conversationValues } from "./service";
@@ -257,7 +259,7 @@ export async function getCentralOverview(user: CurrentUser, filters: CentralFilt
 export type ThreadEntry =
   | { kind: "message"; id: string; at: string; direction: "entrada" | "saida"; authorName: string; authorRole?: string; body: string; channel: ConversationChannel; manual: boolean; delivered: boolean; statusLabel: string }
   | { kind: "note"; id: string; at: string; authorName: string; body: string }
-  | { kind: "system"; id: string; at: string; title: string; description?: string };
+  | { kind: "system"; id: string; at: string; title: string; description?: string; /** Ligação (ícone de telefone). */ call?: boolean };
 
 export interface ConversationContext {
   client?: { id: string; tradeName: string; status: Client["status"]; healthScore?: number; healthLevel?: Client["healthLevel"]; mrr: number };
@@ -298,6 +300,8 @@ export interface ComposerQuickReply {
 
 export interface ConversationDetail {
   conversation: Conversation;
+  /** Ligar para o cliente (quem tem a permissão de ligar): números conhecidos desta conversa. */
+  call?: { numbers: CallNumber[] };
   /** Modelos aprovados para conversa (WhatsApp). */
   templates: ComposerTemplate[];
   /** Respostas rápidas das filas do usuário (e da empresa). */
@@ -341,8 +345,22 @@ export function buildThread(conversation: Conversation, messages: Communication[
       thread.push({ kind: "note", id: m.id, at: m.createdAt, authorName: `Sussurro de ${authorName}`, body: m.body ?? "" });
       continue;
     }
-    // Ligação (voip) e registros internos não são mensagens da conversa.
-    if (m.channel === "voip" || m.channel === "interno") continue;
+    // Ligação feita/recebida a partir da conversa: aparece como registro (não é mensagem).
+    if (m.channel === "voip") {
+      const { title, description } = callThreadText({
+        direction: m.direction,
+        number: m.direction === "entrada" ? (m.fromNumber ?? m.address) : (m.toNumber ?? m.address),
+        status: m.callStatus,
+        durationSeconds: m.durationSeconds,
+        manual: m.status === "manual",
+        authorName: author ? (author === ctx.viewerId ? "você" : authorName) : undefined,
+        note: m.body,
+      });
+      thread.push({ kind: "system", id: m.id, at: m.createdAt, title, description, call: true });
+      continue;
+    }
+    // Registros internos não são mensagens da conversa.
+    if (m.channel === "interno") continue;
     thread.push({
       kind: "message",
       id: m.id,
@@ -365,6 +383,20 @@ export function buildThread(conversation: Conversation, messages: Communication[
     thread.push({ kind: "system", id: `${conversation.id}_fim`, at: conversation.closedAt, title: `Atendimento encerrado${closer ? ` por ${closer}` : ""}`, description: [conversation.closeReason ? CLOSE_REASON_LABELS[conversation.closeReason] : undefined, conversation.closeSummary].filter(Boolean).join(" · ") });
   }
   return thread;
+}
+
+/** Números para ligar a partir da conversa: o da conversa (WhatsApp), o do contato, do cliente, do lead ou do chat. */
+async function conversationCallNumbers(c: Conversation, who: { client?: Client; contact?: Contact; lead?: Lead; contacts: Contact[] }): Promise<CallNumber[]> {
+  const visitor = c.channel === "chat" ? await getById<ChatVisitor>(COLLECTIONS.chatVisitors, c.address) : null;
+  const others = who.contacts.filter((x) => x.id !== who.contact?.id);
+  return callNumbers([
+    { label: "WhatsApp desta conversa", numbers: c.channel === "whatsapp" ? [c.address] : [] },
+    { label: who.contact?.name ?? "Contato", numbers: who.contact ? [who.contact.phone, who.contact.whatsapp] : [] },
+    { label: "Telefone informado no chat", numbers: [visitor?.phone] },
+    { label: who.lead ? `Lead ${who.lead.name}` : "Lead", numbers: who.lead ? [who.lead.phone] : [] },
+    { label: who.client?.tradeName ?? "Cliente", numbers: who.client ? [who.client.phone, who.client.whatsapp] : [] },
+    ...others.map((x) => ({ label: x.name, numbers: [x.phone, x.whatsapp] })),
+  ]);
 }
 
 export async function getConversationDetail(user: CurrentUser, id: string): Promise<ConversationDetail | null> {
@@ -415,8 +447,10 @@ export async function getConversationDetail(user: CurrentUser, id: string): Prom
     getAutoMessages(),
   ]);
   const myQueues = queuesOf(queues, user.id).map((q) => q.id);
+  const call = can(user, "comunicacao.ligacoes.ligar") ? { numbers: await conversationCallNumbers(conversation, { client, contact, lead, contacts }) } : undefined;
   return {
     conversation,
+    call,
     templates: templates.map((t) => {
       const { params, missing } = templateParams(t.variables.slice(0, placeholderCount(t.body)), values);
       return { id: t.id, name: t.name, category: t.category, preview: fillTemplate(t.body, params.map((p, i) => p || `[${t.variables[i]}]`)), missing };
