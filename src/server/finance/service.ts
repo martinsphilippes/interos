@@ -435,32 +435,36 @@ export async function createManualContract(input: { clientId: string; recurrence
 
 /**
  * Após o envio para assinatura, qualquer alteração gera nova versão: assinaturas são zeradas e o
- * contrato volta para "aguardando contrato" (precisa ser reenviado). Devolve o patch a aplicar.
+ * contrato volta para "aguardando contrato" (precisa ser reenviado). Devolve o patch a aplicar e `announce`, que o
+ * chamador roda DEPOIS de gravar (o evento "versão criada" não fica registrado se a gravação for recusada).
  */
-async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: string): Promise<{ patch: Partial<Contract>; clear: string[]; versioned: boolean }> {
-  if (!contract.signatureEnvelopeId) return { patch: {}, clear: [], versioned: false };
+async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: string): Promise<{ patch: Partial<Contract>; clear: string[]; versioned: boolean; announce: () => Promise<void> }> {
+  if (!contract.signatureEnvelopeId) return { patch: {}, clear: [], versioned: false, announce: async () => undefined };
   const version = contract.version + 1;
   // Snapshot COMPLETO da versão anterior (itens, totais, condições, signatários, hash): o documento ?versao=N
   // renderiza como o contrato estava antes da revisão.
   const entry: ContractVersionEntry = stripUndefined({ version: contract.version, kind: "revisao" as const, at: nowIso(), by: actor.id, reason, envelopeId: contract.signatureEnvelopeId, snapshot: contractSnapshot(contract) });
   // A versão enviada pela Clicksign deixa de valer: o chamador cancela lá DEPOIS de gravar a versão nova
-  // (cancelPreviousClicksignDocument), para o aviso de cancelamento já chegar como "versão antiga".
-  await emitEvent({
-    type: "contract.version_created",
-    actor,
-    clientId: contract.clientId,
-    entity: { type: "contract", id: contract.id },
-    title: `Contrato ${contract.number} v${version} criado`,
-    description: `${reason}. Assinaturas anteriores (v${contract.version}) descartadas; reenvie para assinatura.`,
-    department: "financeiro",
-    payload: {
-      contractId: contract.id,
-      fromVersion: contract.version,
-      toVersion: version,
-      previous: { items: contract.items, setupTotal: contract.setupTotal, monthlyTotal: contract.monthlyTotal, hardwareTotal: contract.hardwareTotal, documentHash: contract.documentHash, envelopeId: contract.signatureEnvelopeId },
-    },
-  });
+  // (cancelClicksignSend), para o aviso de cancelamento já chegar como "versão antiga".
+  const announce = async () => {
+    await emitEvent({
+      type: "contract.version_created",
+      actor,
+      clientId: contract.clientId,
+      entity: { type: "contract", id: contract.id },
+      title: `Contrato ${contract.number} v${version} criado`,
+      description: `${reason}. Assinaturas anteriores (v${contract.version}) descartadas; reenvie para assinatura.`,
+      department: "financeiro",
+      payload: {
+        contractId: contract.id,
+        fromVersion: contract.version,
+        toVersion: version,
+        previous: { items: contract.items, setupTotal: contract.setupTotal, monthlyTotal: contract.monthlyTotal, hardwareTotal: contract.hardwareTotal, documentHash: contract.documentHash, envelopeId: contract.signatureEnvelopeId },
+      },
+    });
+  };
   return {
+    announce,
     patch: {
       version,
       status: contract.status === "pendencia" ? "pendencia" : "aguardando_contrato",
@@ -488,6 +492,7 @@ export async function updateContractItems(contractId: string, items: ContractIte
   const version = await versionPatchIfSent(contract, actor, "Itens alterados");
   const patch: Partial<Contract> = { ...version.patch, items: normalized, setupTotal: totals.setupTotal, monthlyTotal: totals.monthlyTotal, hardwareTotal: totals.hardwareTotal };
   const sendAtWrite = await writeContractReturningSend(contract.id, patch, version.clear, contract);
+  await version.announce();
   if (version.versioned) await cancelClicksignSend(contract, sendAtWrite, actor, "O contrato ganhou uma versão nova (itens alterados).");
   const next: Contract = { ...contract, ...patch };
   const audit = auditChanges<Contract>(contract, next, ["items", "setupTotal", "monthlyTotal", "hardwareTotal"]);
@@ -562,6 +567,7 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
   if (!input.firstDueDate && contract.firstDueDate) clear.push("firstDueDate");
   if (!input.paymentCondition && contract.paymentCondition) clear.push("paymentCondition");
   const sendAtWrite = await writeContractReturningSend(contract.id, patch, clear, contract);
+  await version.announce();
   if (version.versioned) await cancelClicksignSend(contract, sendAtWrite, actor, "O contrato ganhou uma versão nova (condições alteradas).");
   const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
   // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão).
