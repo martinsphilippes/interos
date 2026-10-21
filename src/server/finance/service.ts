@@ -61,7 +61,8 @@ import { sendEmail } from "@/server/integrations/providers";
 import { isConnected } from "@/server/integrations/status";
 import { billingProviderConnected, getBillingProvider } from "@/server/integrations/billing-provider";
 import { telHref, whatsappHref } from "@/components/clients/contact-links";
-import { billingEmailSubject, billingLabel, boletoLines, defaultBillingMessage, hasBoletoData, loadBillingMessageContext } from "./billing-message";
+import { billingEmailSubject, billingLabel, billingTemplateValues, boletoLines, defaultBillingMessage, hasBoletoData, loadBillingMessageContext } from "./billing-message";
+import { fillTemplate, placeholderCount, templateParams } from "@/domain/message-variables";
 import { fillPortalLink, templateUsesPortalLink } from "@/domain/portal";
 import { attachPortalLinkCommunication, createMessagePortalLink, redactPortalUrl, revokePortalLink } from "@/server/portal/service";
 import { DEFAULT_GATE_SETTINGS, GATE_SETTING_KEY, PAYMENT_REQUIREMENTS, type BillingDataInput, type BillingMessageChannel, type ContractItemInput, type FinanceGateSettings, type ManualSignatureInput, type RegisterBoletoInput, type RegisterPaymentInput, type UpdateConditionsInput } from "./schemas";
@@ -1501,6 +1502,11 @@ export interface SendBillingMessageOptions {
    * (padrão true; a action passa a permissão financeiro.contratos.portal.gerar). false → o marcador some.
    */
   portalLink?: boolean;
+  /**
+   * WhatsApp com a Meta conectada: envia este modelo aprovado (variáveis da cobrança) em vez do texto livre. Falta de
+   * valor (ex.: sem link do boleto) = segue o texto livre e o motivo fica no registro.
+   */
+  whatsappTemplate?: { name: string; language: string; body: string; variables: string[] };
 }
 
 /**
@@ -1538,14 +1544,24 @@ export async function sendBillingMessage(
   const recorded = redactPortalUrl(body, portal?.url);
   const subject = billingEmailSubject(ctx, { includeBoleto });
   const results: BillingChannelResult[] = [];
+  // Modelo do WhatsApp (régua): parâmetros a partir dos dados da cobrança.
+  let template: { name: string; language: string; params: string[]; text: string } | undefined;
+  if (options.whatsappTemplate && channels.includes("whatsapp")) {
+    const t = options.whatsappTemplate;
+    const { params, missing } = templateParams(t.variables.slice(0, placeholderCount(t.body)), billingTemplateValues(ctx));
+    if (missing.length === 0) template = { name: t.name, language: t.language, params, text: fillTemplate(t.body, params) };
+    else console.warn(`[cobranca] modelo ${t.name} sem valor para ${missing.join(", ")}: segue o texto livre`);
+  }
   for (const channel of channels) {
     const to = channel === "whatsapp" ? ctx.phone : ctx.email;
+    const viaTemplate = channel === "whatsapp" && template ? template : undefined;
     const sent = await sendOrRecord({
       channel,
       to,
       subject,
-      text: body,
-      recordText: recorded,
+      text: viaTemplate ? viaTemplate.text : body,
+      recordText: viaTemplate ? viaTemplate.text : recorded,
+      whatsappTemplate: viaTemplate ? { name: viaTemplate.name, language: viaTemplate.language, params: viaTemplate.params } : undefined,
       clientId: client.id,
       contactId: ctx.contact?.id ?? ctx.primary?.id,
       templateKey: options.templateKey ?? "cobranca",

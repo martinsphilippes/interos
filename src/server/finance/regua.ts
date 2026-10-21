@@ -179,6 +179,8 @@ export interface ReguaPreview {
   pausedByPendency: number;
   items: ReguaPreviewItem[];
   channels: { whatsapp: boolean; email: boolean };
+  /** Modelos do WhatsApp aprovados para cobrança (para escolher em cada marco). */
+  whatsappTemplates: { id: string; label: string; body: string }[];
 }
 
 export async function previewBillingReminders(now: Date = new Date()): Promise<ReguaPreview> {
@@ -201,7 +203,9 @@ export async function previewBillingReminders(now: Date = new Date()): Promise<R
       sample: mine.slice(0, 3).map((t) => `${clients.get(t.billing.clientId)?.tradeName ?? t.billing.clientId} · ${billingLabel(t.billing)} ${formatCurrency(t.billing.amount)} · vence ${formatDate(t.billing.dueDate)}`),
     };
   });
-  return { ativa: settings.ativa, diasUteis: settings.diasUteis, today, openBillings: open.length, pausedByPendency: paused, items, channels: { whatsapp: isConnected("whatsapp"), email: isConnected("email") } };
+  const { usableTemplates } = await import("@/server/conversations/templates");
+  const whatsappTemplates = (await usableTemplates("cobranca")).map((t) => ({ id: t.id, label: `${t.name} (${t.category})`, body: t.body }));
+  return { ativa: settings.ativa, diasUteis: settings.diasUteis, today, openBillings: open.length, pausedByPendency: paused, items, channels: { whatsapp: isConnected("whatsapp"), email: isConnected("email") }, whatsappTemplates };
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +244,9 @@ export async function runBillingReminders(now: Date = new Date()): Promise<Regua
   ]);
   const opps = await getManyByIds<Opportunity>(COLLECTIONS.opportunities, targets.map((t) => t.contract.opportunityId ?? ""));
   const { sendBillingMessage } = await import("./service");
+  // Modelos do WhatsApp aprovados para cobrança (marco.modeloWhatsapp → message_templates.id).
+  const { usableTemplates } = await import("@/server/conversations/templates");
+  const templates = new Map((await usableTemplates("cobranca")).map((tpl) => [tpl.id, tpl]));
 
   for (const t of targets) {
     const client = clients.get(t.billing.clientId);
@@ -259,7 +266,14 @@ export async function runBillingReminders(now: Date = new Date()): Promise<Regua
       let outcome: Record<string, unknown> = {};
       if (t.marco.canal === "whatsapp" || t.marco.canal === "email" || t.marco.canal === "whatsapp_email") {
         const channel = t.marco.canal === "whatsapp_email" ? "ambos" : t.marco.canal;
-        const { results, sentText } = await sendBillingMessage(t.billing.id, { channel, text }, SYSTEM_ACTOR, { id: reminderCommunicationId(t.billing.id, t.marco.id), whenNotConnected: "nao_enviada", templateKey: "regua", originLabel });
+        const modelo = t.marco.modeloWhatsapp ? templates.get(t.marco.modeloWhatsapp) : undefined;
+        const { results, sentText } = await sendBillingMessage(t.billing.id, { channel, text }, SYSTEM_ACTOR, {
+          id: reminderCommunicationId(t.billing.id, t.marco.id),
+          whenNotConnected: "nao_enviada",
+          templateKey: "regua",
+          originLabel,
+          whatsappTemplate: modelo ? { name: modelo.name, language: modelo.language, body: modelo.body, variables: modelo.variables } : undefined,
+        });
         const created = results.filter((r) => r.created);
         if (created.length === 0) {
           result.skippedExisting += 1;

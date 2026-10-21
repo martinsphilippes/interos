@@ -12,7 +12,7 @@ import "server-only";
 import { create, createIfAbsent, getById, list, nowIso, update } from "@/server/db";
 import { COLLECTIONS, type Client, type Communication, type UserRef } from "@/domain/types";
 import { mailtoHref, whatsappHref } from "@/components/clients/contact-links";
-import { sendEmail, sendWhatsappText } from "./providers";
+import { sendEmail, sendWhatsappTemplate, sendWhatsappText } from "./providers";
 import { isConnected } from "./status";
 
 export type CommunicationInput = Omit<Communication, "id" | "organizationId" | "createdAt" | "updatedAt" | "status" | "provider"> & {
@@ -93,6 +93,11 @@ export interface SendOrRecordInput {
    * 24 h sem modelo aprovado. Fica como registro manual.
    */
   forceManual?: boolean;
+  /**
+   * WhatsApp conectado: envia este modelo aprovado em vez de texto livre (fora da janela de 24 h é a única forma que a
+   * Meta aceita). `text` deve ser o modelo já preenchido — é o que fica gravado e o que vai no wa.me sem conexão.
+   */
+  whatsappTemplate?: { name: string; language: string; params: string[] };
 }
 
 export interface SendOrRecordResult {
@@ -161,7 +166,12 @@ export async function sendOrRecord(input: SendOrRecordInput): Promise<SendOrReco
   if (optedOut) {
     outcome = { status: "nao_enviada", provider: "manual", error: `Cliente optou por não receber ${CHANNEL_LABEL[channel]}`, delivery: "nao_enviada" };
   } else if (connected && input.to && !input.forceManual) {
-    const r = channel === "whatsapp" ? await sendWhatsappText(input.to, input.text) : await sendEmail({ to: input.to, subject, text: input.text });
+    const r =
+      channel === "whatsapp"
+        ? input.whatsappTemplate
+          ? await sendWhatsappTemplate(input.to, input.whatsappTemplate)
+          : await sendWhatsappText(input.to, input.text)
+        : await sendEmail({ to: input.to, subject, text: input.text });
     outcome = r.ok ? { status: "enviada", provider: channel === "whatsapp" ? "meta" : "resend", externalId: r.externalId, delivery: "enviada" } : { status: "falha", provider: channel === "whatsapp" ? "meta" : "resend", error: r.error, delivery: "falha" };
   } else if (input.whenNotConnected === "nao_enviada") {
     outcome = { status: "nao_enviada", provider: "manual", error: !input.to ? `Destinatário sem ${channel === "whatsapp" ? "telefone" : "e-mail"} cadastrado` : `${CHANNEL_LABEL[channel]} não conectado`, delivery: "nao_enviada" };

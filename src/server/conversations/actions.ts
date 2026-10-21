@@ -19,20 +19,29 @@ import {
   closeConversation,
   linkConversationIdentity,
   sendConversationMessage,
+  sendConversationTemplate,
   startConversation,
   transferConversation,
 } from "./service";
 import { identityCandidates, type IdentityCandidate } from "./identity";
 import { loadConversationInScope } from "./queries";
 import { saveQueue } from "./queues";
+import { saveTemplate, syncTemplatesFromMeta } from "./templates";
+import { countQuickReplyUse, saveQuickReply } from "./quick-replies";
+import { saveAutoMessages } from "./auto-messages";
 import {
   assignSchema,
   closeSchema,
   conversationIdSchema,
   linkIdentitySchema,
   noteSchema,
+  saveAutoMessagesSchema,
   saveQueueSchema,
+  saveQuickReplySchema,
+  saveTemplateSchema,
   searchTargetsSchema,
+  sendTemplateSchema,
+  syncTemplatesSchema,
   type ConversationTarget,
   sendMessageSchema,
   startSchema,
@@ -96,6 +105,7 @@ export async function sendConversationMessageAction(input: unknown): Promise<Act
     const c = await assertConversationAccess(user, data.conversationId);
     if (c.assigneeId && c.assigneeId !== user.id && !can(user, "comunicacao.central.distribuir")) throw new PermissionError("Esta conversa está com outra pessoa: peça a transferência");
     const result = await sendConversationMessage(c.id, { body: data.body, manual: data.manual }, actor(user));
+    if (data.quickReplyId && (result.delivery === "enviada" || result.delivery === "manual")) await countQuickReplyUse(data.quickReplyId);
     revalidateCentral(c.clientId);
     if (result.delivery === "falha" || result.delivery === "nao_enviada") return { ok: false, error: result.error ?? "A mensagem não saiu" };
     return { ok: true, data: { delivery: result.delivery, manualUrl: result.manualUrl } };
@@ -137,7 +147,7 @@ export async function closeConversationAction(input: unknown): Promise<ActionRes
     // Abrir chamado com o resumo exige também a chave de criar chamado (checkedIn do catálogo).
     if (data.ticket === "novo") await requirePermission("suporte.chamados.criar");
     const c = await assertConversationAccess(user, data.conversationId);
-    const result = await closeConversation(c.id, { reason: data.reason, summary: data.summary, ticket: data.ticket, ticketId: data.ticketId }, actor(user));
+    const result = await closeConversation(c.id, { reason: data.reason, summary: data.summary, ticket: data.ticket, ticketId: data.ticketId, sendClosingMessage: data.sendClosingMessage }, actor(user));
     revalidateCentral(c.clientId);
     if (result.ticketId) revalidatePath("/suporte");
     return { ok: true, data: { id: c.id, ticketId: result.ticketId } };
@@ -186,6 +196,21 @@ export async function startConversationAction(input: unknown): Promise<ActionRes
     return { ok: true, data: { id: conversation.id, delivery: result.delivery, manualUrl: result.manualUrl } };
   } catch (error) {
     return fail(error, "Não foi possível iniciar o atendimento");
+  }
+}
+
+export async function sendConversationTemplateAction(input: unknown): Promise<ActionResult<{ delivery: string; manualUrl: string | null }>> {
+  try {
+    const user = await requirePermission("comunicacao.central.atender");
+    const data = sendTemplateSchema.parse(input);
+    const c = await assertConversationAccess(user, data.conversationId);
+    if (c.assigneeId && c.assigneeId !== user.id && !can(user, "comunicacao.central.distribuir")) throw new PermissionError("Esta conversa está com outra pessoa: peça a transferência");
+    const result = await sendConversationTemplate(c.id, data.templateId, actor(user));
+    revalidateCentral(c.clientId);
+    if (result.delivery === "falha" || result.delivery === "nao_enviada") return { ok: false, error: result.error ?? "O modelo não saiu" };
+    return { ok: true, data: { delivery: result.delivery, manualUrl: result.manualUrl } };
+  } catch (error) {
+    return fail(error, "Não foi possível enviar o modelo");
   }
 }
 
@@ -251,5 +276,59 @@ export async function saveQueueAction(input: unknown): Promise<ActionResult<{ id
     return { ok: true, data: { id: queue.id } };
   } catch (error) {
     return fail(error, "Não foi possível salvar a fila");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Modelos, respostas rápidas e mensagens automáticas (tela Canais e filas)
+// ---------------------------------------------------------------------------
+
+export async function saveTemplateAction(input: unknown): Promise<ActionResult<{ id: string; sentToMeta: boolean; error?: string }>> {
+  try {
+    await requirePermission("comunicacao.canais.modelos.editar");
+    const data = saveTemplateSchema.parse(input);
+    const r = await saveTemplate(data);
+    revalidatePath("/comunicacao/canais");
+    return { ok: true, data: { id: r.template.id, sentToMeta: r.sentToMeta, error: r.error } };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar o modelo");
+  }
+}
+
+export async function syncTemplatesAction(input: unknown): Promise<ActionResult<{ created: number; updated: number; total: number }>> {
+  try {
+    await requirePermission("comunicacao.canais.modelos.editar");
+    syncTemplatesSchema.parse(input ?? {});
+    const r = await syncTemplatesFromMeta();
+    if (!r.ok) return { ok: false, error: r.error ?? "Não foi possível ler os modelos da Meta" };
+    revalidatePath("/comunicacao/canais");
+    return { ok: true, data: { created: r.created, updated: r.updated, total: r.total } };
+  } catch (error) {
+    return fail(error, "Não foi possível sincronizar os modelos");
+  }
+}
+
+export async function saveQuickReplyAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    await requirePermission("comunicacao.canais.respostas.editar");
+    const data = saveQuickReplySchema.parse(input);
+    const reply = await saveQuickReply(data);
+    revalidatePath("/comunicacao/canais");
+    revalidatePath("/comunicacao");
+    return { ok: true, data: { id: reply.id } };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar a resposta rápida");
+  }
+}
+
+export async function saveAutoMessagesAction(input: unknown): Promise<ActionResult<{ saved: true }>> {
+  try {
+    const user = await requirePermission("comunicacao.canais.automaticas.editar");
+    const data = saveAutoMessagesSchema.parse(input);
+    await saveAutoMessages(data, user.id);
+    revalidatePath("/comunicacao/canais");
+    return { ok: true, data: { saved: true } };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar as mensagens automáticas");
   }
 }

@@ -8,14 +8,20 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDocdb, docdb } from "@/server/docdb";
-import { create, getById, list } from "@/server/db";
+import { create, getById, list, update } from "@/server/db";
 import { COLLECTIONS, type ChannelEvent, type Communication, type Conversation, type ServiceQueue, type User } from "@/domain/types";
 import { receiveInboundMessage } from "@/server/conversations/inbound";
-import { closeConversation, distributeWaiting, linkConversationIdentity, sendConversationMessage, transferConversation } from "@/server/conversations/service";
+import { closeConversation, distributeWaiting, linkConversationIdentity, NOTE_TEMPLATE_KEY, sendConversationMessage, transferConversation } from "@/server/conversations/service";
+import { runCentralSweep } from "@/server/conversations/scheduler";
+import { quickRepliesFor, saveQuickReply, listQuickReplies } from "@/server/conversations/quick-replies";
+import { patchFields } from "@/server/conversations/store";
 
 const RUN = `t${Date.now().toString(36)}`;
 const PHONE_A = `5588${String(Date.now()).slice(-8)}`; // número que ninguém tem
 const PHONE_B = `5585${String(Date.now() + 7).slice(-8)}`;
+const PHONE_C = `5586${String(Date.now() + 13).slice(-8)}`;
+const PHONE_D = `5587${String(Date.now() + 29).slice(-8)}`;
+const OVERFLOW_ID = `${RUN}_transbordo`;
 const OP = { id: `${RUN}_op`, name: "Operadora Teste" };
 const QUEUE_ID = `${RUN}_fila`;
 
@@ -48,6 +54,7 @@ afterAll(async () => {
   await sql`delete from interos.notifications where data->>'userId' = ${OP.id}`;
   if (leadIds.size) await sql`delete from interos.leads where id = any(${[...leadIds]})`;
   await sql`delete from interos.users where id = ${OP.id}`;
+  await sql`delete from interos.quick_replies where data->>'shortcut' like ${RUN + "%"}`;
   await sql`delete from interos.service_queues`;
   for (const q of savedQueues) await sql`insert into interos.service_queues (id, data) values (${q.id}, ${sql.json(q.data as never)})`;
   await closeDocdb();
@@ -142,5 +149,74 @@ describe("entrada de mensagens", () => {
     conversationIds.add(b.conversationId!);
     expect(a.conversationId).toBe(b.conversationId);
     expect(await list<Communication>(COLLECTIONS.communications, { where: [["conversationId", "==", a.conversationId!]] })).toHaveLength(2);
+  });
+});
+
+describe("agendador da Central", () => {
+  const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+
+  beforeAll(async () => {
+    // Ninguém online: as conversas ficam na fila (é o cenário do transbordo).
+    await update<User>(COLLECTIONS.users, OP.id, { presence: "ausente" });
+    await create<ServiceQueue>(
+      COLLECTIONS.serviceQueues,
+      { name: "Transbordo de teste", department: "administrativo", channels: ["whatsapp"], memberIds: [], strategy: "manual", maxConcurrent: 5, isDefault: false, active: true, order: 2 },
+      OVERFLOW_ID,
+    );
+    await update<ServiceQueue>(COLLECTIONS.serviceQueues, QUEUE_ID, { overflowQueueId: OVERFLOW_ID, overflowAfterMinutes: 10 });
+  });
+
+  it("na fila há mais que o tempo da fila: transborda (com nota) e não volta", async () => {
+    const r = await receiveInboundMessage({ channel: "whatsapp", from: PHONE_C, body: "Alguém?", externalId: `${RUN}_c1` });
+    conversationIds.add(r.conversationId!);
+    expect(await conv(r.conversationId!)).toMatchObject({ status: "na_fila", queueId: QUEUE_ID });
+    await patchFields<Conversation>(COLLECTIONS.conversations, r.conversationId!, { queuedAt: minutesAgo(20) });
+
+    const report = await runCentralSweep();
+    expect(report.steps.every((s) => s.ok), JSON.stringify(report.steps)).toBe(true);
+    expect((await conv(r.conversationId!)).queueId).toBe(OVERFLOW_ID);
+    const notes = (await list<Communication>(COLLECTIONS.communications, { where: [["conversationId", "==", r.conversationId!]] })).filter((m) => m.templateKey === NOTE_TEMPLATE_KEY);
+    expect(notes.map((n) => n.body).join(" ")).toMatch(/transbordou para Transbordo de teste/);
+
+    await runCentralSweep();
+    expect((await conv(r.conversationId!)).queueId).toBe(OVERFLOW_ID);
+  });
+
+  it("menu sem resposta há mais de 10 minutos: vai para a fila padrão", async () => {
+    const r = await receiveInboundMessage({ channel: "whatsapp", from: PHONE_D, body: "Oi", externalId: `${RUN}_d1` });
+    conversationIds.add(r.conversationId!);
+    await patchFields<Conversation>(COLLECTIONS.conversations, r.conversationId!, { menuPending: true, queueId: undefined, status: "nova", autoSentAt: { menu: minutesAgo(15) } });
+    await runCentralSweep();
+    const c = await conv(r.conversationId!);
+    expect(c.menuPending).toBeUndefined();
+    expect(c).toMatchObject({ queueId: QUEUE_ID, status: "na_fila" });
+  });
+
+  it("apaga registros técnicos com mais de 30 dias e mantém os recentes", async () => {
+    const old = await create<ChannelEvent>(COLLECTIONS.channelEvents, { channel: "whatsapp", kind: "status", result: "processado", detail: "antigo", externalId: `${RUN}_old`, occurredAt: new Date(Date.now() - 31 * 86_400_000).toISOString() });
+    const fresh = await create<ChannelEvent>(COLLECTIONS.channelEvents, { channel: "whatsapp", kind: "status", result: "processado", detail: "recente", externalId: `${RUN}_new`, occurredAt: new Date().toISOString() });
+    await runCentralSweep();
+    expect(await getById<ChannelEvent>(COLLECTIONS.channelEvents, old.id)).toBeNull();
+    expect(await getById<ChannelEvent>(COLLECTIONS.channelEvents, fresh.id)).not.toBeNull();
+  });
+});
+
+describe("respostas rápidas", () => {
+  it("atalho normalizado, variável que não existe na conversa e atalho repetido são barrados", async () => {
+    const r = await saveQuickReply({ shortcut: `/${RUN} Segunda Via`, body: "Olá, {contato}! Segue a 2ª via.", active: true });
+    expect(r.shortcut).toBe(`${RUN}-segunda-via`);
+    await expect(saveQuickReply({ shortcut: `${RUN}-valor`, body: "Valor: {valor}", active: true })).rejects.toThrow(/não existe na conversa/);
+    await expect(saveQuickReply({ shortcut: `${RUN}-segunda-via`, body: "Outra", active: true })).rejects.toThrow(/Já existe/);
+  });
+
+  it("da fila: só aparece para quem atende a fila; desativada não aparece", async () => {
+    const q = await saveQuickReply({ shortcut: `${RUN}-fila`, body: "Só da fila", queueId: QUEUE_ID, active: true });
+    const all = (await listQuickReplies()).filter((r) => r.shortcut.startsWith(RUN));
+    expect(quickRepliesFor(all, []).map((r) => r.shortcut)).toEqual([`${RUN}-segunda-via`]);
+    expect(quickRepliesFor(all, [QUEUE_ID]).map((r) => r.shortcut).sort()).toEqual([`${RUN}-fila`, `${RUN}-segunda-via`]);
+    await saveQuickReply({ id: q.id, shortcut: q.shortcut, body: q.body, active: false });
+    const after = (await listQuickReplies()).filter((r) => r.shortcut.startsWith(RUN));
+    expect(after.find((r) => r.id === q.id)?.queueId).toBeUndefined(); // sem fila = empresa inteira
+    expect(quickRepliesFor(after, [QUEUE_ID]).map((r) => r.shortcut)).toEqual([`${RUN}-segunda-via`]);
   });
 });

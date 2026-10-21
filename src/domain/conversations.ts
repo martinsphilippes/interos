@@ -103,3 +103,29 @@ export function pickAssignee(input: PickAssigneeInput): string | undefined {
   for (const c of able) if (c.load < best.load) best = c;
   return best.id;
 }
+
+// ---------------------------------------------------------------------------
+// Menu de boas-vindas (mensagem automática): a resposta do cliente escolhe a fila.
+// ---------------------------------------------------------------------------
+
+export interface MenuOption {
+  tecla: string;
+  rotulo: string;
+  filaId: string;
+}
+
+/** Texto do menu com as opções numeradas. */
+export function menuText(config: { texto: string; opcoes: readonly MenuOption[] }): string {
+  return [config.texto.trim(), ...config.opcoes.map((o) => `${o.tecla} · ${o.rotulo}`)].join("\n");
+}
+
+/**
+ * Opção escolhida pela resposta do cliente ("2", "2.", "opção 2", "2 - financeiro", ou o nome exato da opção). O número
+ * precisa abrir a mensagem: «tenho 3 boletos» é texto livre, não a opção 3.
+ */
+export function pickMenuOption(body: string, options: readonly MenuOption[]): MenuOption | undefined {
+  const t = body.trim().toLowerCase();
+  const digit = t.match(/^(?:op[cç][aã]o\s*|n[º°o]?\s*|#\s*)?(\d{1,2})(?!\d)/)?.[1];
+  if (digit) return options.find((o) => o.tecla.trim() === digit);
+  return options.find((o) => o.rotulo.trim().toLowerCase() === t);
+}

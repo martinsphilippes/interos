@@ -44,6 +44,7 @@ export const COMUNICACAO = {
             "src/server/conversations/actions.ts#assumeConversationAction",
             "src/server/conversations/actions.ts#sendConversationMessageAction",
             "src/server/conversations/actions.ts#addConversationNoteAction",
+            "src/server/conversations/actions.ts#sendConversationTemplateAction",
           ],
           recordCondition: "conversa dentro do escopo da Central (minha, sem responsável numa fila minha, ou escopo maior)",
         },
@@ -128,6 +129,10 @@ export const COMUNICACAO = {
       sections: [
         { key: "comunicacao.canais.canais.ver", label: "Estado dos canais", rule: { manager: true }, tab: "canais" },
         { key: "comunicacao.canais.filas.ver", label: "Filas e distribuição", rule: { manager: true }, tab: "filas" },
+        { key: "comunicacao.canais.modelos.ver", label: "Modelos do WhatsApp", rule: { manager: true }, tab: "modelos" },
+        { key: "comunicacao.canais.respostas.ver", label: "Respostas rápidas", rule: { manager: true }, tab: "respostas" },
+        { key: "comunicacao.canais.automaticas.ver", label: "Mensagens automáticas", rule: { manager: true }, tab: "automaticas" },
+        { key: "comunicacao.canais.registros.ver", label: "Registros técnicos", rule: { manager: true }, tab: "registros" },
       ],
       actions: [
         {
@@ -136,6 +141,27 @@ export const COMUNICACAO = {
           verb: "editar",
           rule: { manager: true },
           guards: ["src/server/conversations/actions.ts#saveQueueAction"],
+        },
+        {
+          key: "comunicacao.canais.modelos.editar",
+          label: "Cadastrar modelos, ligar variáveis e sincronizar com a Meta",
+          verb: "editar",
+          rule: { manager: true },
+          guards: ["src/server/conversations/actions.ts#saveTemplateAction", "src/server/conversations/actions.ts#syncTemplatesAction"],
+        },
+        {
+          key: "comunicacao.canais.respostas.editar",
+          label: "Criar e editar respostas rápidas",
+          verb: "editar",
+          rule: { manager: true },
+          guards: ["src/server/conversations/actions.ts#saveQuickReplyAction"],
+        },
+        {
+          key: "comunicacao.canais.automaticas.editar",
+          label: "Configurar mensagens automáticas",
+          verb: "editar",
+          rule: { manager: true },
+          guards: ["src/server/conversations/actions.ts#saveAutoMessagesAction"],
         },
       ],
       scope: null,

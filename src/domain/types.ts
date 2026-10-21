@@ -121,6 +121,10 @@ export const COLLECTIONS = {
   serviceQueues: "service_queues",
   /** Registros técnicos dos canais: cada aviso recebido do provedor e o que o INTEROS fez com ele (30 dias). */
   channelEvents: "channel_events",
+  /** Modelos de mensagem do WhatsApp (aprovados pela Meta): id `tpl_<nome>_<idioma>`, sincronizados da Meta. */
+  messageTemplates: "message_templates",
+  /** Respostas rápidas da Central («/atalho» no campo de resposta). */
+  quickReplies: "quick_replies",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -1963,7 +1967,17 @@ export interface Conversation extends BaseEntity {
   closeSummary?: string;
   /** Quantas vezes a conversa foi transferida. */
   transfers?: number;
+  /** Desde quando espera na fila atual (transbordo e aviso de posição). */
+  queuedAt?: string;
+  /** Menu de boas-vindas enviado; a próxima resposta do cliente escolhe a fila. */
+  menuPending?: boolean;
+  menuAttempts?: number;
+  /** Última vez que cada mensagem automática foi enviada nesta conversa. */
+  autoSentAt?: Partial<Record<AutoMessageKind, string>>;
 }
+
+export const AUTO_MESSAGE_KINDS = ["menu", "foraDoHorario", "encerramento", "aguardandoFila", "lembrete", "encerramentoSemResposta"] as const;
+export type AutoMessageKind = (typeof AUTO_MESSAGE_KINDS)[number];
 
 export const CONVERSATION_CLOSE_REASONS = ["resolvida", "virou_chamado", "proposta_enviada", "sem_resposta", "engano"] as const;
 export type ConversationCloseReason = (typeof CONVERSATION_CLOSE_REASONS)[number];
@@ -2011,6 +2025,47 @@ export interface ChannelEvent extends BaseEntity {
   providerCode?: string;
   durationMs?: number;
   occurredAt: string;
+}
+
+export const TEMPLATE_STATUSES = ["aprovado", "em_analise", "rejeitado", "pausado", "desativado", "rascunho"] as const;
+export type TemplateStatus = (typeof TEMPLATE_STATUSES)[number];
+export const TEMPLATE_CATEGORIES = ["utilidade", "marketing"] as const;
+export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number];
+/** Onde o modelo pode ser usado: conversa da Central ou cobrança (régua/Financeiro). */
+export const TEMPLATE_CONTEXTS = ["conversa", "cobranca"] as const;
+export type TemplateContext = (typeof TEMPLATE_CONTEXTS)[number];
+
+/** Modelo de mensagem do WhatsApp (a única forma de escrever fora da janela de 24 h). */
+export interface MessageTemplate extends BaseEntity {
+  /** Nome técnico na Meta (minúsculas, números e _). */
+  name: string;
+  /** Idioma na Meta (ex.: pt_BR). */
+  language: string;
+  category: TemplateCategory;
+  status: TemplateStatus;
+  /** Corpo com {{1}}, {{2}}… */
+  body: string;
+  footer?: string;
+  buttons?: { type: string; text: string; url?: string }[];
+  /** Variável do INTEROS que preenche cada {{n}}, na ordem (chaves de src/domain/message-variables.ts). */
+  variables: string[];
+  context: TemplateContext;
+  rejectedReason?: string;
+  /** Qualidade informada pela Meta (GREEN, YELLOW, RED). */
+  quality?: string;
+  metaId?: string;
+  syncedAt?: string;
+}
+
+/** Resposta rápida: o operador digita «/atalho» e o texto vem com as variáveis preenchidas. */
+export interface QuickReply extends BaseEntity {
+  /** Sem a barra: "segunda-via". */
+  shortcut: string;
+  body: string;
+  /** Só para quem atende esta fila; ausente = toda a empresa. */
+  queueId?: string;
+  active: boolean;
+  usageCount?: number;
 }
 
 export interface Settings extends BaseEntity {

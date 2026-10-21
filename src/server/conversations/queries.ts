@@ -23,6 +23,8 @@ import {
   type CurrentUser,
   type Lead,
   type ChannelEvent,
+  type MessageTemplate,
+  type QuickReply,
   type ServiceQueue,
   type SlaInstance,
   type SlaRule,
@@ -33,7 +35,11 @@ import type { SlaState } from "@/domain/constants";
 import { displayPhone } from "@/domain/phone";
 import { CLOSE_REASON_LABELS, CONVERSATION_STATUS_LABELS, isOpenConversation, whatsappWindow, type WindowState } from "@/domain/conversations";
 import { listQueues, queuesOf } from "./queues";
-import { NOTE_TEMPLATE_KEY } from "./service";
+import { NOTE_TEMPLATE_KEY, conversationValues } from "./service";
+import { templateUsage, usableTemplates, listTemplates } from "./templates";
+import { listQuickReplies, quickRepliesFor } from "./quick-replies";
+import { businessStatus, canAutoSend, getAutoMessages, type AutoMessagesConfig } from "./auto-messages";
+import { fillTemplate, placeholderCount, templateParams } from "@/domain/message-variables";
 
 export const CENTRAL_TABS = ["minhas", "fila", "aguardando", "todas"] as const;
 export type CentralTab = (typeof CENTRAL_TABS)[number];
@@ -264,13 +270,37 @@ export interface ConversationCapabilities {
   createLead: boolean;
 }
 
+/** Modelo pronto para enviar na conversa (com o texto já preenchido). */
+export interface ComposerTemplate {
+  id: string;
+  name: string;
+  category: MessageTemplate["category"];
+  preview: string;
+  /** Variáveis sem valor nesta conversa (envio bloqueado). */
+  missing: string[];
+}
+
+export interface ComposerQuickReply {
+  id: string;
+  shortcut: string;
+  body: string;
+}
+
 export interface ConversationDetail {
   conversation: Conversation;
+  /** Modelos aprovados para conversa (WhatsApp). */
+  templates: ComposerTemplate[];
+  /** Respostas rápidas das filas do usuário (e da empresa). */
+  quickReplies: ComposerQuickReply[];
+  /** Valores das variáveis ({contato}, {cliente}, {operador}, {atendimento}) desta conversa para quem está vendo. */
+  values: Record<string, string>;
   row: ConversationRow;
   thread: ThreadEntry[];
   window: WindowState;
   /** O canal da conversa está conectado ao provedor (senão, tudo é registro manual). */
   channelConnected: boolean;
+  /** Mensagem automática de encerramento que sairia agora (ligada, canal conectado e janela aberta); null = nenhuma. */
+  closingMessage: string | null;
   /** Prazo da primeira resposta e da solução (regra da fila). */
   sla?: { state: SlaState; dueAt: string; responseDueAt?: string; respondedAt?: string };
   context: ConversationContext;
@@ -347,12 +377,26 @@ export async function getConversationDetail(user: CurrentUser, id: string): Prom
     createLead: can(user, "marketing.leads.criar"),
   };
 
+  const [templates, replies, values, auto] = await Promise.all([
+    conversation.channel === "whatsapp" ? usableTemplates("conversa") : Promise.resolve([] as MessageTemplate[]),
+    listQuickReplies(),
+    conversationValues(conversation, { id: user.id, name: user.name }),
+    getAutoMessages(),
+  ]);
+  const myQueues = queuesOf(queues, user.id).map((q) => q.id);
   return {
     conversation,
+    templates: templates.map((t) => {
+      const { params, missing } = templateParams(t.variables.slice(0, placeholderCount(t.body)), values);
+      return { id: t.id, name: t.name, category: t.category, preview: fillTemplate(t.body, params.map((p, i) => p || `[${t.variables[i]}]`)), missing };
+    }),
+    quickReplies: quickRepliesFor(replies, conversation.queueId ? [...myQueues, conversation.queueId] : myQueues).map((r) => ({ id: r.id, shortcut: r.shortcut, body: r.body })),
+    values,
     row,
     thread,
     window: conversation.channel === "whatsapp" ? whatsappWindow(conversation.lastInboundAt, now) : { open: true },
     channelConnected: isConnected(conversation.channel === "whatsapp" ? "whatsapp" : "email"),
+    closingMessage: open && auto.encerramento.ativa && canAutoSend(conversation, now) ? auto.encerramento.texto : null,
     sla: slaView && sla ? { state: slaView.state, dueAt: slaView.dueAt, responseDueAt: sla.responseDueAt, respondedAt: sla.respondedAt } : undefined,
     context: {
       client: client ? { id: client.id, tradeName: client.tradeName, status: client.status, healthScore: client.healthScore, healthLevel: client.healthLevel, mrr: client.mrr } : undefined,
@@ -462,5 +506,66 @@ export async function getQueuesAdmin(): Promise<QueuesAdmin> {
       .filter((r) => r.active && (r.appliesTo === "conversa" || r.appliesTo === "chamado"))
       .map((r) => ({ key: r.key, name: r.name }))
       .sort((a, b) => a.name.localeCompare(b.name, "pt-BR")),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Modelos, respostas rápidas, mensagens automáticas e registros técnicos (tela Canais e filas)
+// ---------------------------------------------------------------------------
+
+export interface TemplatesAdmin {
+  templates: (MessageTemplate & { usage30d: number })[];
+  /** Conta do WhatsApp Business configurada (dá para sincronizar e enviar à análise). */
+  metaConfigured: boolean;
+  /** Régua: marcos de WhatsApp ainda sem modelo (com o canal conectado, a Meta recusa fora da janela). */
+  reguaWithoutTemplate: string[];
+}
+
+export async function getTemplatesAdmin(): Promise<TemplatesAdmin> {
+  const templates = await listTemplates();
+  const usage = await templateUsage(templates);
+  const settings = await list<{ id: string; organizationId: string; createdAt: string; updatedAt: string; key: string; value: { marcos?: { nome: string; canal: string; ativo: boolean; modeloWhatsapp?: string }[]; ativa?: boolean } }>(COLLECTIONS.settings, { where: [["key", "==", "regua_cobranca"]] });
+  const marcos = settings[0]?.value?.marcos ?? [];
+  return {
+    templates: templates.map((t) => ({ ...t, usage30d: usage.get(t.id) ?? 0 })),
+    metaConfigured: Boolean(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) && isConnected("whatsapp"),
+    reguaWithoutTemplate: marcos.filter((m) => m.ativo && (m.canal === "whatsapp" || m.canal === "whatsapp_email") && !m.modeloWhatsapp).map((m) => m.nome),
+  };
+}
+
+export async function getQuickRepliesAdmin(): Promise<{ replies: QuickReply[]; queues: { id: string; name: string }[] }> {
+  const [replies, queues] = await Promise.all([listQuickReplies(), listQueues()]);
+  return { replies, queues: queues.filter((q) => q.active).map((q) => ({ id: q.id, name: q.name })) };
+}
+
+export async function getAutoMessagesAdmin(): Promise<{ config: AutoMessagesConfig; stored: boolean; queues: { id: string; name: string }[]; openNow: boolean; nextOpening: string; channelConnected: boolean }> {
+  const [config, queues, status] = await Promise.all([getAutoMessages(), listQueues(), businessStatus()]);
+  const { stored, ...rest } = config;
+  return { config: rest, stored, queues: queues.filter((q) => q.active).map((q) => ({ id: q.id, name: q.name })), openNow: status.open, nextOpening: status.nextOpening, channelConnected: isConnected("whatsapp") };
+}
+
+export interface ChannelEventsAdmin {
+  events: ChannelEvent[];
+  summary: { received: number; duplicates: number; failures: number; rejected: number };
+}
+
+export async function getChannelEventsAdmin(filters: { channel?: ConversationChannel; result?: ChannelEvent["result"]; q?: string } = {}): Promise<ChannelEventsAdmin> {
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const all = await list<ChannelEvent>(COLLECTIONS.channelEvents, filters.channel ? { where: [["channel", "==", filters.channel]] } : {});
+  const recent = all.filter((e) => e.occurredAt >= since);
+  let events = all;
+  if (filters.result) events = events.filter((e) => e.result === filters.result);
+  if (filters.q?.trim()) {
+    const t = filters.q.trim().toLowerCase();
+    events = events.filter((e) => [e.externalId, e.detail, e.contactMasked, e.providerCode].some((v) => v?.toLowerCase().includes(t)));
+  }
+  return {
+    events: events.sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1)).slice(0, 200),
+    summary: {
+      received: recent.filter((e) => e.kind === "mensagem_recebida" && e.result === "processado").length,
+      duplicates: recent.filter((e) => e.result === "duplicado").length,
+      failures: recent.filter((e) => e.result === "falha").length,
+      rejected: recent.filter((e) => e.result === "recusado").length,
+    },
   };
 }

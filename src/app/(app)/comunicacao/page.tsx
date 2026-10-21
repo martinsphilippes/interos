@@ -4,6 +4,7 @@ import { SlidersHorizontal } from "lucide-react";
 import { can, canSeeHref, requireScreen } from "@/server/auth/session";
 import { getCentralOverview, getConversationDetail, getTransferOptions, isCentralTab } from "@/server/conversations/queries";
 import { distributeWaitingThrottled } from "@/server/conversations/service";
+import { usableTemplates } from "@/server/conversations/templates";
 import { isConnected } from "@/server/integrations/status";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,7 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
   await distributeWaitingThrottled();
   const ver = first(sp.ver);
   const canal = first(sp.canal);
-  const [overview, transferOptions] = await Promise.all([
+  const [overview, transferOptions, templates] = await Promise.all([
     getCentralOverview(user, {
       tab: isCentralTab(ver) ? ver : undefined,
       queueId: first(sp.filaId) || undefined,
@@ -36,6 +37,7 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
       q: first(sp.q) || undefined,
     }),
     getTransferOptions(),
+    usableTemplates("conversa"),
   ]);
   const chosen = first(sp.conversa);
   const selectedId = chosen ?? overview.rows[0]?.id;
@@ -61,7 +63,9 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
                 </Link>
               </Button>
             ) : null}
-            {can(user, "comunicacao.central.iniciar") ? <NewConversationDialog queues={overview.queues.map((q) => ({ id: q.id, name: q.name }))} whatsappConnected={isConnected("whatsapp")} /> : null}
+            {can(user, "comunicacao.central.iniciar") ? (
+              <NewConversationDialog queues={overview.queues.map((q) => ({ id: q.id, name: q.name }))} whatsappConnected={isConnected("whatsapp")} templates={templates.map((t) => ({ id: t.id, name: t.name, body: t.body }))} />
+            ) : null}
           </>
         }
       />

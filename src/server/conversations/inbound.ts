@@ -11,15 +11,16 @@ import "server-only";
  * 5. Registro técnico do que aconteceu.
  */
 import { createHash } from "node:crypto";
-import { create, createIfAbsent, getById, nowIso } from "@/server/db";
+import { create, createIfAbsent, getById, nowIso, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { notify } from "@/server/notifications";
 import { isConnected } from "@/server/integrations/status";
 import { findOpenTicketForClient, recordInboundOnTicket } from "@/server/support/service";
-import { COLLECTIONS, type Communication, type ConversationChannel } from "@/domain/types";
+import { COLLECTIONS, type Communication, type Conversation, type ConversationChannel } from "@/domain/types";
 import { resolveIdentity } from "./identity";
 import { applyInbound, conversationHref, displayNameOf, findOrOpenConversation, routeNewConversation } from "./service";
 import { logChannelEvent } from "./channel-events";
+import { businessStatus, canAutoSend, getAutoMessages, menuText, pickMenuOption, sendAutoMessage } from "./auto-messages";
 
 export interface InboundMessage {
   channel: ConversationChannel;
@@ -95,6 +96,28 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
   let current = await applyInbound({ conversation, body: input.body, at, communicationId: communication.id });
   const who = identity.name ?? input.displayName ?? input.from;
 
+  // Mensagens automáticas (desligadas por padrão): fora do horário e menu de boas-vindas.
+  const auto = await getAutoMessages();
+  if (auto.foraDoHorario.ativa) {
+    const status = await businessStatus(new Date(at));
+    if (!status.open) await sendAutoMessage(current, "foraDoHorario", auto.foraDoHorario.texto.replace(/\{proximaAbertura\}/g, status.nextOpening));
+  }
+  let menuSent = false;
+  if (created && !ticket && auto.menu.ativa && auto.menu.opcoes.length > 0 && canAutoSend(current)) {
+    menuSent = await sendAutoMessage(current, "menu", menuText(auto.menu), { allowRepeat: true });
+    if (menuSent) {
+      await update<Conversation>(COLLECTIONS.conversations, current.id, { menuPending: true, menuAttempts: 0 });
+      current = { ...current, menuPending: true, menuAttempts: 0 };
+    }
+  } else if (!created && current.menuPending) {
+    // Resposta ao menu: a opção escolhe a fila; inválida → repete uma vez; depois vai para a fila padrão.
+    const option = pickMenuOption(input.body, auto.menu.opcoes);
+    if (option) current = await routeNewConversation(current, { hasOpenTicket: Boolean(ticket), queueId: option.filaId });
+    else if ((current.menuAttempts ?? 0) < 1 && (await sendAutoMessage(current, "menu", `Não entendi. ${menuText(auto.menu)}`, { allowRepeat: true }))) {
+      await update<Conversation>(COLLECTIONS.conversations, current.id, { menuAttempts: (current.menuAttempts ?? 0) + 1 });
+    } else current = await routeNewConversation(current, { hasOpenTicket: Boolean(ticket) });
+  }
+
   if (created) {
     await emitEvent({
       type: "conversation.opened",
@@ -105,7 +128,8 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
       payload: { conversationId: current.id, channel: input.channel, origin: "cliente", identity: identity.identity },
       timeline: false,
     });
-    current = await routeNewConversation(current, { hasOpenTicket: Boolean(ticket) });
+    // Com menu enviado, a fila sai da resposta do cliente.
+    if (!menuSent) current = await routeNewConversation(current, { hasOpenTicket: Boolean(ticket) });
   } else if (current.assigneeId && !ticket && !wasWaiting) {
     await notify({
       userIds: [current.assigneeId],

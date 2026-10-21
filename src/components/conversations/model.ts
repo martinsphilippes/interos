@@ -18,7 +18,7 @@ export const CENTRAL_TAB_ORDER: readonly CentralTab[] = ["minhas", "fila", "agua
 export const CHANNEL_LABELS: Record<ConversationChannel, string> = { whatsapp: "WhatsApp", email: "E-mail" };
 
 /** Abas da tela Canais e filas (?aba=). */
-export const CANAIS_TABS = ["canais", "filas"] as const;
+export const CANAIS_TABS = ["canais", "filas", "modelos", "respostas", "automaticas", "registros"] as const;
 export type CanaisTab = (typeof CANAIS_TABS)[number];
 
 export function toThreadItems(entries: readonly ThreadEntry[]): ThreadItem[] {

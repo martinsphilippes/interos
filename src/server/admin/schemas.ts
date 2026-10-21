@@ -340,6 +340,11 @@ export const reguaMarcoSchema = z.object({
   canal: z.enum(REGUA_CANAIS, { message: "Canal do marco inválido" }),
   template: z.string().trim().min(5, "Texto do marco muito curto").max(1000, "Texto do marco muito longo"),
   ativo: z.boolean("Informe se o marco está ativo"),
+  /**
+   * Modelo do WhatsApp aprovado (message_templates.id) usado com o WhatsApp conectado: fora da janela de 24 h a Meta só
+   * aceita modelo. Sem modelo, vai o texto acima (e a Meta recusa quando o cliente não escreveu nas últimas 24 h).
+   */
+  modeloWhatsapp: z.string().trim().max(120).optional(),
 });
 export type ReguaMarco = z.infer<typeof reguaMarcoSchema>;
 

@@ -29,10 +29,12 @@ interface MarcoForm {
   canal: ReguaMarco["canal"];
   template: string;
   ativo: boolean;
+  /** Modelo do WhatsApp aprovado (id) ou vazio. */
+  modeloWhatsapp: string;
 }
 
 function toForm(m: ReguaMarco, i: number): MarcoForm {
-  return { key: `${m.id}-${i}`, id: m.id, nome: m.nome, dias: String(Math.abs(m.offsetDias)), quando: m.offsetDias < 0 ? "antes" : "depois", canal: m.canal, template: m.template, ativo: m.ativo };
+  return { key: `${m.id}-${i}`, id: m.id, nome: m.nome, dias: String(Math.abs(m.offsetDias)), quando: m.offsetDias < 0 ? "antes" : "depois", canal: m.canal, template: m.template, ativo: m.ativo, modeloWhatsapp: m.modeloWhatsapp ?? "" };
 }
 
 function slug(text: string): string {
@@ -61,7 +63,7 @@ export function SettingsRegua({ value, stored, preview }: { value: ReguaCobranca
   const addMarco = () => {
     const n = seq + 1;
     setSeq(n);
-    setMarcos((list) => [...list, { key: `novo-${n}`, id: `marco_${n}`, nome: `Marco ${n}`, dias: "3", quando: "depois", canal: "whatsapp", template: "Olá, {contato}! A {parcela} de {cliente} ({valor}) venceu em {vencimento}. {linhaDigitavel}{linkBoleto}Podemos ajudar?", ativo: true }]);
+    setMarcos((list) => [...list, { key: `novo-${n}`, id: `marco_${n}`, nome: `Marco ${n}`, dias: "3", quando: "depois", canal: "whatsapp", template: "Olá, {contato}! A {parcela} de {cliente} ({valor}) venceu em {vencimento}. {linhaDigitavel}{linkBoleto}Podemos ajudar?", ativo: true, modeloWhatsapp: "" }]);
   };
   const removeMarco = (key: string) => setMarcos((list) => list.filter((m) => m.key !== key));
 
@@ -71,14 +73,15 @@ export function SettingsRegua({ value, stored, preview }: { value: ReguaCobranca
       {
         ativa: form.ativa,
         diasUteis: form.diasUteis,
-        marcos: marcos.map((m) => ({ id: m.id.trim() || slug(m.nome) || `marco_${Date.now()}`, nome: m.nome.trim(), offsetDias: (m.quando === "antes" ? -1 : 1) * Math.abs(Number(m.dias) || 0), canal: m.canal, template: m.template, ativo: m.ativo })),
+        marcos: marcos.map((m) => ({ id: m.id.trim() || slug(m.nome) || `marco_${Date.now()}`, nome: m.nome.trim(), offsetDias: (m.quando === "antes" ? -1 : 1) * Math.abs(Number(m.dias) || 0), canal: m.canal, template: m.template, ativo: m.ativo, modeloWhatsapp: m.modeloWhatsapp || undefined })),
         pausarQuando: { pendencia: form.pausarPendencia, negociacao: form.pausarNegociacao },
       },
       form.ativa ? "Régua de cobrança salva e ATIVA" : "Régua de cobrança salva (desligada)",
     );
   };
 
-  const canalWarning = (canal: ReguaMarco["canal"]) => {
+  const canalWarning = (canal: ReguaMarco["canal"], modelo?: string) => {
+    if ((canal === "whatsapp" || canal === "whatsapp_email") && preview.channels.whatsapp && !modelo) return "WhatsApp conectado sem modelo: fora da janela de 24 h a Meta recusa o texto livre. Escolha um modelo aprovado.";
     if ((canal === "whatsapp" || canal === "whatsapp_email") && !preview.channels.whatsapp) return "WhatsApp não conectado: vira tarefa ao Financeiro com o texto e o link prontos.";
     if ((canal === "email" || canal === "whatsapp_email") && !preview.channels.email) return "E-mail não conectado: vira tarefa ao Financeiro com o texto e o link prontos.";
     return null;
@@ -113,7 +116,7 @@ export function SettingsRegua({ value, stored, preview }: { value: ReguaCobranca
         {marcos.map((m, index) => {
           const offset = (m.quando === "antes" ? -1 : 1) * Math.abs(Number(m.dias) || 0);
           const p = previewById.get(m.id);
-          const warning = canalWarning(m.canal);
+          const warning = canalWarning(m.canal, m.modeloWhatsapp);
           return (
             <div key={m.key} className="rounded-lg border border-border p-3 md:p-4" data-marco={m.id}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -148,6 +151,25 @@ export function SettingsRegua({ value, stored, preview }: { value: ReguaCobranca
                 <FormField label="Canal" htmlFor={`${m.key}-canal`} required>
                   <Select id={`${m.key}-canal`} value={m.canal} onChange={(e) => setMarco(m.key, { canal: e.target.value as ReguaMarco["canal"] })} options={REGUA_CANAIS.map((c) => ({ value: c, label: REGUA_CANAL_LABELS[c] }))} />
                 </FormField>
+                {m.canal === "whatsapp" || m.canal === "whatsapp_email" ? (
+                  <FormField
+                    label="Modelo do WhatsApp"
+                    htmlFor={`${m.key}-modelo`}
+                    className="sm:col-span-2 lg:col-span-4"
+                    hint={
+                      m.modeloWhatsapp
+                        ? "Com o WhatsApp conectado, vai o modelo aprovado (aceito mesmo se o cliente não escreveu nas últimas 24 h). Sem conexão, vale o texto abaixo."
+                        : "Sem modelo, vai o texto abaixo — e a Meta recusa quando o cliente não escreveu nas últimas 24 h (o caso comum na cobrança). Modelos em Comunicação › Canais e filas › Modelos."
+                    }
+                  >
+                    <Select
+                      id={`${m.key}-modelo`}
+                      value={m.modeloWhatsapp}
+                      onChange={(e) => setMarco(m.key, { modeloWhatsapp: e.target.value })}
+                      options={[{ value: "", label: preview.whatsappTemplates.length ? "Sem modelo (texto livre)" : "Nenhum modelo de cobrança aprovado ainda" }, ...preview.whatsappTemplates.map((t) => ({ value: t.id, label: t.label }))]}
+                    />
+                  </FormField>
+                ) : null}
                 <FormField label="Texto" htmlFor={`${m.key}-template`} required className="sm:col-span-2 lg:col-span-4" hint={`Variáveis: ${REGUA_TEMPLATE_VARS.join(" ")} ({linkPortal} gera um link novo do portal do cliente, válido por 30 dias, em cada envio por WhatsApp/e-mail; em tarefa/notificação fica vazio)`}>
                   <Textarea id={`${m.key}-template`} value={m.template} onChange={(e) => setMarco(m.key, { template: e.target.value })} rows={3} />
                 </FormField>

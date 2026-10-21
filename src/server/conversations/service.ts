@@ -38,6 +38,7 @@ import {
 } from "@/domain/types";
 import { contactKeyOf, withNinthDigit } from "@/domain/phone";
 import { CLOSE_REASON_LABELS, isOpenConversation, pickAssignee, whatsappWindow } from "@/domain/conversations";
+import { MESSAGE_VARIABLES, fillTemplate, placeholderCount, templateParams } from "@/domain/message-variables";
 import { resolveIdentity, type ResolvedIdentity } from "./identity";
 import { chooseQueue, getQueue, listActiveQueues, listQueues } from "./queues";
 import { patchFields } from "./store";
@@ -177,9 +178,11 @@ async function startConversationSla(c: Conversation, queue: ServiceQueue | undef
 /**
  * Coloca a conversa nova na fila certa e, se houver operador disponível, atribui. Também inicia o SLA da fila.
  */
-export async function routeNewConversation(c: Conversation, ctx: { hasOpenTicket: boolean }): Promise<Conversation> {
+export async function routeNewConversation(c: Conversation, ctx: { hasOpenTicket: boolean; queueId?: string }): Promise<Conversation> {
   const queues = await listActiveQueues();
-  const queue = chooseQueue(queues, { channel: c.channel, identity: c.identity, hasOpenTicket: ctx.hasOpenTicket });
+  // Fila escolhida no menu de boas-vindas (se ainda ativa e atendendo o canal); senão, a regra de entrada.
+  const chosen = ctx.queueId ? queues.find((q) => q.id === ctx.queueId && q.channels.includes(c.channel)) : undefined;
+  const queue = chosen ?? chooseQueue(queues, { channel: c.channel, identity: c.identity, hasOpenTicket: ctx.hasOpenTicket });
   const loads = await loadByAssignee();
   const preferredId = await preferredAssignee(c);
   let assigneeId: string | undefined;
@@ -194,8 +197,10 @@ export async function routeNewConversation(c: Conversation, ctx: { hasOpenTicket
     assigneeId,
     assignedAt: assigneeId ? now : undefined,
     slaInstanceId,
+    queuedAt: now,
+    menuPending: undefined,
   };
-  await update<Conversation>(COLLECTIONS.conversations, c.id, patch);
+  await patchFields<Conversation>(COLLECTIONS.conversations, c.id, patch);
   if (queue && assigneeId) await update<ServiceQueue>(COLLECTIONS.serviceQueues, queue.id, { lastAssignedId: assigneeId });
   const next = { ...c, ...patch };
   if (assigneeId) await announceAssignment(next, assigneeId, SYSTEM_ACTOR, queue?.name);
@@ -263,7 +268,7 @@ export async function releaseUserFromCentral(userId: string): Promise<number> {
   await removeFromAllQueues(userId);
   const open = (await list<Conversation>(COLLECTIONS.conversations, { where: [["assigneeId", "==", userId]] })).filter(isOpenConversation);
   for (const c of open) {
-    await patchFields<Conversation>(COLLECTIONS.conversations, c.id, { assigneeId: undefined, assignedAt: undefined, status: "na_fila" });
+    await patchFields<Conversation>(COLLECTIONS.conversations, c.id, { assigneeId: undefined, assignedAt: undefined, status: "na_fila", queuedAt: nowIso() });
     if (c.slaInstanceId) await patchFields<SlaInstance>(COLLECTIONS.slaInstances, c.slaInstanceId, { ownerId: undefined });
     await addConversationNote(c.id, "O responsável foi desativado: a conversa voltou para a fila.", SYSTEM_ACTOR);
   }
@@ -426,6 +431,54 @@ export async function noteOutboundElsewhere(conversationId: string, body: string
   }
 }
 
+/** Valores das variáveis de mensagem para a conversa (modelos e respostas rápidas). */
+export async function conversationValues(c: Conversation, actor: UserRef): Promise<Record<string, string>> {
+  const [contact, client, lead] = await Promise.all([
+    c.contactId ? getById<Contact>(COLLECTIONS.contacts, c.contactId) : null,
+    c.clientId ? getById<Client>(COLLECTIONS.clients, c.clientId) : null,
+    c.leadId ? getById<Lead>(COLLECTIONS.leads, c.leadId) : null,
+  ]);
+  const person = contact?.name ?? lead?.name ?? c.displayName ?? "";
+  return {
+    contato: person.split(" ")[0] ?? "",
+    cliente: client?.tradeName ?? lead?.company ?? "",
+    operador: actor.name.split(" ")[0] ?? actor.name,
+    atendimento: c.number,
+  };
+}
+
+/**
+ * Envia um modelo aprovado na conversa (a forma de escrever no WhatsApp fora da janela de 24 h). Variável sem valor
+ * (ex.: cliente de um contato não identificado) impede o envio — nunca vai «-» para o cliente.
+ */
+export async function sendConversationTemplate(id: string, templateIdValue: string, actor: UserRef): Promise<SendMessageResult> {
+  const c = await loadConversation(id);
+  requireOpen(c);
+  if (c.channel !== "whatsapp") throw new BusinessError("Modelos são do WhatsApp");
+  const { getTemplate, templateKeyOf, templateUsable } = await import("./templates");
+  const template = await getTemplate(templateIdValue);
+  if (!template || !templateUsable(template, "conversa")) throw new BusinessError("Modelo indisponível: precisa estar aprovado e com as variáveis ligadas");
+  const values = await conversationValues(c, actor);
+  const { params, missing } = templateParams(template.variables.slice(0, placeholderCount(template.body)), values);
+  if (missing.length) throw new BusinessError(`Falta informação para o modelo: ${missing.map((m) => MESSAGE_VARIABLES[m as keyof typeof MESSAGE_VARIABLES]?.label ?? m).join(", ")}. Identifique o contato ou use outro modelo.`);
+  const text = fillTemplate(template.body, params);
+  const sent = await sendOrRecord({
+    channel: "whatsapp",
+    to: c.address,
+    text,
+    clientId: c.clientId,
+    contactId: c.contactId,
+    entity: c.leadId && !c.clientId ? { type: "lead", id: c.leadId } : c.ticketId ? { type: "ticket", id: c.ticketId } : { type: "conversation", id: c.id },
+    actor,
+    conversationId: c.id,
+    templateKey: templateKeyOf(template),
+    whatsappTemplate: { name: template.name, language: template.language, params },
+  });
+  if (sent.delivery === "falha" || sent.delivery === "nao_enviada") return { communication: sent.communication, delivery: sent.delivery, manualUrl: sent.manualUrl, error: sent.error };
+  await applyOutbound(c, text, actor);
+  return { communication: sent.communication, delivery: sent.delivery, manualUrl: sent.manualUrl };
+}
+
 /** Nota interna (o cliente nunca vê): só na conversa. */
 export async function addConversationNote(id: string, body: string, actor: UserRef): Promise<Communication> {
   const c = await loadConversation(id);
@@ -467,7 +520,7 @@ export async function transferConversation(id: string, input: TransferInput, act
     const queue = await getQueue(input.toQueueId!);
     if (!queue || !queue.active) throw new BusinessError("Fila não encontrada ou inativa");
     if (!queue.channels.includes(c.channel)) throw new BusinessError(`A fila ${queue.name} não atende ${CHANNEL_LABEL[c.channel]}`);
-    patch = { queueId: queue.id, assigneeId: undefined, assignedAt: undefined, status: "na_fila", transfers: (c.transfers ?? 0) + 1 };
+    patch = { queueId: queue.id, assigneeId: undefined, assignedAt: undefined, status: "na_fila", transfers: (c.transfers ?? 0) + 1, queuedAt: nowIso() };
     target = `fila ${queue.name}`;
   }
   await patchFields<Conversation>(COLLECTIONS.conversations, c.id, patch);
@@ -501,6 +554,10 @@ export async function transferConversation(id: string, input: TransferInput, act
 export interface CloseInput {
   reason: ConversationCloseReason;
   summary?: string;
+  /** Texto automático de encerramento (ex.: «sem resposta do cliente»); padrão = mensagem de encerramento configurada. */
+  autoText?: string;
+  /** false = o operador desmarcou a mensagem de encerramento. */
+  sendClosingMessage?: boolean;
   /** Chamado: nada, vincular ao chamado aberto do cliente, ou abrir um novo com o resumo. */
   ticket: "nenhum" | "vincular" | "novo";
   ticketId?: string;
@@ -539,6 +596,15 @@ export async function closeConversation(id: string, input: CloseInput, actor: Us
   await update<Conversation>(COLLECTIONS.conversations, c.id, patch);
   if (c.slaInstanceId) await completeSla(c.slaInstanceId);
   const next = { ...c, ...patch };
+  // Mensagem automática de encerramento (se ligada; só sai com o canal conectado e a janela aberta).
+  try {
+    const { getAutoMessages, sendAutoMessage } = await import("./auto-messages");
+    const auto = await getAutoMessages();
+    const text = input.autoText ?? (auto.encerramento.ativa && input.sendClosingMessage !== false ? auto.encerramento.texto : "");
+    if (text) await sendAutoMessage(next, input.autoText ? "encerramentoSemResposta" : "encerramento", text, { allowRepeat: true });
+  } catch (error) {
+    console.error("[conversas] falha na mensagem automática de encerramento", error);
+  }
   await emitEvent({
     type: "conversation.closed",
     actor,
@@ -568,6 +634,8 @@ export interface StartInput {
   queueId?: string;
   body: string;
   manual?: boolean;
+  /** WhatsApp: envia este modelo aprovado em vez do texto (fora da janela de 24 h). */
+  templateId?: string;
 }
 
 export async function startConversation(input: StartInput, actor: UserRef): Promise<{ conversation: Conversation; result: SendMessageResult }> {
@@ -594,6 +662,7 @@ export async function startConversation(input: StartInput, actor: UserRef): Prom
   }
   // WhatsApp conectado e o cliente não escreveu nas últimas 24 h: sem modelo aprovado, vai pelo aparelho (registro
   // manual) em vez de a Meta recusar.
+  if (input.templateId) return { conversation: { ...conversation }, result: await sendConversationTemplate(conversation.id, input.templateId, actor) };
   const fresh = (await getById<Conversation>(COLLECTIONS.conversations, conversation.id)) ?? conversation;
   const manual = input.manual || (input.channel === "whatsapp" && isConnected("whatsapp") && !whatsappWindow(fresh.lastInboundAt).open);
   const result = await sendConversationMessage(conversation.id, { body: input.body, manual }, actor);

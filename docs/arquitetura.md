@@ -584,20 +584,37 @@ pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`sr
   só para quem está **online** e abaixo do limite. Roda ao chegar mensagem, ao ficar online (`setPresence`), ao
   encerrar/transferir e ao abrir a Central (no máximo a cada 30 s). Fila sem operador: o que espera nela fica visível
   para todos os operadores (ninguém deixa de ver).
-- **Janela de 24 h do WhatsApp**: fora dela a Meta recusa texto livre. Com o canal conectado, a Central não tenta
-  enviar: o operador envia pelo WhatsApp do aparelho (registro manual) até os modelos aprovados chegarem.
+- **Janela de 24 h do WhatsApp**: fora dela a Meta recusa texto livre. Com o canal conectado e a janela fechada, o
+  operador usa um **modelo aprovado** (botão «Enviar modelo» ou «Novo atendimento» com modelo) ou envia pelo aparelho.
 - **Nota interna**: `communications` do canal `interno` com `templateKey: "nota_interna"`, ligada só à conversa
   (sem `clientId`: não aparece em outras telas). Transferência grava nota; o SLA continua de onde estava.
 - **Escopo** (`comunicacao.central`): "meus" = comigo + sem responsável nas minhas filas (e filas sem operador);
   gestão = empresa. Fora do escopo, a conversa por id responde "não encontrada" (actions e `?conversa=`).
 - **Tela**: 3 colunas (lista | conversa | contexto do cliente), atualização automática a cada 15 s com a aba visível
   (fase 1 sem tempo real). Usuário desativado sai das filas e as conversas dele voltam para a fila.
-- **Registros técnicos** (`channel_events`): contato mascarado, nunca o texto; retenção de 30 dias (limpeza com o
-  agendador da próxima entrega). Leitura em `/comunicacao/canais` (saúde do canal nas últimas 24 h).
+- **Registros técnicos** (`channel_events`): contato mascarado, nunca o texto; retenção de 30 dias (limpeza pelo
+  agendador). Leitura em `/comunicacao/canais?aba=registros` (filtros por canal, resultado e busca) e saúde do canal.
+- **Variáveis de mensagem** (`src/domain/message-variables.ts`): lista única para modelos ({{n}} ligado a uma variável),
+  respostas rápidas (`{contato}`, `{operador}`…) e régua (`{valor}`, `{linkBoleto}`…). Variável sem valor bloqueia o
+  envio — nunca sai «{contato}» para o cliente.
+- **Modelos do WhatsApp** (`message_templates`, `templates.ts`): id `tpl_<nome>_<idioma>`; sincronizados com a Meta
+  (Graph v20, `WHATSAPP_BUSINESS_ACCOUNT_ID`) a cada hora pelo agendador ou no botão; sem a conta configurada, ficam
+  como rascunho. Contexto `conversa` (Central) ou `cobranca` (régua: cada etapa de WhatsApp pode apontar um modelo;
+  sem valor para alguma variável, a régua cai no texto livre).
+- **Respostas rápidas** (`quick_replies`, `quick-replies.ts`): «/atalho» no campo de mensagem; da empresa ou de uma
+  fila; contagem de uso.
+- **Mensagens automáticas** (setting `central_automaticas`, `auto-messages.ts`): tudo nasce desligado. Menu de
+  boas-vindas (a resposta escolhe a fila; regra pura `pickMenuOption` exige o número no começo), fora do horário
+  (setting `horario_comercial` + feriados), aviso de posição na fila, cliente sem resposta (lembrete → encerramento) e
+  encerramento (o operador pode desmarcar). Só saem pelo provedor conectado e dentro da janela; nunca viram registro
+  manual; cada tipo no máximo 1×/12 h por conversa.
+- **Agendador** (`scheduler.ts`, `/api/cron/central`, `CRON_SECRET`): pg_cron + pg_net do Supabase a cada 5 min
+  (`supabase/agendador-central.sql`, rodado uma vez no SQL Editor; o segredo fica no Vault como `interos_cron_secret`),
+  porque o plano atual da Vercel só agenda uma vez por dia. Passos independentes: menu sem resposta (10 min), transbordo,
+  distribuição, posição na fila, cliente sem resposta, limpeza de registros e sincronização de modelos.
 
-Próximas entregas da fase 1: modelos do WhatsApp, respostas rápidas, mensagens automáticas e agendador (pg_cron do
-Supabase chamando o INTEROS, porque o plano atual da Vercel só agenda uma vez por dia); depois histórico de
-atendimentos, e-mail de entrada e as mudanças no Cliente 360, Usuário, Caixa de Entrada e Chamado.
+Próxima entrega da fase 1: histórico de atendimentos, e-mail de entrada e as mudanças no Cliente 360, Usuário, Caixa de
+Entrada e Chamado.
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.

@@ -23,7 +23,7 @@ const KIND_LABEL: Record<ConversationTarget["kind"], string> = { contato: "Conta
  * fila. WhatsApp: quem não escreveu nas últimas 24 h só recebe modelo aprovado — até os modelos chegarem, o envio é
  * pelo WhatsApp do aparelho (registro manual).
  */
-export function NewConversationDialog({ queues, whatsappConnected }: { queues: { id: string; name: string }[]; whatsappConnected: boolean }) {
+export function NewConversationDialog({ queues, whatsappConnected, templates = [] }: { queues: { id: string; name: string }[]; whatsappConnected: boolean; templates?: { id: string; name: string; body: string }[] }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [term, setTerm] = React.useState("");
@@ -33,6 +33,7 @@ export function NewConversationDialog({ queues, whatsappConnected }: { queues: {
   const [address, setAddress] = React.useState("");
   const [queueId, setQueueId] = React.useState("");
   const [body, setBody] = React.useState("");
+  const [templateId, setTemplateId] = React.useState("");
   const [manualLink, setManualLink] = React.useState<string | null>(null);
   const [searching, startSearch] = React.useTransition();
   const [pending, startTransition] = React.useTransition();
@@ -63,6 +64,7 @@ export function NewConversationDialog({ queues, whatsappConnected }: { queues: {
     setTarget(null);
     setAddress("");
     setBody("");
+    setTemplateId("");
     setManualLink(null);
   };
 
@@ -72,7 +74,8 @@ export function NewConversationDialog({ queues, whatsappConnected }: { queues: {
   };
 
   const finalAddress = target ? address : address || term;
-  const ready = finalAddress.trim().length >= 5 && body.trim().length > 0;
+  const useTemplate = channel === "whatsapp" && Boolean(templateId);
+  const ready = finalAddress.trim().length >= 5 && (useTemplate || body.trim().length > 0);
   // O servidor decide: com o WhatsApp conectado e a janela de 24 h fechada, o envio vai pelo aparelho (registro manual).
   const manual = channel === "whatsapp" && whatsappConnected;
 
@@ -85,7 +88,8 @@ export function NewConversationDialog({ queues, whatsappConnected }: { queues: {
         contactId: target?.kind === "contato" ? target.id : undefined,
         leadId: target?.kind === "lead" ? target.id : undefined,
         queueId: queueId || undefined,
-        body: body.trim(),
+        body: useTemplate ? "" : body.trim(),
+        templateId: useTemplate ? templateId : undefined,
       });
       if (!r.ok) return void toast.error(r.error);
       if (r.data.delivery === "manual") {
@@ -187,10 +191,19 @@ export function NewConversationDialog({ queues, whatsappConnected }: { queues: {
                   <Input id="new-address" value={address} onChange={(e) => setAddress(e.target.value)} placeholder={channel === "whatsapp" ? "DDD + número" : "nome@empresa.com"} />
                 </FormField>
               ) : null}
-              <FormField label="Mensagem" htmlFor="new-body" required>
-                <Textarea id="new-body" rows={4} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Olá! Aqui é da Intercert…" />
-              </FormField>
-              {manual ? (
+              {channel === "whatsapp" && templates.length > 0 ? (
+                <FormField label="Modelo aprovado" htmlFor="new-template" hint="Para quem não escreveu nas últimas 24 h, só modelo aprovado chega no WhatsApp.">
+                  <Select id="new-template" value={templateId} onChange={(e) => setTemplateId(e.target.value)} options={[{ value: "", label: "Sem modelo (texto livre)" }, ...templates.map((t) => ({ value: t.id, label: t.name }))]} />
+                </FormField>
+              ) : null}
+              {useTemplate ? (
+                <p className="whitespace-pre-line rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm">{templates.find((t) => t.id === templateId)?.body}</p>
+              ) : (
+                <FormField label="Mensagem" htmlFor="new-body" required>
+                  <Textarea id="new-body" rows={4} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Olá! Aqui é da Intercert…" />
+                </FormField>
+              )}
+              {manual && !useTemplate ? (
                 <p className={cn("rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-warning-fg")}>
                   No WhatsApp, quem não escreveu nas últimas 24 h só recebe modelo aprovado pela Meta. Até os modelos chegarem, nesse caso a mensagem vai pelo WhatsApp do aparelho e fica registrada na conversa.
                 </p>
