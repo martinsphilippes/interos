@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { docdb } from "@/server/docdb";
 import { create, getById, list } from "@/server/db";
-import { COLLECTIONS, type Client, type Contract, type ContractTemplate, type ContractTemplateFile, type Document, type SignatureInboxItem } from "@/domain/types";
+import { COLLECTIONS, type Client, type Contract, type User, type ContractTemplate, type ContractTemplateFile, type Document, type SignatureInboxItem } from "@/domain/types";
 import { getSignatureSettings, saveInterosTemplate, saveSignatureSettings, saveTemplateVariables, setTemplateState, signatureDocumentInfo, uploadWordTemplate } from "@/server/finance/contract-templates";
 import { contractDocumentData, contractDocx, contractPdf } from "@/server/finance/contract-document";
 import { createManualContract, sendForSignature, updateContractItems } from "@/server/finance/service";
@@ -22,6 +22,8 @@ const RUN = `t${Date.now().toString(36)}`;
 const ACTOR = { id: `${RUN}_fin`, name: "Financeiro Teste" };
 const CLIENT_ID = `${RUN}_cli`;
 const CLIENT_EMAIL = `${RUN}@acme-teste.com.br`;
+/** O padrão de quem assina pela Intercert é o usuário ativo chamado Hércules: o teste cria o seu (banco limpo não tem). */
+const HERCULES_ID = `${RUN}_hercules`;
 let settingsBackup: unknown = undefined;
 let previousDefault: string | undefined;
 const contractIds: string[] = [];
@@ -45,6 +47,7 @@ beforeAll(async () => {
   settingsBackup = row ? row.data : null;
   await docdb.sql()`delete from interos.settings where data->>'key' = ${SIGNATURE_SETTING}`;
   previousDefault = (await list<ContractTemplate>(COLLECTIONS.contractTemplates, { where: [["isDefault", "==", true]] }))[0]?.id;
+  await create<User>(COLLECTIONS.users, { name: `Hércules ${RUN}`, email: `${RUN}.hercules@intercert.com.br`, role: "admin", departmentId: "administrativo", active: true } as Omit<User, "id" | "organizationId" | "createdAt" | "updatedAt">, HERCULES_ID);
   await create<Client>(COLLECTIONS.clients, { legalName: `ACME ${RUN} LTDA`, tradeName: `ACME ${RUN}`, document: "12345678000190", status: "ativo", email: CLIENT_EMAIL, address: { city: "Crato", state: "CE" }, mrr: 0, tags: [] } as never, CLIENT_ID);
 });
 
@@ -61,6 +64,7 @@ afterAll(async () => {
   await sql`delete from interos.documents where data->>'clientId' = ${CLIENT_ID}`;
   await sql`delete from interos.signature_inbox where data->>'envelopeId' = any(${envelopeIds})`;
   await sql`delete from interos.clients where id = ${CLIENT_ID}`;
+  await sql`delete from interos.users where id = ${HERCULES_ID}`;
 });
 
 describe("assinatura eletrônica", () => {
@@ -68,7 +72,7 @@ describe("assinatura eletrônica", () => {
     const s = await getSignatureSettings();
     expect(s.stored).toBe(false);
     expect(s.defaultAuth).toBe("email");
-    // O banco local tem o Hércules da carga de demonstração.
+    // O primeiro usuário ativo chamado Hércules (o do teste ou o da carga de demonstração).
     expect(s.companySigner.name).toMatch(/^H[eé]rcules/);
     expect(s.fromUser).toBe(true);
   });
