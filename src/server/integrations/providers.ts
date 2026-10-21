@@ -149,12 +149,19 @@ export async function createWhatsappTemplate(input: { name: string; language: st
   }
 }
 
-export async function sendEmail(input: { to: string; subject: string; text: string }): Promise<ProviderResult> {
+export async function sendEmail(input: { to: string; subject: string; text: string; inReplyTo?: string }): Promise<ProviderResult> {
   const key = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM;
   if (!key || !from) return { ok: false, error: "E-mail não configurado" };
+  // Respostas da Central: o cliente responde para a caixa de entrada (EMAIL_REPLY_TO) e o e-mail cai na mesma conversa.
+  const replyTo = process.env.EMAIL_REPLY_TO?.trim();
+  const headers = input.inReplyTo ? { "In-Reply-To": `<${input.inReplyTo}>`, References: `<${input.inReplyTo}>` } : undefined;
   try {
-    const { status, json } = await post("https://api.resend.com/emails", { authorization: `Bearer ${key}` }, { from, to: [input.to], subject: input.subject, text: input.text });
+    const { status, json } = await post(
+      "https://api.resend.com/emails",
+      { authorization: `Bearer ${key}` },
+      { from, to: [input.to], subject: input.subject, text: input.text, ...(replyTo ? { reply_to: replyTo } : {}), ...(headers ? { headers } : {}) },
+    );
     const id = (json as { id?: string } | null)?.id;
     if (status >= 200 && status < 300 && id) return { ok: true, externalId: id };
     const message = (json as { message?: string } | null)?.message;
@@ -163,5 +170,23 @@ export async function sendEmail(input: { to: string; subject: string; text: stri
   } catch (error) {
     console.error("[email] falha no envio", error);
     return { ok: false, error: "Falha de rede ao chamar o provedor de e-mail" };
+  }
+}
+
+/**
+ * Conteúdo de um e-mail RECEBIDO no Resend (o webhook `email.received` só traz os metadados e o `email_id`).
+ * Devolve o objeto cru do Resend (from, to, subject, text, html, headers, message_id…) para normalizeInboundEmail.
+ */
+export async function getResendReceivedEmail(emailId: string): Promise<{ ok: true; email: Record<string, unknown> } | { ok: false; error: string }> {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return { ok: false, error: "RESEND_API_KEY não configurada" };
+  try {
+    const { status, json } = await getJson(`https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`, { authorization: `Bearer ${key}` });
+    const body = json as Record<string, unknown> | null;
+    if (status >= 200 && status < 300 && body) return { ok: true, email: body };
+    return { ok: false, error: (body?.message as string | undefined) ?? `HTTP ${status}` };
+  } catch (error) {
+    console.error("[email] falha ao ler e-mail recebido", error);
+    return { ok: false, error: "Falha de rede ao chamar o Resend" };
   }
 }

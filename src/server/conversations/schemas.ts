@@ -163,3 +163,32 @@ export const saveAutoMessagesSchema = z.object({
     textoEncerramento: autoText("a mensagem de encerramento automático"),
   }),
 });
+
+// ---------------------------------------------------------------------------
+// Histórico
+// ---------------------------------------------------------------------------
+
+export const historyFiltersSchema = z.object({
+  q: z.string().trim().max(120, "Busca muito longa").optional(),
+  channel: z.enum(CONVERSATION_CHANNELS).optional(),
+  queueId: optionalId,
+  assigneeId: optionalId,
+  reason: z.enum(CONVERSATION_CLOSE_REASONS).optional(),
+  sla: z.enum(["dentro", "estourado"]).optional(),
+  days: z.coerce.number().int().refine((n) => [7, 30, 90, 365].includes(n), "Período inválido").default(30),
+});
+
+export const saveUserCentralSchema = z.object({
+  userId: id("Usuário"),
+  attends: z.boolean(),
+  queueIds: z.array(z.string().trim().min(1)).max(50).default([]),
+  maxConcurrent: z.coerce
+    .number()
+    .int()
+    .min(1, "Mínimo de 1 conversa")
+    .max(30, "No máximo 30 conversas")
+    .nullish()
+    .transform((v) => v ?? undefined),
+  channels: z.array(z.enum(CONVERSATION_CHANNELS)).min(1, "Escolha ao menos um canal").max(2).optional(),
+  emailSignature: z.string().trim().max(500, "Assinatura muito longa").optional(),
+});

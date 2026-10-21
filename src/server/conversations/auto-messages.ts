@@ -21,6 +21,7 @@ import { whatsappWindow, type MenuOption } from "@/domain/conversations";
 export { menuText, pickMenuOption, type MenuOption } from "@/domain/conversations";
 import { DEFAULT_BUSINESS_HOURS, isBusinessOpen, nextOpeningLabel, type BusinessHours } from "@/domain/business-hours";
 import { BusinessError } from "@/server/auth/error-classes";
+import { replySubject } from "@/domain/email-inbound";
 
 export const AUTO_MESSAGES_SETTING = "central_automaticas";
 const REPEAT_MS = 12 * 3600_000;
@@ -116,7 +117,8 @@ export async function sendAutoMessage(c: Conversation, kind: AutoMessageKind, te
   const sent = await sendOrRecord({
     channel: c.channel,
     to: c.address,
-    subject: "Intercert — Atendimento",
+    subject: replySubject(c.subject),
+    inReplyTo: c.channel === "email" ? c.lastInboundMessageId : undefined,
     text,
     clientId: c.clientId,
     contactId: c.contactId,

@@ -186,6 +186,7 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "call.completed": Phone,
   "conversation.opened": MessagesSquare,
   "conversation.closed": MessagesSquare,
+  "conversation.reopened": MessagesSquare,
   "comment.added": MessageSquare,
   "upsell.created": TrendingUp,
   "opportunity.won": Handshake,

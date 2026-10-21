@@ -37,7 +37,8 @@ import {
   type UserRef,
 } from "@/domain/types";
 import { contactKeyOf, withNinthDigit } from "@/domain/phone";
-import { CLOSE_REASON_LABELS, isOpenConversation, pickAssignee, whatsappWindow } from "@/domain/conversations";
+import { replySubject } from "@/domain/email-inbound";
+import { CLOSE_REASON_LABELS, isOpenConversation, pickAssignee, whatsappWindow, type QueueCandidate } from "@/domain/conversations";
 import { MESSAGE_VARIABLES, fillTemplate, placeholderCount, templateParams } from "@/domain/message-variables";
 import { resolveIdentity, type ResolvedIdentity } from "./identity";
 import { chooseQueue, getQueue, listActiveQueues, listQueues } from "./queues";
@@ -143,12 +144,23 @@ export async function loadByAssignee(): Promise<Map<string, number>> {
   return loads;
 }
 
-async function candidatesFor(queue: ServiceQueue, loads: Map<string, number>): Promise<{ id: string; available: boolean; load: number }[]> {
+/**
+ * Operadores da fila para uma conversa do canal: disponível = ativo, online, atende na Central e atende o canal
+ * (ficha do usuário › Atendimento na Central). Limite próprio, quando definido, vale no lugar do da fila.
+ */
+async function candidatesFor(queue: ServiceQueue, loads: Map<string, number>, channel: ConversationChannel): Promise<QueueCandidate[]> {
   const users = await getManyByIds<User>(COLLECTIONS.users, queue.memberIds);
   return queue.memberIds.map((id) => {
     const u = users.get(id);
-    return { id, available: Boolean(u && u.active !== false && u.presence === "online"), load: loads.get(id) ?? 0 };
+    return { id, available: Boolean(u && isAvailableFor(u, channel)), load: loads.get(id) ?? 0, limit: u?.central?.maxConcurrent };
   });
+}
+
+/** O usuário pode receber conversa deste canal agora? */
+export function isAvailableFor(u: Pick<User, "active" | "presence" | "central">, channel: ConversationChannel): boolean {
+  if (u.active === false || u.presence !== "online") return false;
+  if (u.central?.attends === false) return false;
+  return !u.central?.channels?.length || u.central.channels.includes(channel);
 }
 
 /** Responsável natural: atendente do chamado aberto, dono do lead ou quem atendeu a última conversa do contato. */
@@ -187,7 +199,7 @@ export async function routeNewConversation(c: Conversation, ctx: { hasOpenTicket
   const preferredId = await preferredAssignee(c);
   let assigneeId: string | undefined;
   if (queue) {
-    assigneeId = pickAssignee({ strategy: queue.strategy, candidates: await candidatesFor(queue, loads), maxConcurrent: queue.maxConcurrent, preferredId, lastAssignedId: queue.lastAssignedId });
+    assigneeId = pickAssignee({ strategy: queue.strategy, candidates: await candidatesFor(queue, loads, c.channel), maxConcurrent: queue.maxConcurrent, preferredId, lastAssignedId: queue.lastAssignedId });
   }
   const now = nowIso();
   const slaInstanceId = await startConversationSla(c, queue, assigneeId);
@@ -245,7 +257,7 @@ export async function distributeWaiting(options: { queueIds?: string[] } = {}): 
   for (const c of waiting) {
     const queue = c.queueId ? queues.get(c.queueId) : undefined;
     if (!queue) continue;
-    const assigneeId = pickAssignee({ strategy: queue.strategy, candidates: await candidatesFor(queue, loads), maxConcurrent: queue.maxConcurrent, preferredId: await preferredAssignee(c), lastAssignedId: queue.lastAssignedId });
+    const assigneeId = pickAssignee({ strategy: queue.strategy, candidates: await candidatesFor(queue, loads, c.channel), maxConcurrent: queue.maxConcurrent, preferredId: await preferredAssignee(c), lastAssignedId: queue.lastAssignedId });
     if (!assigneeId) continue;
     const now = nowIso();
     await update<Conversation>(COLLECTIONS.conversations, c.id, { assigneeId, assignedAt: now, status: c.awaitingReply || !c.lastOutboundAt ? "em_atendimento" : "aguardando_cliente" });
@@ -353,6 +365,8 @@ export interface SendMessageInput {
   body: string;
   /** Enviar pelo WhatsApp/e-mail do aparelho (registro manual). */
   manual?: boolean;
+  /** false = quem chamou já registra a resposta no chamado (resposta dada pela tela do chamado). */
+  recordOnTicket?: boolean;
 }
 
 export interface SendMessageResult {
@@ -371,23 +385,26 @@ export async function sendConversationMessage(id: string, input: SendMessageInpu
       "Fora da janela de 24 h do WhatsApp: a Meta só aceita modelo aprovado. Envie pelo WhatsApp do aparelho (fica como registro manual) ou por e-mail.",
     );
   }
+  // E-mail: «Re: <assunto>», encadeado na última mensagem do cliente e com a assinatura de quem responde.
+  const text = c.channel === "email" ? await withEmailSignature(input.body, actor.id) : input.body;
   const sent = await sendOrRecord({
     channel: c.channel,
     to: c.address,
-    subject: "Intercert — Atendimento",
-    text: input.body,
+    subject: replySubject(c.subject),
+    text,
     clientId: c.clientId,
     contactId: c.contactId,
     entity: c.leadId && !c.clientId ? { type: "lead", id: c.leadId } : c.ticketId ? { type: "ticket", id: c.ticketId } : { type: "conversation", id: c.id },
     actor,
     conversationId: c.id,
     forceManual: input.manual,
+    inReplyTo: c.channel === "email" ? c.lastInboundMessageId : undefined,
   });
   if (sent.delivery === "falha" || sent.delivery === "nao_enviada") {
     return { communication: sent.communication, delivery: sent.delivery, manualUrl: sent.manualUrl, error: sent.error };
   }
   await applyOutbound(c, input.body, actor);
-  if (c.ticketId) {
+  if (c.ticketId && input.recordOnTicket !== false) {
     try {
       await recordConversationReplyOnTicket(c.ticketId, { channel: c.channel, body: input.body, authorId: actor.id, manual: sent.delivery === "manual" });
     } catch (error) {
@@ -395,6 +412,13 @@ export async function sendConversationMessage(id: string, input: SendMessageInpu
     }
   }
   return { communication: sent.communication, delivery: sent.delivery, manualUrl: sent.manualUrl };
+}
+
+/** Texto do e-mail com a assinatura do usuário (ficha do usuário › Atendimento na Central), se houver. */
+export async function withEmailSignature(body: string, userId: string): Promise<string> {
+  const u = await getById<User>(COLLECTIONS.users, userId);
+  const signature = u?.central?.emailSignature?.trim();
+  return signature ? `${body.trimEnd()}\n\n-- \n${signature}` : body;
 }
 
 /** Estado da conversa depois de uma resposta da equipe (primeira resposta, SLA, responsável). */
@@ -618,6 +642,116 @@ export async function closeConversation(id: string, input: CloseInput, actor: Us
   });
   await distributeWaitingSafely();
   return { conversation: next, ticketId };
+}
+
+// ---------------------------------------------------------------------------
+// Resposta dada pela tela do chamado
+// ---------------------------------------------------------------------------
+
+export interface TicketReplyInput {
+  ticketId: string;
+  clientId: string;
+  contactId?: string;
+  channel: ConversationChannel;
+  to: string;
+  body: string;
+}
+
+/**
+ * Resposta do chamado por WhatsApp/e-mail: sai pela conversa da Central do contato (a aberta ligada ao chamado, a
+ * aberta do contato, ou uma nova com quem respondeu). Assim a resposta do cliente volta para a mesma conversa e tudo
+ * fica no Cliente 360. WhatsApp conectado com a janela de 24 h fechada: vai pelo aparelho (registro manual). A
+ * interação no chamado fica com quem chamou (recordOnTicket: false).
+ */
+export async function replyFromTicket(input: TicketReplyInput, actor: UserRef): Promise<SendMessageResult & { conversationId: string }> {
+  const contactKey = contactKeyOf(input.channel, input.to);
+  if (!contactKey) throw new BusinessError(input.channel === "email" ? "E-mail do contato inválido" : "Telefone do contato inválido");
+  const linked = (await list<Conversation>(COLLECTIONS.conversations, { where: [["ticketId", "==", input.ticketId]] })).find((c) => c.channel === input.channel && c.contactKey === contactKey && isOpenConversation(c));
+  let conversation = linked;
+  if (!conversation) {
+    const identity: ResolvedIdentity = { identity: "cliente", clientId: input.clientId, contactId: input.contactId };
+    const opened = await findOrOpenConversation({ channel: input.channel, address: input.to, identity, ticketId: input.ticketId });
+    conversation = opened.conversation;
+    const patch: Partial<Conversation> = {};
+    if (!conversation.ticketId) patch.ticketId = input.ticketId;
+    if (opened.created) {
+      const queue = chooseQueue(await listActiveQueues(), { channel: input.channel, identity: "cliente", hasOpenTicket: true });
+      Object.assign(patch, { queueId: queue?.id, assigneeId: actor.id, assignedAt: nowIso(), status: "em_atendimento" as const });
+    }
+    if (Object.keys(patch).length) {
+      await update<Conversation>(COLLECTIONS.conversations, conversation.id, patch);
+      conversation = { ...conversation, ...patch };
+    }
+  }
+  const manual = input.channel === "whatsapp" && isConnected("whatsapp") && !whatsappWindow(conversation.lastInboundAt).open;
+  const result = await sendConversationMessage(conversation.id, { body: input.body, manual, recordOnTicket: false }, actor);
+  return { ...result, conversationId: conversation.id };
+}
+
+/** Conversas da Central ligadas ao chamado (a primeira é a de origem). */
+export async function ticketConversations(ticketId: string): Promise<Conversation[]> {
+  return (await list<Conversation>(COLLECTIONS.conversations, { where: [["ticketId", "==", ticketId]] })).sort((a, b) => (a.openedAt < b.openedAt ? -1 : 1));
+}
+
+// ---------------------------------------------------------------------------
+// Reabrir (histórico)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reabre um atendimento encerrado. Volta para quem atendeu, se essa pessoa estiver disponível (online, ativa, atende o
+ * canal e abaixo do limite); senão, para a fila de antes (ou a regra de entrada). O SLA começa de novo.
+ * Um contato tem uma conversa aberta por canal: se já existe outra aberta, a reabertura é recusada e aponta para ela.
+ */
+export async function reopenConversation(id: string, actor: UserRef): Promise<Conversation> {
+  const c = await loadConversation(id);
+  if (isOpenConversation(c)) throw new BusinessError("Este atendimento já está aberto");
+  const other = await findOpenConversation(c.channel, c.contactKey);
+  if (other) throw new BusinessError(`Já existe um atendimento aberto com este contato (${other.number}). Continue por ele.`);
+
+  const now = nowIso();
+  // Estado de encerramento sai; o resto (mensagens, chamado, identificação) continua.
+  const reset: Partial<Conversation> = {
+    closedAt: undefined,
+    closedById: undefined,
+    closeReason: undefined,
+    closeSummary: undefined,
+    slaInstanceId: undefined,
+    firstResponseAt: undefined,
+    menuPending: undefined,
+    reopenedAt: now,
+    reopenCount: (c.reopenCount ?? 0) + 1,
+    openedAt: now,
+    awaitingReply: false,
+  };
+  await patchFields<Conversation>(COLLECTIONS.conversations, c.id, { ...reset, status: "nova" });
+  const base: Conversation = { ...c, ...reset, status: "nova" };
+
+  const previous = c.assigneeId ? await getById<User>(COLLECTIONS.users, c.assigneeId) : null;
+  const queues = await listActiveQueues();
+  const queue = queues.find((q) => q.id === c.queueId && q.channels.includes(c.channel));
+  const loads = await loadByAssignee();
+  const backToPrevious = previous && isAvailableFor(previous, c.channel) && (loads.get(previous.id) ?? 0) < Math.max(1, previous.central?.maxConcurrent ?? queue?.maxConcurrent ?? 1);
+  let next: Conversation;
+  if (previous && backToPrevious) {
+    const slaInstanceId = await startConversationSla(base, queue, previous.id);
+    const patch: Partial<Conversation> = { queueId: queue?.id ?? c.queueId, assigneeId: previous.id, assignedAt: now, status: "em_atendimento", slaInstanceId, queuedAt: now };
+    await patchFields<Conversation>(COLLECTIONS.conversations, c.id, patch);
+    next = { ...base, ...patch };
+    await announceAssignment(next, previous.id, actor, queue?.name);
+  } else {
+    await patchFields<Conversation>(COLLECTIONS.conversations, c.id, { assigneeId: undefined, assignedAt: undefined });
+    next = await routeNewConversation({ ...base, assigneeId: undefined, assignedAt: undefined }, { hasOpenTicket: Boolean(c.ticketId), queueId: c.queueId });
+  }
+  await addConversationNote(c.id, `Atendimento reaberto por ${actor.name}.`, SYSTEM_ACTOR);
+  await emitEvent({
+    type: "conversation.reopened",
+    actor,
+    clientId: c.clientId,
+    entity: { type: "conversation", id: c.id },
+    title: `${actor.name} reabriu o atendimento ${c.number}`,
+    payload: { conversationId: c.id, channel: c.channel, assigneeId: next.assigneeId, queueId: next.queueId },
+  });
+  return next;
 }
 
 // ---------------------------------------------------------------------------

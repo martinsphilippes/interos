@@ -42,7 +42,7 @@ function previousRange(startKey: string, endKey: string): { startKey: string; en
 }
 
 /** Gatilhos que caracterizam uma automação de captação. */
-const CAPTURE_EVENTS = new Set(["lead.created", "lead.updated", "lead.qualified", "lead.disqualified", "lead.contacted", "whatsapp.message.received", "prospect.contacted"]);
+const CAPTURE_EVENTS = new Set(["lead.created", "lead.updated", "lead.qualified", "lead.disqualified", "lead.contacted", "whatsapp.message.received", "email.received", "prospect.contacted"]);
 const ACTION_LABELS: Record<AutomationRule["actions"][number]["type"], string> = {
   criar_tarefa: "Criar tarefa",
   notificar: "Notificar",

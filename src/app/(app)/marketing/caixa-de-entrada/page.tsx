@@ -26,9 +26,12 @@ export default async function CaixaDeEntradaPage() {
       <PageContainer>
         <PageHeader
           title="Caixa de Entrada"
-          description="Mensagens de WhatsApp e e-mail recebidas e leads novos aguardando responsável."
+          description="Mensagens de leads e de números desconhecidos e leads novos aguardando responsável."
           breadcrumbs={[{ label: "Marketing", href: "/marketing" }, { label: "Caixa de Entrada" }]}
         />
+        <p className="mb-5 rounded-lg border border-border bg-surface-muted px-4 py-3 text-sm" role="note">
+          As mensagens vêm da Central de Atendimento. Aqui ficam as de leads e de números desconhecidos; as de clientes ficam na Central. Responder aqui ou na Central dá no mesmo: é a mesma conversa.
+        </p>
         {!channels.whatsapp || !channels.email ? (
           <div className="mb-5 flex items-start gap-3 rounded-lg border border-info/30 bg-info-soft/60 p-3 text-sm text-info-fg" role="note">
             <Info className="mt-0.5 size-4 shrink-0" />

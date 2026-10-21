@@ -314,7 +314,7 @@ async function transferTargetsFor(sellers: Awaited<ReturnType<typeof listSalesUs
   return candidates.filter((_, i) => perms[i]?.has("vendas.acessar")).map(toLite);
 }
 
-const CONTACT_EVENT_TYPES = new Set<EventType>(["whatsapp.message.sent", "whatsapp.message.received", "call.completed", "email.sent"]);
+const CONTACT_EVENT_TYPES = new Set<EventType>(["whatsapp.message.sent", "whatsapp.message.received", "call.completed", "email.sent", "email.received"]);
 
 function isRelevantEvent(e: DomainEvent, ctx: { oppId: string; leadId?: string; proposalIds: Set<string>; visitIds: Set<string> }): boolean {
   const payloadOpp = typeof e.payload?.opportunityId === "string" ? e.payload.opportunityId : undefined;

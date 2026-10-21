@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 12 módulos, 68 telas, 139 seções e 260 ações (479 chaves únicas) — Central de Atendimento: + módulo Comunicação (2 telas, 6 abas, 10 ações)", () => {
+  it("tem 12 módulos, 69 telas, 139 seções e 262 ações (482 chaves únicas) — Central de Atendimento: + módulo Comunicação (3 telas, 6 abas, 12 ações)", () => {
     expect(MODULES.length).toBe(12);
-    expect(SCREENS.length).toBe(68);
+    expect(SCREENS.length).toBe(69);
     expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(139);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(260);
-    expect(PERMISSION_KEYS.length).toBe(479);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(262);
+    expect(PERMISSION_KEYS.length).toBe(482);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -201,8 +201,8 @@ describe("catálogo — cobertura de páginas", () => {
       .filter((s) => s && !/^\(.*\)$/.test(s))
       .join("/");
 
-  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (94 páginas — Central de Atendimento: + /comunicacao e /comunicacao/canais)", () => {
-    expect(pages.length).toBe(94);
+  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (95 páginas — Central de Atendimento: + /comunicacao, /comunicacao/canais e /comunicacao/historico)", () => {
+    expect(pages.length).toBe(95);
     const exempt = new Set<string>(EXEMPTIONS.filter((e) => e.kind === "page").map((e) => e.target));
     const routes = new Set(SCREENS.flatMap((s) => [...s.routes, ...s.sections.flatMap((x) => x.routes ?? [])]));
     const missing = pages.filter((p) => !exempt.has(p) && !routes.has(toRoute(p)));

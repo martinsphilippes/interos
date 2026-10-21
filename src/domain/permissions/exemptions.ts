@@ -144,6 +144,13 @@ export const EXEMPTIONS = [
     reason: "Captura de leads por webhook. Guarda por token.",
   },
   {
+    target: "src/app/api/webhooks/email/route.ts#POST",
+    kind: "api",
+    // Assinatura Svix do Resend (RESEND_WEBHOOK_SECRET) ou x-interos-token (EMAIL_INBOUND_TOKEN) → 401; sem nenhuma
+    // env ACEITA fora de produção e responde 503 em produção.
+    reason: "E-mail recebido do cliente (Central de Atendimento). Guarda por assinatura/token.",
+  },
+  {
     target: "src/app/api/webhooks/whatsapp/route.ts#GET",
     kind: "api",
     // Hoje: hub.verify_token timingSafe → 403 (route.ts:39-46)

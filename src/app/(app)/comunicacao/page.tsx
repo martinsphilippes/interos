@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { SlidersHorizontal } from "lucide-react";
+import { History, SlidersHorizontal } from "lucide-react";
 import { can, canSeeHref, requireScreen } from "@/server/auth/session";
 import { getCentralOverview, getConversationDetail, getTransferOptions, isCentralTab } from "@/server/conversations/queries";
 import { distributeWaitingThrottled } from "@/server/conversations/service";
@@ -56,6 +56,13 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
         className={chosen && detail ? "hidden lg:flex" : undefined}
         actions={
           <>
+            {canSeeHref(user, "/comunicacao/historico") ? (
+              <Button asChild variant="outline" className="min-h-[44px] md:min-h-0">
+                <Link href="/comunicacao/historico">
+                  <History /> Histórico
+                </Link>
+              </Button>
+            ) : null}
             {canSeeHref(user, "/comunicacao/canais") ? (
               <Button asChild variant="outline" className="min-h-[44px] md:min-h-0">
                 <Link href="/comunicacao/canais">

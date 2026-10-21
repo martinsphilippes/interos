@@ -10,22 +10,26 @@ import { can, failAction, requirePermission } from "@/server/auth/session";
 import { resolveDataScope, scopeAllows } from "@/server/auth/scope";
 import { BusinessError, PermissionError } from "@/server/auth/errors";
 import { getById, list } from "@/server/db";
-import { COLLECTIONS, type ActionResult, type Client, type Contact, type CurrentUser, type Lead, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type ActionResult, type Client, type Contact, type Conversation, type CurrentUser, type Lead, type UserRef } from "@/domain/types";
 import { emailIdentity, phoneIdentity } from "@/domain/phone";
 import {
   addConversationNote,
   assignConversation,
+  distributeWaitingSafely,
   assumeConversation,
   closeConversation,
   linkConversationIdentity,
   sendConversationMessage,
   sendConversationTemplate,
   startConversation,
+  reopenConversation,
   transferConversation,
 } from "./service";
 import { identityCandidates, type IdentityCandidate } from "./identity";
 import { loadConversationInScope } from "./queries";
-import { saveQueue } from "./queues";
+import { getHistoryForExport, historyConversationInScope } from "./history";
+import { formatDurationShort, toCsv } from "@/domain/conversation-history";
+import { saveQueue, saveUserCentral } from "./queues";
 import { saveTemplate, syncTemplatesFromMeta } from "./templates";
 import { countQuickReplyUse, saveQuickReply } from "./quick-replies";
 import { saveAutoMessages } from "./auto-messages";
@@ -33,10 +37,12 @@ import {
   assignSchema,
   closeSchema,
   conversationIdSchema,
+  historyFiltersSchema,
   linkIdentitySchema,
   noteSchema,
   saveAutoMessagesSchema,
   saveQueueSchema,
+  saveUserCentralSchema,
   saveQuickReplySchema,
   saveTemplateSchema,
   searchTargetsSchema,
@@ -330,5 +336,77 @@ export async function saveAutoMessagesAction(input: unknown): Promise<ActionResu
     return { ok: true, data: { saved: true } };
   } catch (error) {
     return fail(error, "Não foi possível salvar as mensagens automáticas");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Histórico de atendimentos
+// ---------------------------------------------------------------------------
+
+export async function reopenConversationAction(input: unknown): Promise<ActionResult<{ id: string; assigned: boolean }>> {
+  try {
+    const user = await requirePermission("comunicacao.historico.reabrir");
+    const { conversationId } = conversationIdSchema.parse(input);
+    const c = await getById<Conversation>(COLLECTIONS.conversations, conversationId);
+    if (!c || !(await historyConversationInScope(user, c))) throw new BusinessError("Conversa não encontrada");
+    const next = await reopenConversation(c.id, actor(user));
+    revalidateCentral(c.clientId);
+    revalidatePath("/comunicacao/historico");
+    return { ok: true, data: { id: next.id, assigned: Boolean(next.assigneeId) } };
+  } catch (error) {
+    return fail(error, "Não foi possível reabrir o atendimento");
+  }
+}
+
+const CHANNEL_NAME = { whatsapp: "WhatsApp", email: "E-mail" } as const;
+
+export async function exportHistoryAction(input: unknown): Promise<ActionResult<{ filename: string; csv: string; truncated: boolean }>> {
+  try {
+    const user = await requirePermission("comunicacao.historico.exportar");
+    const filters = historyFiltersSchema.parse(input ?? {});
+    const { rows, truncated } = await getHistoryForExport(user, filters);
+    const fmt = (iso: string) => new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
+    const csv = toCsv(
+      ["Atendimento", "Canal", "Contato", "Tipo", "Telefone/e-mail", "Fila", "Operador", "Aberta", "Encerrada", "1ª resposta", "SLA", "Motivo", "Resumo", "Chamado"],
+      rows.map((r) => [
+        r.number,
+        CHANNEL_NAME[r.channel],
+        r.name,
+        r.subtitle,
+        r.address,
+        r.queueName,
+        r.assigneeName,
+        fmt(r.openedAt),
+        fmt(r.closedAt),
+        formatDurationShort(r.firstResponseMs),
+        r.sla === "estourado" ? "Estourado" : r.sla === "dentro" ? "Dentro" : "",
+        r.reasonLabel,
+        r.summary,
+        r.ticket?.number,
+      ]),
+    );
+    return { ok: true, data: { filename: `historico-atendimentos-${new Date().toISOString().slice(0, 10)}.csv`, csv, truncated } };
+  } catch (error) {
+    return fail(error, "Não foi possível exportar o histórico");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ficha do usuário › Atendimento na Central
+// ---------------------------------------------------------------------------
+
+export async function saveUserCentralAction(input: unknown): Promise<ActionResult<{ queuesChanged: number }>> {
+  try {
+    await requirePermission("comunicacao.canais.filas.editar");
+    const data = saveUserCentralSchema.parse(input);
+    const r = await saveUserCentral(data);
+    // A pessoa pode ter ficado disponível para a fila (entrou numa fila, voltou a atender, aumentou o limite).
+    await distributeWaitingSafely();
+    revalidatePath("/admin/usuarios");
+    revalidatePath("/comunicacao/canais");
+    revalidatePath("/comunicacao");
+    return { ok: true, data: r };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar o atendimento na Central");
   }
 }

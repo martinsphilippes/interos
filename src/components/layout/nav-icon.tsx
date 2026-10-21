@@ -31,6 +31,7 @@ import {
   Megaphone,
   Menu,
   MessagesSquare,
+  History,
   Plug,
   Network,
   Package,
@@ -125,6 +126,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   HandCoins,
   LayoutGrid,
   MessagesSquare,
+  History,
   SlidersHorizontal,
 };
 

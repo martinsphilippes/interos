@@ -613,8 +613,24 @@ pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`sr
   porque o plano atual da Vercel só agenda uma vez por dia. Passos independentes: menu sem resposta (10 min), transbordo,
   distribuição, posição na fila, cliente sem resposta, limpeza de registros e sincronização de modelos.
 
-Próxima entrega da fase 1: histórico de atendimentos, e-mail de entrada e as mudanças no Cliente 360, Usuário, Caixa de
-Entrada e Chamado.
+- **Histórico** (`history.ts`, `/comunicacao/historico`, tela `comunicacao.historico`): conversas encerradas no escopo
+  próprio da tela (operador: as suas; gestor: a equipe; direção: todas). Busca no contato e, com 3+ letras, no texto das
+  mensagens do período (até 12 meses, 500 linhas; CSV até 5.000, com proteção contra fórmula). **Reabrir** volta para
+  quem atendeu se a pessoa estiver disponível, senão para a fila; o SLA recomeça; recusa se o contato já tem outra
+  conversa aberta no canal.
+- **E-mail de entrada** (`/api/webhooks/email`): Resend (`email.received` + leitura do conteúdo na API, assinatura Svix
+  com `RESEND_WEBHOOK_SECRET`) ou formato próprio/Postmark com `EMAIL_INBOUND_TOKEN`. Corta a parte citada, ignora
+  respostas automáticas e e-mails do próprio remetente. A conversa guarda o assunto e o Message-ID do cliente: a
+  resposta sai «Re: <assunto>», encadeada (`In-Reply-To`), com `reply_to` = `EMAIL_REPLY_TO` e a assinatura do operador.
+- **Por pessoa** (`User.central`, ficha do usuário › Atendimento na Central, chave `comunicacao.canais.filas.editar`):
+  recebe ou não conversas, filas (em `service_queues.memberIds`), limite próprio e canais (respeitados por
+  `pickAssignee`/`isAvailableFor`) e assinatura de e-mail.
+- **Cliente 360 › Atendimentos**: conversas do cliente (só metadados), conversas e 1ª resposta média em 90 dias, «Como
+  falar com eles» (janela do WhatsApp por número e recusas de comunicação) e «Iniciar conversa».
+- **Caixa de Entrada do Marketing**: só mensagens de leads e números desconhecidos (as de clientes ficam na Central),
+  com a situação da conversa; assumir aqui assume a conversa.
+- **Chamado**: aviso da conversa de origem; resposta por WhatsApp/e-mail sai pela conversa da Central do contato
+  (`replyFromTicket`), então a resposta do cliente volta para a mesma conversa e o Cliente 360 vê tudo.
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.

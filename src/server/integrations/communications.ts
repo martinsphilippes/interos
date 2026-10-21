@@ -98,6 +98,8 @@ export interface SendOrRecordInput {
    * Meta aceita). `text` deve ser o modelo já preenchido — é o que fica gravado e o que vai no wa.me sem conexão.
    */
   whatsappTemplate?: { name: string; language: string; params: string[] };
+  /** E-mail: Message-ID da mensagem do cliente que esta responde (o cliente de e-mail encadeia na mesma conversa). */
+  inReplyTo?: string;
 }
 
 export interface SendOrRecordResult {
@@ -171,7 +173,7 @@ export async function sendOrRecord(input: SendOrRecordInput): Promise<SendOrReco
         ? input.whatsappTemplate
           ? await sendWhatsappTemplate(input.to, input.whatsappTemplate)
           : await sendWhatsappText(input.to, input.text)
-        : await sendEmail({ to: input.to, subject, text: input.text });
+        : await sendEmail({ to: input.to, subject, text: input.text, inReplyTo: input.inReplyTo });
     outcome = r.ok ? { status: "enviada", provider: channel === "whatsapp" ? "meta" : "resend", externalId: r.externalId, delivery: "enviada" } : { status: "falha", provider: channel === "whatsapp" ? "meta" : "resend", error: r.error, delivery: "falha" };
   } else if (input.whenNotConnected === "nao_enviada") {
     outcome = { status: "nao_enviada", provider: "manual", error: !input.to ? `Destinatário sem ${channel === "whatsapp" ? "telefone" : "e-mail"} cadastrado` : `${CHANNEL_LABEL[channel]} não conectado`, delivery: "nao_enviada" };

@@ -25,6 +25,9 @@ import { KeyValueEditor, recordToRows, rowsToRecord, type KeyValueRow } from "./
 import { ActiveIndicator, RoleBadge } from "./users-table";
 import { useAdminUrl } from "./use-admin-url";
 import { UserAccessPanel, type AccessEditorHandle } from "./user-access-panel";
+import type { UserCentralView } from "@/server/conversations/queues";
+import { saveUserCentralAction } from "@/server/conversations/actions";
+import { UserCentralSection, centralFormOf, centralInputOf, type UserCentralForm } from "@/components/conversations/user-central-section";
 
 /** O que o perfil pode fazer no drawer (calculado no servidor; as actions revalidam cada item). */
 export interface UserAbilities {
@@ -60,6 +63,8 @@ export interface UserDrawerProps {
   currentUserId: string;
   /** Exceções, acesso efetivo e histórico (só quando o perfil pode ver). */
   access?: UserAccessData | null;
+  /** Atendimento na Central (comunicacao.canais.filas.ver; edição com .editar). */
+  central?: { view: UserCentralView; canEdit: boolean } | null;
 }
 
 /** O que ainda não foi salvo no drawer (cadastro e/ou acessos). */
@@ -72,7 +77,7 @@ interface Unsaved {
  * Drawer de edição de usuário (?usuario=<id>). Sem permissão de editar (gestor/diretoria, no padrão) só exibe os dados.
  * Fechar com alterações não salvas (cadastro ou acessos) pede confirmação, e sair da página avisa pelo navegador.
  */
-export function UserDrawer({ user, users, departments, abilities, currentUserId, access }: UserDrawerProps) {
+export function UserDrawer({ user, users, departments, abilities, currentUserId, access, central }: UserDrawerProps) {
   const { navigate } = useAdminUrl();
   const [unsaved, setUnsaved] = React.useState<Unsaved>({ form: false, access: false });
   const [confirmClose, setConfirmClose] = React.useState(false);
@@ -97,7 +102,18 @@ export function UserDrawer({ user, users, departments, abilities, currentUserId,
       <Drawer open={Boolean(user)} onOpenChange={(open) => !open && close()}>
         <DrawerContent size="lg">
           {user ? (
-            <DrawerInner key={`${user.id}-${user.updatedAt}`} user={user} users={users} departments={departments} abilities={abilities} currentUserId={currentUserId} access={access} onClose={close} onUnsavedChange={setUnsaved} />
+            <DrawerInner
+              key={`${user.id}-${user.updatedAt}`}
+              user={user}
+              users={users}
+              departments={departments}
+              abilities={abilities}
+              currentUserId={currentUserId}
+              access={access}
+              central={central}
+              onClose={close}
+              onUnsavedChange={setUnsaved}
+            />
           ) : null}
         </DrawerContent>
       </Drawer>
@@ -134,7 +150,7 @@ function goalSuggestions(users: UserRow[]): string[] {
   return Array.from(keys).sort();
 }
 
-function DrawerInner({ user, users, departments, abilities, currentUserId, access, onClose, onUnsavedChange }: UserDrawerProps & { user: UserRow; onClose: () => void; onUnsavedChange: (value: Unsaved) => void }) {
+function DrawerInner({ user, users, departments, abilities, currentUserId, access, central, onClose, onUnsavedChange }: UserDrawerProps & { user: UserRow; onClose: () => void; onUnsavedChange: (value: Unsaved) => void }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
@@ -155,9 +171,12 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
   const formDirty = React.useMemo(() => JSON.stringify(form) !== JSON.stringify(initialForm), [form, initialForm]);
   const [accessDirty, setAccessDirty] = React.useState(false);
   const accessEditor = React.useRef<AccessEditorHandle>(null);
+  const [initialCentral] = React.useState<UserCentralForm | null>(() => (central ? centralFormOf(central.view) : null));
+  const [centralForm, setCentralForm] = React.useState<UserCentralForm | null>(initialCentral);
+  const centralDirty = Boolean(central?.canEdit && centralForm && JSON.stringify(centralForm) !== JSON.stringify(initialCentral));
   React.useEffect(() => {
-    onUnsavedChange({ form: formDirty && abilities.edit, access: accessDirty });
-  }, [formDirty, accessDirty, abilities.edit, onUnsavedChange]);
+    onUnsavedChange({ form: (formDirty && abilities.edit) || centralDirty, access: accessDirty });
+  }, [formDirty, accessDirty, centralDirty, abilities.edit, onUnsavedChange]);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
   const isSelf = user.id === currentUserId;
   const canEdit = abilities.edit;
@@ -207,12 +226,22 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
     };
   };
 
-  const saveProfile = (input: UpdateUserInput) =>
+  /** Grava o cadastro (se mudou) e o atendimento na Central (se mudou), nesta ordem. */
+  const saveProfile = (input: UpdateUserInput | null) =>
     startTransition(async () => {
-      const result = await updateUser(input);
-      if (!result.ok) {
-        setError(result.error);
-        return;
+      if (input) {
+        const result = await updateUser(input);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+      }
+      if (centralDirty && centralForm) {
+        const result = await saveUserCentralAction(centralInputOf(user.id, centralForm));
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
       }
       toast.success("Usuário salvo");
       router.refresh();
@@ -228,10 +257,10 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
     const input = formDirty ? buildInput() : null;
     if (formDirty && !input) return;
     if (accessDirty && accessEditor.current) {
-      accessEditor.current.save(input ? () => saveProfile(input) : undefined);
+      accessEditor.current.save(input || centralDirty ? () => saveProfile(input) : undefined);
       return;
     }
-    if (!input) {
+    if (!input && !centralDirty) {
       toast.info("Nenhuma alteração para salvar.");
       return;
     }
@@ -365,16 +394,20 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
             </div>
           ) : null}
 
+          {central && centralForm ? (
+            <UserCentralSection view={central.view} value={centralForm} onChange={setCentralForm} readOnly={!central.canEdit} inactive={user.active === false} />
+          ) : null}
+
           {access ? (
             <UserAccessPanel userName={user.name} view={access.view} catalog={access.catalog} caps={access.caps} neverDenied={access.neverDenied} onDirtyChange={setAccessDirty} editorRef={accessEditor} />
           ) : null}
         </DrawerBody>
 
-        {canEdit || accessDirty ? (
+        {canEdit || accessDirty || central?.canEdit ? (
           <DrawerFooter>
-            {formDirty || accessDirty ? (
+            {formDirty || accessDirty || centralDirty ? (
               <span className="mr-auto self-center text-xs text-muted">
-                Não salvo: {formDirty && accessDirty ? "cadastro e acessos" : accessDirty ? "acessos" : "cadastro"}
+                Não salvo: {[formDirty ? "cadastro" : null, centralDirty ? "atendimento na Central" : null, accessDirty ? "acessos" : null].filter(Boolean).join(", ")}
               </span>
             ) : null}
             <Button type="button" variant="outline" onClick={onClose} disabled={pending}>

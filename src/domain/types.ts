@@ -226,6 +226,20 @@ export interface User extends BaseEntity {
   presenceUpdatedAt?: string;
   /** Cookies de sessão emitidos antes deste instante são recusados (gravado por authAdmin ao encerrar sessões). */
   sessionsRevokedAt?: string;
+  /** Como a pessoa atende na Central (ficha do usuário › Atendimento na Central). Ausente = padrão. */
+  central?: UserCentralSettings;
+}
+
+/** Atendimento na Central por usuário. As filas ficam em service_queues.memberIds (fonte única). */
+export interface UserCentralSettings {
+  /** false = não recebe conversas pela distribuição automática (continua podendo assumir e responder). */
+  attends: boolean;
+  /** Limite próprio de conversas simultâneas; ausente = o da fila. */
+  maxConcurrent?: number;
+  /** Canais que atende; ausente = todos os da fila. */
+  channels?: ConversationChannel[];
+  /** Assinatura acrescentada às respostas por e-mail. */
+  emailSignature?: string;
 }
 
 export const USER_PRESENCES = ["online", "ausente", "ocupado"] as const;
@@ -1974,6 +1988,13 @@ export interface Conversation extends BaseEntity {
   menuAttempts?: number;
   /** Última vez que cada mensagem automática foi enviada nesta conversa. */
   autoSentAt?: Partial<Record<AutoMessageKind, string>>;
+  /** E-mail: assunto da conversa (o da primeira mensagem); as respostas saem com «Re: <assunto>». */
+  subject?: string;
+  /** E-mail: Message-ID da última mensagem do cliente (a resposta sai «em resposta a» ela e cai na mesma conversa dele). */
+  lastInboundMessageId?: string;
+  /** Reaberta a partir do histórico. */
+  reopenedAt?: string;
+  reopenCount?: number;
 }
 
 export const AUTO_MESSAGE_KINDS = ["menu", "foraDoHorario", "encerramento", "aguardandoFila", "lembrete", "encerramentoSemResposta"] as const;

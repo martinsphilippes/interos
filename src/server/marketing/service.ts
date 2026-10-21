@@ -25,6 +25,7 @@ import {
   type Client,
   type Communication,
   type Contact,
+  type Conversation,
   type DomainEvent,
   type Lead,
   type LeadSource,
@@ -40,6 +41,7 @@ import {
   type WorkflowInstance,
   type WorkflowStep,
 } from "@/domain/types";
+import { isOpenConversation } from "@/domain/conversations";
 import { getChannelAdapter } from "./channels";
 import { DEFAULT_SCORING_RULES, computeLeadScore, evaluateMqlGate, normalize, type LeadScoreResult, type LeadScoringRules } from "./scoring";
 import {
@@ -925,6 +927,12 @@ export async function assumeInboxItem(kind: "lead" | "message", id: string, acto
   if (message.entityType === "lead" && message.entityId) {
     const lead = await getById<Lead>(COLLECTIONS.leads, message.entityId);
     if (lead && !lead.ownerId) await assignLead(lead.id, actor.id, actor);
+  }
+  // A mensagem é de uma conversa da Central sem responsável: quem assume aqui assume a conversa (é a mesma).
+  if (message.conversationId) {
+    const { assumeConversation } = await import("@/server/conversations/service");
+    const conversation = await getById<Conversation>(COLLECTIONS.conversations, message.conversationId);
+    if (conversation && isOpenConversation(conversation) && !conversation.assigneeId) await assumeConversation(conversation.id, actor);
   }
 }
 

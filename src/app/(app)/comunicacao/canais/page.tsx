@@ -57,7 +57,11 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Sea
 
   return (
     <PageContainer>
-      <PageHeader title="Canais e filas" description="Estado real de cada canal e as filas da Central de Atendimento." breadcrumbs={[{ label: "Central de Atendimento", href: "/comunicacao" }, { label: "Canais e filas" }]} />
+      <PageHeader
+        title="Canais e filas"
+        description="Estado real de cada canal e as filas da Central de Atendimento."
+        breadcrumbs={[{ label: "Central de Atendimento", href: "/comunicacao" }, { label: "Canais e filas" }]}
+      />
       {!tab ? (
         <EmptyState title="Sem acesso às seções" description="Seu perfil não inclui o estado dos canais nem as filas." />
       ) : (
@@ -69,14 +73,24 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Sea
                 role="tab"
                 aria-selected={tab === t}
                 href={`/comunicacao/canais?aba=${t}`}
-                className={cn("-mb-px inline-flex min-h-[44px] shrink-0 items-center whitespace-nowrap border-b-2 px-3 text-sm font-medium transition-colors", tab === t ? "border-brand text-brand-fg" : "border-transparent text-muted hover:text-foreground")}
+                className={cn(
+                  "-mb-px inline-flex min-h-[44px] shrink-0 items-center whitespace-nowrap border-b-2 px-3 text-sm font-medium transition-colors",
+                  tab === t ? "border-brand text-brand-fg" : "border-transparent text-muted hover:text-foreground",
+                )}
               >
                 {TAB_LABEL[t]}
               </Link>
             ))}
           </nav>
           {tab === "canais" ? (
-            <ChannelsStatus whatsapp={getIntegration("whatsapp")} email={getIntegration("email")} voip={getIntegration("voip")} health={await getChannelHealth()} webhookSecured={Boolean(process.env.WHATSAPP_APP_SECRET)} />
+            <ChannelsStatus
+              whatsapp={getIntegration("whatsapp")}
+              email={getIntegration("email")}
+              voip={getIntegration("voip")}
+              health={await getChannelHealth()}
+              webhookSecured={Boolean(process.env.WHATSAPP_APP_SECRET)}
+              emailInbound={process.env.RESEND_WEBHOOK_SECRET ? "resend" : process.env.EMAIL_INBOUND_TOKEN ? "token" : null}
+            />
           ) : tab === "filas" ? (
             <QueuesAdminView data={await getQueuesAdmin()} canEdit={can(user, "comunicacao.canais.filas.editar")} />
           ) : tab === "modelos" ? (

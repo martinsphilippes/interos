@@ -24,6 +24,8 @@ export interface ChannelStatus {
   whatsapp: boolean;
   voip: boolean;
   email: boolean;
+  /** Janela de 24 h do WhatsApp com o contato (conversa da Central ligada ao chamado), quando conhecida. */
+  whatsappWindow?: "aberta" | "fechada";
 }
 
 type ComposerChannel = ReplyChannel | "ligacao";
@@ -56,7 +58,9 @@ export function TicketComposer({ detail, channels, className, onSent, can = FULL
   const router = useRouter();
   const { ticket } = detail;
   const target = contactTarget(detail);
-  const channelOptions = CHANNEL_OPTIONS.filter((o) => (o.value === "ligacao" ? can.register : can.reply));
+  const channelOptions = CHANNEL_OPTIONS.filter((o) => (o.value === "ligacao" ? can.register : can.reply)).map((o) =>
+    o.value === "whatsapp" && channels.whatsapp && channels.whatsappWindow ? { ...o, label: channels.whatsappWindow === "aberta" ? "WhatsApp (janela aberta)" : "WhatsApp (pelo aparelho)" } : o,
+  );
   const preferred: ComposerChannel = ticket.channel === "email" ? "email" : ticket.channel === "portal" || ticket.channel === "interno" ? "portal" : ticket.channel === "telefone" ? "ligacao" : "whatsapp";
   const defaultChannel: ComposerChannel = channelOptions.some((o) => o.value === preferred) ? preferred : (channelOptions[0]?.value ?? preferred);
   const [channel, setChannel] = React.useState<ComposerChannel>(defaultChannel);

@@ -457,9 +457,9 @@ export interface ReplyResult {
 }
 
 /**
- * Resposta do atendente. Com a integração do canal conectada, envia pelo adapter; sem integração (situação
- * atual) grava um REGISTRO MANUAL com o texto digitado e devolve o destinatário para o atendente enviar pelo
- * app (wa.me / mailto). Portal é interno: a resposta fica visível no chamado.
+ * Resposta do atendente. WhatsApp/e-mail com destinatário saem pela conversa da Central do contato (envio único de
+ * mensagens: registro manual quando o canal não está conectado, com o destinatário para o wa.me/mailto). Portal é
+ * interno: a resposta fica visível no chamado.
  */
 export async function replyToTicket(ticketId: string, channel: ReplyChannel, body: string, actor: UserRef): Promise<ReplyResult> {
   const ticket = await loadTicket(ticketId);
@@ -471,8 +471,34 @@ export async function replyToTicket(ticketId: string, channel: ReplyChannel, bod
   ]);
   const to = channel === "whatsapp" ? (contact?.whatsapp ?? contact?.phone ?? client.whatsapp ?? client.phone) : channel === "email" ? (contact?.email ?? client.email) : undefined;
   const connected = channel === "portal" || (channel === "whatsapp" ? status.whatsapp : status.email);
-  const manual = !connected;
 
+  // WhatsApp/e-mail com destinatário: sai pela conversa da Central do contato (a resposta do cliente volta para ela e
+  // tudo fica no Cliente 360). Janela de 24 h fechada com o WhatsApp conectado = registro manual pelo aparelho.
+  if ((channel === "whatsapp" || channel === "email") && to) {
+    const { replyFromTicket } = await import("@/server/conversations/service");
+    const sent = await replyFromTicket({ ticketId: ticket.id, clientId: ticket.clientId, contactId: contact?.id, channel, to, body }, actor);
+    if (sent.delivery === "falha" || sent.delivery === "nao_enviada") throw new SupportError(sent.error ? `Não foi possível enviar: ${sent.error}` : "Não foi possível enviar a resposta");
+    const manualReply = sent.delivery === "manual";
+    const interaction = await addInteraction(ticket, { kind: CHANNEL_KIND[channel], body, authorId: actor.id, channel, manual: manualReply });
+    if (channel === "whatsapp") {
+      await emitEvent({
+        type: "whatsapp.message.sent",
+        actor,
+        clientId: ticket.clientId,
+        entity: { type: "ticket", id: ticket.id },
+        title: manualReply
+          ? `WhatsApp registrado manualmente no chamado ${ticket.number}${contact ? ` (${contact.name})` : ""}`
+          : `WhatsApp enviado no chamado ${ticket.number}${contact ? ` para ${contact.name}` : ""}`,
+        description: body.length > 280 ? `${body.slice(0, 277)}…` : body,
+        department: "suporte",
+        payload: { communicationId: sent.communication.id, to, manual: manualReply, ticketId: ticket.id, conversationId: sent.conversationId },
+      });
+    }
+    await registerAgentResponse(ticket, actor, `${TICKET_CHANNEL_LABELS[channel]}${manualReply ? " (registro manual)" : ""}`);
+    return { interaction, manual: manualReply, to };
+  }
+
+  const manual = !connected;
   const interaction = await addInteraction(ticket, { kind: CHANNEL_KIND[channel], body, authorId: actor.id, channel, manual });
   let communicationId: string | undefined;
   if (connected && channel !== "portal") {
@@ -1068,11 +1094,11 @@ export async function recordInboundOnTicket(
 ): Promise<void> {
   await addInteraction(ticket, { kind: input.channel, body: input.body });
   await emitEvent({
-    type: "whatsapp.message.received",
+    type: input.channel === "email" ? "email.received" : "whatsapp.message.received",
     actor: { id: CUSTOMER_ACTOR.id, name: input.who },
     clientId: ticket.clientId,
     entity: { type: "ticket", id: ticket.id },
-    title: `WhatsApp recebido de ${input.who} no chamado ${ticket.number}`,
+    title: `${input.channel === "email" ? "E-mail" : "WhatsApp"} recebido de ${input.who} no chamado ${ticket.number}`,
     description: input.body,
     department: "suporte",
     payload: { communicationId: input.communicationId, from: input.from, ticketId: ticket.id, conversationId: input.conversationId },

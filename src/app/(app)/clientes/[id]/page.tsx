@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import { ACCESS_DENIED_REDIRECT, can, getCurrentUser, requireScreen } from "@/server/auth/session";
+import { ACCESS_DENIED_REDIRECT, can, canSeeHref, getCurrentUser, requireScreen } from "@/server/auth/session";
 import { canSeeClient, canSeeClientId, clientCapabilities, clientSectionAccess } from "@/server/clients/access";
 import { getClient, getClient360, getClientFormOptions } from "@/server/clients/queries";
-import { getCommunicationChannelStatus } from "@/server/integrations/status";
+import { getCommunicationChannelStatus, isConnected } from "@/server/integrations/status";
+import { getClientConversations } from "@/server/conversations/client-view";
+import { listActiveQueues } from "@/server/conversations/queues";
+import { usableTemplates } from "@/server/conversations/templates";
+import { NewConversationDialog } from "@/components/conversations/new-conversation-dialog";
 import { PageContainer } from "@/components/layout/page-container";
 import { ClientHeader, ClientKpis } from "@/components/clients/client-header";
 import { CLIENT_TABS, ClientTabs, parseClientTab, type ClientTab } from "@/components/clients/client-tabs";
@@ -69,6 +73,13 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
   const [csData, supportOptions] = await Promise.all([tab === "cs" ? getClientCs(id, user) : Promise.resolve(null), canSupport ? getSupportOptions(user) : Promise.resolve(null)]);
   // Portal do cliente (D31) na aba Financeiro: seção financeiro.contratos.portal.ver; links lidos só nessa aba e só
   // quando o cliente tem contrato (o portal mostra contratos e cobranças).
+  // Conversas da Central (aba Atendimentos): só metadados; o texto fica na Central, com o escopo dela.
+  const canStartConversation = tab === "suporte" && can(user, "comunicacao.central.iniciar");
+  const [conversations, startQueues, startTemplates] = await Promise.all([
+    tab === "suporte" ? getClientConversations(data.client, data.contacts) : Promise.resolve(null),
+    canStartConversation ? listActiveQueues() : Promise.resolve([]),
+    canStartConversation ? usableTemplates("conversa") : Promise.resolve([]),
+  ]);
   const showPortal = tab === "financeiro" && can(user, "financeiro.contratos.portal.ver") && data.contracts.length > 0;
   const portal = showPortal ? await listPortalLinks(id) : null;
   const ticketOptions = supportOptions ? { clients: supportOptions.clients, products: supportOptions.products, team: supportOptions.team, categories: supportOptions.categories, slaRules: supportOptions.slaRules } : null;
@@ -121,7 +132,32 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
         }
       />
     ),
-    suporte: <TabSuporte data={data} action={ticketOptions ? <NewTicketDialog options={ticketOptions} fixedClient={{ id: data.client.id, name: data.client.tradeName }} /> : null} />,
+    suporte: (
+      <TabSuporte
+        data={data}
+        conversations={conversations}
+        links={{ central: canSeeHref(user, "/comunicacao"), history: canSeeHref(user, "/comunicacao/historico") }}
+        action={
+          <>
+            {canStartConversation ? (
+              <NewConversationDialog
+                label="Iniciar conversa"
+                queues={startQueues.map((q) => ({ id: q.id, name: q.name }))}
+                whatsappConnected={isConnected("whatsapp")}
+                templates={startTemplates.map((t) => ({ id: t.id, name: t.name, body: t.body }))}
+                suggestions={[
+                  ...data.contacts
+                    .filter((c) => c.whatsapp || c.phone || c.email)
+                    .map((c) => ({ kind: "contato" as const, id: c.id, clientId: data.client.id, name: c.name, company: data.client.tradeName, whatsapp: c.whatsapp || c.phone, email: c.email })),
+                  { kind: "cliente" as const, id: data.client.id, name: data.client.tradeName, whatsapp: data.client.whatsapp || data.client.phone, email: data.client.email },
+                ]}
+              />
+            ) : null}
+            {ticketOptions ? <NewTicketDialog options={ticketOptions} fixedClient={{ id: data.client.id, name: data.client.tradeName }} /> : null}
+          </>
+        }
+      />
+    ),
     documentos: <TabDocumentos data={data} canAttach={caps.attachDocument} />,
     tarefas: <TabTarefas data={data} canCreate={caps.createTask} />,
   };
