@@ -942,15 +942,23 @@ export async function replyToInbox(input: { communicationId?: string; leadId?: s
   const to = input.channel === "whatsapp" ? (lead?.phone ?? client?.whatsapp ?? client?.phone) : (lead?.email ?? client?.email);
   if (!to && !original) throw new MarketingError(input.channel === "whatsapp" ? "O lead não tem telefone cadastrado" : "O lead não tem e-mail cadastrado");
 
+  // Mesma conversa da Central quando o canal da resposta é o da mensagem original.
+  const conversationId = original?.conversationId && original.channel === input.channel ? original.conversationId : undefined;
   const sent = await getChannelAdapter().sendMessage({
     channel: input.channel,
-    to,
+    to: to ?? (conversationId ? original?.address : undefined),
     body: input.body,
     clientId: client?.id,
     contactId: original?.contactId,
     entity: lead ? { type: "lead", id: lead.id } : original?.entityType && original.entityId ? { type: original.entityType, id: original.entityId } : undefined,
     sender: actor,
+    conversationId,
   });
+  if (conversationId && sent.status !== "falha" && sent.status !== "nao_enviada") {
+    // Import dinâmico: a Central depende do Suporte e do Marketing; aqui só é preciso no caminho da resposta.
+    const { noteOutboundElsewhere } = await import("@/server/conversations/service");
+    await noteOutboundElsewhere(conversationId, input.body, actor);
+  }
   if (original) await update<Communication>(COLLECTIONS.communications, original.id, { status: "lida", userId: original.userId ?? actor.id });
   const manual = sent.status === "manual";
   const suffix = manual ? " (registro manual)" : sent.status === "falha" ? " (falha no envio)" : "";

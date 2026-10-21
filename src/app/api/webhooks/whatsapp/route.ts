@@ -1,7 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
-import { receiveWhatsappMessage } from "@/server/support/service";
+import { receiveInboundMessage } from "@/server/conversations/inbound";
+import { logChannelEvent } from "@/server/conversations/channel-events";
 import { applyWhatsappStatuses, type WhatsappStatusUpdate } from "@/server/integrations/communications";
 
 /**
@@ -17,7 +18,8 @@ import { applyWhatsappStatuses, type WhatsappStatusUpdate } from "@/server/integ
  *           que a Meta envia em toda chamada. Validada sempre que WHATSAPP_APP_SECRET existir.
  *        2. Header `x-interos-token: <WHATSAPP_WEBHOOK_TOKEN>` (integradores próprios/testes).
  *      Em produção, sem nenhuma das variáveis o webhook responde 503.
- *      Mensagens: telefone de contato/cliente com chamado aberto → interação do chamado; senão → Caixa de Entrada.
+ *      Mensagens: entram na Central de Atendimento (src/server/conversations/inbound.ts) — conversa do contato, fila e
+ *      responsável; com chamado aberto do cliente, também no chamado. Aviso repetido (mesmo id da Meta) é ignorado.
  *      Statuses (sent/delivered/read/failed): atualizam `communications.status` pela id da mensagem (externalId).
  * Respostas: 200 { processed, results, statuses } · 400 JSON inválido · 401 assinatura/token inválido · 503 não configurado.
  */
@@ -49,14 +51,18 @@ interface IncomingItem {
   from: string;
   body: string;
   externalId?: string;
+  displayName?: string;
+  at?: string;
 }
 
 type MetaPayload = {
   from?: unknown;
   body?: unknown;
   id?: unknown;
-  entry?: { changes?: { value?: { messages?: { from?: string; id?: string; text?: { body?: string } }[]; statuses?: { id?: string; status?: string; timestamp?: string; errors?: { code?: number; title?: string; message?: string }[] }[] } }[] }[];
+  entry?: { changes?: { value?: { contacts?: { wa_id?: string; profile?: { name?: string } }[]; messages?: { from?: string; id?: string; timestamp?: string; type?: string; text?: { body?: string } }[]; statuses?: { id?: string; status?: string; timestamp?: string; errors?: { code?: number; title?: string; message?: string }[] }[] } }[] }[];
 };
+
+const MEDIA_LABEL: Record<string, string> = { image: "Imagem", audio: "Áudio", video: "Vídeo", document: "Documento", sticker: "Figurinha", location: "Localização", contacts: "Contato" };
 
 function extractMessages(payload: unknown): IncomingItem[] {
   const out: IncomingItem[] = [];
@@ -64,8 +70,13 @@ function extractMessages(payload: unknown): IncomingItem[] {
   if (typeof p?.from === "string" && typeof p?.body === "string") out.push({ from: p.from, body: p.body, externalId: typeof p.id === "string" ? p.id : undefined });
   for (const entry of p?.entry ?? []) {
     for (const change of entry.changes ?? []) {
+      const names = new Map((change.value?.contacts ?? []).map((c) => [c.wa_id ?? "", c.profile?.name]));
       for (const m of change.value?.messages ?? []) {
-        if (m.from && m.text?.body) out.push({ from: m.from, body: m.text.body, externalId: m.id });
+        if (!m.from) continue;
+        const at = m.timestamp && /^\d+$/.test(m.timestamp) ? new Date(Number(m.timestamp) * 1000).toISOString() : undefined;
+        // Só texto nesta fase: mídia (foto, áudio, documento) entra como aviso para o operador pedir por outro meio.
+        const body = m.text?.body ?? (m.type ? `[${MEDIA_LABEL[m.type] ?? "Conteúdo"} recebido — ainda não exibido na Central]` : "");
+        if (body) out.push({ from: m.from, body, externalId: m.id, displayName: names.get(m.from) || undefined, at });
       }
     }
   }
@@ -85,6 +96,24 @@ function extractStatuses(payload: unknown): WhatsappStatusUpdate[] {
   return out;
 }
 
+/** Erros mais comuns da Meta em português (o registro técnico mostra isso ao administrador). */
+function whatsappErrorText(code: number | undefined, title: string | undefined): string {
+  switch (code) {
+    case 131047:
+      return "Recusado: fora da janela de 24 h (o cliente não escreveu nas últimas 24 h; só modelo aprovado).";
+    case 131026:
+      return "Recusado: o número não recebe mensagens (sem WhatsApp ou bloqueou).";
+    case 131049:
+      return "Recusado pela Meta para preservar a qualidade (muitas mensagens de marketing para este número).";
+    case 131056:
+      return "Recusado: muitas mensagens para o mesmo número em pouco tempo.";
+    case 132001:
+      return "Recusado: modelo inexistente ou não aprovado.";
+    default:
+      return `Falha informada pela Meta${code ? ` (${code})` : ""}${title ? `: ${title}` : ""}.`;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const token = process.env.WHATSAPP_WEBHOOK_TOKEN;
@@ -100,7 +129,10 @@ export async function POST(request: NextRequest) {
     if (process.env.NODE_ENV === "production") return NextResponse.json({ error: "Webhook de WhatsApp não configurado (WHATSAPP_APP_SECRET ou WHATSAPP_WEBHOOK_TOKEN ausente)" }, { status: 503 });
     authenticated = true;
   }
-  if (!authenticated) return NextResponse.json({ error: signature ? "Assinatura inválida" : "Token inválido" }, { status: 401 });
+  if (!authenticated) {
+    await logChannelEvent({ channel: "whatsapp", kind: "autenticacao", result: "recusado", detail: signature ? "Assinatura da Meta inválida: aviso recusado sem processar." : "Token inválido: aviso recusado sem processar." });
+    return NextResponse.json({ error: signature ? "Assinatura inválida" : "Token inválido" }, { status: 401 });
+  }
 
   let payload: unknown;
   try {
@@ -112,9 +144,10 @@ export async function POST(request: NextRequest) {
   const results = [];
   for (const m of messages) {
     try {
-      results.push(await receiveWhatsappMessage(m));
+      results.push(await receiveInboundMessage({ channel: "whatsapp", from: m.from, body: m.body, externalId: m.externalId, displayName: m.displayName, at: m.at }));
     } catch (error) {
       console.error("[webhook:whatsapp] falha ao processar mensagem", error);
+      await logChannelEvent({ channel: "whatsapp", kind: "mensagem_recebida", result: "falha", detail: "Falha ao processar a mensagem (detalhes no log do servidor).", externalId: m.externalId, contact: m.from });
       results.push({ error: "falha ao processar" });
     }
   }
@@ -123,6 +156,10 @@ export async function POST(request: NextRequest) {
   if (updates.length > 0) {
     try {
       statuses = await applyWhatsappStatuses(updates);
+      for (const u of updates.filter((x) => x.status === "failed")) {
+        const e = u.errors?.[0];
+        await logChannelEvent({ channel: "whatsapp", kind: "envio", result: "falha", detail: whatsappErrorText(e?.code, e?.title ?? e?.message), externalId: u.id, providerCode: e?.code !== undefined ? String(e.code) : undefined });
+      }
     } catch (error) {
       console.error("[webhook:whatsapp] falha ao aplicar statuses", error);
     }
@@ -130,6 +167,7 @@ export async function POST(request: NextRequest) {
   try {
     revalidatePath("/suporte", "layout");
     revalidatePath("/marketing/caixa-de-entrada");
+    revalidatePath("/comunicacao");
     if (updates.length > 0) revalidatePath("/financeiro", "layout");
   } catch (error) {
     console.error("[webhook:whatsapp] falha ao revalidar", error);

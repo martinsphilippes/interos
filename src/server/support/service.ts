@@ -1049,85 +1049,62 @@ export async function voteArticle(id: string, helpful: boolean, actor?: UserRef)
 }
 
 // ---------------------------------------------------------------------------
-// WhatsApp de entrada (webhook)
+// Mensagens de entrada no chamado (chamadas pela Central de Atendimento)
 // ---------------------------------------------------------------------------
 
-const digitsOnly = (v: string | undefined | null) => (v ?? "").replace(/\D/g, "");
-
-/** Compara telefones pelos últimos 10 dígitos (ignora DDI e o 9º dígito opcional fica coberto pelo DDD + número). */
-function samePhone(a: string | undefined | null, b: string | undefined | null): boolean {
-  const da = digitsOnly(a);
-  const db = digitsOnly(b);
-  if (da.length < 8 || db.length < 8) return false;
-  return da.slice(-10) === db.slice(-10) || da.slice(-8) === db.slice(-8);
-}
-
-export interface IncomingWhatsappResult {
-  matched: "chamado" | "caixa_de_entrada";
-  ticketId?: string;
-  clientId?: string;
-  communicationId: string;
-}
-
 /**
- * Mensagem de WhatsApp recebida: se o telefone for de um contato (ou do próprio cliente) com chamado
- * aberto, vira interação do chamado mais recente; senão fica na Caixa de Entrada do Marketing.
+ * Chamado aberto mais recente do cliente (onde a mensagem que chega entra). O roteamento da mensagem em si — quem é o
+ * contato, qual conversa, qual fila — fica em src/server/conversations/inbound.ts.
  */
-export async function receiveWhatsappMessage(input: { from: string; body: string; externalId?: string }): Promise<IncomingWhatsappResult> {
-  const [contacts, clients] = await Promise.all([list<Contact>(COLLECTIONS.contacts), list<Client>(COLLECTIONS.clients)]);
-  const contact = contacts.find((c) => samePhone(c.whatsapp, input.from) || samePhone(c.phone, input.from));
-  const clientId = contact?.clientId ?? clients.find((c) => samePhone(c.whatsapp, input.from) || samePhone(c.phone, input.from))?.id;
+export async function findOpenTicketForClient(clientId: string): Promise<SupportTicket | undefined> {
+  const tickets = await list<SupportTicket>(COLLECTIONS.supportTickets, { where: [["clientId", "==", clientId]] });
+  return tickets.filter(isOpenTicket).sort((a, b) => (a.openedAt < b.openedAt ? 1 : -1))[0];
+}
 
-  let ticket: SupportTicket | undefined;
-  if (clientId) {
-    const tickets = await list<SupportTicket>(COLLECTIONS.supportTickets, { where: [["clientId", "==", clientId]] });
-    ticket = tickets.filter(isOpenTicket).sort((a, b) => (a.openedAt < b.openedAt ? 1 : -1))[0];
-  }
-  const communication = await getSupportChannels().receiveMessage({
-    channel: "whatsapp",
-    from: input.from,
-    body: input.body,
-    clientId,
-    contactId: contact?.id,
-    entity: ticket ? { type: "ticket", id: ticket.id } : undefined,
-    externalId: input.externalId,
-  });
-  const who = contact?.name ?? input.from;
-  if (ticket) {
-    await addInteraction(ticket, { kind: "whatsapp", body: input.body });
-    await emitEvent({
-      type: "whatsapp.message.received",
-      actor: { id: CUSTOMER_ACTOR.id, name: who },
-      clientId: ticket.clientId,
-      entity: { type: "ticket", id: ticket.id },
-      title: `WhatsApp recebido de ${who} no chamado ${ticket.number}`,
-      description: input.body,
-      department: "suporte",
-      payload: { communicationId: communication.id, from: input.from, ticketId: ticket.id },
-    });
-    if (ticket.assigneeId) {
-      await notify({
-        userIds: [ticket.assigneeId],
-        kind: ticket.status === "aguardando_cliente" ? "acao" : "informativa",
-        title: `Cliente respondeu no chamado ${ticket.number}`,
-        body: input.body.length > 140 ? `${input.body.slice(0, 137)}…` : input.body,
-        href: ticketHref(ticket.id),
-        entity: { type: "ticket", id: ticket.id },
-      });
-    }
-    return { matched: "chamado", ticketId: ticket.id, clientId, communicationId: communication.id };
-  }
+/** Mensagem do cliente entra no chamado aberto: interação, evento e aviso ao atendente (comportamento de antes). */
+export async function recordInboundOnTicket(
+  ticket: SupportTicket,
+  input: { channel: "whatsapp" | "email"; body: string; who: string; communicationId: string; from: string; conversationId?: string },
+): Promise<void> {
+  await addInteraction(ticket, { kind: input.channel, body: input.body });
   await emitEvent({
     type: "whatsapp.message.received",
-    actor: { id: CUSTOMER_ACTOR.id, name: who },
-    clientId,
-    entity: { type: "communication", id: communication.id },
-    title: `WhatsApp recebido de ${who}`,
+    actor: { id: CUSTOMER_ACTOR.id, name: input.who },
+    clientId: ticket.clientId,
+    entity: { type: "ticket", id: ticket.id },
+    title: `WhatsApp recebido de ${input.who} no chamado ${ticket.number}`,
     description: input.body,
-    department: "marketing",
-    payload: { communicationId: communication.id, from: input.from },
+    department: "suporte",
+    payload: { communicationId: input.communicationId, from: input.from, ticketId: ticket.id, conversationId: input.conversationId },
   });
-  return { matched: "caixa_de_entrada", clientId, communicationId: communication.id };
+  if (ticket.assigneeId) {
+    await notify({
+      userIds: [ticket.assigneeId],
+      kind: ticket.status === "aguardando_cliente" ? "acao" : "informativa",
+      title: `Cliente respondeu no chamado ${ticket.number}`,
+      body: input.body.length > 140 ? `${input.body.slice(0, 137)}…` : input.body,
+      href: ticketHref(ticket.id),
+      entity: { type: "ticket", id: ticket.id },
+    });
+  }
+}
+
+/** Resposta dada pela Central numa conversa ligada a chamado: entra na conversa do chamado também. */
+export async function recordConversationReplyOnTicket(ticketId: string, input: { channel: "whatsapp" | "email"; body: string; authorId: string; manual: boolean }): Promise<void> {
+  const ticket = await getById<SupportTicket>(COLLECTIONS.supportTickets, ticketId);
+  if (!ticket || !isOpenTicket(ticket)) return;
+  await addInteraction(ticket, { kind: input.channel, body: input.body, authorId: input.authorId, channel: input.channel, manual: input.manual });
+}
+
+/** Chamado criado a partir de uma conversa da Central (encerrar → «abrir chamado com o resumo»). */
+export async function createTicketFromConversation(
+  input: { clientId: string; contactId?: string; channel: "whatsapp" | "email"; subject: string; description: string; assigneeId?: string },
+  actor: UserRef,
+): Promise<SupportTicket> {
+  return createTicket(
+    { clientId: input.clientId, contactId: input.contactId, productId: undefined, subject: input.subject, description: input.description, channel: input.channel, priority: "medio", queue: "n1", category: undefined, assigneeId: input.assigneeId },
+    actor,
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,23 @@ import type { DepartmentKey, RoleKey } from "@/domain/constants";
 import { LEGACY_MOBILE_NAV as MOBILE_NAV, LEGACY_NAVIGATION as NAVIGATION, LEGACY_QUICK_ACTIONS as QUICK_ACTIONS } from "./legacy-navigation";
 import { REPORT_DEFINITIONS, type ReportKey } from "@/server/reports/definitions";
 
+/**
+ * Módulos criados DEPOIS do catálogo (não existiam no commit congelado): não têm comportamento anterior para comparar.
+ * O T0 compara só o que já existia; as regras padrão destes módulos são provadas nos testes próprios
+ * (tests/permissions/comunicacao.test.ts).
+ */
+export const MODULES_AFTER_T0: readonly string[] = ["comunicacao"];
+
+/** A chave (ou tela) pertence a um módulo criado depois do T0? */
+export function isAfterT0Key(key: string): boolean {
+  return MODULES_AFTER_T0.includes(key.split(".")[0]);
+}
+
+/** O href é de uma tela de módulo criado depois do T0? (prefixo da rota = módulo) */
+export function isAfterT0Href(href: string): boolean {
+  return MODULES_AFTER_T0.some((m) => href === `/${m}` || href.startsWith(`/${m}/`) || href.startsWith(`/${m}?`));
+}
+
 export interface LegacyUser {
   id: string;
   role: RoleKey;

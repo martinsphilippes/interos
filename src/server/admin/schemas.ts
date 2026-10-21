@@ -550,7 +550,7 @@ export type UpsertSettingInput = { key: SettingKey; value: unknown };
 // Regras de SLA
 // ---------------------------------------------------------------------------
 
-export const SLA_APPLIES_TO = ["tarefa", "workflow", "chamado", "implantacao", "cs", "oportunidade"] as const;
+export const SLA_APPLIES_TO = ["tarefa", "workflow", "chamado", "implantacao", "cs", "oportunidade", "conversa"] as const;
 
 export const slaRuleSchema = z
   .object({

@@ -205,6 +205,7 @@ const SLA_ENTITY_KIND: Record<SlaInstance["entityType"], PriorityKind> = {
   projeto: "projeto",
   cs: "cliente",
   oportunidade: "oportunidade",
+  conversa: "sla",
 };
 
 function slaEntityHref(sla: SlaInstance): string {
@@ -219,6 +220,8 @@ function slaEntityHref(sla: SlaInstance): string {
       return `/implantacao/${sla.entityId}`;
     case "oportunidade":
       return `/vendas/oportunidades?oportunidade=${sla.entityId}`;
+    case "conversa":
+      return `/comunicacao?conversa=${sla.entityId}`;
     default:
       return sla.clientId ? `/clientes/${sla.clientId}?aba=cs` : "/cs";
   }

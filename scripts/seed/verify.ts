@@ -18,6 +18,7 @@ const ENTITY_COLLECTION: Record<SlaInstance["entityType"], CollectionName> = {
   projeto: COLLECTIONS.implementationProjects,
   cs: COLLECTIONS.csAccounts,
   oportunidade: COLLECTIONS.opportunities,
+  conversa: COLLECTIONS.conversations,
 };
 
 async function main(): Promise<void> {

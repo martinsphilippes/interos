@@ -44,6 +44,8 @@ import {
   legacyRequireRole,
   legacyScreenAccess,
   legacyUser,
+  isAfterT0Href,
+  isAfterT0Key,
   type LegacyUser,
 } from "./legacy";
 
@@ -93,7 +95,7 @@ const actionKeys = (screen: string, filter: (key: string) => boolean = () => tru
   SCREENS.find((s) => s.key === screen)!.actions.map((a) => a.key).filter(filter);
 
 describe("T0 — módulos (<m>.acessar ≡ canAccessModule)", () => {
-  const keys = MODULE_KEYS.map((m) => `${m}.acessar`);
+  const keys = MODULE_KEYS.map((m) => `${m}.acessar`).filter((k) => !isAfterT0Key(k));
   it("idêntico, exceto A27: Administração passa a {gestores} (gestor e diretoria)", () => {
     const diff = differences(keys, (u, k) => legacyCanAccessModule(u, k.split(".")[0]));
     const exp = expected(keys, (u, k) => k === "admin.acessar" && (u.role === "gestor" || u.role === "diretoria"), (u, k) => legacyCanAccessModule(u, k.split(".")[0]));
@@ -102,7 +104,7 @@ describe("T0 — módulos (<m>.acessar ≡ canAccessModule)", () => {
 });
 
 describe("T0 — telas (<tela>.ver ≡ guarda da página)", () => {
-  const keys = SCREENS.map((s) => `${s.key}.ver`);
+  const keys = SCREENS.map((s) => `${s.key}.ver`).filter((k) => !isAfterT0Key(k));
   it("idêntico, exceto A14: páginas de Marketing passam a exigir o módulo", () => {
     const legacy = (u: LegacyUser, k: string) => legacyScreenAccess(u, k.replace(/\.ver$/, ""));
     const diff = differences(keys, legacy);
@@ -434,7 +436,7 @@ describe("T0 — menu, barra do celular e atalhos '+'", () => {
     const exp: string[] = [];
     for (const { fixture, current, legacy: old } of USERS) {
       const before = new Set(legacyMenu(old).flatMap((s) => s.hrefs));
-      const now = new Set(visibleNavigation(current).flatMap((s) => s.items.map((i) => i.href)));
+      const now = new Set(visibleNavigation(current).flatMap((s) => s.items.map((i) => i.href)).filter((h) => !isAfterT0Href(h)));
       for (const href of new Set([...before, ...now])) if (before.has(href) !== now.has(href)) diff.push(`${label(fixture)} ${href} ${now.has(href) ? "+" : "-"}`);
       // Esperado (nominal): gestor/diretoria veem Usuários e Departamentos; gestor deixa de ver o Cockpit;
       // papel Vendas lotado no Financeiro passa a ver Contas a Pagar (a rota já abria).
@@ -484,7 +486,8 @@ describe("T0 — sem curto-circuito de admin", () => {
 
 describe("T0 — cobertura", () => {
   it("toda chave com regra padrão não trivial tem oráculo antigo no T0", () => {
-    const missing = PERMISSION_NODES.filter((n) => n.rule !== "all" && !COVERED.has(n.key)).map((n) => `${n.key} ${JSON.stringify(n.rule)}`);
+    // Módulos criados depois do T0 não têm oráculo antigo: as regras deles são provadas em comunicacao.test.ts.
+    const missing = PERMISSION_NODES.filter((n) => n.rule !== "all" && !COVERED.has(n.key) && !isAfterT0Key(n.key)).map((n) => `${n.key} ${JSON.stringify(n.rule)}`);
     expect(missing).toEqual([]);
   });
 });

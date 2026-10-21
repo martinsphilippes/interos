@@ -112,6 +112,15 @@ export const COLLECTIONS = {
   financialAccounts: "financial_accounts",
   costCenters: "cost_centers",
   financeCategories: "finance_categories",
+  /**
+   * Central de Atendimento (Comunicação): uma conversa por canal + contato enquanto aberta. As mensagens continuam em
+   * `communications` (com `conversationId`); a conversa guarda fila, responsável, status, janela de 24 h e SLA.
+   */
+  conversations: "conversations",
+  /** Filas de atendimento da Central (mensagens hoje; ligações na fase de telefonia). */
+  serviceQueues: "service_queues",
+  /** Registros técnicos dos canais: cada aviso recebido do provedor e o que o INTEROS fez com ele (30 dias). */
+  channelEvents: "channel_events",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -1262,7 +1271,7 @@ export interface Notification extends BaseEntity {
 export interface SlaRule extends BaseEntity {
   key: string;
   name: string;
-  appliesTo: "tarefa" | "workflow" | "chamado" | "implantacao" | "cs" | "oportunidade";
+  appliesTo: "tarefa" | "workflow" | "chamado" | "implantacao" | "cs" | "oportunidade" | "conversa";
   department?: DepartmentKey;
   responseHours?: number;
   resolutionHours: number;
@@ -1276,7 +1285,7 @@ export interface SlaRule extends BaseEntity {
 export interface SlaInstance extends BaseEntity {
   ruleKey: string;
   ruleName: string;
-  entityType: "tarefa" | "workflow_step" | "chamado" | "projeto" | "cs" | "oportunidade";
+  entityType: "tarefa" | "workflow_step" | "chamado" | "projeto" | "cs" | "oportunidade" | "conversa";
   entityId: string;
   clientId?: string;
   ownerId?: string;
@@ -1893,6 +1902,115 @@ export interface Communication extends BaseEntity {
   statusUpdatedAt?: string;
   /** Motivo de "falha"/"nao_enviada" (erro do provedor, opt-out, canal não conectado). */
   error?: string;
+  /** Conversa da Central de Atendimento a que a mensagem pertence. */
+  conversationId?: string;
+  /** Telefone ou e-mail do outro lado (de quem veio ou para quem foi), como o provedor informou. */
+  address?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Central de Atendimento (módulo Comunicação)
+// ---------------------------------------------------------------------------
+
+export const CONVERSATION_CHANNELS = ["whatsapp", "email"] as const;
+export type ConversationChannel = (typeof CONVERSATION_CHANNELS)[number];
+
+/**
+ * nova: acabou de chegar, ainda sem fila decidida · na_fila: esperando operador · em_atendimento: com responsável ·
+ * aguardando_cliente: a equipe respondeu e espera o cliente · encerrada.
+ */
+export const CONVERSATION_STATUSES = ["nova", "na_fila", "em_atendimento", "aguardando_cliente", "encerrada"] as const;
+export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
+
+/** Quem é o contato, pela identificação única (telefone/e-mail). */
+export type ConversationIdentity = "cliente" | "lead" | "desconhecido";
+
+export interface Conversation extends BaseEntity {
+  /** Número de exibição (AT-AAAA-NNNN). */
+  number: string;
+  channel: ConversationChannel;
+  status: ConversationStatus;
+  /** Chave canônica do contato (telefone sem DDI e sem o 9 extra, ou e-mail minúsculo). Ver src/domain/phone.ts. */
+  contactKey: string;
+  /** Telefone/e-mail usado para responder (o último informado pelo provedor). */
+  address: string;
+  /** Nome que a pessoa usa no canal (perfil do WhatsApp), quando não identificada. */
+  displayName?: string;
+  identity: ConversationIdentity;
+  clientId?: string;
+  contactId?: string;
+  leadId?: string;
+  queueId?: string;
+  assigneeId?: string;
+  /** Chamado ligado à conversa (aberto a partir dela ou já aberto quando ela começou). */
+  ticketId?: string;
+  openedAt: string;
+  lastMessageAt: string;
+  lastMessagePreview?: string;
+  lastMessageDirection?: "entrada" | "saida";
+  /** Última mensagem do cliente: abre a janela de 24 h do WhatsApp. */
+  lastInboundAt?: string;
+  lastOutboundAt?: string;
+  /** Primeira resposta humana. */
+  firstResponseAt?: string;
+  /** A última mensagem é do cliente e ninguém respondeu ainda. */
+  awaitingReply: boolean;
+  assignedAt?: string;
+  slaInstanceId?: string;
+  closedAt?: string;
+  closedById?: string;
+  closeReason?: ConversationCloseReason;
+  closeSummary?: string;
+  /** Quantas vezes a conversa foi transferida. */
+  transfers?: number;
+}
+
+export const CONVERSATION_CLOSE_REASONS = ["resolvida", "virou_chamado", "proposta_enviada", "sem_resposta", "engano"] as const;
+export type ConversationCloseReason = (typeof CONVERSATION_CLOSE_REASONS)[number];
+
+export const QUEUE_STRATEGIES = ["menor_carga", "rodizio", "responsavel_primeiro", "manual"] as const;
+export type QueueStrategy = (typeof QUEUE_STRATEGIES)[number];
+
+export interface ServiceQueue extends BaseEntity {
+  name: string;
+  department: DepartmentKey;
+  channels: ConversationChannel[];
+  /** Operadores (usuários do INTEROS). */
+  memberIds: string[];
+  strategy: QueueStrategy;
+  /** Conversas abertas por operador ao mesmo tempo. */
+  maxConcurrent: number;
+  /** Regra de SLA (sla_rules.key) aplicada às conversas da fila. Sem regra = sem SLA. */
+  slaRuleKey?: string;
+  /** Sem operador por `overflowAfterMinutes`, a conversa vai para esta fila. */
+  overflowQueueId?: string;
+  overflowAfterMinutes?: number;
+  /** Fila de destino quando nada mais se aplica (há exatamente uma). */
+  isDefault?: boolean;
+  /** Ponteiro do rodízio (último operador escolhido). */
+  lastAssignedId?: string;
+  active: boolean;
+  order: number;
+}
+
+export type ChannelEventResult = "processado" | "duplicado" | "ignorado" | "falha" | "recusado";
+
+/** Registro técnico de um aviso do provedor (mensagem, status de entrega, assinatura inválida, erro de envio). */
+export interface ChannelEvent extends BaseEntity {
+  channel: ConversationChannel;
+  kind: "mensagem_recebida" | "status" | "envio" | "autenticacao";
+  result: ChannelEventResult;
+  /** Explicação em português do que aconteceu. */
+  detail: string;
+  externalId?: string;
+  /** Contato mascarado (nunca o número completo). */
+  contactMasked?: string;
+  conversationId?: string;
+  communicationId?: string;
+  /** Código de erro do provedor (ex.: 131047 da Meta). */
+  providerCode?: string;
+  durationMs?: number;
+  occurredAt: string;
 }
 
 export interface Settings extends BaseEntity {

@@ -73,6 +73,7 @@ export const MODULE_ACCESS: Record<ModuleKey, readonly RoleKey[] | "all"> = {
   implantacao: ["diretoria", "gestor", "implantacao", "suporte", "cs"],
   cs: ["diretoria", "gestor", "cs", "vendas", "suporte"],
   suporte: ["diretoria", "gestor", "suporte", "implantacao", "cs"],
+  comunicacao: ["diretoria", "gestor", "suporte", "vendas", "financeiro", "marketing", "cs", "implantacao"],
   performance: "all",
   gestao: ["diretoria", "gestor"],
   admin: ["admin"],
@@ -332,6 +333,11 @@ export const EVENT_TYPES = [
   "whatsapp.message.received",
   "whatsapp.message.sent",
   "call.completed",
+  // central de atendimento (comunicação)
+  "conversation.opened",
+  "conversation.assigned",
+  "conversation.transferred",
+  "conversation.closed",
   // financeiro (Onda 2)
   "contract.created",
   "contract.sent_for_signature",

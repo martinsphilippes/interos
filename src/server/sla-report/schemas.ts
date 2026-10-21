@@ -7,7 +7,7 @@ import { DEPARTMENT_KEYS, type DepartmentKey } from "@/domain/constants";
 
 export type SlaEntityType = SlaInstance["entityType"];
 
-export const SLA_ENTITY_TYPES: SlaEntityType[] = ["chamado", "tarefa", "workflow_step", "projeto", "cs", "oportunidade"];
+export const SLA_ENTITY_TYPES: SlaEntityType[] = ["chamado", "conversa", "tarefa", "workflow_step", "projeto", "cs", "oportunidade"];
 
 export const SLA_TYPE_LABELS: Record<SlaEntityType, string> = {
   chamado: "Chamado",
@@ -16,6 +16,7 @@ export const SLA_TYPE_LABELS: Record<SlaEntityType, string> = {
   projeto: "Implantação",
   cs: "Customer Success",
   oportunidade: "Oportunidade",
+  conversa: "Conversa",
 };
 
 /** Prioridade única para a tela (chamados usam critico/alto/medio/baixo; tarefas, critica/alta/media/baixa). */

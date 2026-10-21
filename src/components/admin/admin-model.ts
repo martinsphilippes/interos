@@ -16,6 +16,7 @@ export const SLA_APPLIES_TO_LABELS: Record<SlaRule["appliesTo"], string> = {
   implantacao: "Projeto de implantação",
   cs: "Customer Success",
   oportunidade: "Oportunidade",
+  conversa: "Conversa da Central de Atendimento",
 };
 
 /** Dias da semana na ordem do JavaScript (0 = domingo). */

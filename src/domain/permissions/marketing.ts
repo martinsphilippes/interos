@@ -116,6 +116,8 @@ export const MARKETING = {
             "src/server/marketing/actions.ts#createLeadAction",
             "src/server/marketing/actions.ts#checkLeadDuplicates",
           ],
+          // Central de Atendimento: «Quem é este número?» → criar lead novo.
+          checkedIn: ["src/server/conversations/actions.ts#linkConversationIdentityAction?novo lead"],
         },
         {
           key: "marketing.leads.importar",

@@ -25,6 +25,8 @@ export interface OutgoingMessage {
   contactId?: string;
   entity?: { type: string; id: string };
   sender: UserRef;
+  /** Conversa da Central de Atendimento (quando a mensagem respondida pertence a uma). */
+  conversationId?: string;
 }
 
 export interface IncomingMessage {
@@ -60,6 +62,7 @@ const adapter: ChannelAdapter = {
       contactId: message.contactId,
       entity: message.entity,
       actor: message.sender,
+      conversationId: message.conversationId,
     });
     const { communication } = sent;
     if (message.channel === "whatsapp") {
