@@ -31,6 +31,9 @@ export interface ShellUser {
   jobTitle?: string;
   /** Presença atual (seletor da top bar). */
   presence?: UserPresence;
+  /** Motivo da pausa atual e os motivos que a pessoa pode escolher (Central de Atendimento). */
+  pauseReasonKey?: string;
+  pauseReasons?: { key: string; label: string }[];
   /**
    * Rotas que o usuário vê (calculado no servidor pelas permissões efetivas). Só para ESCONDER links no cliente
    * (AccessProvider/ScreenLink); nunca autoriza operação.

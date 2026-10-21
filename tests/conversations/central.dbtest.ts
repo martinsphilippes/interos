@@ -13,6 +13,9 @@ import { COLLECTIONS, type ChannelEvent, type Communication, type Conversation, 
 import { receiveInboundMessage } from "@/server/conversations/inbound";
 import { closeConversation, distributeWaiting, linkConversationIdentity, NOTE_TEMPLATE_KEY, reopenConversation, sendConversationMessage, transferConversation } from "@/server/conversations/service";
 import { saveUserCentral } from "@/server/conversations/queues";
+import { escalate, runManagerAlerts, touchMonitoring, whisper } from "@/server/conversations/supervision";
+import { ALERTS_SETTING, writeSetting } from "@/server/conversations/ops-settings";
+import { buildThread } from "@/server/conversations/queries";
 import { runCentralSweep } from "@/server/conversations/scheduler";
 import { quickRepliesFor, saveQuickReply, listQuickReplies } from "@/server/conversations/quick-replies";
 import { patchFields } from "@/server/conversations/store";
@@ -57,6 +60,8 @@ afterAll(async () => {
   if (leadIds.size) await sql`delete from interos.leads where id = any(${[...leadIds]})`;
   await sql`delete from interos.users where id = ${OP.id}`;
   await sql`delete from interos.quick_replies where data->>'shortcut' like ${RUN + "%"}`;
+  if (ids.length) await sql`delete from interos.supervision_logs where data->>'conversationId' = any(${ids})`;
+  await sql`delete from interos.settings where data->>'key' in ('central_alertas', 'central_alertas_estado')`;
   await sql`delete from interos.service_queues`;
   for (const q of savedQueues) await sql`insert into interos.service_queues (id, data) values (${q.id}, ${sql.json(q.data as never)})`;
   await closeDocdb();
@@ -286,5 +291,54 @@ describe("parte 3: reabrir, e-mail de entrada e atendimento por pessoa", () => {
     await saveUserCentral({ userId: OP.id, attends: true, queueIds: [QUEUE_ID] });
     await distributeWaiting();
     expect((await conv(r.conversationId!)).assigneeId).toBe(OP.id);
+  });
+});
+
+describe("fase 2: supervisão", () => {
+  const SUP = { id: `${RUN}_gerente`, name: "Gerente Teste" };
+  let convId = "";
+
+  beforeAll(async () => {
+    await update<User>(COLLECTIONS.users, OP.id, { presence: "online", central: { attends: true } });
+    const r = await receiveInboundMessage({ channel: "whatsapp", from: `5590${String(Date.now() + 53).slice(-8)}`, body: "Preciso de ajuda", externalId: `${RUN}_s1` });
+    convId = r.conversationId!;
+    conversationIds.add(convId);
+    // A operadora pode estar no limite pelas conversas dos testes anteriores: atribui direto.
+    await update<Conversation>(COLLECTIONS.conversations, convId, { assigneeId: OP.id, status: "em_atendimento" });
+  });
+
+  it("sussurro fica na conversa como nota privada «Sussurro de …» e avisa o operador", async () => {
+    const c = await conv(convId);
+    expect(c.assigneeId).toBe(OP.id);
+    await whisper(c, "Ofereça a segunda via.", SUP);
+    const messages = await list<Communication>(COLLECTIONS.communications, { where: [["conversationId", "==", convId]] });
+    const thread = buildThread(c, messages, new Map(), { viewerId: OP.id, customerName: "Cliente" });
+    expect(thread.some((t) => t.kind === "note" && t.authorName.startsWith("Sussurro de") && t.body === "Ofereça a segunda via.")).toBe(true);
+    const notes = await list<{ id: string; organizationId: string; createdAt: string; updatedAt: string; userId: string; title: string }>(COLLECTIONS.notifications, { where: [["userId", "==", OP.id]] });
+    expect(notes.some((n) => n.title.includes("sussurrou"))).toBe(true);
+  });
+
+  it("escalar marca prioridade uma vez; acompanhar continua a sessão até 2 min e depois abre outra", async () => {
+    await escalate(await conv(convId), "Cliente VIP", SUP);
+    expect((await conv(convId)).escalatedAt).toBeTruthy();
+    await expect(escalate(await conv(convId), "", SUP)).rejects.toThrow(/já está escalado/);
+
+    const c = await conv(convId);
+    const t0 = Date.now();
+    const a = await touchMonitoring(SUP, c, t0);
+    const b = await touchMonitoring(SUP, c, t0 + 60_000);
+    expect(b.id).toBe(a.id);
+    const d = await touchMonitoring(SUP, c, t0 + 60_000 + 3 * 60_000);
+    expect(d.id).not.toBe(a.id);
+  });
+
+  it("alertas do gerente: desligados não saem; ligados saem uma vez dentro do intervalo de repetição", async () => {
+    expect(await runManagerAlerts()).toBe(0);
+    await writeSetting(ALERTS_SETTING, { queue: { active: false, maxWaiting: 5 }, sla: { active: false }, idle: { active: true, minutes: 1 }, pause: { active: false }, repeatMinutes: 30 }, "teste");
+    // O cliente espera resposta há 5 minutos.
+    await update<Conversation>(COLLECTIONS.conversations, convId, { awaitingReply: true, lastInboundAt: new Date(Date.now() - 5 * 60_000).toISOString() });
+    const first = await runManagerAlerts();
+    expect(first).toBeGreaterThanOrEqual(1);
+    expect(await runManagerAlerts()).toBe(0);
   });
 });

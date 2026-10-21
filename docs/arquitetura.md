@@ -631,6 +631,20 @@ pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`sr
   com a situação da conversa; assumir aqui assume a conversa.
 - **Chamado**: aviso da conversa de origem; resposta por WhatsApp/e-mail sai pela conversa da Central do contato
   (`replyFromTicket`), então a resposta do cliente volta para a mesma conversa e o Cliente 360 vê tudo.
+- **Ativação dos canais** (`activation.ts`, `/comunicacao/ativacao`, fase 0): checklist lido da configuração real
+  (existência das variáveis, nunca os valores; mensagens recebidas; filas; última execução do agendador, gravada em
+  `central_agendador.lastRunAt`) e a **política de gravação** (`politica_gravacao`: aviso, retenção, quem ouve, motivo).
+- **Pausas** (fase 2): presença `pausa` com `User.pauseReasonKey` (motivos em `central_pausas`, aba Canais › Motivos de
+  pausa). Em pausa, a distribuição não entrega conversa (só `online` recebe).
+- **Central de Comando** (`supervision.ts`, `/comunicacao/supervisao`, tela `comunicacao.supervisao`, escopo: equipe do
+  gerente; direção, empresa): indicadores do dia, operadores (estado, pausa, carga, conversas), filas e gargalos,
+  conversa acompanhada ao vivo com **sussurro** (nota `templateKey: "sussurro"` + aviso ao operador), assumir e
+  **escalar** (`Conversation.escalatedAt`: topo da lista). **Registro de supervisão** em `supervision_logs` (acompanhar
+  conta o tempo por batimento de 60 s da tela; intervalo > 2 min abre outra sessão). **Painel para TV** em
+  `/comunicacao/supervisao/tv`.
+- **Alertas do gerente** (`central_alertas`, desligados por padrão; passo do agendador): fila cheia, SLA em risco,
+  cliente sem resposta e pausa longa, como notificação ao gestor do operador ou do departamento da fila (sem gestor,
+  admins), cada um no máximo a cada `repeatMinutes` (estado em `central_alertas_estado`).
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.

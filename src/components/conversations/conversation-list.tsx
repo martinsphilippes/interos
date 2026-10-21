@@ -75,6 +75,7 @@ function Row({ row, selected, href, now }: { row: ConversationRow; selected: boo
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+        {row.escalated ? <span className="rounded bg-danger-soft px-1.5 py-0.5 font-semibold text-danger-fg">Prioridade</span> : null}
         {waiting ? (
           <span className="font-medium text-warning-fg" suppressHydrationWarning>
             espera resposta {waiting}

@@ -125,6 +125,7 @@ export const COLLECTIONS = {
   messageTemplates: "message_templates",
   /** Respostas rápidas da Central («/atalho» no campo de resposta). */
   quickReplies: "quick_replies",
+  supervisionLogs: "supervision_logs",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -224,6 +225,8 @@ export interface User extends BaseEntity {
   /** Presença informada pelo próprio usuário na top bar (telas operacionais). */
   presence?: UserPresence;
   presenceUpdatedAt?: string;
+  /** Motivo da pausa (setting central_pausas), quando presence = "pausa". */
+  pauseReasonKey?: string;
   /** Cookies de sessão emitidos antes deste instante são recusados (gravado por authAdmin ao encerrar sessões). */
   sessionsRevokedAt?: string;
   /** Como a pessoa atende na Central (ficha do usuário › Atendimento na Central). Ausente = padrão. */
@@ -242,9 +245,9 @@ export interface UserCentralSettings {
   emailSignature?: string;
 }
 
-export const USER_PRESENCES = ["online", "ausente", "ocupado"] as const;
+export const USER_PRESENCES = ["online", "ausente", "ocupado", "pausa"] as const;
 export type UserPresence = (typeof USER_PRESENCES)[number];
-export const USER_PRESENCE_LABELS: Record<UserPresence, string> = { online: "Online", ausente: "Ausente", ocupado: "Ocupado" };
+export const USER_PRESENCE_LABELS: Record<UserPresence, string> = { online: "Online", ausente: "Ausente", ocupado: "Ocupado", pausa: "Em pausa" };
 
 export interface Department extends BaseEntity {
   key: DepartmentKey;
@@ -1995,6 +1998,21 @@ export interface Conversation extends BaseEntity {
   /** Reaberta a partir do histórico. */
   reopenedAt?: string;
   reopenCount?: number;
+  /** Escalada pelo gerente (prioridade): vai para o topo da lista e da fila. */
+  escalatedAt?: string;
+  escalatedById?: string;
+}
+
+/** Registro de supervisão: quem acompanhou, sussurrou, assumiu ou escalou qual conversa, e por quanto tempo. */
+export interface SupervisionLog extends BaseEntity {
+  supervisorId: string;
+  operatorId?: string;
+  conversationId: string;
+  action: "acompanhar" | "sussurro" | "assumir" | "transferir" | "escalar";
+  startedAt: string;
+  /** Acompanhar: última vez que a tela do gerente estava aberta na conversa. */
+  endedAt?: string;
+  detail?: string;
 }
 
 export const AUTO_MESSAGE_KINDS = ["menu", "foraDoHorario", "encerramento", "aguardandoFila", "lembrete", "encerramentoSemResposta"] as const;
