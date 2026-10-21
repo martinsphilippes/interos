@@ -4,6 +4,7 @@ import { History, SlidersHorizontal } from "lucide-react";
 import { can, canSeeHref, requireScreen } from "@/server/auth/session";
 import { getCentralOverview, getConversationDetail, getTransferOptions, isCentralTab } from "@/server/conversations/queries";
 import { distributeWaitingThrottled } from "@/server/conversations/service";
+import { getTeamNow } from "@/server/conversations/supervision";
 import { usableTemplates } from "@/server/conversations/templates";
 import { isConnected } from "@/server/integrations/status";
 import { PageContainer } from "@/components/layout/page-container";
@@ -22,6 +23,7 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
 /**
  * Central de Atendimento (módulo Comunicação): conversas de WhatsApp e e-mail com filas, responsável, nota interna,
  * SLA e o contexto do cliente. ?ver= aba (minhas | fila | aguardando | todas), ?filaId=, ?canal=, ?q= e ?conversa=.
+ * ?painel=equipe (quem distribui): a coluna da esquerda mostra a equipe, o estado e as conversas de cada atendente.
  * A lista e a conversa respeitam o escopo da tela (catálogo comunicacao.central); a tela se atualiza sozinha.
  */
 export default async function CentralPage({ searchParams }: { searchParams: SearchParams }) {
@@ -41,11 +43,17 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
     getTransferOptions(),
     usableTemplates("conversa"),
   ]);
+  // Gestor: aba Equipe (?painel=equipe) com os atendentes e o que cada um atende.
+  const teamEnabled = can(user, "comunicacao.central.distribuir");
+  const teamNow = teamEnabled && first(sp.painel) === "equipe" ? await getTeamNow(user, "comunicacao.central") : null;
+  const team = teamNow
+    ? { operators: teamNow.operators, queues: teamNow.queues, bottlenecks: teamNow.bottlenecks, waiting: teamNow.waiting.length, oldestWaitingSince: teamNow.waiting.map((c) => c.queuedAt ?? c.openedAt).sort()[0] }
+    : null;
   const chosen = first(sp.conversa);
-  const selectedId = chosen ?? overview.rows[0]?.id;
+  const selectedId = chosen ?? (team ? team.operators.flatMap((o) => o.conversations)[0]?.id : undefined) ?? overview.rows[0]?.id;
   const detail = selectedId ? await getConversationDetail(user, selectedId) : null;
   const back = new URLSearchParams();
-  for (const k of ["ver", "filaId", "canal", "q"]) {
+  for (const k of ["ver", "filaId", "canal", "q", "painel"]) {
     const v = first(sp[k]);
     if (v) back.set(k, v);
   }
@@ -82,7 +90,7 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
         }
       />
       </HideInFocus>
-      <CentralWorkspace overview={overview} detail={detail} explicit={Boolean(chosen && detail)} transferOptions={transferOptions} currentUserId={user.id} backHref={`/comunicacao${back.toString() ? `?${back.toString()}` : ""}`} />
+      <CentralWorkspace overview={overview} detail={detail} explicit={Boolean(chosen && detail)} transferOptions={transferOptions} currentUserId={user.id} teamEnabled={teamEnabled} team={team} backHref={`/comunicacao${back.toString() ? `?${back.toString()}` : ""}`} />
     </PageContainer>
   );
 }

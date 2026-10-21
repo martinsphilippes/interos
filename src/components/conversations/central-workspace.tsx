@@ -10,6 +10,7 @@ import { ConversationContext } from "./conversation-context";
 import { ConversationList } from "./conversation-list";
 import { ConversationPanel } from "./conversation-panel";
 import type { TransferOptions } from "./transfer-dialog";
+import type { CentralTeam } from "./team-panel";
 import { useFocusMode } from "@/components/layout/focus-mode";
 
 /** Intervalo da atualização automática (fase 1: sem tempo real; a tela busca de novo só com a aba visível). */
@@ -51,20 +52,23 @@ export interface CentralWorkspaceProps {
   transferOptions: TransferOptions;
   currentUserId: string;
   backHref: string;
+  /** Gestor: aba Equipe disponível. */
+  teamEnabled?: boolean;
+  team?: CentralTeam | null;
 }
 
 /**
  * Central do Operador em 3 colunas: conversas | conversa aberta | contexto do cliente. Abaixo de xl o contexto vira a
  * aba «Cliente» da conversa; no celular é uma pilha lista → conversa.
  */
-export function CentralWorkspace({ overview, detail, explicit, transferOptions, currentUserId, backHref }: CentralWorkspaceProps) {
+export function CentralWorkspace({ overview, detail, explicit, transferOptions, currentUserId, backHref, teamEnabled, team }: CentralWorkspaceProps) {
   const now = useNow(overview.generatedAt);
   useAutoRefresh();
   // Modo foco: sem barra superior e sem título, a Central usa a altura toda (só a faixa de 44 px fica em cima).
   const focus = useFocusMode();
   return (
     <div className={cn("grid gap-4", focus ? "lg:h-[calc(100dvh-2.75rem-3rem)]" : "lg:h-[calc(100dvh-var(--spacing-topbar)-9rem)]", "lg:min-h-[600px] lg:grid-cols-[320px_minmax(0,1fr)]", "xl:grid-cols-[300px_minmax(0,1fr)_320px] 2xl:grid-cols-[340px_minmax(0,1fr)_360px]")}>
-      <ConversationList overview={overview} selectedId={detail?.conversation.id} now={now} className={explicit && detail ? "hidden lg:flex" : "flex"} />
+      <ConversationList overview={overview} selectedId={detail?.conversation.id} now={now} teamEnabled={teamEnabled} team={team} className={explicit && detail ? "hidden lg:flex" : "flex"} />
       {detail ? (
         <>
           <ConversationPanel detail={detail} transferOptions={transferOptions} currentUserId={currentUserId} now={now} backHref={backHref} showContextTab className={explicit ? "flex" : "hidden lg:flex"} />

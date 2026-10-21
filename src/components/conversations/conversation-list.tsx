@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Inbox, UserRound } from "lucide-react";
+import { Inbox, MessagesSquare, UserRound, UsersRound } from "lucide-react";
 import type { CentralOverview, ConversationRow } from "@/server/conversations/queries";
 import { formatDate, formatTime, dateKey } from "@/lib/format";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -14,12 +14,17 @@ import { SlaBadge } from "@/components/ui/sla-badge";
 import { cn } from "@/lib/utils";
 import { CENTRAL_TAB_LABELS, CENTRAL_TAB_ORDER, CHANNEL_LABELS, waitingLabel } from "./model";
 import { CHANNEL_TONE, ChannelGlyph } from "./channel-icon";
+import { TeamPanel, type CentralTeam } from "./team-panel";
 
 export interface ConversationListProps {
   overview: CentralOverview;
   selectedId?: string;
   now: number;
   className?: string;
+  /** Gestor: alterna entre as conversas e a equipe (atendentes e o que cada um atende). */
+  teamEnabled?: boolean;
+  /** Equipe agora (só quando a aba Equipe está aberta). */
+  team?: CentralTeam | null;
 }
 
 /** Monta o link mantendo os filtros atuais e trocando só o que foi pedido. */
@@ -105,7 +110,7 @@ function Row({ row, selected, href, now }: { row: ConversationRow; selected: boo
  * Coluna da esquerda: abas (Minhas, Na fila, Aguardando cliente, Todas), filtros de fila/canal, busca e a lista. Quem
  * espera resposta vem primeiro, o mais antigo no topo.
  */
-export function ConversationList({ overview, selectedId, now, className }: ConversationListProps) {
+export function ConversationList({ overview, selectedId, now, className, teamEnabled, team }: ConversationListProps) {
   const router = useRouter();
   const params = useSearchParams();
   const href = useHref();
@@ -116,8 +121,34 @@ export function ConversationList({ overview, selectedId, now, className }: Conve
     router.replace(href({ q: value.trim() || undefined, conversa: undefined }), { scroll: false });
   };
 
+  const switcher = teamEnabled ? (
+    <div className="flex shrink-0 gap-1 border-b border-border p-2" role="tablist" aria-label="Ver">
+      {[
+        { key: "conversas", label: "Conversas", icon: <MessagesSquare className="size-4" />, href: href({ painel: undefined }) },
+        { key: "equipe", label: "Equipe", icon: <UsersRound className="size-4" />, href: href({ painel: "equipe" }) },
+      ].map((t) => {
+        const active = (team ? "equipe" : "conversas") === t.key;
+        return (
+          <Link key={t.key} role="tab" aria-selected={active} href={t.href} scroll={false} className={cn("inline-flex min-h-[36px] flex-1 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-colors", active ? "bg-brand-soft text-brand-fg" : "text-muted hover:bg-surface-hover hover:text-foreground")}>
+            {t.icon} {t.label}
+          </Link>
+        );
+      })}
+    </div>
+  ) : null;
+
+  if (team) {
+    return (
+      <section className={cn("flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-card", className)} aria-label="Equipe">
+        {switcher}
+        <TeamPanel team={team} selectedId={selectedId} now={now} hrefFor={(id) => href({ conversa: id })} queueHref={href({ painel: undefined, ver: "fila", conversa: undefined })} />
+      </section>
+    );
+  }
+
   return (
     <section className={cn("flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-card", className)} aria-label="Conversas">
+      {switcher}
       <div role="tablist" aria-label="Filtrar conversas" className="scrollbar-none flex shrink-0 gap-1 overflow-x-auto border-b border-border px-3 pt-2">
         {CENTRAL_TAB_ORDER.map((t) => (
           <Link

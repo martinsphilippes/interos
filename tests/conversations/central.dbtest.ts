@@ -11,11 +11,12 @@ import { closeDocdb, docdb } from "@/server/docdb";
 import { create, getById, list, update } from "@/server/db";
 import { COLLECTIONS, type ChannelEvent, type Communication, type Conversation, type ServiceQueue, type User } from "@/domain/types";
 import { receiveInboundMessage } from "@/server/conversations/inbound";
-import { closeConversation, distributeWaiting, linkConversationIdentity, NOTE_TEMPLATE_KEY, reopenConversation, sendConversationMessage, transferConversation } from "@/server/conversations/service";
+import { closeConversation, distributeWaiting, linkConversationIdentity, NOTE_TEMPLATE_KEY, redistributeConversation, registerConversationCall, releaseOperator, reopenConversation, sendConversationMessage, transferConversation } from "@/server/conversations/service";
+import { getTeamNow } from "@/server/conversations/supervision";
 import { saveUserCentral } from "@/server/conversations/queues";
 import { escalate, runManagerAlerts, touchMonitoring, whisper } from "@/server/conversations/supervision";
 import { ALERTS_SETTING, writeSetting } from "@/server/conversations/ops-settings";
-import { buildThread } from "@/server/conversations/queries";
+import { buildThread, getConversationDetail } from "@/server/conversations/queries";
 import { applyCallResult, applyRecording, availableAgents, callId, getPabx, pabxHistory, recordIncomingCall, recordOutgoingCall, savePabx } from "@/server/telephony/service";
 import { needsCallback } from "@/domain/telephony";
 import { handleMonitoredDialResult, joinMonitorTwiml, monitorNoticeFor, supervisorLeft } from "@/server/telephony/monitor";
@@ -612,3 +613,71 @@ describe("fase 5: novos canais", () => {
   });
 });
 
+
+describe("ligar da conversa e equipe na Central", () => {
+  const PHONE_E = `5589${String(Date.now() + 41).slice(-8)}`;
+  const OP2 = { id: `${RUN}_op2`, name: "Segunda Operadora" };
+  const GER = { id: `${RUN}_ger`, name: "Gerente Teste" };
+  let id = "";
+
+  beforeAll(async () => {
+    await create<User>(COLLECTIONS.users, { name: OP2.name, email: `${RUN}.op2@teste.local`, role: "suporte", departmentId: "suporte", active: true, presence: "online" } as Omit<User, "id" | "organizationId" | "createdAt" | "updatedAt">, OP2.id);
+    await create<User>(COLLECTIONS.users, { name: GER.name, email: `${RUN}.ger@teste.local`, role: "admin", departmentId: "administrativo", active: true } as Omit<User, "id" | "organizationId" | "createdAt" | "updatedAt">, GER.id);
+    await update<ServiceQueue>(COLLECTIONS.serviceQueues, QUEUE_ID, { memberIds: [OP.id, OP2.id] });
+    // OP2 fora até a hora de testar a redistribuição; a OP já tem conversas dos testes anteriores: limite folgado.
+    await patchFields<User>(COLLECTIONS.users, OP2.id, { presence: "ausente" });
+    await patchFields<User>(COLLECTIONS.users, OP.id, { presence: "online", central: { attends: true, maxConcurrent: 50 } });
+  });
+
+  afterAll(async () => {
+    await docdb.sql()`delete from interos.users where id = any(${[OP2.id, GER.id]})`;
+    await docdb.sql()`delete from interos.notifications where data->>'userId' = ${OP2.id}`;
+    await update<ServiceQueue>(COLLECTIONS.serviceQueues, QUEUE_ID, { memberIds: [OP.id] });
+  });
+
+  it("ligação pelo aparelho fica registrada na conversa; a do softphone também; o detalhe traz o número", async () => {
+    const r = await receiveInboundMessage({ channel: "whatsapp", from: PHONE_E, body: "Pode me ligar?", externalId: `${RUN}_e1`, displayName: "Cliente Ligação" });
+    id = r.conversationId!;
+    conversationIds.add(id);
+    expect((await conv(id)).assigneeId).toBe(OP.id);
+    await expect(registerConversationCall(id, { number: "123", outcome: "atendida" }, OP)).rejects.toThrow(/DDD/);
+    const manual = await registerConversationCall(id, { number: PHONE_E, outcome: "sem_resposta", note: "Caixa postal" }, OP);
+    expect(manual).toMatchObject({ channel: "voip", direction: "saida", status: "manual", callStatus: "sem_resposta", conversationId: id, body: "Caixa postal" });
+    const c = await conv(id);
+    const soft = await recordOutgoingCall({ callSid: `${RUN}_ligacao`, userId: OP.id, to: `+${PHONE_E}`, conversation: c });
+    expect(soft.conversationId).toBe(id);
+    const messages = await list<Communication>(COLLECTIONS.communications, { where: [["conversationId", "==", id]] });
+    const thread = buildThread(c, messages, new Map([[OP.id, { id: OP.id, name: OP.name } as User]]), { viewerId: GER.id, customerName: "Cliente" });
+    const calls = thread.filter((t) => t.kind === "system" && t.title.startsWith("Ligação para"));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ description: "por Operadora Teste · não atendeu · pelo aparelho (registro manual) · Caixa postal" });
+    // As mensagens continuam só as mensagens.
+    expect(thread.filter((t) => t.kind === "message")).toHaveLength(1);
+    const detail = await getConversationDetail(await currentUserFor((await getById<User>(COLLECTIONS.users, OP.id))!), id);
+    expect(detail?.call?.numbers[0]).toEqual({ label: "WhatsApp desta conversa", number: PHONE_E.slice(2) });
+  });
+
+  it("equipe: o gerente vê quem atende o quê, passa para outra pessoa, devolve para a fila e libera a atendente", async () => {
+    const ger = await currentUserFor((await getById<User>(COLLECTIONS.users, GER.id))!);
+    const team = await getTeamNow(ger, "comunicacao.central");
+    const op = team.operators.find((o) => o.id === OP.id);
+    expect(op?.conversations.map((c) => c.id)).toContain(id);
+
+    await patchFields<User>(COLLECTIONS.users, OP2.id, { presence: "online", presenceUpdatedAt: new Date().toISOString() });
+    const moved = await redistributeConversation(id, { toUserId: OP2.id }, GER);
+    expect(moved.assigneeId).toBe(OP2.id);
+    await expect(redistributeConversation(id, { toUserId: OP2.id }, GER)).rejects.toThrow(/já está com essa pessoa/);
+
+    // Liberar a OP2: a conversa volta para a fila e vai para quem está livre (a OP); a OP2 fica ausente.
+    const released = await releaseOperator(OP2.id, { away: true }, GER);
+    expect(released).toEqual({ returned: 1, failed: 0 });
+    expect((await getById<User>(COLLECTIONS.users, OP2.id))!.presence).toBe("ausente");
+    expect((await conv(id)).assigneeId).toBe(OP.id);
+
+    // Devolver para a fila: distribui na hora (a OP é a única livre e recebe de novo).
+    const back = await redistributeConversation(id, { toQueue: true }, GER);
+    expect(back.assigneeId).toBe(OP.id);
+    const notes = (await list<Communication>(COLLECTIONS.communications, { where: [["conversationId", "==", id]] })).filter((m) => m.templateKey === "nota_interna").map((n) => n.body);
+    expect(notes).toEqual(expect.arrayContaining([expect.stringContaining("redistribuída por Gerente Teste"), expect.stringContaining("liberação de Segunda Operadora"), expect.stringContaining("devolvida para a fila por Gerente Teste")]));
+  });
+});

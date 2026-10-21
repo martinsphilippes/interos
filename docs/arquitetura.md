@@ -664,6 +664,18 @@ pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`sr
   `central_agendador.lastRunAt`) e a **política de gravação** (`politica_gravacao`: aviso, retenção, quem ouve, motivo).
 - **Pausas** (fase 2): presença `pausa` com `User.pauseReasonKey` (motivos em `central_pausas`, aba Canais › Motivos de
   pausa). Em pausa, a distribuição não entrega conversa (só `online` recebe).
+- **Ligar da conversa** (botão «Ligar» no cabeçalho, `call-button.tsx`, chave `comunicacao.ligacoes.ligar`): números
+  conhecidos (`ConversationDetail.call`: o da conversa no WhatsApp, contato, telefone do chat, lead, cliente e demais
+  contatos; `callNumbers` em `domain/conversation-call.ts`) ou outro digitado. Com o softphone pronto
+  (`softphone-bridge.ts`), a ligação sai por ele com o parâmetro `conversation` e a rota outgoing grava
+  `conversationId` (só se a conversa estiver no escopo de quem liga). Sem telefonia, abre o `tel:` do aparelho e o
+  atendente registra o resultado (`registerConversationCall`: voip, `status: "manual"`). Na conversa, toda ligação
+  vira um registro com ícone de telefone (`callThreadText`), nunca mensagem.
+- **Aba Equipe na Central** (`?painel=equipe`, quem tem `comunicacao.central.distribuir`): `getTeamNow` (o mesmo
+  cálculo da Central de Comando, no escopo da Central) mostra estado, carga/limite e as conversas de cada atendente.
+  Ações: passar para outra pessoa e devolver para a fila (`redistributeConversation`, com nota; a fila é distribuída
+  na hora e a tela diz para quem foi) e liberar o atendente (`releaseOperator`: devolve todas as conversas abertas
+  para a fila e, se marcado, deixa a pessoa «Ausente» para sair da distribuição).
 - **Central de Comando** (`supervision.ts`, `/comunicacao/supervisao`, tela `comunicacao.supervisao`, escopo: equipe do
   gerente; direção, empresa): indicadores do dia, operadores (estado, pausa, carga, conversas), filas e gargalos,
   conversa acompanhada ao vivo com **sussurro** (nota `templateKey: "sussurro"` + aviso ao operador), assumir e

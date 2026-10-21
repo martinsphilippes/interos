@@ -2,6 +2,8 @@
  * Modelo da tela da Central de Atendimento (cliente): abas, rótulos e a conversão dos itens da conversa para a
  * ConversationThread única do sistema.
  */
+import * as React from "react";
+import { Phone } from "lucide-react";
 import type { ThreadItem } from "@/components/ui/conversation-thread";
 import type { CentralTab, ThreadEntry } from "@/server/conversations/queries";
 import type { ConversationChannel } from "@/domain/types";
@@ -25,7 +27,7 @@ export type CanaisTab = (typeof CANAIS_TABS)[number];
 export function toThreadItems(entries: readonly ThreadEntry[]): ThreadItem[] {
   return entries.map((e): ThreadItem => {
     if (e.kind === "note") return { kind: "note", id: e.id, at: e.at, authorName: e.authorName, body: e.body };
-    if (e.kind === "system") return { kind: "system", id: e.id, at: e.at, title: e.title, description: e.description };
+    if (e.kind === "system") return { kind: "system", id: e.id, at: e.at, title: e.title, description: e.description, icon: e.call ? React.createElement(Phone, { className: "size-3.5 text-brand-fg", "aria-hidden": true }) : undefined };
     return {
       kind: "message",
       id: e.id,

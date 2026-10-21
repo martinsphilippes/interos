@@ -76,6 +76,16 @@ export interface CommandCenter {
   generatedAt: string;
 }
 
+export interface TeamNow {
+  operators: OperatorRow[];
+  queues: QueueNow[];
+  bottlenecks: string[];
+  scopeKind: string;
+  inScope: (userId: string) => boolean;
+  assigned: Conversation[];
+  waiting: Conversation[];
+}
+
 /** Documentos da organização com `field` >= `since` (consulta por faixa; o `list` só faz igualdade). */
 async function listSince<T extends BaseEntity>(name: CollectionName, field: string, since: string): Promise<T[]> {
   const snap = await col(name).where("organizationId", "==", ORG_ID).where(field, ">=", since).get();
@@ -87,8 +97,9 @@ function startOfTodayBrt(now: number): string {
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) + 3 * 3600_000).toISOString();
 }
 
-export async function getCommandCenter(user: CurrentUser, filters: { queueId?: string } = {}, now: number = Date.now()): Promise<CommandCenter> {
-  const [scope, allQueues, pauseReasons] = await Promise.all([resolveDataScope(user, "comunicacao.supervisao"), listQueues(), getPauseReasons()]);
+/** Operadores agora (estado, carga, conversas) e filas, no escopo da tela dada. Base do painel e da aba Equipe. */
+export async function getTeamNow(user: CurrentUser, screen: "comunicacao.supervisao" | "comunicacao.central", filters: { queueId?: string } = {}, now: number = Date.now()): Promise<TeamNow> {
+  const [scope, allQueues, pauseReasons] = await Promise.all([resolveDataScope(user, screen), listQueues(), getPauseReasons()]);
   const activeQueues = allQueues.filter((q) => q.active && (!filters.queueId || q.id === filters.queueId));
   const inScope = (id: string) => !scope.userIds || scope.userIds.has(id);
   const queueMemberIds = activeQueues.flatMap((q) => q.memberIds);
@@ -156,6 +167,12 @@ export async function getCommandCenter(user: CurrentUser, filters: { queueId?: s
     .filter((q) => q.waiting > 0 && q.available === 0)
     .map((q) => (q.members === 0 ? `${q.name}: ${q.waiting} esperando e nenhum operador na fila.` : `${q.name}: ${q.waiting} esperando e nenhum operador disponível.`));
 
+  return { operators, queues, bottlenecks, scopeKind: scope.kind, inScope: (id: string) => !scope.userIds || scope.userIds.has(id), assigned, waiting };
+}
+
+export async function getCommandCenter(user: CurrentUser, filters: { queueId?: string } = {}, now: number = Date.now()): Promise<CommandCenter> {
+  const { operators, queues, bottlenecks, scopeKind, inScope, assigned, waiting } = await getTeamNow(user, "comunicacao.supervisao", filters, now);
+
   // Indicadores de hoje.
   const today = startOfTodayBrt(now);
   const todays = (await listSince<Conversation>(COLLECTIONS.conversations, "openedAt", today)).filter((c) => !c.assigneeId || inScope(c.assigneeId));
@@ -181,7 +198,7 @@ export async function getCommandCenter(user: CurrentUser, filters: { queueId?: s
     operators,
     queues,
     bottlenecks,
-    scopeKind: scope.kind,
+    scopeKind,
     generatedAt: new Date(now).toISOString(),
   };
 }

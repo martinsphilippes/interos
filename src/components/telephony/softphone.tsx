@@ -9,6 +9,7 @@ import type { MonitorNotice } from "@/server/telephony/monitor";
 import type { CallMonitorMode } from "@/domain/types";
 import { CALL_MONITOR_LABELS } from "@/domain/telephony";
 import { MONITOR_CALL_EVENT, type MonitorCallDetail } from "./model";
+import { CALL_EVENT, setSoftphoneReady, type CallRequest } from "./softphone-bridge";
 import { displayPhone } from "@/domain/phone";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -144,14 +145,15 @@ export function Softphone() {
   }, []);
 
   const call = React.useCallback(
-    async (raw: string) => {
+    async (raw: string, conversationId?: string) => {
       const device = deviceRef.current;
       const number = raw.trim();
       if (!device || status !== "pronto") return void toast.error("Telefone ainda não está pronto");
       if (active) return void toast.error("Já há uma ligação em andamento");
       if (number.replace(/\D/g, "").length < 8) return void toast.error("Digite o número com DDD");
       try {
-        const c = await device.connect({ params: { To: number } });
+        // Ligação a partir de uma conversa da Central: o servidor registra a ligação na conversa.
+        const c = await device.connect({ params: { To: number, ...(conversationId ? { conversation: conversationId } : {}) } });
         attach(c, { direction: "saida", number });
         setOpen(true);
         setDial("");
@@ -161,6 +163,22 @@ export function Softphone() {
     },
     [active, attach, status],
   );
+
+  // As telas sabem se dá para ligar pelo INTEROS (senão o botão «Ligar» usa o telefone do aparelho).
+  React.useEffect(() => {
+    setSoftphoneReady(status === "pronto");
+    return () => setSoftphoneReady(false);
+  }, [status]);
+
+  // Botão «Ligar» da conversa da Central.
+  React.useEffect(() => {
+    const onCall = (e: Event) => {
+      const detail = (e as CustomEvent<CallRequest>).detail;
+      if (detail?.number) void call(detail.number, detail.conversationId);
+    };
+    window.addEventListener(CALL_EVENT, onCall);
+    return () => window.removeEventListener(CALL_EVENT, onCall);
+  }, [call]);
 
   // Central de Comando → entrar na supervisão de uma ligação (o servidor já preparou a conferência).
   React.useEffect(() => {

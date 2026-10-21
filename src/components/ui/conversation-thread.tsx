@@ -120,7 +120,7 @@ function Item({ item, noRecordingText }: { item: ThreadItem; noRecordingText: st
         {item.icon ? <span className="mt-0.5 shrink-0">{item.icon}</span> : null}
         <span className="min-w-0 text-xs text-muted">
           <span className="text-foreground/85">{item.title}</span>
-          {item.description ? <span className="block truncate">{item.description}</span> : null}
+          {item.description ? <span className="line-clamp-3 block break-words">{item.description}</span> : null}
           <span className="block text-[11px] text-muted-light">
             {item.actorName ? `${item.actorName} · ` : ""}
             {formatTime(item.at)}
