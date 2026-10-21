@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Inbox, Link2, RotateCcw, Sparkles, XCircle } from "lucide-react";
+import { FileText, Inbox, Link2, RotateCcw, Sparkles, XCircle } from "lucide-react";
 import type { SignatureInboxItem } from "@/domain/types";
 import { assignInboxItemAction, ignoreInboxItemAction, reopenInboxItemAction } from "@/server/finance/signature-actions";
 import { formatDateTime } from "@/lib/format";
@@ -97,6 +97,11 @@ export function SignatureInbox({ items, clients, contracts, canEdit, providerCon
                     </li>
                   ))}
                 </ul>
+                {item.signedFileId ? (
+                  <a href={`/api/financeiro/assinaturas/entrada/${item.id}/arquivo`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-fg hover:underline">
+                    <FileText className="size-4" /> PDF assinado
+                  </a>
+                ) : null}
                 {item.state === "pendente" && item.suggestedClientId ? (
                   <p className="flex items-center gap-1.5 text-sm text-brand-fg">
                     <Sparkles className="size-4" /> Sugestão: {clientName(item.suggestedClientId) ?? "cliente"} ({item.suggestionReason})

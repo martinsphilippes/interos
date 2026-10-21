@@ -110,7 +110,7 @@ const CATALOG: CatalogEntry[] = [
     key: "assinatura",
     name: "Assinatura eletrônica (Clicksign)",
     enables: "Contrato enviado à Clicksign com o código por e-mail, status dos signatários, PDF assinado de volta e os contratos criados direto na Clicksign na caixa de entrada.",
-    requirements: [{ label: "Clicksign (API v3)", vars: ["CLICKSIGN_API_TOKEN"], implemented: false }],
+    requirements: [{ label: "Clicksign (API v3)", vars: ["CLICKSIGN_API_TOKEN"], implemented: true }],
     optional: [
       { name: "CLICKSIGN_WEBHOOK_SECRET", description: "Segredo HMAC dos avisos da Clicksign (confere que o aviso veio dela)." },
       { name: "CLICKSIGN_ENV", description: "sandbox (testes) ou producao. Padrão: sandbox." },

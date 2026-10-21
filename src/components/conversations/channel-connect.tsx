@@ -22,7 +22,7 @@ function Box({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 shadow-card">{children}</div>;
 }
 
-function CopyLine({ label, value }: { label: string; value: string }) {
+export function CopyLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1 text-sm">
       <span className="text-muted">{label}</span>

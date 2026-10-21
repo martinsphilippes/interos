@@ -39,13 +39,18 @@ export interface ContractDocumentData {
   hash: string;
 }
 
-export async function contractDocumentData(contractId: string): Promise<ContractDocumentData | null> {
+/**
+ * `sending`: o contrato como está sendo enviado agora para assinatura (signatários e modelo já fixados, ainda não
+ * gravados): o documento sai exatamente com eles.
+ */
+export async function contractDocumentData(contractId: string, sending?: Contract): Promise<ContractDocumentData | null> {
   const [detail, organization] = await Promise.all([getContract(contractId), getById<Organization>(COLLECTIONS.organizations, ORG_ID)]);
   if (!detail) return null;
-  const { contract, client, billingData } = detail;
-  // Documento já gerado: vale o modelo fixado nele (contrato gerado antes dos modelos fica sem cláusulas, como foi
-  // gerado). Antes de gerar: prévia com o modelo atual.
-  const generated = Boolean(contract.signatureEnvelopeId);
+  const { client, billingData } = detail;
+  const contract = sending ?? detail.contract;
+  // Documento já gerado (ou sendo enviado): vale o modelo fixado nele (contrato gerado antes dos modelos fica sem
+  // cláusulas, como foi gerado). Antes de gerar: prévia com o modelo atual.
+  const generated = Boolean(sending) || Boolean(contract.signatureEnvelopeId);
   let template: ContractDocumentTemplate | null = contract.documentTemplate ?? null;
   if (!generated) {
     const current = await templateForContract(contract);
@@ -53,7 +58,7 @@ export async function contractDocumentData(contractId: string): Promise<Contract
   }
   const companyName = organization?.name ?? "Intercert";
   const companyAddress = HEADQUARTERS.label.replace("Sede Intercert — ", "");
-  const issuedAt = detail.sentAt ?? new Date().toISOString();
+  const issuedAt = sending ? new Date().toISOString() : (detail.sentAt ?? new Date().toISOString());
   const fields = contractFieldValues({
     contract,
     client,
@@ -77,7 +82,7 @@ export async function contractDocumentData(contractId: string): Promise<Contract
     preview: !generated,
     values,
     clauses,
-    hash: contract.documentHash ?? contractDocumentHash(contract),
+    hash: sending ? contractDocumentHash(sending) : (contract.documentHash ?? contractDocumentHash(contract)),
   };
 }
 

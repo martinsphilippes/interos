@@ -560,6 +560,8 @@ export interface SignatureRow {
   remindersSent: number;
   lastReminderAt?: string;
   ownerName?: string;
+  /** Provedor do envio atual (clicksign | manual); ausente antes do envio. */
+  signatureProvider?: string;
 }
 
 export interface SignatureQueue {
@@ -597,6 +599,7 @@ export async function listSignatureQueue(options: FinanceReadOptions = {}): Prom
       sentAt: sentAt.get(c.id),
       daysWaiting: Math.max(0, daysBetween(dateKey(since), today)),
       signers: c.signers,
+      signatureProvider: c.signatureProvider,
       pendingCount: c.signers.filter((s) => s.status !== "assinado").length,
       remindersSent: reminders.length,
       lastReminderAt: reminders.map((r) => r.createdAt).sort().pop(),
