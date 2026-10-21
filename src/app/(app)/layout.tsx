@@ -3,6 +3,7 @@ import { requireUser } from "@/server/auth/session";
 import { filterMobileNav, filterNavigation, filterQuickActions, filterShellLinks, hrefAccessMap } from "@/server/auth/navigation";
 import { listNotifications } from "@/server/notifications";
 import { AppShell, type ShellLinks, type ShellUser } from "@/components/layout/app-shell";
+import { getPauseReasons } from "@/server/conversations/ops-settings";
 
 /** Papéis que veem o seletor de presença na top bar (telas operacionais), além dos gestores. */
 const PRESENCE_ROLES: readonly RoleKey[] = ["vendas", "suporte", "cs", "implantacao"];
@@ -29,6 +30,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     console.error("[layout] falha ao contar notificações", error);
   }
 
+  async function loadPauseReasons() {
+    try {
+      return (await getPauseReasons()).filter((r) => r.active).map((r) => ({ key: r.key, label: r.label }));
+    } catch (error) {
+      console.error("[layout] falha ao ler os motivos de pausa", error);
+      return [];
+    }
+  }
+
   // Só campos serializáveis chegam ao Client Component.
   const shellUser: ShellUser = {
     id: user.id,
@@ -39,6 +49,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     avatarUrl: user.avatarUrl,
     jobTitle: user.jobTitle,
     presence: user.presence,
+    pauseReasonKey: user.pauseReasonKey,
+    pauseReasons: showPresence ? await loadPauseReasons() : undefined,
     access: hrefAccessMap(user),
   };
 

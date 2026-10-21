@@ -15,6 +15,19 @@ import { ChannelEventsLog } from "@/components/conversations/channel-events-log"
 import type { ChannelEventResult, ConversationChannel } from "@/domain/types";
 import { CANAIS_TABS, type CanaisTab } from "@/components/conversations/model";
 import { cn } from "@/lib/utils";
+import { PauseReasonsAdmin, ManagerAlertsAdmin } from "@/components/conversations/ops-admin";
+import { getManagerAlertsConfig, getPauseReasons } from "@/server/conversations/ops-settings";
+import { getSchedulerStatus } from "@/server/conversations/activation";
+
+async function alertsConfig() {
+  const { stored, ...config } = await getManagerAlertsConfig();
+  void stored;
+  return config;
+}
+
+async function schedulerRan(): Promise<boolean> {
+  return Boolean((await getSchedulerStatus()).lastRunAt);
+}
 
 export const metadata: Metadata = { title: "Canais e filas" };
 
@@ -26,6 +39,8 @@ const TAB_LABEL: Record<CanaisTab, string> = {
   modelos: "Modelos do WhatsApp",
   respostas: "Respostas rápidas",
   automaticas: "Mensagens automáticas",
+  pausas: "Motivos de pausa",
+  alertas: "Alertas do gerente",
   registros: "Registros técnicos",
 };
 
@@ -49,6 +64,8 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Sea
     modelos: can(user, "comunicacao.canais.modelos.ver"),
     respostas: can(user, "comunicacao.canais.respostas.ver"),
     automaticas: can(user, "comunicacao.canais.automaticas.ver"),
+    pausas: can(user, "comunicacao.canais.pausas.ver"),
+    alertas: can(user, "comunicacao.canais.alertas.ver"),
     registros: can(user, "comunicacao.canais.registros.ver"),
   };
   const visible = CANAIS_TABS.filter((t) => allowed[t]);
@@ -99,6 +116,10 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Sea
             <QuickRepliesAdminView data={await getQuickRepliesAdmin()} canEdit={can(user, "comunicacao.canais.respostas.editar")} />
           ) : tab === "automaticas" ? (
             <AutoMessagesAdminView data={await getAutoMessagesAdmin()} canEdit={can(user, "comunicacao.canais.automaticas.editar")} />
+          ) : tab === "pausas" ? (
+            <PauseReasonsAdmin reasons={await getPauseReasons()} canEdit={can(user, "comunicacao.canais.pausas.editar")} />
+          ) : tab === "alertas" ? (
+            <ManagerAlertsAdmin config={await alertsConfig()} canEdit={can(user, "comunicacao.canais.alertas.editar")} schedulerOk={await schedulerRan()} />
           ) : (
             <ChannelEventsLog
               data={await getChannelEventsAdmin({

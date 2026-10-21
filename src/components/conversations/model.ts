@@ -18,7 +18,7 @@ export const CENTRAL_TAB_ORDER: readonly CentralTab[] = ["minhas", "fila", "agua
 export const CHANNEL_LABELS: Record<ConversationChannel, string> = { whatsapp: "WhatsApp", email: "E-mail" };
 
 /** Abas da tela Canais e filas (?aba=). */
-export const CANAIS_TABS = ["canais", "filas", "modelos", "respostas", "automaticas", "registros"] as const;
+export const CANAIS_TABS = ["canais", "filas", "modelos", "respostas", "automaticas", "pausas", "alertas", "registros"] as const;
 export type CanaisTab = (typeof CANAIS_TABS)[number];
 
 export function toThreadItems(entries: readonly ThreadEntry[]): ThreadItem[] {
@@ -62,3 +62,6 @@ export function manualHref(channel: ConversationChannel, address: string, text: 
   const intl = digits.length <= 11 ? `55${digits}` : digits;
   return `https://wa.me/${intl}?text=${encodeURIComponent(text)}`;
 }
+
+/** Abas da Central de Comando (?aba=), uma por seção do catálogo comunicacao.supervisao. */
+export const SUPERVISAO_TABS = ["painel", "registro"] as const;

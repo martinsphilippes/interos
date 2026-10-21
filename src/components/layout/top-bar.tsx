@@ -89,7 +89,7 @@ export function TopBar({ user, unreadCount, sections = [], mobileNav = [], links
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
-          {showPresence ? <PresenceSelect value={user.presence} className="hidden md:inline-flex" /> : null}
+          {showPresence ? <PresenceSelect value={user.presence} pauseReasonKey={user.pauseReasonKey} pauseReasons={user.pauseReasons} className="hidden md:inline-flex" /> : null}
           <HelpMenu links={links.help} className="hidden md:inline-flex" />
           <NotificationsBell unreadCount={unreadCount} />
           <span className="mx-1 hidden h-8 w-px bg-border md:block" aria-hidden />

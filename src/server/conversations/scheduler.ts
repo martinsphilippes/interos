@@ -10,6 +10,8 @@ import "server-only";
  * 5. Cliente que parou de responder: lembrete e, depois, encerramento automático.
  * 6. Limpeza dos registros técnicos com mais de 30 dias.
  * 7. Sincronização dos modelos do WhatsApp com a Meta (a cada hora).
+ * 8. Alertas do gerente (fila cheia, SLA em risco, cliente sem resposta, pausa longa), quando ligados.
+ * No fim, grava a hora da execução (a tela «Ativação dos canais» mostra se o agendador está rodando).
  */
 import { col, create, list, nowIso, ORG_ID, update } from "@/server/db";
 import { COLLECTIONS, type Conversation, type ServiceQueue, type Settings } from "@/domain/types";
@@ -21,7 +23,7 @@ import { syncTemplatesFromMeta } from "./templates";
 import { patchFields } from "./store";
 
 const MENU_TIMEOUT_MS = 10 * 60_000;
-const STATE_SETTING = "central_agendador";
+export const STATE_SETTING = "central_agendador";
 
 export interface CentralSweepReport {
   ranAt: string;
@@ -119,10 +121,23 @@ export async function runCentralSweep(now: Date = new Date()): Promise<CentralSw
     if (last && t - new Date(last).getTime() < 3600_000) return "sincronizados há menos de 1 h";
     if (!process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) return "conta do WhatsApp Business não configurada";
     const r = await syncTemplatesFromMeta();
-    const value = { templatesSyncedAt: nowIso() };
+    const value = { ...(docs[0]?.value ?? {}), templatesSyncedAt: nowIso() };
     if (docs[0]) await update<Settings>(COLLECTIONS.settings, docs[0].id, { value });
     else await create<Settings>(COLLECTIONS.settings, { key: STATE_SETTING, value, description: "Estado do agendador da Central de Atendimento." });
     return r.ok ? `${r.total} modelo(s) lido(s) da Meta` : `falha: ${r.error}`;
+  });
+
+  await step(report, "alertas do gerente", async () => {
+    const { runManagerAlerts } = await import("./supervision");
+    return `${await runManagerAlerts(t)} alerta(s) enviado(s)`;
+  });
+
+  await step(report, "registro da execução", async () => {
+    const docs = await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", STATE_SETTING]] });
+    const value = { ...(docs[0]?.value ?? {}), lastRunAt: now.toISOString(), lastRunOk: report.steps.every((s) => s.ok) };
+    if (docs[0]) await update<Settings>(COLLECTIONS.settings, docs[0].id, { value });
+    else await create<Settings>(COLLECTIONS.settings, { key: STATE_SETTING, value, description: "Estado do agendador da Central de Atendimento." });
+    return "ok";
   });
 
   return report;

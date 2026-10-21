@@ -73,6 +73,8 @@ export interface ConversationRow {
   sla?: { state: SlaState; dueAt: string };
   /** WhatsApp: a janela de 24 h está aberta (dá para responder com texto livre). */
   windowOpen: boolean;
+  /** Escalada pelo gerente (prioridade). */
+  escalated: boolean;
 }
 
 export interface CentralOverview {
@@ -180,12 +182,14 @@ function toRow(c: Conversation, n: Names, now: number): ConversationRow {
     queueName: c.queueId ? n.queues.get(c.queueId)?.name : undefined,
     sla: view ? { state: view.state, dueAt: view.dueAt } : undefined,
     windowOpen: c.channel !== "whatsapp" || whatsappWindow(c.lastInboundAt, now).open,
+    escalated: Boolean(c.escalatedAt) && isOpenConversation(c),
   };
 }
 
-/** Quem espera resposta primeiro (o mais antigo no topo); depois o resto, mais recente primeiro. */
+/** Escaladas primeiro; depois quem espera resposta (o mais antigo no topo); depois o resto, mais recente primeiro. */
 function sortRows(rows: ConversationRow[]): ConversationRow[] {
   return [...rows].sort((a, b) => {
+    if (a.escalated !== b.escalated) return a.escalated ? -1 : 1;
     if (a.awaitingReply !== b.awaitingReply) return a.awaitingReply ? -1 : 1;
     if (a.awaitingReply) return (a.waitingSince ?? a.lastMessageAt) < (b.waitingSince ?? b.lastMessageAt) ? -1 : 1;
     return a.lastMessageAt < b.lastMessageAt ? 1 : -1;
@@ -316,6 +320,11 @@ export function buildThread(conversation: Conversation, messages: Communication[
     const authorName = author ? (authors.get(author)?.name ?? (author === "sistema" ? "Central de Atendimento" : "Equipe")) : "Equipe";
     if (m.templateKey === NOTE_TEMPLATE_KEY) {
       thread.push({ kind: "note", id: m.id, at: m.createdAt, authorName, body: m.body ?? "" });
+      continue;
+    }
+    // Sussurro do gerente (Central de Comando): nota privada para o operador.
+    if (m.templateKey === "sussurro") {
+      thread.push({ kind: "note", id: m.id, at: m.createdAt, authorName: `Sussurro de ${authorName}`, body: m.body ?? "" });
       continue;
     }
     if (m.channel !== "whatsapp" && m.channel !== "email") continue;
