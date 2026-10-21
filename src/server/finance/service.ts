@@ -119,16 +119,20 @@ async function clearFields(name: typeof COLLECTIONS.contracts | typeof COLLECTIO
  * contrato com o envelope: os avisos dele passam a ser ignorados, então alguém precisa cancelar lá.
  */
 async function cancelClicksignSend(contract: Pick<Contract, "id" | "number" | "clientId">, send: Pick<Contract, "signatureProvider" | "signatureEnvelopeId" | "signatureDocumentId">, actor: UserRef, why: string): Promise<void> {
-  if (await cancelPreviousClicksignDocument(send)) return;
+  const result = await cancelPreviousClicksignDocument(send);
+  if (result === "cancelado") return;
+  const finished = result === "finalizado";
   await emitEvent({
     type: "note.added",
     actor,
     clientId: contract.clientId,
     entity: { type: "contract", id: contract.id },
-    title: `Cancele na Clicksign o envelope ${send.signatureEnvelopeId} do contrato ${contract.number}`,
-    description: `${why} A Clicksign não confirmou o cancelamento: cancele o envelope lá para ninguém assinar por ele.`,
+    title: finished ? `O envelope ${send.signatureEnvelopeId} do contrato ${contract.number} já estava finalizado na Clicksign` : `Cancele na Clicksign o envelope ${send.signatureEnvelopeId} do contrato ${contract.number}`,
+    description: finished
+      ? `${why} Esse envelope já tinha sido finalizado na Clicksign (todos assinaram ou foi finalizado manualmente) e os avisos dele não são mais aplicados ao contrato. Confira na Clicksign antes de seguir.`
+      : `${why} A Clicksign não confirmou o cancelamento: cancele o envelope lá para ninguém assinar por ele.`,
     department: "financeiro",
-    payload: { contractId: contract.id, envelopeId: send.signatureEnvelopeId, documentId: send.signatureDocumentId, provider: "clicksign" },
+    payload: { contractId: contract.id, envelopeId: send.signatureEnvelopeId, documentId: send.signatureDocumentId, provider: "clicksign", result },
   });
 }
 
@@ -139,11 +143,22 @@ type SendFields = Pick<Contract, "signatureProvider" | "signatureEnvelopeId" | "
  * escrita. Quem cancela ou cria versão nova cancela na Clicksign esse envio — não o lido no início, que pode ter sido
  * trocado por um reenvio feito ao mesmo tempo.
  */
-async function writeContractReturningSend(contractId: string, patch: Partial<Contract>, clear: string[] = []): Promise<SendFields> {
+async function writeContractReturningSend(contractId: string, patch: Partial<Contract>, clear: string[] = [], expected?: Contract): Promise<SendFields> {
   const ref = col(COLLECTIONS.contracts).doc(contractId);
   return docdb.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const current = (snap.data() ?? {}) as Partial<Contract>;
+    // Alteração decidida sobre a leitura do início: se o envio de assinatura, a versão ou o status mudaram desde então
+    // (envio, assinatura ou cancelamento ao mesmo tempo), não grava por cima.
+    if (
+      expected &&
+      ((current.signatureEnvelopeId ?? "") !== (expected.signatureEnvelopeId ?? "") ||
+        (current.signedAt ?? "") !== (expected.signedAt ?? "") ||
+        current.version !== expected.version ||
+        current.status !== expected.status)
+    ) {
+      throw new Error("O contrato mudou enquanto você editava (foi enviado, assinado ou alterado por outra pessoa). Atualize a página e confira antes de salvar de novo.");
+    }
     const write: Record<string, unknown> = { ...stripUndefined(patch as Record<string, unknown>), updatedAt: nowIso() };
     for (const f of clear) write[f] = FieldValue.delete();
     tx.update(ref, write);
@@ -472,7 +487,7 @@ export async function updateContractItems(contractId: string, items: ContractIte
   const totals = proposalTotals(normalized);
   const version = await versionPatchIfSent(contract, actor, "Itens alterados");
   const patch: Partial<Contract> = { ...version.patch, items: normalized, setupTotal: totals.setupTotal, monthlyTotal: totals.monthlyTotal, hardwareTotal: totals.hardwareTotal };
-  const sendAtWrite = await writeContractReturningSend(contract.id, patch, version.clear);
+  const sendAtWrite = await writeContractReturningSend(contract.id, patch, version.clear, contract);
   if (version.versioned) await cancelClicksignSend(contract, sendAtWrite, actor, "O contrato ganhou uma versão nova (itens alterados).");
   const next: Contract = { ...contract, ...patch };
   const audit = auditChanges<Contract>(contract, next, ["items", "setupTotal", "monthlyTotal", "hardwareTotal"]);
@@ -546,7 +561,7 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
   const clear = [...version.clear];
   if (!input.firstDueDate && contract.firstDueDate) clear.push("firstDueDate");
   if (!input.paymentCondition && contract.paymentCondition) clear.push("paymentCondition");
-  const sendAtWrite = await writeContractReturningSend(contract.id, patch, clear);
+  const sendAtWrite = await writeContractReturningSend(contract.id, patch, clear, contract);
   if (version.versioned) await cancelClicksignSend(contract, sendAtWrite, actor, "O contrato ganhou uma versão nova (condições alteradas).");
   const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
   // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão).
@@ -719,7 +734,9 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
       (current.signedAt ?? "") !== (contract.signedAt ?? "") ||
       current.version !== contract.version ||
       current.status === "cancelado" ||
-      current.status === "liberado";
+      current.status === "liberado" ||
+      // Conteúdo (itens, valores, condições, signatários) mudou: o documento enviado não é mais o do contrato.
+      JSON.stringify(contractSnapshot({ ...current, id: contract.id } as Contract)) !== JSON.stringify(contractSnapshot(contract));
     if (changed) return true;
     const write: Record<string, unknown> = { ...stripUndefined(patch), updatedAt: nowIso() };
     // Sempre limpa (FieldValue.delete em campo ausente não faz nada): não depende da leitura do início.

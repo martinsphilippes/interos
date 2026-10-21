@@ -118,23 +118,27 @@ export const clicksignSignatureProvider: SignatureProvider = {
   },
 };
 
+/** Resultado do cancelamento: "cancelado" (ou nada a cancelar), "finalizado" (já estava finalizado lá) ou "falhou". */
+export type ClicksignCancelResult = "cancelado" | "finalizado" | "falhou";
+
 /**
  * Cancela na Clicksign o documento de um envio que deixou de valer (contrato gerado de novo, nova versão, cancelado).
- * Melhor esforço: false quando havia o que cancelar e a Clicksign não confirmou (o chamador pode registrar a pendência).
+ * Melhor esforço. Recusado pela Clicksign (4xx), confere o documento: já cancelado → nada a fazer; FINALIZADO → o
+ * chamador registra que ele foi concluído lá (todos assinaram ou finalizado manualmente), porque o aviso de finalização
+ * desse envio passa a ser ignorado. Ainda em andamento ou sem resposta → "falhou" (alguém precisa cancelar lá).
  */
-export async function cancelPreviousClicksignDocument(contract: Pick<Contract, "signatureProvider" | "signatureEnvelopeId" | "signatureDocumentId">): Promise<boolean> {
-  if (contract.signatureProvider !== "clicksign" || !contract.signatureEnvelopeId || !contract.signatureDocumentId || !clicksignConfigured()) return true;
+export async function cancelPreviousClicksignDocument(contract: Pick<Contract, "signatureProvider" | "signatureEnvelopeId" | "signatureDocumentId">): Promise<ClicksignCancelResult> {
+  if (contract.signatureProvider !== "clicksign" || !contract.signatureEnvelopeId || !contract.signatureDocumentId || !clicksignConfigured()) return "cancelado";
   try {
     await cancelDocument(contract.signatureEnvelopeId, contract.signatureDocumentId);
-    return true;
+    return "cancelado";
   } catch (error) {
-    // Recusado pela Clicksign (4xx): o documento pode já não estar em andamento (cancelado, vencido, recusado ou
-    // finalizado). Nesse caso não há o que cancelar. Só fica pendente se ainda estiver em andamento ou sem resposta.
     if (error instanceof ClicksignError && error.status >= 400 && error.status < 500 && error.status !== 429) {
       const doc = await getDocument(contract.signatureEnvelopeId, contract.signatureDocumentId).catch(() => null);
-      if (doc && doc.status && doc.status !== "running") return true;
+      if (doc?.status === "closed") return "finalizado";
+      if (doc && doc.status && doc.status !== "running") return "cancelado";
     }
     console.error("[assinatura] não cancelou o documento na Clicksign", error);
-    return false;
+    return "falhou";
   }
 }

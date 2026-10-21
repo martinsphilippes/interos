@@ -619,9 +619,11 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   API têm tempo-limite de 20 s; 429/5xx repetem; tempo-limite/falha de rede repete tudo menos POST (criar ou mandar
   e-mail de novo poderia duplicar). Todo cancelamento de envio na Clicksign (reenvio, nova versão, contrato cancelado,
   conflito) que a Clicksign não confirma vira nota no contrato com o envelope a cancelar lá (`cancelClicksignSend`);
-  documento que já não está em andamento lá (vencido, cancelado, finalizado) não gera nota. Cancelar o contrato e criar
-  versão nova gravam em transação e cancelam o envio EM VIGOR no momento da escrita (`writeContractReturningSend`),
-  não o lido no início (um reenvio simultâneo não fica ativo esquecido).
+  documento já cancelado lá não gera nota; já FINALIZADO gera a nota "já estava finalizado, confira" (os avisos dele
+  passam a ser ignorados). Cancelar o contrato e criar versão nova gravam em transação e cancelam o envio EM VIGOR no
+  momento da escrita (`writeContractReturningSend`), não o lido no início; alterar itens/condições recusa a gravação se
+  o envio, a assinatura, a versão ou o status mudaram desde a leitura. O envio também é desfeito se o conteúdo do
+  contrato (itens, valores, condições, signatários) mudou enquanto o envelope era criado.
 - **PDF assinado** (`signed_files`, um por envio: `contract_<id>_<envelope>`; aditivo mantém o envelope): ao finalizar, o PDF assinado é baixado (link da API ou do aviso; https, até 20 MB)
   e guardado no INTEROS, porque os links da Clicksign expiram. `GET /api/financeiro/contratos/[id]/assinado` (mesmo
   acesso do documento; se ainda não guardado, busca na hora) e `GET /api/financeiro/assinaturas/entrada/[id]/arquivo`

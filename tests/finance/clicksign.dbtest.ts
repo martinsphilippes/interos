@@ -369,6 +369,33 @@ describe("Clicksign: envio e avisos", () => {
       docStatus = "closed";
     }
     expect((await eventsOf(first.id, "note.added")).filter((e) => e.title.startsWith("Cancele na Clicksign"))).toHaveLength(0);
+    // Já FINALIZADO lá (todos assinaram ou finalizado manualmente): registra para conferir (os avisos dele são ignorados).
+    const before = (await getById<Contract>(COLLECTIONS.contracts, first.id))!;
+    failPatch = true;
+    docStatus = "closed";
+    try {
+      await sendForSignature(first.id, ACTOR);
+    } finally {
+      failPatch = false;
+    }
+    const finished = (await eventsOf(first.id, "note.added")).filter((e) => e.title.includes("já estava finalizado na Clicksign"));
+    expect(finished).toHaveLength(1);
+    expect(finished[0].title).toContain(before.signatureEnvelopeId!);
+  });
+
+  it("itens alterados enquanto o envelope era criado: o envio é desfeito (o cliente não assina um documento diferente do contrato)", async () => {
+    const c = await newContract();
+    onCall = async (method, path) => {
+      if (method === "POST" && path.endsWith("/documents")) {
+        onCall = null;
+        await updateContractItems(c.id, [{ productId: "p2", productName: "INTEROS Plus", quantity: 1, setupValue: 0, monthlyValue: 350, hardwareValue: 0, discountPct: 0 }] as never, ACTOR);
+      }
+    };
+    await expect(sendForSignature(c.id, ACTOR)).rejects.toThrow(/mudou durante o envio/);
+    onCall = null;
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.signatureEnvelopeId).toBeUndefined();
+    expect(after.items.map((i) => i.productId)).toEqual(["p2"]);
   });
 
   it("cancelamento/prazo com o contrato sem signatários: não diz que está assinado, avisa para reenviar", async () => {
