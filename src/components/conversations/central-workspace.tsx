@@ -10,6 +10,7 @@ import { ConversationContext } from "./conversation-context";
 import { ConversationList } from "./conversation-list";
 import { ConversationPanel } from "./conversation-panel";
 import type { TransferOptions } from "./transfer-dialog";
+import { useFocusMode } from "@/components/layout/focus-mode";
 
 /** Intervalo da atualização automática (fase 1: sem tempo real; a tela busca de novo só com a aba visível). */
 const REFRESH_MS = 15_000;
@@ -59,8 +60,10 @@ export interface CentralWorkspaceProps {
 export function CentralWorkspace({ overview, detail, explicit, transferOptions, currentUserId, backHref }: CentralWorkspaceProps) {
   const now = useNow(overview.generatedAt);
   useAutoRefresh();
+  // Modo foco: sem barra superior e sem título, a Central usa a altura toda (só a faixa de 44 px fica em cima).
+  const focus = useFocusMode();
   return (
-    <div className={cn("grid gap-4", "lg:h-[calc(100dvh-var(--spacing-topbar)-9rem)] lg:min-h-[600px] lg:grid-cols-[320px_minmax(0,1fr)]", "xl:grid-cols-[300px_minmax(0,1fr)_320px] 2xl:grid-cols-[340px_minmax(0,1fr)_360px]")}>
+    <div className={cn("grid gap-4", focus ? "lg:h-[calc(100dvh-2.75rem-3rem)]" : "lg:h-[calc(100dvh-var(--spacing-topbar)-9rem)]", "lg:min-h-[600px] lg:grid-cols-[320px_minmax(0,1fr)]", "xl:grid-cols-[300px_minmax(0,1fr)_320px] 2xl:grid-cols-[340px_minmax(0,1fr)_360px]")}>
       <ConversationList overview={overview} selectedId={detail?.conversation.id} now={now} className={explicit && detail ? "hidden lg:flex" : "flex"} />
       {detail ? (
         <>

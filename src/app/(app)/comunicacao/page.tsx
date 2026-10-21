@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { CentralWorkspace } from "@/components/conversations/central-workspace";
 import { NewConversationDialog } from "@/components/conversations/new-conversation-dialog";
 import { CONVERSATION_CHANNELS } from "@/domain/types";
+import { FocusModeButton, FocusModeScope, HideInFocus } from "@/components/layout/focus-mode";
 
 export const metadata: Metadata = { title: "Central de Atendimento" };
 
@@ -51,12 +52,15 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
 
   return (
     <PageContainer size="full" className="lg:pb-4">
+      <FocusModeScope />
+      <HideInFocus>
       <PageHeader
         title="Central de Atendimento"
-        description="Todos os canais numa tela só (WhatsApp, e-mail, Instagram, Messenger, Telegram e chat do site), com filas, nota interna e o contexto do cliente."
+        description="Todos os canais numa tela só, com filas e o contexto do cliente."
         className={chosen && detail ? "hidden lg:flex" : undefined}
         actions={
           <>
+            <FocusModeButton className="min-h-0" />
             {canSeeHref(user, "/comunicacao/historico") ? (
               <Button asChild variant="outline" className="min-h-[44px] md:min-h-0">
                 <Link href="/comunicacao/historico">
@@ -77,6 +81,7 @@ export default async function CentralPage({ searchParams }: { searchParams: Sear
           </>
         }
       />
+      </HideInFocus>
       <CentralWorkspace overview={overview} detail={detail} explicit={Boolean(chosen && detail)} transferOptions={transferOptions} currentUserId={user.id} backHref={`/comunicacao${back.toString() ? `?${back.toString()}` : ""}`} />
     </PageContainer>
   );
