@@ -492,8 +492,10 @@ export async function updateContractItems(contractId: string, items: ContractIte
   const version = await versionPatchIfSent(contract, actor, "Itens alterados");
   const patch: Partial<Contract> = { ...version.patch, items: normalized, setupTotal: totals.setupTotal, monthlyTotal: totals.monthlyTotal, hardwareTotal: totals.hardwareTotal };
   const sendAtWrite = await writeContractReturningSend(contract.id, patch, version.clear, contract);
-  await version.announce();
+  // Primeiro cancela o envio antigo na Clicksign (já gravado no contrato), depois registra a versão: uma falha ao
+  // registrar o evento não deixa o envio antigo assinável.
   if (version.versioned) await cancelClicksignSend(contract, sendAtWrite, actor, "O contrato ganhou uma versão nova (itens alterados).");
+  await version.announce();
   const next: Contract = { ...contract, ...patch };
   const audit = auditChanges<Contract>(contract, next, ["items", "setupTotal", "monthlyTotal", "hardwareTotal"]);
   // D4: produtos do cliente acompanham os itens do contrato de venda enquanto não estão ativos.
@@ -567,8 +569,10 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
   if (!input.firstDueDate && contract.firstDueDate) clear.push("firstDueDate");
   if (!input.paymentCondition && contract.paymentCondition) clear.push("paymentCondition");
   const sendAtWrite = await writeContractReturningSend(contract.id, patch, clear, contract);
-  await version.announce();
+  // Primeiro cancela o envio antigo na Clicksign (já gravado no contrato), depois registra a versão: uma falha ao
+  // registrar o evento não deixa o envio antigo assinável.
   if (version.versioned) await cancelClicksignSend(contract, sendAtWrite, actor, "O contrato ganhou uma versão nova (condições alteradas).");
+  await version.announce();
   const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
   // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão).
   if (hasChanges(audit)) {
