@@ -115,8 +115,11 @@ async function applyToContract(contract: Contract, hook: ClicksignWebhook): Prom
     if (!hook.signer) return { ...base, message: "Aviso de recusa sem signatário" };
     const result = await markSigners(contract.id, envelopeId, (s) => sameSigner(s, hook.signer!), "recusado", hook.occurredAt);
     if (result.stale) return { ...base, message: "Aviso de um envio anterior deste contrato: ignorado" };
-    if (!result.changed.length) return { ...base, message: result.unknown ? `Signatário ${hook.signer.email} não está no contrato` : "Recusa já registrada" };
-    const s = result.changed[0];
+    // Os outros podem ter concluído o contrato (ex.: quem recusou já tinha sido removido): anuncia se for o caso.
+    await ensureSignedAnnounced(contract.id);
+    // A nota/aviso da recusa sai enquanto estiver pendente no signatário: falha depois de gravar é refeita na reentrega.
+    const s = result.signers.find((x) => sameSigner(x, hook.signer!) && x.status === "recusado" && x.refusalNoticePending);
+    if (!s) return { ...base, message: result.unknown ? `Signatário ${hook.signer.email} não está no contrato` : "Recusa já registrada" };
     const reasons = [...(hook.refusal?.reasons ?? []), hook.refusal?.comment].filter(Boolean).join(" · ") || "sem motivo informado";
     const title = `${s.name} recusou o contrato ${contract.number} na Clicksign`;
     await emitEvent({
@@ -130,6 +133,7 @@ async function applyToContract(contract: Contract, hook: ClicksignWebhook): Prom
       payload: { contractId: contract.id, email: s.email, provider: "clicksign", reasons: hook.refusal?.reasons, comment: hook.refusal?.comment, changes: { signer: { from: `${s.name}: pendente`, to: `${s.name}: recusado` } } },
     });
     await warn(contract, title, `Motivo: ${reasons}`, "atencao");
+    await clearRefusalNotice(contract.id, s.email);
     return { ...base, message: "Recusa registrada" };
   }
 
@@ -164,7 +168,11 @@ async function applyToContract(contract: Contract, hook: ClicksignWebhook): Prom
   }
 
   if (hook.event === "cancel" || hook.event === "deadline") {
-    if (contract.signedAt) return { ...base, message: "Contrato já assinado: aviso ignorado" };
+    // Todos do contrato já assinaram? Conclui e anuncia (pode ter faltado em um aviso anterior).
+    const result = await markSigners(contract.id, envelopeId, () => false, "assinado", hook.occurredAt);
+    if (result.stale) return { ...base, message: "Aviso de um envio anterior deste contrato: ignorado" };
+    await ensureSignedAnnounced(contract.id);
+    if (contract.signedAt || result.signers.every((s) => s.status === "assinado")) return { ...base, message: "Contrato já assinado: aviso ignorado" };
     const title = hook.event === "cancel" ? `Documento do contrato ${contract.number} cancelado na Clicksign` : `Prazo de assinatura do contrato ${contract.number} venceu na Clicksign`;
     const body = "Gere o documento de novo para reenviar aos signatários.";
     await emitEvent({ type: "note.added", actor: ACTOR, clientId: contract.clientId, entity: { type: "contract", id: contract.id }, title, description: body, department: "financeiro", payload: { contractId: contract.id, provider: "clicksign", event: hook.event } });
@@ -208,7 +216,7 @@ async function markSigners(contractId: string, envelopeId: string | undefined, p
       const next: ContractSignerEntry =
         status === "assinado"
           ? { ...s, status, signedAt: when, method: "provedor", evidence: "Assinatura eletrônica na Clicksign", registeredBy: ACTOR.id, registeredAt: now }
-          : { ...s, status, registeredBy: ACTOR.id, registeredAt: now };
+          : { ...s, status, registeredBy: ACTOR.id, registeredAt: now, refusalNoticePending: true };
       changed.push(next);
       return next;
     });
@@ -257,6 +265,18 @@ export async function ensureSignedAnnounced(contractId: string): Promise<boolean
   return true;
 }
 
+/** Nota/aviso da recusa registrados: tira a pendência do signatário (em transação, sem sobrescrever outros avisos). */
+async function clearRefusalNotice(contractId: string, email: string): Promise<void> {
+  const ref = col(COLLECTIONS.contracts).doc(contractId);
+  await docdb.runTransaction(async (tx) => {
+    const snap = await txGetOwn(tx, ref);
+    if (!snap) return;
+    const current = snap.data() as unknown as Contract;
+    if (!current.signers.some((s) => s.email === email && s.refusalNoticePending)) return;
+    tx.update(ref, { signers: current.signers.map((s) => (s.email === email ? { ...s, refusalNoticePending: false } : s)), updatedAt: nowIso() });
+  });
+}
+
 /** Avisa o dono do contrato e o gestor do Financeiro. Falha no aviso não desfaz o que já foi registrado. */
 async function warn(contract: Contract, title: string, body: string, kind: "atencao" | "informativa"): Promise<void> {
   try {
@@ -271,9 +291,12 @@ async function warn(contract: Contract, title: string, body: string, kind: "aten
 // PDF assinado guardado no INTEROS
 // ---------------------------------------------------------------------------
 
-/** Um arquivo por envio (versão + envelope): um reenvio na mesma versão não reaproveita o PDF do envio anterior. */
-export function contractSignedFileId(contract: Pick<Contract, "id" | "version" | "signatureEnvelopeId">): string {
-  return `contract_${contract.id}_v${contract.version}_${(contract.signatureEnvelopeId ?? "").replace(/[^A-Za-z0-9_-]/g, "")}`;
+/**
+ * Um arquivo por envio (o envelope identifica o envio): um reenvio não reaproveita o PDF do envio anterior, e um aditivo
+ * (versão nova, mesmo envelope assinado) continua achando o PDF.
+ */
+export function contractSignedFileId(contract: Pick<Contract, "id" | "signatureEnvelopeId">): string {
+  return `contract_${contract.id}_${(contract.signatureEnvelopeId ?? "").replace(/[^A-Za-z0-9_-]/g, "")}`;
 }
 
 export function inboxSignedFileId(inboxId: string): string {
@@ -293,7 +316,7 @@ async function contractSignedFileUrl(contract: Contract, hookUrl?: string): Prom
   return hookUrl;
 }
 
-/** Guarda o PDF assinado do contrato (uma vez por versão). true quando o arquivo está guardado. */
+/** Guarda o PDF assinado do contrato (uma vez por envio). true quando o arquivo está guardado. */
 export async function storeContractSignedFile(contract: Contract, hook?: Pick<ClicksignWebhook, "signedFileUrl" | "filename">): Promise<boolean> {
   const id = contractSignedFileId(contract);
   if (await getById<SignedFile>(COLLECTIONS.signedFiles, id)) return true;

@@ -656,6 +656,8 @@ export interface ContractSignerEntry {
   party?: "contratante" | "contratada";
   /** Id do signatário no provedor de assinatura (Clicksign), para lembretes e para reconhecer o aviso de assinatura. */
   providerSignerId?: string;
+  /** Recusa gravada e ainda sem nota/aviso registrados (refeito na reentrega do aviso da Clicksign). */
+  refusalNoticePending?: boolean;
 }
 
 // ---------------------------------------------------------------------------

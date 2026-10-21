@@ -608,10 +608,16 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   (`signedAnnounceClaimAt`, vence em 2 min) e anuncia uma vez (`announceContractSigned`, compartilhado com o registro
   manual, grava `signedAnnouncedAt`); falha depois de gravar a assinatura é refeita na reentrega. Documento sem contrato
   vai para a caixa de entrada (id `clicksign_<chave do documento>`; todos contam como assinados só no `auto_close`).
+  A recusa grava `refusalNoticePending` no signatário junto com o status; a nota e o aviso saem enquanto estiver
+  pendente (falha depois de gravar é refeita na reentrega). Todo aviso do envio atual (inclusive recusa, cancelamento e
+  prazo) confere se o contrato precisa ser concluído/anunciado.
 - **Envio robusto**: falha antes de ativar apaga o rascunho; depois de ativar, o envio fica gravado mesmo se o e-mail
-  falhar (o lembrete reenvia); o documento anterior é cancelado só depois de gravar o novo; o modelo enviado é o mesmo
-  que fica gravado. Chamadas à API têm tempo-limite de 20 s.
-- **PDF assinado** (`signed_files`, um por envio: `contract_<id>_v<versão>_<envelope>`): ao finalizar, o PDF assinado é baixado (link da API ou do aviso; https, até 20 MB)
+  falhar (o lembrete reenvia); a gravação final é em transação, relendo o contrato — se ele foi assinado ou reenviado
+  enquanto o envelope novo era criado, o envio novo é cancelado na Clicksign e o usuário é avisado; o documento anterior
+  é cancelado só depois de gravar o envio (ou a versão) novo; o modelo enviado é o mesmo que fica gravado. Chamadas à
+  API têm tempo-limite de 20 s; 429/5xx repetem, mas tempo-limite/falha de rede só repete leitura (criar, ativar ou
+  mandar e-mail de novo poderia duplicar).
+- **PDF assinado** (`signed_files`, um por envio: `contract_<id>_<envelope>`; aditivo mantém o envelope): ao finalizar, o PDF assinado é baixado (link da API ou do aviso; https, até 20 MB)
   e guardado no INTEROS, porque os links da Clicksign expiram. `GET /api/financeiro/contratos/[id]/assinado` (mesmo
   acesso do documento; se ainda não guardado, busca na hora) e `GET /api/financeiro/assinaturas/entrada/[id]/arquivo`
   (`financeiro.assinaturas.entrada.ver`).

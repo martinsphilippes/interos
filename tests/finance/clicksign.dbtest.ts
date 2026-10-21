@@ -32,11 +32,14 @@ const inboxKeys: string[] = [];
 /** API v3 falsa: guarda as chamadas e devolve ids previsíveis. */
 const calls: { method: string; path: string; body?: Record<string, unknown> }[] = [];
 let seq = 0;
-function fakeFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  if (url.startsWith("https://files.clicksign.test/")) return Promise.resolve(new Response(new Uint8Array(PDF), { status: 200, headers: { "content-type": "application/pdf" } }));
+/** Gancho do teste: roda quando a API recebe uma chamada (ex.: ler o banco no momento do cancelamento). */
+let onCall: ((method: string, path: string) => Promise<void>) | null = null;
+async function fakeFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  if (url.startsWith("https://files.clicksign.test/")) return new Response(new Uint8Array(PDF), { status: 200, headers: { "content-type": "application/pdf" } });
   const path = url.replace("https://sandbox.clicksign.com/api/v3", "");
   const method = init.method ?? "GET";
   calls.push({ method, path, body: init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined });
+  if (onCall) await onCall(method, path);
   const json = (data: unknown, status = 201) => Promise.resolve(new Response(JSON.stringify({ data }), { status }));
   if (method === "POST" && path === "/envelopes") return json({ id: `${RUN}-env-${++seq}`, type: "envelopes" });
   if (method === "POST" && /\/documents$/.test(path)) return json({ id: `${RUN}-doc-${++seq}`, type: "documents" });
@@ -188,11 +191,17 @@ describe("Clicksign: envio e avisos", () => {
   it("reenvio na mesma versão: avisos do envio anterior (assinatura, finalização, cancelamento) não mexem no contrato", async () => {
     const first = await sendForSignature((await newContract()).id, ACTOR);
     calls.length = 0;
-    const second = await sendForSignature(first.id, ACTOR);
+    // No momento do cancelamento do documento anterior, o contrato já precisa estar gravado com o envio novo.
+    let envelopeAtCancel: string | undefined = "nao-cancelou";
+    onCall = async (method, path) => {
+      if (method === "PATCH" && path === `/envelopes/${first.signatureEnvelopeId}/documents/${first.signatureDocumentId}`) envelopeAtCancel = (await getById<Contract>(COLLECTIONS.contracts, first.id))?.signatureEnvelopeId;
+    };
+    const second = await sendForSignature(first.id, ACTOR).finally(() => {
+      onCall = null;
+    });
     expect(second.version).toBe(first.version);
     expect(second.signatureEnvelopeId).not.toBe(first.signatureEnvelopeId);
-    // O documento anterior é cancelado na Clicksign depois de gravar o envio novo.
-    expect(calls.at(-1)).toMatchObject({ method: "PATCH", path: `/envelopes/${first.signatureEnvelopeId}/documents/${first.signatureDocumentId}` });
+    expect(envelopeAtCancel).toBe(second.signatureEnvelopeId);
     const maria = first.signers.find((s) => s.email.startsWith("maria."))!;
     const oldByEnvelope = { key: first.signatureDocumentId, metadata: { interos_contract_id: first.id, interos_version: first.version, interos_envelope_id: first.signatureEnvelopeId } };
     const oldByKey = { key: first.signatureDocumentId, metadata: { interos_contract_id: first.id, interos_version: first.version } };
@@ -265,6 +274,56 @@ describe("Clicksign: envio e avisos", () => {
     expect(after.status).toBe("assinado");
     expect(after.signedAt).toBeTruthy();
     expect(await eventsOf(c.id, "contract.signed")).toHaveLength(1);
+  });
+
+  it("recusa: se a nota falhar depois de gravar, a reentrega refaz; depois disso, não repete", async () => {
+    const c = await sendForSignature((await newContract()).id, ACTOR);
+    const maria = c.signers.find((s) => s.email.startsWith("maria."))!;
+    const document = { key: c.signatureDocumentId, metadata: { interos_contract_id: c.id, interos_version: c.version, interos_envelope_id: c.signatureEnvelopeId } };
+    // Simula a execução que gravou a recusa e caiu antes da nota.
+    const signers = c.signers.map((s) => (s.email === maria.email ? { ...s, status: "recusado" as const, refusalNoticePending: true } : s));
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signers });
+    const refusal = () => processClicksignWebhook(hook({ event: { name: "refusal", data: { signer: { email: maria.email, name: maria.name }, refusal: { reasons: ["Dados pessoais incorretos"] } } }, document }));
+    expect((await refusal()).message).toBe("Recusa registrada");
+    expect((await refusal()).message).toBe("Recusa já registrada");
+    const notes = (await eventsOf(c.id, "note.added")).filter((e) => e.title.includes("recusou"));
+    expect(notes).toHaveLength(1);
+    expect((await getById<Contract>(COLLECTIONS.contracts, c.id))?.signers.find((s) => s.email === maria.email)?.refusalNoticePending).toBe(false);
+  });
+
+  it("recusa de quem já saiu do contrato: os que ficaram assinaram, então o contrato fecha e é anunciado", async () => {
+    const c = await sendForSignature((await newContract()).id, ACTOR);
+    const document = { key: c.signatureDocumentId, metadata: { interos_contract_id: c.id, interos_version: c.version, interos_envelope_id: c.signatureEnvelopeId } };
+    const [gone, ...rest] = c.signers;
+    for (const s of rest) await processClicksignWebhook(hook({ event: { name: "sign", data: { signer: { email: s.email } } }, document }));
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signers: (await getById<Contract>(COLLECTIONS.contracts, c.id))!.signers.filter((s) => s.email !== gone.email) });
+    await processClicksignWebhook(hook({ event: { name: "refusal", data: { signer: { email: gone.email } } }, document }));
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.status).toBe("assinado");
+    expect(await eventsOf(c.id, "contract.signed")).toHaveLength(1);
+  });
+
+  it("envio que perde a corrida (contrato assinado enquanto o envelope novo era criado) é desfeito, sem sobrescrever", async () => {
+    const first = await sendForSignature((await newContract()).id, ACTOR);
+    const document = { key: first.signatureDocumentId, metadata: { interos_contract_id: first.id, interos_version: first.version, interos_envelope_id: first.signatureEnvelopeId } };
+    // Enquanto o reenvio cria o envelope novo (no POST do documento), todos assinam o envio atual.
+    onCall = async (method, path) => {
+      if (method === "POST" && path.endsWith("/documents")) {
+        onCall = null;
+        for (const s of first.signers) await processClicksignWebhook(hook({ event: { name: "sign", data: { signer: { email: s.email } } }, document }));
+      }
+    };
+    calls.length = 0;
+    await expect(sendForSignature(first.id, ACTOR)).rejects.toThrow(/mudou durante o envio/);
+    onCall = null;
+    const after = (await getById<Contract>(COLLECTIONS.contracts, first.id))!;
+    expect(after.signatureEnvelopeId).toBe(first.signatureEnvelopeId);
+    expect(after.status).toBe("assinado");
+    expect(await eventsOf(first.id, "contract.signed")).toHaveLength(1);
+    // O envelope novo foi cancelado na Clicksign.
+    const newEnvelope = calls.find((c) => c.method === "POST" && c.path === "/envelopes");
+    expect(calls.some((c) => c.method === "PATCH" && c.path.includes("/documents/") && !c.path.includes(first.signatureEnvelopeId!))).toBe(true);
+    expect(newEnvelope).toBeTruthy();
   });
 
   it("contrato de outro INTEROS (id que não existe aqui) é ignorado e não vai para a caixa de entrada", async () => {

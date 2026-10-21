@@ -391,8 +391,8 @@ async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: st
   // Snapshot COMPLETO da versão anterior (itens, totais, condições, signatários, hash): o documento ?versao=N
   // renderiza como o contrato estava antes da revisão.
   const entry: ContractVersionEntry = stripUndefined({ version: contract.version, kind: "revisao" as const, at: nowIso(), by: actor.id, reason, envelopeId: contract.signatureEnvelopeId, snapshot: contractSnapshot(contract) });
-  // A versão enviada pela Clicksign deixa de valer: cancela lá para ninguém assinar o texto antigo.
-  await cancelPreviousClicksignDocument(contract);
+  // A versão enviada pela Clicksign deixa de valer: o chamador cancela lá DEPOIS de gravar a versão nova
+  // (cancelPreviousClicksignDocument), para o aviso de cancelamento já chegar como "versão antiga".
   await emitEvent({
     type: "contract.version_created",
     actor,
@@ -437,6 +437,7 @@ export async function updateContractItems(contractId: string, items: ContractIte
   const patch: Partial<Contract> = { ...version.patch, items: normalized, setupTotal: totals.setupTotal, monthlyTotal: totals.monthlyTotal, hardwareTotal: totals.hardwareTotal };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
   await clearFields(COLLECTIONS.contracts, contract.id, version.clear);
+  if (version.versioned) await cancelPreviousClicksignDocument(contract);
   const next: Contract = { ...contract, ...patch };
   const audit = auditChanges<Contract>(contract, next, ["items", "setupTotal", "monthlyTotal", "hardwareTotal"]);
   // D4: produtos do cliente acompanham os itens do contrato de venda enquanto não estão ativos.
@@ -511,6 +512,7 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
   if (!input.firstDueDate && contract.firstDueDate) clear.push("firstDueDate");
   if (!input.paymentCondition && contract.paymentCondition) clear.push("paymentCondition");
   await clearFields(COLLECTIONS.contracts, contract.id, clear);
+  if (version.versioned) await cancelPreviousClicksignDocument(contract);
   const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
   // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão).
   if (hasChanges(audit)) {
@@ -670,14 +672,25 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
     ...(documentTemplate ? { documentTemplate } : {}),
     ...(envelope.documentId ? { signatureDocumentId: envelope.documentId } : {}),
   };
-  await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
-  await clearFields(COLLECTIONS.contracts, contract.id, [
-    ...(contract.signedAt ? ["signedAt"] : []),
-    ...(contract.signedAnnouncedAt ? ["signedAnnouncedAt"] : []),
-    ...(contract.signedAnnounceClaimAt ? ["signedAnnounceClaimAt"] : []),
-    ...(!documentTemplate && contract.documentTemplate ? ["documentTemplate"] : []),
-    ...(!envelope.documentId && contract.signatureDocumentId ? ["signatureDocumentId"] : []),
-  ]);
+  // Gravação em transação, relendo o contrato: se ele foi assinado ou reenviado enquanto o envio era criado (um aviso
+  // da Clicksign do envio anterior, outra pessoa), o envio novo é desfeito em vez de sobrescrever o que aconteceu.
+  const ref = col(COLLECTIONS.contracts).doc(contract.id);
+  const conflict = await docdb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.data() as Contract | undefined;
+    if (!current || (current.signatureEnvelopeId ?? "") !== (contract.signatureEnvelopeId ?? "") || (current.signedAt ?? "") !== (contract.signedAt ?? "")) return true;
+    const write: Record<string, unknown> = { ...stripUndefined(patch), updatedAt: nowIso() };
+    // Sempre limpa (FieldValue.delete em campo ausente não faz nada): não depende da leitura do início.
+    for (const f of ["signedAt", "signedAnnouncedAt", "signedAnnounceClaimAt"]) write[f] = FieldValue.delete();
+    if (!documentTemplate) write.documentTemplate = FieldValue.delete();
+    if (!envelope.documentId) write.signatureDocumentId = FieldValue.delete();
+    tx.update(ref, write);
+    return false;
+  });
+  if (conflict) {
+    if (envelope.provider === "clicksign") await cancelPreviousClicksignDocument({ signatureProvider: "clicksign", signatureEnvelopeId: envelope.envelopeId, signatureDocumentId: envelope.documentId });
+    throw new Error("O contrato mudou durante o envio (foi assinado ou reenviado). Atualize a página e confira antes de enviar de novo.");
+  }
   // Documento do envio anterior pela Clicksign deixa de valer: cancela lá (melhor esforço) DEPOIS de gravar o envio
   // novo, para os avisos do anterior já chegarem como "envio anterior".
   if (contract.signatureEnvelopeId && contract.signatureEnvelopeId !== envelope.envelopeId) await cancelPreviousClicksignDocument(contract);

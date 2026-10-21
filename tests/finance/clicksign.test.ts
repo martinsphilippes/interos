@@ -151,6 +151,24 @@ describe("cliente da API v3", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("tempo-limite/falha de rede: leitura repete, criação não (evita documento ou e-mail duplicado)", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      if (calls.length === 1) throw new TypeError("fetch failed");
+      return new Response(JSON.stringify({ data: { id: "ok", type: "x" } }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const read = clicksignApi("/envelopes/e1");
+    await vi.runAllTimersAsync();
+    expect((await read).data.id).toBe("ok");
+    expect(calls).toHaveLength(2);
+    vi.useRealTimers();
+    calls = [];
+    await expect(clicksignApi("/envelopes/e1/notifications", { method: "POST", body: {} })).rejects.toThrow(/não respondeu a tempo/);
+    expect(calls).toHaveLength(1);
+  });
+
   it("sem token não chama a API", async () => {
     delete process.env.CLICKSIGN_API_TOKEN;
     await expect(clicksignApi("/envelopes")).rejects.toThrow(/não configurada/);
