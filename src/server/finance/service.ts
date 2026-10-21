@@ -415,7 +415,7 @@ async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: st
       signers: contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const, ...(s.party ? { party: s.party } : {}) })),
       previousVersions: [...(contract.previousVersions ?? []), entry],
     },
-    clear: ["signatureEnvelopeId", "signatureDocumentId", "documentHash", "signedAt"],
+    clear: ["signatureEnvelopeId", "signatureDocumentId", "documentHash", "signedAt", "signedAnnouncedAt", "signedAnnounceClaimAt"],
     versioned: true,
   };
 }
@@ -652,12 +652,13 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
   const [settings, template] = await Promise.all([getSignatureSettings(), templateForContract(contract)]);
   const signers = withCompanySigner(contract.signers, companySignerEntry(settings)).map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const, ...(s.party ? { party: s.party } : {}) }));
   const documentTemplate = template ? await documentTemplateSnapshot(template) : undefined;
-  const toSend: Contract = { ...contract, signers, ...(documentTemplate ? { documentTemplate } : {}) };
+  // O documento enviado usa o MESMO modelo que fica gravado: sem modelo agora, o antigo não vai junto.
+  const { documentTemplate: _previousTemplate, ...withoutTemplate } = contract;
+  void _previousTemplate;
+  const toSend: Contract = { ...withoutTemplate, signers, ...(documentTemplate ? { documentTemplate } : {}) };
   const provider = activeSignatureProvider();
   const envelope = await provider.createEnvelope(toSend, client.tradeName);
   const manual = envelope.provider === "manual";
-  // Documento de um envio anterior pela Clicksign deixa de valer: cancela lá (melhor esforço).
-  if (contract.signatureEnvelopeId && contract.signatureEnvelopeId !== envelope.envelopeId) await cancelPreviousClicksignDocument(contract);
   const signerIds = envelope.signerIds ?? {};
   const sentSigners = signers.map((s) => (signerIds[s.email.toLowerCase()] ? { ...s, providerSignerId: signerIds[s.email.toLowerCase()] } : s));
   const patch: Partial<Contract> = {
@@ -672,9 +673,14 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
   await clearFields(COLLECTIONS.contracts, contract.id, [
     ...(contract.signedAt ? ["signedAt"] : []),
+    ...(contract.signedAnnouncedAt ? ["signedAnnouncedAt"] : []),
+    ...(contract.signedAnnounceClaimAt ? ["signedAnnounceClaimAt"] : []),
     ...(!documentTemplate && contract.documentTemplate ? ["documentTemplate"] : []),
     ...(!envelope.documentId && contract.signatureDocumentId ? ["signatureDocumentId"] : []),
   ]);
+  // Documento do envio anterior pela Clicksign deixa de valer: cancela lá (melhor esforço) DEPOIS de gravar o envio
+  // novo, para os avisos do anterior já chegarem como "envio anterior".
+  if (contract.signatureEnvelopeId && contract.signatureEnvelopeId !== envelope.envelopeId) await cancelPreviousClicksignDocument(contract);
   await emitEvent({
     type: "contract.sent_for_signature",
     actor,
@@ -685,7 +691,7 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
       : `Contrato ${contract.number} v${contract.version} enviado para assinatura`,
     description: manual
       ? `Aguardando assinatura — envio manual ao cliente. ${signers.length} signatário(s): ${signers.map((s) => s.name).join(", ")} · documento ${envelope.envelopeId}`
-      : `${signers.length} signatário(s): ${signers.map((s) => s.name).join(", ")} · envelope ${envelope.envelopeId}`,
+      : `${signers.length} signatário(s): ${signers.map((s) => s.name).join(", ")} · envelope ${envelope.envelopeId}${envelope.notified === false ? " · o e-mail com o pedido de assinatura falhou: use «Reenviar lembrete»" : ""}`,
     department: "financeiro",
     payload: { contractId: contract.id, envelopeId: envelope.envelopeId, provider: envelope.provider, method: manual ? "manual" : "provedor", documentHash: envelope.documentHash, signers: signers.map((s) => s.email), version: contract.version, ...auditChanges<Contract>(contract, { ...contract, ...patch }, ["status", "documentHash"]) },
   });
@@ -721,6 +727,8 @@ export async function registerManualSignature(input: ManualSignatureInput, actor
   if (done) {
     patch.signedAt = signers.map((s) => s.signedAt ?? "").sort().pop() || signedAt;
     if (contract.status !== "pendencia") patch.status = "assinado";
+    // Reserva o anúncio: um aviso da Clicksign chegando agora não anuncia junto (ver ensureSignedAnnounced).
+    patch.signedAnnounceClaimAt = now;
   }
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
   if (evidenceUrl) {
@@ -775,6 +783,8 @@ export async function announceContractSigned(
     department: "financeiro",
     payload: { contractId: contract.id, signedAt: patch.signedAt, envelopeId: contract.signatureEnvelopeId, documentHash, ownerId: contract.ownerId, method: input.method, ...auditChanges<Contract>(contract, { ...contract, ...patch }, ["status", "signedAt"]) },
   });
+  // Marca o anúncio deste envio (um aviso atrasado da Clicksign não anuncia de novo).
+  await update<Contract>(COLLECTIONS.contracts, contract.id, { signedAnnouncedAt: nowIso() });
 }
 
 /**

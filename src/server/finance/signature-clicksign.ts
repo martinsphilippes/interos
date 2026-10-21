@@ -67,19 +67,21 @@ export const clicksignSignatureProvider: SignatureProvider = {
     const word = data.template?.kind === "word" ? await contractDocx(data) : null;
     const file = word ? { filename: word.fileName, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", content: word.buffer } : await contractPdf(data).then((p) => ({ filename: p.fileName, mimeType: "application/pdf", content: p.buffer }));
 
+    let documentId = "";
+    const signerIds: Record<string, string> = {};
     const envelopeId = await createEnvelope({
       name: `Contrato ${contract.number} v${contract.version} · ${clientName}`,
       defaultSubject: `Contrato ${contract.number} da ${data.companyName} para assinatura`,
       remindInterval: 3,
     });
     try {
-      const documentId = await addDocument(envelopeId, {
+      documentId = await addDocument(envelopeId, {
         filename: file.filename,
         mimeType: file.mimeType,
         content: file.content,
-        metadata: { interos_contract_id: contract.id, interos_number: contract.number, interos_version: String(contract.version) },
+        // O envelope identifica o envio: avisos de um envio anterior (contrato reenviado) são ignorados.
+        metadata: { interos_contract_id: contract.id, interos_number: contract.number, interos_version: String(contract.version), interos_envelope_id: envelopeId },
       });
-      const signerIds: Record<string, string> = {};
       for (const s of contract.signers) {
         const email = s.email.trim().toLowerCase();
         const id = await addSigner(envelopeId, { name: s.name.trim(), email, phone: phones.get(email) });
@@ -88,13 +90,20 @@ export const clicksignSignatureProvider: SignatureProvider = {
         signerIds[email] = id;
       }
       await activateEnvelope(envelopeId);
-      await notifyEnvelope(envelopeId);
-      return { provider: "clicksign", envelopeId, documentId, signerIds, documentHash: contractDocumentHash(contract), sentAt: new Date().toISOString() };
     } catch (error) {
-      // Não deixa rascunho perdido na Clicksign (só dá para apagar envelope em rascunho; se já ativou, fica).
+      // Não deixa rascunho perdido na Clicksign (só dá para apagar envelope em rascunho, antes de ativar).
       await clicksignApi(`/envelopes/${envelopeId}`, { method: "DELETE" }).catch(() => undefined);
       throw error;
     }
+    // Ativado: o envio vale e fica gravado no contrato mesmo se o e-mail falhar agora (o lembrete reenvia o pedido).
+    let notified = true;
+    try {
+      await notifyEnvelope(envelopeId);
+    } catch (error) {
+      notified = false;
+      console.error("[clicksign] envelope ativado, mas o pedido de assinatura por e-mail falhou", error);
+    }
+    return { provider: "clicksign", envelopeId, documentId, signerIds, documentHash: contractDocumentHash(contract), sentAt: new Date().toISOString(), notified };
   },
 
   async sendReminder(contract, signerEmail) {

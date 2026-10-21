@@ -596,14 +596,22 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   `notifySigner`; gerar de novo, mudar o contrato ou cancelá-lo cancela o documento antigo na Clicksign (melhor esforço).
   O cliente da API repete em 429/5xx e devolve o erro da Clicksign legível.
 - **Avisos** (`POST /api/webhooks/clicksign`, `signature-webhook.ts`): `Content-Hmac` conferido com
-  `CLICKSIGN_WEBHOOK_SECRET` (503 sem o segredo, 401 inválido). O contrato vem dos metadados (ou do id do documento);
-  versão antiga ou contrato encerrado é ignorado; id de contrato que não existe aqui também. `sign` marca o signatário
-  (método `provedor`), `refusal` marca recusado e avisa o dono e o gestor do Financeiro, `auto_close`/`close`/
-  `document_closed` contam todos como assinados, `cancel`/`deadline` viram nota + aviso. A marcação é em transação
-  (avisos simultâneos não se sobrescrevem) e o fechamento sai uma vez só (`announceContractSigned`, compartilhado com o
-  registro manual: documento "Contrato assinado (Clicksign)" + `contract.signed`). Documento sem contrato vai para a
-  caixa de entrada (id `clicksign_<chave do documento>`, andamento e quem assinou atualizados a cada aviso).
-- **PDF assinado** (`signed_files`): ao finalizar, o PDF assinado é baixado (link da API ou do aviso; https, até 20 MB)
+  `CLICKSIGN_WEBHOOK_SECRET` (503 sem o segredo, 401 inválido). O contrato vem dos metadados (ou do id do documento) e o
+  aviso só vale para o envio ATUAL: versão diferente, envelope diferente (`interos_envelope_id` nos metadados; sem ele,
+  o id do documento) ou contrato encerrado são ignorados, inclusive dentro da transação. `sign` marca o signatário
+  (método `provedor`); `refusal` marca recusado e avisa o dono e o gestor do Financeiro; `auto_close` (logo depois da
+  última assinatura) marca quem está no envelope — quem entrou no contrato depois do envio fica pendente e o contrato
+  não fecha; `close`/`document_closed` não marcam ninguém (finalização manual com assinatura parcial vira nota + aviso);
+  `cancel`/`deadline` viram nota + aviso. O envelope é criado com `deadline_partial_signature_action: canceled` (prazo
+  vencido com assinatura parcial cancela em vez de finalizar). "Assinado por todos" sai do estado gravado
+  (`ensureSignedAnnounced`): qualquer aviso confere contrato assinado e não anunciado, reserva em transação
+  (`signedAnnounceClaimAt`, vence em 2 min) e anuncia uma vez (`announceContractSigned`, compartilhado com o registro
+  manual, grava `signedAnnouncedAt`); falha depois de gravar a assinatura é refeita na reentrega. Documento sem contrato
+  vai para a caixa de entrada (id `clicksign_<chave do documento>`; todos contam como assinados só no `auto_close`).
+- **Envio robusto**: falha antes de ativar apaga o rascunho; depois de ativar, o envio fica gravado mesmo se o e-mail
+  falhar (o lembrete reenvia); o documento anterior é cancelado só depois de gravar o novo; o modelo enviado é o mesmo
+  que fica gravado. Chamadas à API têm tempo-limite de 20 s.
+- **PDF assinado** (`signed_files`, um por envio: `contract_<id>_v<versão>_<envelope>`): ao finalizar, o PDF assinado é baixado (link da API ou do aviso; https, até 20 MB)
   e guardado no INTEROS, porque os links da Clicksign expiram. `GET /api/financeiro/contratos/[id]/assinado` (mesmo
   acesso do documento; se ainda não guardado, busca na hora) e `GET /api/financeiro/assinaturas/entrada/[id]/arquivo`
   (`financeiro.assinaturas.entrada.ver`).

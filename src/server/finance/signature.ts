@@ -23,6 +23,8 @@ export interface EnvelopeResult {
   /** "sha256:<hex>" do JSON canônico do contrato no momento do envio (evidência de integridade). */
   documentHash: string;
   sentAt: string;
+  /** false: o envio foi criado, mas o pedido de assinatura por e-mail falhou (reenviar pelo lembrete). */
+  notified?: boolean;
 }
 
 export interface ReminderResult {

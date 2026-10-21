@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, ChevronRight, Circle, ExternalLink, FileText, Mail, MessageCircle, Phone, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, Circle, ExternalLink, FileText, Mail, MessageCircle, Phone, Send, ShieldCheck } from "lucide-react";
 import type { ContractPanel, PanelInteraction } from "@/server/finance/workspace";
 import type { IntegrationFlags } from "@/server/integrations/types";
 import { sendForSignatureAction } from "@/server/finance/actions";
@@ -61,7 +61,7 @@ export function ContractSidePanel({ panel, integrations }: { panel: ContractPane
   });
 
   const generate = () =>
-    run(() => sendForSignatureAction({ contractId: panel.id }), (d) => (signatureManual ? `Documento gerado (${d.envelopeId}): aguardando assinatura — envio manual` : "Contrato enviado para assinatura"));
+    run(() => sendForSignatureAction({ contractId: panel.id }), (d) => (integrations.assinatura !== "conectado" ? `Documento gerado (${d.envelopeId}): aguardando assinatura — envio manual` : "Contrato enviado para assinatura pela Clicksign"));
 
   return (
     <>
@@ -160,7 +160,7 @@ export function ContractSidePanel({ panel, integrations }: { panel: ContractPane
             ) : null}
             {access.contracts.signatureSend && panel.editable && !panel.documentGenerated ? (
               <Button onClick={generate} loading={pending} disabled={total === 0 || panel.itemsCount === 0} className="h-11 md:h-9" title={panel.itemsCount === 0 ? "Adicione itens no contrato completo" : undefined}>
-                <FileText /> Gerar para assinatura
+                {integrations.assinatura === "conectado" ? <><Send /> Enviar para assinatura</> : <><FileText /> Gerar para assinatura</>}
               </Button>
             ) : panel.documentGenerated && !allSigned && signatureManual ? (
               <Button asChild variant="outline" className="h-11 md:h-9">

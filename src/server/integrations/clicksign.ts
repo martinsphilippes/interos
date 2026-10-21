@@ -74,6 +74,7 @@ export async function clicksignApi<T = { data: JsonApiResource }>(path: string, 
         headers: { Authorization: token, Accept: "application/vnd.api+json", "Content-Type": "application/vnd.api+json" },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
         cache: "no-store",
+        signal: AbortSignal.timeout(20_000),
       });
       if (res.status === 429 || res.status >= 500) {
         lastError = new ClicksignError(`Clicksign respondeu ${res.status}`, res.status);
@@ -127,6 +128,8 @@ export async function createEnvelope(input: EnvelopeInput): Promise<string> {
           auto_close: true,
           remind_interval: input.remindInterval === null ? "null" : String(input.remindInterval ?? 3),
           block_after_refusal: true,
+          // Prazo vencido com assinatura parcial: cancela (o padrão da Clicksign finalizaria sem todas as assinaturas).
+          deadline_partial_signature_action: "canceled",
           ...(input.defaultSubject ? { default_subject: input.defaultSubject.slice(0, 255) } : {}),
           ...(input.defaultMessage ? { default_message: input.defaultMessage } : {}),
           ...(input.deadlineAt ? { deadline_at: input.deadlineAt } : {}),

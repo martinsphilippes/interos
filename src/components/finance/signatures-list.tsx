@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { BellRing, CheckCircle2, FileText } from "lucide-react";
+import { BellRing, CheckCircle2, FileText, Send } from "lucide-react";
 import type { SignatureRow } from "@/server/finance/queries";
 import type { IntegrationFlags } from "@/server/integrations/types";
 import { sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
@@ -35,6 +35,8 @@ export function SignaturesList({ rows, mode, integrations }: { rows: SignatureRo
   // Capacidades do servidor: lembrete/gerar documento (enviar), registrar assinatura, ver documento, valores.
   const { contracts: can, contractValues } = useFinanceAccess();
   const emailConnected = integrations.email === "conectado";
+  // Com a Clicksign conectada, "enviar" cria o envelope e a Clicksign manda o e-mail (não é mais envio manual).
+  const providerConnected = integrations.assinatura === "conectado";
   const { pending, run } = useFinanceAction();
   const [busy, setBusy] = React.useState<string | null>(null);
   const act = async (key: string, fn: () => Promise<boolean>) => {
@@ -89,7 +91,7 @@ export function SignaturesList({ rows, mode, integrations }: { rows: SignatureRo
                   </div>
                   {(can.signatureSend || can.sign) && s.status !== "assinado" ? (
                     <div className="flex flex-wrap gap-2">
-                      {!can.signatureSend ? null : emailConnected ? (
+                      {!can.signatureSend ? null : emailConnected || (providerConnected && r.signatureProvider === "clicksign") ? (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -120,9 +122,9 @@ export function SignaturesList({ rows, mode, integrations }: { rows: SignatureRo
                 className="h-10 sm:h-8"
                 loading={busy === `send:${r.contractId}`}
                 disabled={pending || r.signers.length === 0}
-                onClick={() => act(`send:${r.contractId}`, () => run(() => sendForSignatureAction({ contractId: r.contractId }), "Documento gerado: aguardando assinatura (envio manual)"))}
+                onClick={() => act(`send:${r.contractId}`, () => run(() => sendForSignatureAction({ contractId: r.contractId }), providerConnected ? "Contrato enviado para assinatura pela Clicksign" : "Documento gerado: aguardando assinatura (envio manual)"))}
               >
-                <FileText /> Gerar documento para assinatura
+                {providerConnected ? <Send /> : <FileText />} {providerConnected ? "Enviar para assinatura" : "Gerar documento para assinatura"}
               </Button>
               {can.documentsView ? (
                 <Button asChild variant="outline" size="sm" className="h-10 sm:h-8">

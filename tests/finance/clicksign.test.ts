@@ -119,14 +119,14 @@ describe("cliente da API v3", () => {
     expect(clicksignHost()).toBe("https://app.clicksign.com");
   });
 
-  it("envelope: token sem Bearer, JSON:API, pt-BR, finalização automática e bloqueio após recusa", async () => {
+  it("envelope: token sem Bearer, JSON:API, pt-BR, finalização automática, bloqueio após recusa e prazo vencido cancela", async () => {
     responses.push(new Response(JSON.stringify({ data: { id: "env-1", type: "envelopes" } }), { status: 201 }));
     expect(await createEnvelope({ name: "Contrato CT-1 v1 · ACME", remindInterval: 3 })).toBe("env-1");
     const [call] = calls;
     expect(call.url).toBe("https://sandbox.clicksign.com/api/v3/envelopes");
     expect(call.init.method).toBe("POST");
     expect(call.init.headers).toMatchObject({ Authorization: "tok-teste", Accept: "application/vnd.api+json", "Content-Type": "application/vnd.api+json" });
-    expect(JSON.parse(String(call.init.body))).toEqual({ data: { type: "envelopes", attributes: { name: "Contrato CT-1 v1 · ACME", locale: "pt-BR", auto_close: true, remind_interval: "3", block_after_refusal: true } } });
+    expect(JSON.parse(String(call.init.body))).toEqual({ data: { type: "envelopes", attributes: { name: "Contrato CT-1 v1 · ACME", locale: "pt-BR", auto_close: true, remind_interval: "3", block_after_refusal: true, deadline_partial_signature_action: "canceled" } } });
   });
 
   it("documento em base64 com os metadados; signatário com celular e recusa permitida", async () => {

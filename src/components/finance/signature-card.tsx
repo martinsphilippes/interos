@@ -56,7 +56,11 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
   const allSigned = sent && contract.signers.length > 0 && signedCount === contract.signers.length;
   const providerConnected = integrations.assinatura === "conectado";
   const emailConnected = integrations.email === "conectado";
+  // Envio ATUAL foi manual (mailto, registro com evidência)? E o PRÓXIMO envio será manual? Com a Clicksign conectada,
+  // gerar de novo um contrato enviado manualmente passa a enviar pela Clicksign.
   const manual = !providerConnected || contract.signatureProvider === "manual";
+  const nextManual = !providerConnected;
+  const viaClicksign = providerConnected && contract.signatureProvider === "clicksign";
   const origin = useOrigin();
   const mailHref = contractEmailHref({
     number: contract.number,
@@ -92,9 +96,9 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
             ? `Assinado por todos${contract.signedAt ? ` em ${formatDateTime(contract.signedAt)}` : ""}.`
             : sent
               ? <>{manual ? "Documento gerado" : "Enviado"} {sentAt ? <RelativeTime value={sentAt} /> : ""} · {signedCount}/{contract.signers.length} assinatura(s).</>
-              : manual
+              : nextManual
                 ? "Documento ainda não gerado. Assinatura digital não conectada: envio manual e registro com evidência."
-                : "Ainda não enviado para assinatura."}
+                : "Ainda não enviado para assinatura. O envio cria o documento na Clicksign e manda o pedido por e-mail."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pt-0">
@@ -131,6 +135,9 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                     <p className="truncate text-xs text-muted">
                       {s.role} · {s.email}
                     </p>
+                    {viaClicksign && sent && s.status === "pendente" && !s.providerSignerId ? (
+                      <p className="text-xs text-warning-fg">Incluído depois do envio: não recebeu o documento na Clicksign. Reenvie para assinatura.</p>
+                    ) : null}
                     {s.signedAt ? (
                       <p className="text-xs text-success-fg">
                         Assinou em {formatDateTime(s.signedAt)}
@@ -163,7 +170,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                     {sent ? (
                       <>
                         {can.sign ? <ManualSignatureButton contractId={contract.id} contractNumber={contract.number} signer={s} className="h-10 md:h-8" /> : null}
-                        {!can.signatureSend ? null : emailConnected ? (
+                        {!can.signatureSend ? null : emailConnected || viaClicksign ? (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -234,7 +241,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
               act("send", () =>
                 run(
                   () => sendForSignatureAction({ contractId: contract.id }),
-                  (d) => (manual ? `Documento gerado (${d.envelopeId}): aguardando assinatura — envio manual` : `Contrato enviado para assinatura (envelope ${d.envelopeId})`),
+                  (d) => (nextManual ? `Documento gerado (${d.envelopeId}): aguardando assinatura — envio manual` : `Contrato enviado para assinatura pela Clicksign (envelope ${d.envelopeId})`),
                 ),
               )
             }
@@ -242,8 +249,8 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
             disabled={pending || contract.signers.length === 0}
             className="h-11 md:h-10"
           >
-            {manual ? <FileText /> : <Send />}
-            {manual ? (sent ? "Gerar nova versão do documento" : "Gerar documento para assinatura") : sent ? "Reenviar para assinatura" : "Enviar para assinatura"}
+            {nextManual ? <FileText /> : <Send />}
+            {nextManual ? (sent ? "Gerar nova versão do documento" : "Gerar documento para assinatura") : sent ? "Reenviar para assinatura" : "Enviar para assinatura"}
           </Button>
         ) : null}
 

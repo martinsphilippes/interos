@@ -123,7 +123,7 @@ describe("Clicksign: envio e avisos", () => {
       "POST /envelopes/E/notifications",
     ]);
     const docAttrs = (calls[1].body!.data as { attributes: Record<string, unknown> }).attributes;
-    expect(docAttrs.metadata).toEqual({ interos_contract_id: contract.id, interos_number: contract.number, interos_version: String(sent.version) });
+    expect(docAttrs.metadata).toEqual({ interos_contract_id: contract.id, interos_number: contract.number, interos_version: String(sent.version), interos_envelope_id: sent.signatureEnvelopeId });
     expect(String(docAttrs.content_base64)).toMatch(/^data:application\/pdf;base64,JVBERi/);
     const reqs = calls.filter((c) => c.path.endsWith("/requirements")).map((c) => (c.body!.data as { attributes: Record<string, string> }).attributes);
     expect(reqs).toEqual(expect.arrayContaining([{ action: "agree", role: "contractee" }, { action: "agree", role: "contractor" }, { action: "provide_evidence", auth: "email" }]));
@@ -183,6 +183,88 @@ describe("Clicksign: envio e avisos", () => {
     expect(after.signers.find((s) => s.email === maria.email)?.status).toBe("recusado");
     const notes = await list<Notification>(COLLECTIONS.notifications, { where: [["userId", "==", OWNER_ID]] });
     expect(notes.some((n) => n.title.includes("recusou") && n.body?.includes("Valor errado"))).toBe(true);
+  });
+
+  it("reenvio na mesma versão: avisos do envio anterior (assinatura, finalização, cancelamento) não mexem no contrato", async () => {
+    const first = await sendForSignature((await newContract()).id, ACTOR);
+    calls.length = 0;
+    const second = await sendForSignature(first.id, ACTOR);
+    expect(second.version).toBe(first.version);
+    expect(second.signatureEnvelopeId).not.toBe(first.signatureEnvelopeId);
+    // O documento anterior é cancelado na Clicksign depois de gravar o envio novo.
+    expect(calls.at(-1)).toMatchObject({ method: "PATCH", path: `/envelopes/${first.signatureEnvelopeId}/documents/${first.signatureDocumentId}` });
+    const maria = first.signers.find((s) => s.email.startsWith("maria."))!;
+    const oldByEnvelope = { key: first.signatureDocumentId, metadata: { interos_contract_id: first.id, interos_version: first.version, interos_envelope_id: first.signatureEnvelopeId } };
+    const oldByKey = { key: first.signatureDocumentId, metadata: { interos_contract_id: first.id, interos_version: first.version } };
+    for (const document of [oldByEnvelope, oldByKey]) {
+      for (const event of [{ name: "sign", data: { signer: { email: maria.email } } }, { name: "auto_close" }, { name: "cancel" }]) {
+        expect((await processClicksignWebhook(hook({ event, document }))).message).toMatch(/envio anterior/);
+      }
+    }
+    const after = (await getById<Contract>(COLLECTIONS.contracts, first.id))!;
+    expect(after.signers.every((s) => s.status === "pendente")).toBe(true);
+    expect(after.signedAt).toBeUndefined();
+    expect(await eventsOf(first.id, "contract.signed")).toHaveLength(0);
+  });
+
+  it("finalização manual (close) com assinatura faltando não assina o contrato: vira nota e aviso", async () => {
+    const c = await sendForSignature((await newContract()).id, ACTOR);
+    const maria = c.signers.find((s) => s.email.startsWith("maria."))!;
+    const document = { key: c.signatureDocumentId, metadata: { interos_contract_id: c.id, interos_version: c.version, interos_envelope_id: c.signatureEnvelopeId } };
+    await processClicksignWebhook(hook({ event: { name: "sign", data: { signer: { email: maria.email } } }, document }));
+    expect((await processClicksignWebhook(hook({ event: { name: "close" }, document }))).message).toMatch(/sem todas as assinaturas/);
+    expect((await processClicksignWebhook(hook({ event: { name: "document_closed" }, document }))).message).toMatch(/sem todas as assinaturas/);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.signedAt).toBeUndefined();
+    expect(after.signers.filter((s) => s.status === "assinado").map((s) => s.email)).toEqual([maria.email]);
+    expect(await eventsOf(c.id, "contract.signed")).toHaveLength(0);
+    const notes = await list<Notification>(COLLECTIONS.notifications, { where: [["entityId", "==", c.id]] });
+    expect(notes.some((n) => n.title.includes("sem todas as assinaturas"))).toBe(true);
+  });
+
+  it("finalização automática não marca quem entrou no contrato depois do envio", async () => {
+    const c = await sendForSignature((await newContract()).id, ACTOR);
+    await addSigner({ contractId: c.id, name: "Testemunha Tardia", email: `tardia.${RUN}@acme-teste.com.br`, role: "Testemunha" }, ACTOR);
+    const document = { key: c.signatureDocumentId, metadata: { interos_contract_id: c.id, interos_version: c.version, interos_envelope_id: c.signatureEnvelopeId }, signers: c.signers.map((s) => ({ key: s.providerSignerId, name: s.name, email: s.email })) };
+    expect((await processClicksignWebhook(hook({ event: { name: "auto_close" }, document }))).message).toMatch(/sem todas as assinaturas/);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.signers.find((s) => s.email.startsWith("tardia."))?.status).toBe("pendente");
+    expect(after.signers.filter((s) => s.providerSignerId).every((s) => s.status === "assinado")).toBe(true);
+    expect(after.signedAt).toBeUndefined();
+    expect(await eventsOf(c.id, "contract.signed")).toHaveLength(0);
+  });
+
+  it("anúncio sai do estado gravado: falha depois de gravar é refeita na reentrega, e a reserva evita anúncio duplo", async () => {
+    const c = await sendForSignature((await newContract()).id, ACTOR);
+    const document = { key: c.signatureDocumentId, metadata: { interos_contract_id: c.id, interos_version: c.version, interos_envelope_id: c.signatureEnvelopeId } };
+    // Simula uma execução que gravou a assinatura de todos e caiu antes de anunciar, com a reserva ainda valendo.
+    const signers = c.signers.map((s) => ({ ...s, status: "assinado" as const, signedAt: "2026-10-21T15:00:00.000Z", method: "provedor" as const }));
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signers, signedAt: "2026-10-21T15:00:00.000Z", status: "assinado", signedAnnounceClaimAt: new Date().toISOString() });
+    const maria = c.signers.find((s) => s.email.startsWith("maria."))!;
+    const redeliver = () => processClicksignWebhook(hook({ event: { name: "sign", data: { signer: { email: maria.email } } }, document }));
+    expect((await redeliver()).message).toBe("Assinatura já registrada");
+    expect(await eventsOf(c.id, "contract.signed")).toHaveLength(0);
+    // Reserva vencida (a execução caiu): a reentrega anuncia uma vez; as seguintes não repetem.
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signedAnnounceClaimAt: new Date(Date.now() - 5 * 60_000).toISOString() });
+    const [a, b] = await Promise.all([redeliver(), redeliver()]);
+    expect([a.message, b.message].filter((m) => m.includes("assinado por todos"))).toHaveLength(1);
+    expect(await eventsOf(c.id, "contract.signed")).toHaveLength(1);
+    expect((await getById<Contract>(COLLECTIONS.contracts, c.id))?.signedAnnouncedAt).toBeTruthy();
+  });
+
+  it("signatário pendente removido: o próximo aviso conclui e grava o contrato como assinado (uma vez)", async () => {
+    const c = await sendForSignature((await newContract()).id, ACTOR);
+    const document = { key: c.signatureDocumentId, metadata: { interos_contract_id: c.id, interos_version: c.version, interos_envelope_id: c.signatureEnvelopeId } };
+    const [keep, ...rest] = c.signers;
+    for (const s of rest) await processClicksignWebhook(hook({ event: { name: "sign", data: { signer: { email: s.email } } }, document }));
+    // O pendente que sobrou sai do contrato direto no banco (o que a tela faz ao remover o signatário).
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signers: (await getById<Contract>(COLLECTIONS.contracts, c.id))!.signers.filter((s) => s.email !== keep.email) });
+    expect((await processClicksignWebhook(hook({ event: { name: "document_closed" }, document }))).message).toMatch(/assinado por todos/);
+    await processClicksignWebhook(hook({ event: { name: "auto_close" }, document }));
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.status).toBe("assinado");
+    expect(after.signedAt).toBeTruthy();
+    expect(await eventsOf(c.id, "contract.signed")).toHaveLength(1);
   });
 
   it("contrato de outro INTEROS (id que não existe aqui) é ignorado e não vai para a caixa de entrada", async () => {

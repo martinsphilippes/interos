@@ -790,6 +790,10 @@ export interface Contract extends BaseEntity {
   signatureEnvelopeId?: string;
   /** Id do documento no provedor de assinatura (Clicksign): o aviso de assinatura chega por ele. */
   signatureDocumentId?: string;
+  /** "Assinado por todos" já anunciado (documento na ficha + contract.signed) para o envio atual. */
+  signedAnnouncedAt?: string;
+  /** Reserva do anúncio (aviso da Clicksign em andamento); vence em 2 minutos se a execução cair. */
+  signedAnnounceClaimAt?: string;
   signedAt?: string;
   documentHash?: string;
   paymentCondition?: string;

@@ -2,21 +2,28 @@ import "server-only";
 /**
  * Avisos da Clicksign (webhook) aplicados no INTEROS.
  *
- * Contrato enviado pelo INTEROS (achado pelo id gravado nos metadados do documento, ou pelo id do documento):
+ * Contrato enviado pelo INTEROS (achado pelo id gravado nos metadados do documento, ou pelo id do documento). O aviso
+ * só vale para o envio ATUAL: versão diferente, envelope diferente (o contrato foi reenviado) ou contrato encerrado são
+ * ignorados.
  * - sign: o signatário fica "assinado" (método provedor); com todos assinados, o contrato fica assinado;
  * - refusal: o signatário fica "recusado" e o dono do contrato e o gestor do Financeiro são avisados;
- * - auto_close / close / document_closed: o documento foi finalizado: todos contam como assinados e o PDF assinado é
- *   guardado no INTEROS (os links da Clicksign expiram);
- * - cancel / deadline: nota na timeline e aviso ao dono (o contrato continua aguardando assinatura).
- * Documento de versão antiga (o contrato foi gerado de novo) ou de contrato encerrado é ignorado.
+ * - auto_close: a Clicksign finalizou logo depois da ÚLTIMA assinatura: quem está no envelope conta como assinado
+ *   (cobre um aviso de assinatura perdido). Quem foi incluído no contrato depois do envio continua pendente;
+ * - close (finalização manual na Clicksign) e document_closed (PDF pronto): não marcam ninguém. Se o contrato não
+ *   estiver assinado por todos, vira nota + aviso (finalização com assinatura parcial);
+ * - cancel / deadline: nota na timeline e aviso ao dono (o contrato continua aguardando assinatura). O envelope é
+ *   criado para CANCELAR, não finalizar, quando o prazo vence com assinatura parcial.
+ * O PDF assinado é guardado no INTEROS (os links da Clicksign expiram).
+ *
+ * "Contrato assinado por todos" (documento na ficha + contract.signed) sai do estado gravado, não do aviso: qualquer
+ * aviso confere se o contrato está assinado e ainda não foi anunciado, reserva o anúncio em transação (com prazo, para
+ * não travar se a execução cair) e anuncia uma vez só. Assim uma falha depois de gravar a assinatura é refeita na
+ * reentrega da Clicksign, e avisos simultâneos não anunciam duas vezes.
  *
  * Documento criado direto na Clicksign (sem contrato): cai na caixa de entrada, com o andamento atualizado a cada aviso.
- *
- * Tudo é idempotente: a Clicksign reenvia o aviso quando não recebe 200, e o mesmo aviso não muda nada duas vezes.
- * A marcação dos signatários é feita em transação (avisos simultâneos de dois signatários não se sobrescrevem).
  */
 import { createHash } from "node:crypto";
-import { docdb } from "@/server/docdb";
+import { docdb, FieldValue } from "@/server/docdb";
 import { col, createIfAbsent, getById, list, nowIso, txGetOwn, update } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { notify } from "@/server/notifications";
@@ -40,6 +47,8 @@ const CLOSE_EVENTS = new Set(["auto_close", "close", "document_closed"]);
 const ACTOR = { ...SYSTEM_ACTOR, name: "Clicksign (assinatura eletrônica)" };
 /** Tamanho máximo do PDF assinado guardado (o documento original já passou pelo limite de envio). */
 const MAX_SIGNED_FILE_BYTES = 20 * 1024 * 1024;
+/** Reserva do anúncio "assinado por todos": depois desse prazo sem concluir, outro aviso pode anunciar. */
+const ANNOUNCE_LEASE_MS = 2 * 60_000;
 
 export async function processClicksignWebhook(hook: ClicksignWebhook): Promise<ClicksignWebhookOutcome> {
   const found = await findContract(hook);
@@ -61,34 +70,51 @@ function sameSigner(entry: ContractSignerEntry, who: { key?: string; email: stri
   return (Boolean(who.key) && entry.providerSignerId === who.key) || entry.email.trim().toLowerCase() === who.email.toLowerCase();
 }
 
+/**
+ * O aviso é do envio atual do contrato? Pelo envelope gravado nos metadados (interos_envelope_id) quando vem; senão pelo
+ * id do documento. Sem nenhum dos dois para comparar, vale (só a versão confere).
+ */
+export function hookMatchesCurrentSend(contract: Pick<Contract, "signatureEnvelopeId" | "signatureDocumentId">, hook: Pick<ClicksignWebhook, "metadata" | "documentKey">): boolean {
+  const envelope = hook.metadata.interos_envelope_id;
+  if (envelope) return envelope === contract.signatureEnvelopeId;
+  if (hook.documentKey && contract.signatureDocumentId) return hook.documentKey === contract.signatureDocumentId;
+  return true;
+}
+
 async function applyToContract(contract: Contract, hook: ClicksignWebhook): Promise<ClicksignWebhookOutcome> {
   const base = { handled: "contract" as const, contractId: contract.id };
   const version = Number(hook.metadata.interos_version);
   if (hook.metadata.interos_version && version !== contract.version) return { ...base, message: `Aviso da versão ${version} (o contrato está na versão ${contract.version}): ignorado` };
+  if (!hookMatchesCurrentSend(contract, hook)) return { ...base, message: "Aviso de um envio anterior deste contrato: ignorado" };
   if (contract.status === "cancelado" || contract.status === "liberado") return { ...base, message: "Contrato encerrado: aviso ignorado" };
+  const envelopeId = contract.signatureEnvelopeId;
 
   if (hook.event === "sign") {
     if (!hook.signer) return { ...base, message: "Aviso de assinatura sem signatário" };
-    const result = await markSigners(contract.id, (s) => sameSigner(s, hook.signer!), "assinado", hook.occurredAt);
-    if (!result.changed.length) return { ...base, message: result.unknown ? `Signatário ${hook.signer.email} não está no contrato` : "Assinatura já registrada" };
+    const result = await markSigners(contract.id, envelopeId, (s) => sameSigner(s, hook.signer!), "assinado", hook.occurredAt);
+    if (result.stale) return { ...base, message: "Aviso de um envio anterior deste contrato: ignorado" };
     const s = result.changed[0];
-    await emitEvent({
-      type: "note.added",
-      actor: ACTOR,
-      clientId: contract.clientId,
-      entity: { type: "contract", id: contract.id },
-      title: `${s.name} assinou o contrato ${contract.number} (Clicksign)`,
-      description: `${s.role} · ${s.email} · assinado em ${formatDate(s.signedAt ?? nowIso())}`,
-      department: "financeiro",
-      payload: { contractId: contract.id, email: s.email, method: "provedor", provider: "clicksign", signedAt: s.signedAt, envelopeId: contract.signatureEnvelopeId, changes: { signer: { from: `${s.name}: pendente`, to: `${s.name}: assinado em ${formatDate(s.signedAt ?? nowIso())}` } } },
-    });
-    if (result.completed) await finishContract(result.contract, result.patch, hook);
-    return { ...base, message: result.completed ? "Assinatura registrada; contrato assinado por todos" : "Assinatura registrada" };
+    if (s) {
+      await emitEvent({
+        type: "note.added",
+        actor: ACTOR,
+        clientId: contract.clientId,
+        entity: { type: "contract", id: contract.id },
+        title: `${s.name} assinou o contrato ${contract.number} (Clicksign)`,
+        description: `${s.role} · ${s.email} · assinado em ${formatDate(s.signedAt ?? nowIso())}`,
+        department: "financeiro",
+        payload: { contractId: contract.id, email: s.email, method: "provedor", provider: "clicksign", signedAt: s.signedAt, envelopeId, changes: { signer: { from: `${s.name}: pendente`, to: `${s.name}: assinado em ${formatDate(s.signedAt ?? nowIso())}` } } },
+      });
+    }
+    const announced = await ensureSignedAnnounced(contract.id);
+    if (!s) return { ...base, message: result.unknown ? `Signatário ${hook.signer.email} não está no contrato` : `Assinatura já registrada${announced ? "; contrato assinado por todos" : ""}` };
+    return { ...base, message: announced ? "Assinatura registrada; contrato assinado por todos" : "Assinatura registrada" };
   }
 
   if (hook.event === "refusal") {
     if (!hook.signer) return { ...base, message: "Aviso de recusa sem signatário" };
-    const result = await markSigners(contract.id, (s) => sameSigner(s, hook.signer!), "recusado", hook.occurredAt);
+    const result = await markSigners(contract.id, envelopeId, (s) => sameSigner(s, hook.signer!), "recusado", hook.occurredAt);
+    if (result.stale) return { ...base, message: "Aviso de um envio anterior deste contrato: ignorado" };
     if (!result.changed.length) return { ...base, message: result.unknown ? `Signatário ${hook.signer.email} não está no contrato` : "Recusa já registrada" };
     const s = result.changed[0];
     const reasons = [...(hook.refusal?.reasons ?? []), hook.refusal?.comment].filter(Boolean).join(" · ") || "sem motivo informado";
@@ -108,10 +134,33 @@ async function applyToContract(contract: Contract, hook: ClicksignWebhook): Prom
   }
 
   if (CLOSE_EVENTS.has(hook.event)) {
-    const result = await markSigners(contract.id, (s) => s.status !== "assinado", "assinado", hook.finishedAt ?? hook.occurredAt);
-    const stored = await storeContractSignedFile(result.contract, hook);
-    if (result.completed) await finishContract(result.contract, result.patch, hook);
-    return { ...base, message: `${result.completed ? "Contrato assinado por todos" : "Documento finalizado (já registrado)"}${stored ? " · PDF assinado guardado" : ""}` };
+    let outsiders: ContractSignerEntry[] = [];
+    if (hook.event === "auto_close") {
+      // Finalizado logo depois da última assinatura: quem está NO ENVELOPE assinou. Quem entrou no contrato depois do
+      // envio (sem id na Clicksign) ou não aparece no documento continua pendente.
+      const inEnvelope = (s: ContractSignerEntry) => Boolean(s.providerSignerId) && (hook.signers.length === 0 || hook.signers.some((h) => sameSigner(s, h)));
+      const result = await markSigners(contract.id, envelopeId, (s) => s.status !== "assinado" && inEnvelope(s), "assinado", hook.finishedAt ?? hook.occurredAt);
+      if (result.stale) return { ...base, message: "Aviso de um envio anterior deste contrato: ignorado" };
+      outsiders = result.signers.filter((s) => s.status !== "assinado");
+    } else {
+      // close / document_closed não marcam ninguém; só concluem se todos do contrato já assinaram.
+      const result = await markSigners(contract.id, envelopeId, () => false, "assinado", hook.finishedAt ?? hook.occurredAt);
+      if (result.stale) return { ...base, message: "Aviso de um envio anterior deste contrato: ignorado" };
+    }
+    const announced = await ensureSignedAnnounced(contract.id);
+    const now = await getById<Contract>(COLLECTIONS.contracts, contract.id);
+    if (now?.signedAt) {
+      const stored = await storeContractSignedFile(now, hook);
+      return { ...base, message: `${announced ? "Contrato assinado por todos" : "Documento finalizado"}${stored ? " · PDF assinado guardado" : ""}` };
+    }
+    // Finalizado na Clicksign sem todas as assinaturas do contrato: o contrato NÃO fica assinado.
+    if (hook.event === "document_closed") return { ...base, message: "Documento finalizado sem todas as assinaturas do contrato" };
+    const missing = (outsiders.length ? outsiders : (now?.signers ?? contract.signers).filter((s) => s.status !== "assinado")).map((s) => s.name);
+    const title = `Contrato ${contract.number} finalizado na Clicksign sem todas as assinaturas`;
+    const body = `Falta${missing.length > 1 ? "m" : ""}: ${missing.join(", ") || "—"}. ${outsiders.length ? "Quem foi incluído depois do envio não recebeu o documento: gere o documento de novo para reenviar." : "Confira na Clicksign e registre a assinatura com evidência ou reenvie."}`;
+    await emitEvent({ type: "note.added", actor: ACTOR, clientId: contract.clientId, entity: { type: "contract", id: contract.id }, title, description: body, department: "financeiro", payload: { contractId: contract.id, provider: "clicksign", event: hook.event, missing } });
+    await warn(contract, title, body, "atencao");
+    return { ...base, message: "Documento finalizado sem todas as assinaturas do contrato" };
   }
 
   if (hook.event === "cancel" || hook.event === "deadline") {
@@ -127,23 +176,28 @@ async function applyToContract(contract: Contract, hook: ClicksignWebhook): Prom
 }
 
 interface MarkResult {
-  contract: Contract;
-  patch: Partial<Contract>;
+  /** O contrato foi reenviado (outro envelope) enquanto o aviso era processado: nada foi gravado. */
+  stale: boolean;
+  /** Signatários depois da marcação. */
+  signers: ContractSignerEntry[];
   changed: ContractSignerEntry[];
-  /** Este aviso fechou o contrato (antes não estava assinado por todos). */
-  completed: boolean;
   /** Nenhum signatário do contrato bateu com o aviso. */
   unknown: boolean;
 }
 
-/** Marca os signatários escolhidos (em transação) e, com todos assinados, o contrato. */
-async function markSigners(contractId: string, pick: (s: ContractSignerEntry) => boolean, status: "assinado" | "recusado", at: string | undefined): Promise<MarkResult> {
+/**
+ * Marca os signatários escolhidos (em transação, conferindo que o envio ainda é o mesmo) e, com todos assinados, grava
+ * o contrato como assinado (signedAt + status) — inclusive quando ninguém mudou agora (ex.: alguém pendente foi removido
+ * do contrato). O anúncio fica para ensureSignedAnnounced.
+ */
+async function markSigners(contractId: string, envelopeId: string | undefined, pick: (s: ContractSignerEntry) => boolean, status: "assinado" | "recusado", at: string | undefined): Promise<MarkResult> {
   const ref = col(COLLECTIONS.contracts).doc(contractId);
   const when = validIso(at) ?? nowIso();
   return docdb.runTransaction(async (tx) => {
     const snap = await txGetOwn(tx, ref);
     if (!snap) throw new Error("Contrato não encontrado");
     const current = { ...(snap.data() as Omit<Contract, "id">), id: contractId } as Contract;
+    if (current.signatureEnvelopeId !== envelopeId) return { stale: true, signers: current.signers, changed: [], unknown: false };
     const now = nowIso();
     const changed: ContractSignerEntry[] = [];
     let matched = false;
@@ -158,41 +212,68 @@ async function markSigners(contractId: string, pick: (s: ContractSignerEntry) =>
       changed.push(next);
       return next;
     });
-    const patch: Partial<Contract> = {};
     const done = signers.length > 0 && signers.every((s) => s.status === "assinado");
-    const completed = done && !current.signedAt;
-    if (changed.length) {
-      patch.signers = signers;
-      patch.documentHash = current.documentHash ?? contractDocumentHash(current);
-      if (completed) {
+    const completes = done && !current.signedAt && current.status !== "cancelado" && current.status !== "liberado";
+    if (changed.length || completes) {
+      const patch: Partial<Contract> = { signers, documentHash: current.documentHash ?? contractDocumentHash(current) };
+      if (completes) {
         patch.signedAt = signers.map((s) => s.signedAt ?? "").sort().pop() || when;
         if (current.status !== "pendencia") patch.status = "assinado";
       }
       tx.update(ref, { ...patch, updatedAt: now });
     }
-    return { contract: current, patch, changed, completed, unknown: !matched };
+    return { stale: false, signers, changed, unknown: !matched };
   });
 }
 
-async function finishContract(contract: Contract, patch: Partial<Contract>, hook: ClicksignWebhook): Promise<void> {
-  const signers = patch.signers ?? contract.signers;
-  await announceContractSigned(contract, patch, { method: "provedor", signerCount: signers.length, documentHash: patch.documentHash ?? contract.documentHash ?? contractDocumentHash(contract) }, ACTOR);
-  // O aviso de finalização pode chegar antes do PDF ficar pronto: tenta guardar de novo (sem custo se já guardado).
-  if (!CLOSE_EVENTS.has(hook.event)) await storeContractSignedFile(contract, hook);
+/**
+ * Anuncia "assinado por todos" uma vez por envio, a partir do estado gravado: contrato da Clicksign com signedAt e sem
+ * anúncio. A reserva (signedAnnounceClaimAt) é feita em transação; se o anúncio falhar, a reserva é desfeita e o erro
+ * sobe (a rota responde 500 e a Clicksign reenvia). true quando este aviso anunciou.
+ */
+export async function ensureSignedAnnounced(contractId: string): Promise<boolean> {
+  const ref = col(COLLECTIONS.contracts).doc(contractId);
+  const claimedAt = nowIso();
+  const claimed = await docdb.runTransaction(async (tx) => {
+    const snap = await txGetOwn(tx, ref);
+    if (!snap) return null;
+    const c = { ...(snap.data() as Omit<Contract, "id">), id: contractId } as Contract;
+    if (!c.signedAt || c.signatureProvider !== "clicksign" || c.signedAnnouncedAt) return null;
+    if (c.status === "cancelado" || c.status === "liberado") return null;
+    if (c.signedAnnounceClaimAt && Date.parse(claimedAt) - Date.parse(c.signedAnnounceClaimAt) < ANNOUNCE_LEASE_MS) return null;
+    tx.update(ref, { signedAnnounceClaimAt: claimedAt });
+    return c;
+  });
+  if (!claimed) return false;
+  // "Antes" para a auditoria: aguardando assinatura (ou em pendência), sem data de assinatura.
+  const before: Contract = { ...claimed, status: claimed.status === "pendencia" ? "pendencia" : "aguardando_assinatura", signedAt: undefined };
+  const patch: Partial<Contract> = { status: claimed.status, signedAt: claimed.signedAt };
+  try {
+    await announceContractSigned(before, patch, { method: "provedor", signerCount: claimed.signers.length, documentHash: claimed.documentHash ?? contractDocumentHash(claimed) }, ACTOR);
+  } catch (error) {
+    await ref.update({ signedAnnounceClaimAt: FieldValue.delete() }).catch(() => undefined);
+    throw error;
+  }
+  return true;
 }
 
-/** Avisa o dono do contrato e o gestor do Financeiro. */
+/** Avisa o dono do contrato e o gestor do Financeiro. Falha no aviso não desfaz o que já foi registrado. */
 async function warn(contract: Contract, title: string, body: string, kind: "atencao" | "informativa"): Promise<void> {
-  const manager = await getDepartmentManager("financeiro").catch(() => null);
-  await notify({ userIds: [contract.ownerId ?? "", manager?.id ?? ""], kind, title, body, href: `/financeiro/contratos/${contract.id}`, entity: { type: "contract", id: contract.id } });
+  try {
+    const manager = await getDepartmentManager("financeiro").catch(() => null);
+    await notify({ userIds: [contract.ownerId ?? "", manager?.id ?? ""], kind, title, body, href: `/financeiro/contratos/${contract.id}`, entity: { type: "contract", id: contract.id } });
+  } catch (error) {
+    console.error("[clicksign] falha ao notificar", error);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // PDF assinado guardado no INTEROS
 // ---------------------------------------------------------------------------
 
-export function contractSignedFileId(contract: Pick<Contract, "id" | "version">): string {
-  return `contract_${contract.id}_v${contract.version}`;
+/** Um arquivo por envio (versão + envelope): um reenvio na mesma versão não reaproveita o PDF do envio anterior. */
+export function contractSignedFileId(contract: Pick<Contract, "id" | "version" | "signatureEnvelopeId">): string {
+  return `contract_${contract.id}_v${contract.version}_${(contract.signatureEnvelopeId ?? "").replace(/[^A-Za-z0-9_-]/g, "")}`;
 }
 
 export function inboxSignedFileId(inboxId: string): string {
@@ -283,7 +364,8 @@ async function applyToInbox(hook: ClicksignWebhook): Promise<ClicksignWebhookOut
   const source = hook.signers.length ? hook.signers : (previous?.signers ?? []).map((s) => ({ name: s.name, email: s.email, documentation: s.document }));
   const signers = source.map((s) => {
     const email = s.email.toLowerCase();
-    const at = signedAt.get(email) ?? (providerStatus === "finalizado" ? when : undefined);
+    // Só a finalização automática (logo depois da última assinatura) garante que todos assinaram.
+    const at = signedAt.get(email) ?? (hook.event === "auto_close" ? when : undefined);
     return { name: s.name, email, ...(s.documentation ? { document: s.documentation } : {}), ...(at ? { signedAt: at } : {}) };
   });
   const name = (hook.filename ?? previous?.name ?? "").replace(/^.*\//, "") || "Documento da Clicksign";
