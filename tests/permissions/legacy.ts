@@ -14,8 +14,17 @@ import { REPORT_DEFINITIONS, type ReportKey } from "@/server/reports/definitions
  */
 export const MODULES_AFTER_T0: readonly string[] = ["comunicacao"];
 
-/** Chaves avulsas criadas depois do T0 em módulos antigos (provadas em comunicacao.test.ts). */
-export const KEYS_AFTER_T0: readonly string[] = ["gestao.relatorios.agendar"];
+/** Chaves avulsas criadas depois do T0 em módulos antigos (provadas em comunicacao.test.ts e assinatura.test.ts). */
+export const KEYS_AFTER_T0: readonly string[] = [
+  "gestao.relatorios.agendar",
+  // Assinatura eletrônica (Clicksign): abas novas de Financeiro › Assinaturas.
+  "financeiro.assinaturas.entrada.ver",
+  "financeiro.assinaturas.modelos.ver",
+  "financeiro.assinaturas.configuracao.ver",
+  "financeiro.assinaturas.entrada.vincular",
+  "financeiro.assinaturas.modelos.editar",
+  "financeiro.assinaturas.configuracao.editar",
+];
 
 /** A chave (ou tela) pertence a um módulo criado depois do T0 (ou é uma chave nova)? */
 export function isAfterT0Key(key: string): boolean {

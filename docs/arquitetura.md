@@ -563,6 +563,34 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Rate limit**: fica na infraestrutura (Vercel Firewall/WAF para `/portal/*`); o token de 256 bits torna adivinhação
   inviável e cada acesso válido é contado.
 
+## Assinatura eletrônica (Clicksign, `src/server/finance/{contract-templates,contract-document,docx,signature-inbox}.ts`, `/financeiro/assinaturas`)
+
+- **Tela em abas** (`?aba=`, `ASSINATURAS_TABS`): `fila` (aguardando / prontos, como antes), `entrada` (documentos
+  criados direto na Clicksign, à espera do cliente certo), `modelos` e `configuracao`. Chaves novas:
+  `financeiro.assinaturas.{entrada,modelos,configuracao}.ver`, `.entrada.vincular`, `.modelos.editar` e
+  `.configuracao.editar` (só gestão); escolher modelo/autenticação no contrato usa `financeiro.contratos.assinatura.editar`.
+- **Configuração** (settings `assinatura_eletronica`): quem assina pela Intercert (padrão: usuário ativo chamado
+  Hércules, trocável; com usuário escolhido, nome/e-mail seguem o cadastro) e a autenticação padrão (`email` = código por
+  e-mail; também `whatsapp`, `sms`, `icp_brasil`). O signatário entra com `party: "contratada"` na criação do contrato e
+  ao gerar o documento (`withCompanySigner`; quem já tem papel "Contratada" conta como ele).
+- **Modelos** (`contract_templates`): `interos` (título + cláusulas com `{{variáveis}}`, impressas depois dos dados do
+  contrato) ou `word` (.docx da Clicksign; arquivo por versão em `contract_template_files`, id `<modelo>_v<N>`, imutável).
+  Variáveis ligadas a `CONTRACT_FIELDS` (sugestão pelo nome: `{{razao_social}}` → `contratante.razao_social`) ou a texto
+  fixo; sem ligação sai lacuna. Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
+  `POST /api/financeiro/modelos` (multipart; acima do limite das Server Actions), até 4 MB.
+- **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
+  modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o
+  hash antigo). `GET /api/financeiro/contratos/[id]/documento?formato=pdf|docx` gera o PDF (pdfkit) ou o Word preenchido
+  (troca as variáveis mesmo partidas em vários `<w:t>`, sem dependência externa). Antes de gerar = prévia com o modelo
+  atual; contrato gerado antes dos modelos continua sem cláusulas.
+- **Caixa de entrada** (`signature_inbox`, id `clicksign_<envelope>`): `recordExternalEnvelope` é idempotente e sugere o
+  cliente pelo CNPJ/CPF, e-mail do cliente ou contato, ou domínio corporativo (ignora quem assina pela Intercert);
+  vincular cria o documento na ficha do cliente (e no contrato, se escolhido); ignorar pede motivo e pode ser desfeito.
+- **Pendente (depende do sandbox e da rede liberada)**: adaptador `SignatureProvider` da Clicksign (API v3: envelope,
+  signatários, requisitos de autenticação, ativação, lembrete, PDF assinado) e o aviso `/api/webhooks/clicksign` (HMAC
+  com `CLICKSIGN_WEBHOOK_SECRET`) que alimenta a fila e a caixa de entrada. Até lá `integrations.assinatura` fica "não
+  conectado" e o fluxo segue manual com evidência.
+
 ## Central de Atendimento (módulo Comunicação, `src/server/conversations/*`, `/comunicacao`)
 
 Fase 1 da Central omnichannel: WhatsApp e e-mail numa tela só. Nada é duplicado — mensagens continuam em

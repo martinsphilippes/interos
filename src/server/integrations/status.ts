@@ -108,16 +108,16 @@ const CATALOG: CatalogEntry[] = [
   },
   {
     key: "assinatura",
-    name: "Assinatura digital (Clicksign / DocuSign)",
-    enables: "Envelope de assinatura enviado pelo provedor, status dos signatários e evidências automáticas.",
-    requirements: [{ label: "Provedor de assinatura", vars: ["SIGNATURE_PROVIDER_API_KEY"], implemented: false }],
+    name: "Assinatura eletrônica (Clicksign)",
+    enables: "Contrato enviado à Clicksign com o código por e-mail, status dos signatários, PDF assinado de volta e os contratos criados direto na Clicksign na caixa de entrada.",
+    requirements: [{ label: "Clicksign (API v3)", vars: ["CLICKSIGN_API_TOKEN"], implemented: false }],
     optional: [
-      { name: "SIGNATURE_PROVIDER", description: "clicksign ou docusign." },
-      { name: "SIGNATURE_WEBHOOK_TOKEN", description: "Token do webhook de status de assinatura." },
+      { name: "CLICKSIGN_WEBHOOK_SECRET", description: "Segredo HMAC dos avisos da Clicksign (confere que o aviso veio dela)." },
+      { name: "CLICKSIGN_ENV", description: "sandbox (testes) ou producao. Padrão: sandbox." },
     ],
-    descriptions: { SIGNATURE_PROVIDER_API_KEY: "Token de API do provedor de assinatura." },
+    descriptions: { CLICKSIGN_API_TOKEN: "Token de acesso da API da Clicksign (Configurações › API)." },
     docsUrl: "https://developers.clicksign.com/",
-    fallback: "Documento gerado no INTEROS (com hash SHA-256) e assinatura registrada manualmente com evidência.",
+    fallback: "Documento gerado no INTEROS (PDF ou Word do modelo, com hash SHA-256) e assinatura registrada manualmente com evidência.",
   },
   {
     key: "cobranca",

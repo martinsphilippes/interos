@@ -14,6 +14,7 @@ import { contractDocumentHash } from "@/server/finance/signature";
 import { HEADQUARTERS, formatAddressLine } from "@/server/sales/maps";
 import { AMENDMENT_FIELD_LABELS, AMENDMENT_KIND_LABELS, AMENDMENT_STATUS_LABELS, describeReadjustment, describeSnapshotValue } from "@/domain/contract-snapshot";
 import { formatDate, formatDateTime, formatDocument } from "@/lib/format";
+import { isCompanySigner } from "@/domain/contract-templates";
 import { CONTRACT_STATUS_LABELS } from "@/components/clients/labels";
 import { netItem } from "@/components/sales/model";
 import { ContractSummaryCard } from "@/components/finance/contract-summary-card";
@@ -48,10 +49,12 @@ export interface ContractDocumentProps {
   audience?: DocumentAudience;
   /** id do <article> (a impressão da página interna usa "contrato-impressao"; o portal lista vários contratos). */
   articleId?: string;
+  /** Cláusulas do modelo do contrato, já preenchidas (modelo gerado pelo INTEROS). */
+  clauses?: { title?: string; text: string };
 }
 
 /** `hidden`: sem os valores do contrato (A13) — o documento mostra "Restrito"; o hash é calculado com os dados reais. */
-export function ContractDocument({ contract, historical, client, billingData, sentAt, amendments, summary, companyName, hidden, amendmentLinks, audience = "interno", articleId = "contrato-impressao" }: ContractDocumentProps) {
+export function ContractDocument({ contract, historical, client, billingData, sentAt, amendments, summary, companyName, hidden, amendmentLinks, audience = "interno", articleId = "contrato-impressao", clauses }: ContractDocumentProps) {
   const forClient = audience === "cliente";
   const currentHash = forClient ? (contract.documentHash ?? "") : contractDocumentHash(contract);
   const generated = Boolean(contract.signatureEnvelopeId);
@@ -171,6 +174,23 @@ export function ContractDocument({ contract, historical, client, billingData, se
           </section>
         ) : null}
 
+        {clauses && !historical ? (
+          <section className="border-t border-border py-5">
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Cláusulas</h2>
+            <div className="flex flex-col gap-3 text-justify">
+              {clauses.text
+                .split(/\n{2,}/)
+                .map((p) => p.trim())
+                .filter(Boolean)
+                .map((p, i) => (
+                  <p key={i} className={/^(cl[aá]usula|par[aá]grafo)\b/i.test(p) && p.length < 120 && !p.includes("\n") ? "font-semibold" : "whitespace-pre-line"}>
+                    {hidden ? maskMoneyText(p) : p}
+                  </p>
+                ))}
+            </div>
+          </section>
+        ) : null}
+
         <section className="border-t border-border pt-5">
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Assinaturas</h2>
           <div className="grid gap-8 sm:grid-cols-2">
@@ -188,12 +208,14 @@ export function ContractDocument({ contract, historical, client, billingData, se
                 </div>
               </div>
             ))}
-            <div className="pt-8">
-              <div className="border-t border-border-strong pt-1 text-center">
-                <p className="font-semibold">{companyName}</p>
-                <p className="text-muted">Contratada</p>
+            {signers.some((s) => isCompanySigner(s)) ? null : (
+              <div className="pt-8">
+                <div className="border-t border-border-strong pt-1 text-center">
+                  <p className="font-semibold">{companyName}</p>
+                  <p className="text-muted">Contratada</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </section>
 

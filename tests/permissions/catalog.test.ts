@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 12 módulos, 74 telas, 155 seções e 280 ações (521 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 20 abas, 27 ações); fase 4: + 2 relatórios, agendar envio", () => {
+  it("tem 12 módulos, 74 telas, 158 seções e 283 ações (527 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 20 abas, 27 ações); fase 4: + 2 relatórios, agendar envio; assinatura eletrônica: + 3 abas e 3 ações", () => {
     expect(MODULES.length).toBe(12);
     expect(SCREENS.length).toBe(74);
-    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(155);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(280);
-    expect(PERMISSION_KEYS.length).toBe(521);
+    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(158);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(283);
+    expect(PERMISSION_KEYS.length).toBe(527);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -232,6 +232,7 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
     const { CLIENT_TABS } = await import("@/components/clients/client-tabs");
     const { REGISTRY_TABS } = await import("@/components/finance-registry/registry-tabs");
     const { CANAIS_TABS, SUPERVISAO_TABS } = await import("@/components/conversations/model");
+    const { ASSINATURAS_TABS } = await import("@/components/finance/signature-model");
     const { PABX_TABS } = await import("@/components/telephony/model");
     const pageTabs: Record<string, readonly string[]> = {
       "admin.configuracoes": SETTINGS_TABS,
@@ -241,6 +242,7 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
       "comunicacao.canais": CANAIS_TABS,
       "comunicacao.supervisao": SUPERVISAO_TABS,
       "comunicacao.pabx": PABX_TABS,
+      "financeiro.assinaturas": ASSINATURAS_TABS,
     };
     const modeled = new Set<string>();
     for (const screen of SCREENS) {

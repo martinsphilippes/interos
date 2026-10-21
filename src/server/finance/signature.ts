@@ -45,7 +45,7 @@ export interface SignatureProvider {
 
 /** Conteúdo que identifica o documento assinado: mudar qualquer campo muda o hash. */
 export function contractDocumentHash(
-  contract: Pick<Contract, "number" | "version" | "clientId" | "items" | "setupTotal" | "monthlyTotal" | "hardwareTotal" | "billingDay" | "firstDueDate" | "recurrence" | "termMonths" | "paymentCondition" | "signers" | "paymentMethod" | "setupInstallments">,
+  contract: Pick<Contract, "number" | "version" | "clientId" | "items" | "setupTotal" | "monthlyTotal" | "hardwareTotal" | "billingDay" | "firstDueDate" | "recurrence" | "termMonths" | "paymentCondition" | "signers" | "paymentMethod" | "setupInstallments" | "documentTemplate">,
 ): string {
   const canonical = {
     number: contract.number,
@@ -64,6 +64,8 @@ export function contractDocumentHash(
       ...(contract.setupInstallments && contract.setupInstallments > 1 ? { setupInstallments: contract.setupInstallments } : {}),
     },
     signers: contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role })),
+    // Modelo do documento (cláusulas/Word) entra só quando existe: o hash de contratos antigos não muda.
+    ...(contract.documentTemplate ? { template: { id: contract.documentTemplate.id, version: contract.documentTemplate.version, contentHash: contract.documentTemplate.contentHash } } : {}),
   };
   return `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
 }

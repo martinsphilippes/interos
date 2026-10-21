@@ -7,6 +7,7 @@ import { getContract, redactContractDetail } from "@/server/finance/queries";
 import { FINANCIAL_STATUS_LABELS, FINANCIAL_STATUS_VARIANT } from "@/server/finance/schemas";
 import { contractAccessById, financeCapabilities } from "@/server/finance/access";
 import { stripBoleto } from "@/server/finance/redact";
+import { signatureDocumentInfo } from "@/server/finance/contract-templates";
 import { getIntegrationFlags } from "@/server/integrations/status";
 import { formatDate, formatRelative } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -80,6 +81,8 @@ export default async function ContractPage({ params }: { params: Params }) {
   const owner = contract.ownerId ? users[contract.ownerId] : undefined;
   // Portal do cliente (D31): seção própria; links lidos só para quem a vê.
   const portal = sections.portalView ? await listPortalLinks(client.id) : null;
+  // Modelo do documento, autenticação e download do PDF/Word (o arquivo vai ao cliente: exige ver os valores).
+  const documentInfo = sections.signatureView ? await signatureDocumentInfo(raw.contract, sections.documentsView && !hidden) : undefined;
 
   return (
     <FinanceAccessProvider value={caps}>
@@ -227,7 +230,7 @@ export default async function ContractPage({ params }: { params: Params }) {
               closed={closed}
             />
             {sections.signatureView ? (
-              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} integrations={getIntegrationFlags()} />
+              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} integrations={getIntegrationFlags()} documentInfo={documentInfo} />
             ) : null}
             {sections.pendenciesView ? <PendencyCard contractId={contract.id} pendingReason={contract.pendingReason} isPending={contract.status === "pendencia"} closed={closed} /> : null}
             <BillingDataCard
