@@ -92,8 +92,9 @@ describe("repositório real", () => {
   // Central de Atendimento parte 2: + 5 actions (modelo na conversa, salvar/sincronizar modelos, respostas rápidas, automáticas).
   // Parte 3: + página /comunicacao/historico, 3 actions (reabrir, exportar, atendimento do usuário) e o webhook de e-mail.
   // Fases 0 e 2: + páginas supervisao, supervisao/tv e ativacao e 7 actions (supervisão, pausas, alertas, gravação).
-  it("inventário: 98 páginas (10 isentas), 278 funções 'use server' (3 isentas), 10 handlers de API (9 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 98, pagesExempt: 10, serverFunctions: 278, serverFunctionsExempt: 3, apiHandlers: 10, apiExempt: 9 });
+  // Fase 3: + páginas ligacoes, correio-de-voz e pabx, 8 actions de telefonia e 7 rotas de voz (5 da Twilio, isentas por assinatura).
+  it("inventário: 101 páginas (10 isentas), 286 funções 'use server' (3 isentas), 17 handlers de API (14 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 286, serverFunctionsExempt: 3, apiHandlers: 17, apiExempt: 14 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

@@ -11,6 +11,7 @@ import { TopBar } from "./top-bar";
 import { MobileNav } from "./mobile-nav";
 import type { ShellLinks, ShellUser } from "./user-menu";
 import { cn } from "@/lib/utils";
+import { Softphone } from "@/components/telephony/softphone";
 
 export type { ShellLinks, ShellUser } from "./user-menu";
 
@@ -55,6 +56,8 @@ export interface AppShellProps {
   quickActions?: QuickAction[];
   /** Mostra o seletor de presença na top bar. */
   showPresence?: boolean;
+  /** Telefonia configurada e permissão de ligar: mostra o softphone. */
+  softphone?: boolean;
   children: React.ReactNode;
 }
 
@@ -62,7 +65,7 @@ export interface AppShellProps {
  * Shell autenticado: sidebar fixa (desktop, colapsável), barra inferior com ações rápidas (mobile),
  * top bar com busca/presença/ajuda/notificações/usuário. O conteúdo da página usa PageContainer + PageHeader.
  */
-export function AppShell({ user, sections, mobileNav = [], links, unreadCount, quickActions = [], showPresence = false, children }: AppShellProps) {
+export function AppShell({ user, sections, mobileNav = [], links, unreadCount, quickActions = [], showPresence = false, softphone = false, children }: AppShellProps) {
   const pathname = usePathname();
   // No servidor (e na hidratação) a sidebar começa expandida; o cliente aplica a preferência salva.
   const collapsed = React.useSyncExternalStore(subscribeCollapsed, readCollapsed, () => false);
@@ -103,6 +106,7 @@ export function AppShell({ user, sections, mobileNav = [], links, unreadCount, q
         </div>
 
         <MobileNav items={mobileNav} quickActions={quickActions} />
+        {softphone ? <Softphone /> : null}
       </div>
     </TooltipProvider>
     </AccessProvider>

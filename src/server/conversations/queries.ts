@@ -565,7 +565,7 @@ export interface ChannelEventsAdmin {
   summary: { received: number; duplicates: number; failures: number; rejected: number };
 }
 
-export async function getChannelEventsAdmin(filters: { channel?: ConversationChannel; result?: ChannelEvent["result"]; q?: string } = {}): Promise<ChannelEventsAdmin> {
+export async function getChannelEventsAdmin(filters: { channel?: ConversationChannel | "voz"; result?: ChannelEvent["result"]; q?: string } = {}): Promise<ChannelEventsAdmin> {
   const since = new Date(Date.now() - 24 * 3600_000).toISOString();
   const all = await list<ChannelEvent>(COLLECTIONS.channelEvents, filters.channel ? { where: [["channel", "==", filters.channel]] } : {});
   const recent = all.filter((e) => e.occurredAt >= since);

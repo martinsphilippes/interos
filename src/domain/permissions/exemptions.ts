@@ -151,6 +151,41 @@ export const EXEMPTIONS = [
     reason: "E-mail recebido do cliente (Central de Atendimento). Guarda por assinatura/token.",
   },
   {
+    target: "src/app/api/voice/incoming/route.ts#POST",
+    kind: "api",
+    // Assinatura X-Twilio-Signature (HMAC-SHA1 com TWILIO_AUTH_TOKEN) → 401; sem a env ACEITA fora de produção e
+    // responde 503 em produção.
+    reason: "Telefonia (Twilio): Ligação recebida (Voice URL do número). Guarda por assinatura.",
+  },
+  {
+    target: "src/app/api/voice/outgoing/route.ts#POST",
+    kind: "api",
+    // Assinatura X-Twilio-Signature (HMAC-SHA1 com TWILIO_AUTH_TOKEN) → 401; sem a env ACEITA fora de produção e
+    // responde 503 em produção.
+    reason: "Telefonia (Twilio): Ligação feita pelo softphone (TwiML App). Guarda por assinatura.",
+  },
+  {
+    target: "src/app/api/voice/dial-result/route.ts#POST",
+    kind: "api",
+    // Assinatura X-Twilio-Signature (HMAC-SHA1 com TWILIO_AUTH_TOKEN) → 401; sem a env ACEITA fora de produção e
+    // responde 503 em produção.
+    reason: "Telefonia (Twilio): Resultado do toque/discagem. Guarda por assinatura.",
+  },
+  {
+    target: "src/app/api/voice/voicemail/route.ts#POST",
+    kind: "api",
+    // Assinatura X-Twilio-Signature (HMAC-SHA1 com TWILIO_AUTH_TOKEN) → 401; sem a env ACEITA fora de produção e
+    // responde 503 em produção.
+    reason: "Telefonia (Twilio): Recado gravado no correio de voz. Guarda por assinatura.",
+  },
+  {
+    target: "src/app/api/voice/recording/route.ts#POST",
+    kind: "api",
+    // Assinatura X-Twilio-Signature (HMAC-SHA1 com TWILIO_AUTH_TOKEN) → 401; sem a env ACEITA fora de produção e
+    // responde 503 em produção.
+    reason: "Telefonia (Twilio): Gravação concluída. Guarda por assinatura.",
+  },
+  {
     target: "src/app/api/webhooks/whatsapp/route.ts#GET",
     kind: "api",
     // Hoje: hub.verify_token timingSafe → 403 (route.ts:39-46)

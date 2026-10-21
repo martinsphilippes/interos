@@ -123,7 +123,8 @@ export async function getActivationChecklist(now: number = Date.now()): Promise<
       key: "telefonia",
       title: "Telefonia",
       steps: [
-        { key: "voip", title: "Provedor de telefonia", status: isConnected("voip") ? "pronto" : "depois", detail: isConnected("voip") ? "Ligações pelo navegador." : "Provedor a definir pela empresa. Até lá, «Ligar» abre o discador do aparelho e a ligação é registrada à mão.", fix: isConnected("voip") ? undefined : "Vercel: as variáveis do provedor escolhido (Administração › Integrações mostra quais)." },
+        { key: "voip", title: "Provedor de telefonia", status: isConnected("voip") ? "pronto" : "depois", detail: isConnected("voip") ? "Softphone no navegador: ligações recebidas pelas filas e feitas pelo INTEROS." : "Provedor a definir pela empresa (adaptador pronto para a Twilio). Até lá, «Ligar» abre o discador do aparelho e a ligação é registrada à mão.", fix: isConnected("voip") ? undefined : "Vercel: as variáveis TWILIO_*; na Twilio, os endereços mostrados em PABX › Provedor.", href: "/comunicacao/pabx?aba=provedor" },
+        { key: "pabx", title: "Números e ramais", status: "opcional", detail: "Cadastre os números da empresa (para qual fila vão) e os ramais de quem atende.", href: "/comunicacao/pabx?aba=numeros" },
         { key: "rec", title: "Política de gravação", status: policy.stored ? "pronto" : "pendente", detail: policy.stored ? `${policy.enabled ? `Grava as ligações, guarda por ${policy.retentionDays} dias` : "Não grava as ligações"}.` : "Política aprovada pela empresa: registre abaixo o aviso, o prazo e quem pode ouvir." },
       ],
     },
