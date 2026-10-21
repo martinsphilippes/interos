@@ -36,6 +36,8 @@ let seq = 0;
 let onCall: ((method: string, path: string) => Promise<void>) | null = null;
 /** Simula a Clicksign recusando o cancelamento de documento. */
 let failPatch = false;
+/** Status do documento devolvido pela API simulada (GET do documento). */
+let docStatus = "closed";
 async function fakeFetch(url: string, init: RequestInit = {}): Promise<Response> {
   if (url.startsWith("https://files.clicksign.test/")) return new Response(new Uint8Array(PDF), { status: 200, headers: { "content-type": "application/pdf" } });
   const path = url.replace("https://sandbox.clicksign.com/api/v3", "");
@@ -48,7 +50,7 @@ async function fakeFetch(url: string, init: RequestInit = {}): Promise<Response>
   if (method === "POST" && /\/documents$/.test(path)) return json({ id: `${RUN}-doc-${++seq}`, type: "documents" });
   if (method === "POST" && /\/signers$/.test(path)) return json({ id: `${RUN}-sig-${++seq}`, type: "signers" });
   const doc = path.match(/^\/envelopes\/[^/]+\/documents\/([^/]+)$/);
-  if (method === "GET" && doc) return json({ id: doc[1], type: "documents", attributes: { status: "closed" }, links: { files: { signed: `https://files.clicksign.test/${doc[1]}.pdf` } } }, 200);
+  if (method === "GET" && doc) return json({ id: doc[1], type: "documents", attributes: { status: docStatus }, links: { files: { signed: `https://files.clicksign.test/${doc[1]}.pdf` } } }, 200);
   return json({ id: "ok", type: "x" }, 200);
 }
 
@@ -337,11 +339,14 @@ describe("Clicksign: envio e avisos", () => {
         await update<Contract>(COLLECTIONS.contracts, first.id, { status: "cancelado" });
       }
     };
+    // A Clicksign recusa o cancelamento e o documento continua em andamento: fica a nota para cancelar lá.
     failPatch = true;
+    docStatus = "running";
     calls.length = 0;
     await expect(sendForSignature(first.id, ACTOR)).rejects.toThrow(/mudou durante o envio/);
     onCall = null;
     failPatch = false;
+    docStatus = "closed";
     const after = (await getById<Contract>(COLLECTIONS.contracts, first.id))!;
     expect(after.status).toBe("cancelado");
     expect(after.signatureEnvelopeId).toBe(first.signatureEnvelopeId);
@@ -350,6 +355,20 @@ describe("Clicksign: envio e avisos", () => {
     const notes = (await eventsOf(first.id, "note.added")).filter((e) => e.title.startsWith("Cancele na Clicksign o envelope"));
     expect(notes).toHaveLength(1);
     expect(notes[0].title).not.toContain(first.signatureEnvelopeId!);
+  });
+
+  it("documento anterior já fora de andamento na Clicksign (vencido, cancelado ou finalizado): reenvio não deixa nota falsa", async () => {
+    const first = await sendForSignature((await newContract()).id, ACTOR);
+    failPatch = true;
+    docStatus = "canceled";
+    try {
+      const second = await sendForSignature(first.id, ACTOR);
+      expect(second.signatureEnvelopeId).not.toBe(first.signatureEnvelopeId);
+    } finally {
+      failPatch = false;
+      docStatus = "closed";
+    }
+    expect((await eventsOf(first.id, "note.added")).filter((e) => e.title.startsWith("Cancele na Clicksign"))).toHaveLength(0);
   });
 
   it("cancelamento/prazo com o contrato sem signatários: não diz que está assinado, avisa para reenviar", async () => {

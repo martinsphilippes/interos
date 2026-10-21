@@ -11,7 +11,7 @@ import "server-only";
  */
 import { BusinessError } from "@/server/auth/error-classes";
 import { getById, list } from "@/server/db";
-import { activateEnvelope, addAuthentication, addDocument, addQualification, addSigner, cancelDocument, clicksignApi, clicksignConfigured, createEnvelope, notifyEnvelope, notifySigner } from "@/server/integrations/clicksign";
+import { activateEnvelope, addAuthentication, addDocument, addQualification, addSigner, cancelDocument, clicksignApi, clicksignConfigured, ClicksignError, createEnvelope, getDocument, notifyEnvelope, notifySigner } from "@/server/integrations/clicksign";
 import { clicksignRole, clicksignSignerNameProblem } from "@/domain/contract-templates";
 import { COLLECTIONS, type Client, type Contact, type Contract, type SignatureAuthMethod, type User } from "@/domain/types";
 import { nationalNumber } from "@/domain/phone";
@@ -128,6 +128,12 @@ export async function cancelPreviousClicksignDocument(contract: Pick<Contract, "
     await cancelDocument(contract.signatureEnvelopeId, contract.signatureDocumentId);
     return true;
   } catch (error) {
+    // Recusado pela Clicksign (4xx): o documento pode já não estar em andamento (cancelado, vencido, recusado ou
+    // finalizado). Nesse caso não há o que cancelar. Só fica pendente se ainda estiver em andamento ou sem resposta.
+    if (error instanceof ClicksignError && error.status >= 400 && error.status < 500 && error.status !== 429) {
+      const doc = await getDocument(contract.signatureEnvelopeId, contract.signatureDocumentId).catch(() => null);
+      if (doc && doc.status && doc.status !== "running") return true;
+    }
     console.error("[assinatura] não cancelou o documento na Clicksign", error);
     return false;
   }
