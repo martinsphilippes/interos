@@ -42,7 +42,7 @@ function previousRange(startKey: string, endKey: string): { startKey: string; en
 }
 
 /** Gatilhos que caracterizam uma automação de captação. */
-const CAPTURE_EVENTS = new Set(["lead.created", "lead.updated", "lead.qualified", "lead.disqualified", "lead.contacted", "whatsapp.message.received", "email.received", "prospect.contacted"]);
+const CAPTURE_EVENTS = new Set(["lead.created", "lead.updated", "lead.qualified", "lead.disqualified", "lead.contacted", "whatsapp.message.received", "email.received", "conversation.message.received", "prospect.contacted"]);
 const ACTION_LABELS: Record<AutomationRule["actions"][number]["type"], string> = {
   criar_tarefa: "Criar tarefa",
   notificar: "Notificar",
@@ -66,7 +66,7 @@ function toAutomation(rule: AutomationRule): CaptureAutomation {
   return { id: rule.id, name: rule.name, description: rule.description, triggerLabel, flow: `${triggerLabel} → ${actions.join(", ") || "sem ação"}`, active: rule.active, runCount: rule.runCount ?? 0 };
 }
 
-const COMM_CHANNEL: Record<Communication["channel"], LastInteraction["channel"]> = { whatsapp: "whatsapp", voip: "ligacao", email: "email", interno: "outro" };
+const COMM_CHANNEL: Record<Communication["channel"], LastInteraction["channel"]> = { whatsapp: "whatsapp", voip: "ligacao", email: "email", interno: "outro", instagram: "outro", messenger: "outro", telegram: "outro", chat: "outro" };
 
 export async function getMarketingWorkspace(user: CurrentUser, period: PeriodKey, access: WorkspaceAccess = FULL_ACCESS): Promise<MarketingWorkspace> {
   const range = periodRange(period);

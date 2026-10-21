@@ -17,6 +17,7 @@ import { sendOrRecord } from "@/server/integrations/communications";
 import { isConnected } from "@/server/integrations/status";
 import { COLLECTIONS, type AutoMessageKind, type Conversation, type Settings } from "@/domain/types";
 import { whatsappWindow, type MenuOption } from "@/domain/conversations";
+import { metaReplyWindow } from "@/domain/channels";
 
 export { menuText, pickMenuOption, type MenuOption } from "@/domain/conversations";
 import { DEFAULT_BUSINESS_HOURS, isBusinessOpen, nextOpeningLabel, type BusinessHours } from "@/domain/business-hours";
@@ -96,7 +97,11 @@ export async function businessStatus(at: Date = new Date()): Promise<{ open: boo
 /** Dá para mandar automaticamente agora? (provedor conectado; no WhatsApp, janela aberta) */
 export function canAutoSend(c: Pick<Conversation, "channel" | "lastInboundAt">, now: number = Date.now()): boolean {
   if (c.channel === "whatsapp") return isConnected("whatsapp") && whatsappWindow(c.lastInboundAt, now).open;
-  return isConnected("email");
+  if (c.channel === "email") return isConnected("email");
+  // Instagram/Messenger: automática só nas primeiras 24 h (a etiqueta de atendimento humano não vale para robô).
+  // A conexão (pela tela) é conferida no envio, que não grava nada se o canal não estiver conectado.
+  if (c.channel === "instagram" || c.channel === "messenger") return !metaReplyWindow(c.lastInboundAt, now).humanAgentTag && metaReplyWindow(c.lastInboundAt, now).open;
+  return true;
 }
 
 function recentlySent(c: Pick<Conversation, "autoSentAt">, kind: AutoMessageKind, now: number): boolean {

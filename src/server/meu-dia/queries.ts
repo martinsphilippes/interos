@@ -845,7 +845,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
       if (key && (lastOutgoing.get(key) ?? "") < c.createdAt) lastOutgoing.set(key, c.createdAt);
     }
   }
-  const CHANNEL_TEXT: Record<Communication["channel"], string> = { whatsapp: "WhatsApp", voip: "Ligação", email: "E-mail", interno: "Interno" };
+  const CHANNEL_TEXT: Record<Communication["channel"], string> = { whatsapp: "WhatsApp", voip: "Ligação", email: "E-mail", interno: "Interno", instagram: "Instagram", messenger: "Messenger", telegram: "Telegram", chat: "Chat do site" };
   const incoming = communications.filter((c) => c.direction === "entrada" && c.status !== "lida").sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const awaitingSeen = new Set<string>();
   for (const c of incoming) {

@@ -37,6 +37,7 @@ import {
   type UserRef,
 } from "@/domain/types";
 import { contactKeyOf, withNinthDigit } from "@/domain/phone";
+import { CHANNEL_INFO, CHANNEL_NAMES, metaReplyWindow } from "@/domain/channels";
 import { replySubject } from "@/domain/email-inbound";
 import { CLOSE_REASON_LABELS, isOpenConversation, pickAssignee, whatsappWindow, type QueueCandidate } from "@/domain/conversations";
 import { MESSAGE_VARIABLES, fillTemplate, placeholderCount, templateParams } from "@/domain/message-variables";
@@ -45,7 +46,7 @@ import { chooseQueue, getQueue, listActiveQueues, listQueues } from "./queues";
 import { patchFields } from "./store";
 
 export const SYSTEM_ACTOR: UserRef = { id: "sistema", name: "Central de Atendimento" };
-const CHANNEL_LABEL: Record<ConversationChannel, string> = { whatsapp: "WhatsApp", email: "E-mail" };
+const CHANNEL_LABEL: Record<ConversationChannel, string> = CHANNEL_NAMES;
 /** Nota interna: comunicação do canal "interno" ligada só à conversa (sem cliente: não aparece em outras telas). */
 export const NOTE_TEMPLATE_KEY = "nota_interna";
 
@@ -385,6 +386,13 @@ export async function sendConversationMessage(id: string, input: SendMessageInpu
       "Fora da janela de 24 h do WhatsApp: a Meta só aceita modelo aprovado. Envie pelo WhatsApp do aparelho (fica como registro manual) ou por e-mail.",
     );
   }
+  // Instagram/Messenger: 24 h normal; até 7 dias com a etiqueta de atendimento humano; depois, a Meta recusa.
+  let metaHumanAgentTag = false;
+  if ((c.channel === "instagram" || c.channel === "messenger") && !input.manual) {
+    const w = metaReplyWindow(c.lastInboundAt);
+    if (!w.open) throw new BusinessError(`Fora da janela do ${CHANNEL_NAMES[c.channel]}: a Meta só aceita resposta até 7 dias depois da última mensagem do cliente. Peça para a pessoa escrever de novo ou fale por outro canal.`);
+    metaHumanAgentTag = w.humanAgentTag;
+  }
   // E-mail: «Re: <assunto>», encadeado na última mensagem do cliente e com a assinatura de quem responde.
   const text = c.channel === "email" ? await withEmailSignature(input.body, actor.id) : input.body;
   const sent = await sendOrRecord({
@@ -399,6 +407,7 @@ export async function sendConversationMessage(id: string, input: SendMessageInpu
     conversationId: c.id,
     forceManual: input.manual,
     inReplyTo: c.channel === "email" ? c.lastInboundMessageId : undefined,
+    metaHumanAgentTag,
   });
   if (sent.delivery === "falha" || sent.delivery === "nao_enviada") {
     return { communication: sent.communication, delivery: sent.delivery, manualUrl: sent.manualUrl, error: sent.error };
@@ -890,7 +899,7 @@ async function createLeadFromConversation(c: Conversation, name: string, actor: 
 // Leitura auxiliar
 // ---------------------------------------------------------------------------
 
-export async function displayNameOf(c: Pick<Conversation, "clientId" | "contactId" | "leadId" | "displayName" | "address">): Promise<string> {
+export async function displayNameOf(c: Pick<Conversation, "clientId" | "contactId" | "leadId" | "displayName" | "address"> & { channel?: ConversationChannel }): Promise<string> {
   if (c.contactId) {
     const contact = await getById<Contact>(COLLECTIONS.contacts, c.contactId);
     if (contact) return contact.name;
@@ -903,6 +912,7 @@ export async function displayNameOf(c: Pick<Conversation, "clientId" | "contactI
     const lead = await getById<Lead>(COLLECTIONS.leads, c.leadId);
     if (lead) return lead.name;
   }
+  if (!c.displayName && c.channel && CHANNEL_INFO[c.channel].addressKind === "id") return `Contato do ${CHANNEL_INFO[c.channel].label}`;
   return c.displayName || c.address;
 }
 

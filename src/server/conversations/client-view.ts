@@ -6,7 +6,7 @@ import "server-only";
  */
 import { getManyByIds, list } from "@/server/db";
 import { isConnected } from "@/server/integrations/status";
-import { COLLECTIONS, type Client, type Contact, type Conversation, type ConversationChannel, type User } from "@/domain/types";
+import { COLLECTIONS, CONVERSATION_CHANNELS, type Client, type Contact, type Conversation, type ConversationChannel, type User } from "@/domain/types";
 import { CLOSE_REASON_LABELS, CONVERSATION_STATUS_LABELS, isOpenConversation, whatsappWindow } from "@/domain/conversations";
 import { contactKeyOf } from "@/domain/phone";
 import { firstResponseMs } from "@/domain/conversation-history";
@@ -82,7 +82,7 @@ export async function getClientConversations(client: Pick<Client, "id" | "commun
       };
     }),
     total90d: recent.length,
-    byChannel90d: { whatsapp: recent.filter((c) => c.channel === "whatsapp").length, email: recent.filter((c) => c.channel === "email").length },
+    byChannel90d: Object.fromEntries(CONVERSATION_CHANNELS.map((ch) => [ch, recent.filter((c) => c.channel === ch).length])) as Record<ConversationChannel, number>,
     avgFirstResponseMs: responded.length ? responded.reduce((a, b) => a + b, 0) / responded.length : undefined,
     contacts: contacts
       .filter((c) => c.whatsapp || c.phone || c.email)

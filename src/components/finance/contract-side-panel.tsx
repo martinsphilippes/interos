@@ -23,7 +23,7 @@ import { useFinanceAccess } from "./finance-access";
 import { money, RESTRICTED_HINT } from "./values";
 import { useOrigin } from "@/components/ui/use-origin";
 
-const CHANNEL_LABEL: Record<PanelInteraction["channel"], string> = { whatsapp: "WhatsApp", voip: "Ligação", email: "E-mail", interno: "Interno" };
+const CHANNEL_LABEL: Record<PanelInteraction["channel"], string> = { whatsapp: "WhatsApp", voip: "Ligação", email: "E-mail", interno: "Interno", instagram: "Instagram", messenger: "Messenger", telegram: "Telegram", chat: "Chat do site" };
 
 function interactionTitle(i: PanelInteraction, clientName: string): string {
   const who = i.direction === "entrada" ? `de ${clientName}` : `com ${clientName}`;

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRightLeft } from "lucide-react";
 import { transferConversationAction } from "@/server/conversations/actions";
 import type { ConversationDetail } from "@/server/conversations/queries";
-import { USER_PRESENCE_LABELS, type UserPresence } from "@/domain/types";
+import { USER_PRESENCE_LABELS, type ConversationChannel, type UserPresence } from "@/domain/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FormField } from "@/components/ui/form-field";
@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 
 export interface TransferOptions {
   users: { id: string; name: string; presence?: UserPresence; load: number; queueNames: string[] }[];
-  queues: { id: string; name: string; channels: ("whatsapp" | "email")[] }[];
+  queues: { id: string; name: string; channels: ConversationChannel[] }[];
 }
 
 /** Transferir para uma pessoa (com presença e carga) ou para uma fila. Nota obrigatória; o SLA continua. */

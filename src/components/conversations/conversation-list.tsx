@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Inbox, Mail, MessageCircle, UserRound } from "lucide-react";
+import { Inbox, UserRound } from "lucide-react";
 import type { CentralOverview, ConversationRow } from "@/server/conversations/queries";
 import { formatDate, formatTime, dateKey } from "@/lib/format";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -13,6 +13,7 @@ import { Select } from "@/components/ui/select";
 import { SlaBadge } from "@/components/ui/sla-badge";
 import { cn } from "@/lib/utils";
 import { CENTRAL_TAB_LABELS, CENTRAL_TAB_ORDER, CHANNEL_LABELS, waitingLabel } from "./model";
+import { CHANNEL_TONE, ChannelGlyph } from "./channel-icon";
 
 export interface ConversationListProps {
   overview: CentralOverview;
@@ -56,7 +57,7 @@ function Row({ row, selected, href, now }: { row: ConversationRow; selected: boo
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span title={CHANNEL_LABELS[row.channel]}>
-            <IconTile icon={row.channel === "whatsapp" ? <MessageCircle /> : <Mail />} tone={row.channel === "whatsapp" ? "success" : "secondary"} size="sm" />
+            <IconTile icon={<ChannelGlyph channel={row.channel} />} tone={CHANNEL_TONE[row.channel]} size="sm" />
             <span className="sr-only">{CHANNEL_LABELS[row.channel]}</span>
           </span>
           <div className="min-w-0">
@@ -152,8 +153,7 @@ export function ConversationList({ overview, selectedId, now, className }: Conve
             onChange={(e) => router.replace(href({ canal: e.target.value || undefined, conversa: undefined }), { scroll: false })}
             options={[
               { value: "", label: "Todos os canais" },
-              { value: "whatsapp", label: "WhatsApp" },
-              { value: "email", label: "E-mail" },
+              ...Object.entries(CHANNEL_LABELS).map(([value, label]) => ({ value, label })),
             ]}
           />
         </div>

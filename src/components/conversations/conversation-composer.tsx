@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Copy, ExternalLink, FileText, Info, Lock, Mail, MessageCircle, Send, StickyNote, X } from "lucide-react";
+import { Copy, ExternalLink, FileText, Info, Lock, MessageCircle, Send, StickyNote, X } from "lucide-react";
 import { addConversationNoteAction, sendConversationMessageAction, sendConversationTemplateAction } from "@/server/conversations/actions";
 import { MESSAGE_VARIABLES, fillPlaceholders, type MessageVariableKey } from "@/domain/message-variables";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { CHANNEL_LABELS, manualHref } from "./model";
+import { ChannelGlyph } from "./channel-icon";
 
 type Mode = "cliente" | "nota";
 
@@ -124,7 +125,7 @@ export function ConversationComposer({ detail, className }: { detail: Conversati
           {manual.href ? (
             <Button asChild size="sm" variant={conversation.channel === "whatsapp" ? "success" : "secondary"} className="min-h-[36px] md:min-h-8">
               <a href={manual.href} target="_blank" rel="noreferrer">
-                {conversation.channel === "whatsapp" ? <MessageCircle /> : <Mail />}
+                <ChannelGlyph channel={conversation.channel} />
                 {conversation.channel === "whatsapp" ? "Abrir no WhatsApp" : "Abrir e-mail"} <ExternalLink />
               </a>
             </Button>
@@ -240,6 +241,7 @@ export function ConversationComposer({ detail, className }: { detail: Conversati
                 <StatusDot tone="muted" size="sm" /> {channelLabel} não conectado: registro manual (você envia pelo aparelho).
               </>
             )}
+            {!note && detail.windowNote ? <span className="font-medium text-warning-fg"> · {detail.windowNote}</span> : null}
             {!note && !conversation.firstResponseAt ? <span className="font-medium text-warning-fg"> · primeira resposta (conta no SLA)</span> : null}
             {!note && detail.quickReplies.length > 0 && !text ? <span> · digite «/» para as respostas rápidas</span> : null}
             {unresolved.length ? <span className="font-medium text-danger-fg"> · complete: {unresolved.map((k) => `{${k}}`).join(", ")}</span> : null}

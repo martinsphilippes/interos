@@ -7,9 +7,10 @@ import "server-only";
  * contato, cliente e lead, e o lead passa a ser reconhecido. Cliente vence lead; contato vence o telefone geral do
  * cliente; cliente cancelado só entra se não houver outro.
  */
-import { list } from "@/server/db";
-import { COLLECTIONS, type Client, type Contact, type ConversationChannel, type ConversationIdentity, type Lead } from "@/domain/types";
-import { emailIdentity, samePhoneNumber } from "@/domain/phone";
+import { getById, list } from "@/server/db";
+import { COLLECTIONS, type Client, type Contact, type Conversation, type ConversationChannel, type ConversationIdentity, type Lead } from "@/domain/types";
+import { contactKeyOf, emailIdentity, samePhoneNumber } from "@/domain/phone";
+import { CHANNEL_INFO } from "@/domain/channels";
 
 export interface ResolvedIdentity {
   identity: ConversationIdentity;
@@ -47,6 +48,8 @@ async function loadDirectory(): Promise<Directory> {
 }
 
 function matches(channel: ConversationChannel, address: string, values: (string | undefined)[]): boolean {
+  // Instagram, Messenger, Telegram e chat: o endereço é um id do provedor, nunca comparado com telefone ou e-mail.
+  if (CHANNEL_INFO[channel].addressKind === "id") return false;
   if (channel === "email") {
     const e = emailIdentity(address);
     return Boolean(e) && values.some((v) => emailIdentity(v) === e);
@@ -86,8 +89,50 @@ export function resolveIdentityIn(dir: Directory, channel: ConversationChannel, 
   return { identity: "desconhecido" };
 }
 
-export async function resolveIdentity(channel: ConversationChannel, address: string): Promise<ResolvedIdentity> {
-  return resolveIdentityIn(await loadDirectory(), channel, address);
+/** E-mail e telefone que a pessoa informou (formulário do chat do site). */
+export interface IdentityHints {
+  email?: string;
+  phone?: string;
+}
+
+/**
+ * Canais por id (Instagram, Messenger, Telegram, chat): a pessoa é reconhecida pelo vínculo feito numa conversa
+ * anterior do mesmo id (o operador identificou quem era) ou, no chat, pelo e-mail/telefone que ela informou.
+ */
+export async function resolveIdentity(channel: ConversationChannel, address: string, hints?: IdentityHints): Promise<ResolvedIdentity> {
+  if (CHANNEL_INFO[channel].addressKind !== "id") return resolveIdentityIn(await loadDirectory(), channel, address);
+  const remembered = await rememberedIdentity(channel, address);
+  if (remembered) return remembered;
+  if (hints?.email || hints?.phone) {
+    const dir = await loadDirectory();
+    if (hints.email) {
+      const r = resolveIdentityIn(dir, "email", hints.email);
+      if (r.identity !== "desconhecido") return r;
+    }
+    if (hints.phone) {
+      const r = resolveIdentityIn(dir, "whatsapp", hints.phone);
+      if (r.identity !== "desconhecido") return r;
+    }
+  }
+  return { identity: "desconhecido" };
+}
+
+/** A conversa mais recente do mesmo id já identificada (cliente/contato ou lead). */
+async function rememberedIdentity(channel: ConversationChannel, address: string): Promise<ResolvedIdentity | null> {
+  const key = contactKeyOf(channel, address);
+  if (!key) return null;
+  const previous = (await list<Conversation>(COLLECTIONS.conversations, { where: [["channel", "==", channel], ["contactKey", "==", key]] }))
+    .filter((c) => c.clientId || c.leadId)
+    .sort((a, b) => (a.openedAt < b.openedAt ? 1 : -1))[0];
+  if (!previous) return null;
+  const [contact, client, lead] = await Promise.all([
+    previous.contactId ? getById<Contact>(COLLECTIONS.contacts, previous.contactId) : null,
+    previous.clientId ? getById<Client>(COLLECTIONS.clients, previous.clientId) : null,
+    previous.leadId ? getById<Lead>(COLLECTIONS.leads, previous.leadId) : null,
+  ]);
+  if (client) return { identity: "cliente", clientId: client.id, contactId: contact?.id, leadId: lead?.id, name: contact?.name ?? client.tradeName, ownerId: lead?.ownerId };
+  if (lead) return { identity: "lead", leadId: lead.id, name: lead.name, ownerId: lead.ownerId };
+  return null;
 }
 
 function nameKey(value: string | undefined): string {

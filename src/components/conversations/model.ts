@@ -5,6 +5,7 @@
 import type { ThreadItem } from "@/components/ui/conversation-thread";
 import type { CentralTab, ThreadEntry } from "@/server/conversations/queries";
 import type { ConversationChannel } from "@/domain/types";
+import { CHANNEL_NAMES } from "@/domain/channels";
 
 export const CENTRAL_TAB_LABELS: Record<CentralTab, string> = {
   minhas: "Minhas",
@@ -15,10 +16,10 @@ export const CENTRAL_TAB_LABELS: Record<CentralTab, string> = {
 
 export const CENTRAL_TAB_ORDER: readonly CentralTab[] = ["minhas", "fila", "aguardando", "todas"];
 
-export const CHANNEL_LABELS: Record<ConversationChannel, string> = { whatsapp: "WhatsApp", email: "E-mail" };
+export const CHANNEL_LABELS: Record<ConversationChannel, string> = CHANNEL_NAMES;
 
 /** Abas da tela Canais e filas (?aba=). */
-export const CANAIS_TABS = ["canais", "filas", "modelos", "respostas", "automaticas", "pausas", "alertas", "registros"] as const;
+export const CANAIS_TABS = ["canais", "filas", "modelos", "respostas", "automaticas", "social", "telegram", "chat", "pausas", "alertas", "registros"] as const;
 export type CanaisTab = (typeof CANAIS_TABS)[number];
 
 export function toThreadItems(entries: readonly ThreadEntry[]): ThreadItem[] {

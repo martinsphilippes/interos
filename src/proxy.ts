@@ -7,7 +7,8 @@ import { NextResponse, type NextRequest } from "next/server";
 const SESSION_COOKIE = "interos_session";
 // "/portal": Portal do Cliente (D31), público por token na URL (somente leitura; ver src/app/portal/[token]).
 // "/redefinir-senha": link do e-mail de definição de senha (Supabase Auth); "/login/microsoft": retorno do OAuth.
-const PUBLIC_PATHS = ["/login", "/ativar-conta", "/redefinir-senha", "/privacidade", "/termos", "/offline", "/csat", "/portal"];
+// "/chat": chat do site (janela do visitante e script do site), públicos por natureza (ver src/app/chat).
+const PUBLIC_PATHS = ["/login", "/ativar-conta", "/redefinir-senha", "/privacidade", "/termos", "/offline", "/csat", "/portal", "/chat"];
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

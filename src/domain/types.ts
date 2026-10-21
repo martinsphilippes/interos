@@ -129,6 +129,10 @@ export const COLLECTIONS = {
   recordingAccessLogs: "recording_access_logs",
   /** Envios agendados de relatórios (Central de Relatórios). */
   reportSchedules: "report_schedules",
+  /** Canais conectados pela tela (Meta: Instagram/Messenger; Telegram), com o token cifrado. */
+  channelConnections: "channel_connections",
+  /** Visitantes do chat do site (sessão anônima, limite de uso). */
+  chatVisitors: "chat_visitors",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -1104,7 +1108,7 @@ export interface SupportTicket extends BaseEntity {
   productId?: string;
   subject: string;
   description: string;
-  channel: "whatsapp" | "telefone" | "email" | "portal" | "interno";
+  channel: "whatsapp" | "telefone" | "email" | "portal" | "interno" | "instagram" | "messenger" | "telegram" | "chat";
   priority: TicketPriority;
   category?: string;
   assigneeId?: string;
@@ -1907,7 +1911,7 @@ export interface AutomationRun extends BaseEntity {
 export interface Communication extends BaseEntity {
   clientId?: string;
   contactId?: string;
-  channel: "whatsapp" | "voip" | "email" | "interno";
+  channel: "whatsapp" | "voip" | "email" | "interno" | "instagram" | "messenger" | "telegram" | "chat";
   direction: "entrada" | "saida";
   userId?: string;
   entityType?: string;
@@ -1923,7 +1927,7 @@ export interface Communication extends BaseEntity {
   recordingUrl?: string;
   externalId?: string;
   /** "manual" = sem provedor (registro manual); "resend" = e-mail transacional; "mock" = legado. */
-  provider: "mock" | "meta" | "twilio" | "outro" | "manual" | "resend";
+  provider: "mock" | "meta" | "twilio" | "outro" | "manual" | "resend" | "telegram" | "interos";
   /** Última atualização de status vinda do provedor (webhook: entregue/lida/falha). */
   statusUpdatedAt?: string;
   /** Motivo de "falha"/"nao_enviada" (erro do provedor, opt-out, canal não conectado). */
@@ -1987,7 +1991,7 @@ export type CallStatus = (typeof CALL_STATUSES)[number];
 // Central de Atendimento (módulo Comunicação)
 // ---------------------------------------------------------------------------
 
-export const CONVERSATION_CHANNELS = ["whatsapp", "email"] as const;
+export const CONVERSATION_CHANNELS = ["whatsapp", "email", "instagram", "messenger", "telegram", "chat"] as const;
 export type ConversationChannel = (typeof CONVERSATION_CHANNELS)[number];
 
 /**
@@ -2064,6 +2068,43 @@ export interface RecordingAccessLog extends BaseEntity {
   action: "ouvir" | "baixar";
   reason?: string;
   at: string;
+}
+
+/** Canal conectado pela tela. O token nunca sai do servidor e fica cifrado (src/server/integrations/vault.ts). */
+export interface ChannelConnection extends BaseEntity {
+  kind: "meta" | "meta_pendente" | "telegram";
+  /** Meta: página do Facebook (Messenger) e a conta do Instagram ligada a ela. */
+  pageId?: string;
+  pageName?: string;
+  instagramId?: string;
+  instagramUsername?: string;
+  /** Telegram: o bot. */
+  botId?: string;
+  botUsername?: string;
+  /** Token cifrado (página da Meta ou bot do Telegram); meta_pendente: lista de páginas cifrada. */
+  tokenSealed: string;
+  /** Telegram: segredo que o Telegram manda em cada aviso (cifrado). */
+  secretSealed?: string;
+  /** meta_pendente: validade da escolha da página. */
+  expiresAt?: string;
+  connectedAt: string;
+  connectedById: string;
+  connectedByName: string;
+}
+
+/** Visitante do chat do site: sessão anônima (o token assinado guarda o id) e o que ele informou. */
+export interface ChatVisitor extends BaseEntity {
+  name: string;
+  email?: string;
+  phone?: string;
+  /** Hash do IP (limite de novas sessões por hora; o IP em si não é gravado). */
+  ipHash: string;
+  /** Página do site onde começou a conversa. */
+  pageUrl?: string;
+  lastMessageAt?: string;
+  /** Limite de mensagens por minuto. */
+  windowStart?: string;
+  windowCount?: number;
 }
 
 export const REPORT_SCHEDULE_FREQUENCIES = ["diaria", "semanal", "mensal"] as const;

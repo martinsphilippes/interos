@@ -9,6 +9,7 @@ import { FormField } from "@/components/ui/form-field";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { CHANNEL_LABELS } from "./model";
 
 export interface UserCentralForm {
   attends: boolean;
@@ -74,7 +75,7 @@ export function UserCentralSection({ view, value, onChange, readOnly, inactive }
               />
               <span className="min-w-0 flex-1 truncate">{q.name}</span>
               <Badge size="sm" variant="muted">
-                {q.channels.map((c) => (c === "whatsapp" ? "WhatsApp" : "e-mail")).join(" · ")}
+                {q.channels.map((c) => CHANNEL_LABELS[c]).join(" · ")}
               </Badge>
             </label>
           ))}
@@ -98,7 +99,7 @@ export function UserCentralSection({ view, value, onChange, readOnly, inactive }
             disabled={readOnly}
             onChange={(e) => set("channels", e.target.value as UserCentralForm["channels"])}
             options={[
-              { value: "ambos", label: "WhatsApp e e-mail" },
+              { value: "ambos", label: "Todos os canais" },
               { value: "whatsapp", label: "Só WhatsApp" },
               { value: "email", label: "Só e-mail" },
             ]}

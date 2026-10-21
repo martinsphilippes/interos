@@ -339,6 +339,7 @@ export const EVENT_TYPES = [
   "conversation.transferred",
   "conversation.closed",
   "conversation.reopened",
+  "conversation.message.received",
   // financeiro (Onda 2)
   "contract.created",
   "contract.sent_for_signature",

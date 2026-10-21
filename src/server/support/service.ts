@@ -46,9 +46,11 @@ import {
   type Task,
   type TicketInteraction,
   type User,
+  type ConversationChannel,
   type UserRef,
   type KnowledgeArticle,
 } from "@/domain/types";
+import { CHANNEL_NAMES } from "@/domain/channels";
 import { getSupportChannels, type SupportMessageChannel } from "./channels";
 import { getSupportChannelStatus } from "./integrations";
 import {
@@ -230,6 +232,10 @@ const OPENING_KIND: Record<SupportTicket["channel"], TicketInteraction["kind"]> 
   email: "email",
   portal: "mensagem",
   interno: "mensagem",
+  instagram: "mensagem",
+  messenger: "mensagem",
+  telegram: "mensagem",
+  chat: "mensagem",
 };
 
 export async function createTicket(data: CreateTicketData, actor: UserRef): Promise<SupportTicket> {
@@ -1088,17 +1094,27 @@ export async function findOpenTicketForClient(clientId: string): Promise<Support
 }
 
 /** Mensagem do cliente entra no chamado aberto: interação, evento e aviso ao atendente (comportamento de antes). */
+/** Interação do chamado para a mensagem do canal (Instagram, Messenger, Telegram e chat entram como «mensagem»). */
+function interactionKindOf(channel: ConversationChannel): TicketInteraction["kind"] {
+  return channel === "whatsapp" || channel === "email" ? channel : "mensagem";
+}
+
+/** Evento de mensagem recebida do canal. */
+export function receivedEventOf(channel: ConversationChannel): "email.received" | "whatsapp.message.received" | "conversation.message.received" {
+  return channel === "email" ? "email.received" : channel === "whatsapp" ? "whatsapp.message.received" : "conversation.message.received";
+}
+
 export async function recordInboundOnTicket(
   ticket: SupportTicket,
-  input: { channel: "whatsapp" | "email"; body: string; who: string; communicationId: string; from: string; conversationId?: string },
+  input: { channel: ConversationChannel; body: string; who: string; communicationId: string; from: string; conversationId?: string },
 ): Promise<void> {
-  await addInteraction(ticket, { kind: input.channel, body: input.body });
+  await addInteraction(ticket, { kind: interactionKindOf(input.channel), body: input.body });
   await emitEvent({
-    type: input.channel === "email" ? "email.received" : "whatsapp.message.received",
+    type: receivedEventOf(input.channel),
     actor: { id: CUSTOMER_ACTOR.id, name: input.who },
     clientId: ticket.clientId,
     entity: { type: "ticket", id: ticket.id },
-    title: `${input.channel === "email" ? "E-mail" : "WhatsApp"} recebido de ${input.who} no chamado ${ticket.number}`,
+    title: `Mensagem (${CHANNEL_NAMES[input.channel]}) recebida de ${input.who} no chamado ${ticket.number}`,
     description: input.body,
     department: "suporte",
     payload: { communicationId: input.communicationId, from: input.from, ticketId: ticket.id, conversationId: input.conversationId },
@@ -1116,15 +1132,15 @@ export async function recordInboundOnTicket(
 }
 
 /** Resposta dada pela Central numa conversa ligada a chamado: entra na conversa do chamado também. */
-export async function recordConversationReplyOnTicket(ticketId: string, input: { channel: "whatsapp" | "email"; body: string; authorId: string; manual: boolean }): Promise<void> {
+export async function recordConversationReplyOnTicket(ticketId: string, input: { channel: ConversationChannel; body: string; authorId: string; manual: boolean }): Promise<void> {
   const ticket = await getById<SupportTicket>(COLLECTIONS.supportTickets, ticketId);
   if (!ticket || !isOpenTicket(ticket)) return;
-  await addInteraction(ticket, { kind: input.channel, body: input.body, authorId: input.authorId, channel: input.channel, manual: input.manual });
+  await addInteraction(ticket, { kind: interactionKindOf(input.channel), body: input.body, authorId: input.authorId, channel: input.channel === "whatsapp" || input.channel === "email" ? input.channel : undefined, manual: input.manual });
 }
 
 /** Chamado criado a partir de uma conversa da Central (encerrar → «abrir chamado com o resumo»). */
 export async function createTicketFromConversation(
-  input: { clientId: string; contactId?: string; channel: "whatsapp" | "email"; subject: string; description: string; assigneeId?: string },
+  input: { clientId: string; contactId?: string; channel: ConversationChannel; subject: string; description: string; assigneeId?: string },
   actor: UserRef,
 ): Promise<SupportTicket> {
   return createTicket(

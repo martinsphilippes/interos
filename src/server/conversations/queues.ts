@@ -89,7 +89,8 @@ export interface ChooseQueueContext {
 export function chooseQueue(queues: readonly ServiceQueue[], ctx: ChooseQueueContext): ServiceQueue | undefined {
   const usable = queues.filter((q) => q.active && q.channels.includes(ctx.channel));
   const byDepartment = (d: DepartmentKey) => usable.find((q) => q.department === d && q.strategy !== "manual") ?? usable.find((q) => q.department === d);
-  const fallback = usable.find((q) => q.isDefault) ?? usable[0];
+  // Canal que nenhuma fila atende (ex.: canal novo recém-conectado): cai na fila padrão.
+  const fallback = usable.find((q) => q.isDefault) ?? usable[0] ?? queues.find((q) => q.active && q.isDefault);
   if (ctx.hasOpenTicket) return byDepartment("suporte") ?? fallback;
   if (ctx.identity === "lead") return byDepartment("vendas") ?? fallback;
   return fallback;

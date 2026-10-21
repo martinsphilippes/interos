@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CheckCheck, Lock, Mail, MessageCircle, Monitor, Paperclip, Phone, PhoneIncoming, PhoneMissed, PlayCircle } from "lucide-react";
+import { Camera, CheckCheck, Lock, Mail, MessageCircle, MessageSquareText, MessagesSquare, Monitor, Paperclip, Phone, PhoneIncoming, PhoneMissed, PlayCircle, Send } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { formatCallDuration, formatDateTime, formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
  * à mão ("registro manual"); `recordingUrl` só deve vir de um provedor VoIP real.
  */
 
-export type ThreadChannel = "whatsapp" | "email" | "portal" | "interno";
+export type ThreadChannel = "whatsapp" | "email" | "portal" | "interno" | "instagram" | "messenger" | "telegram" | "chat";
 
 export type ThreadItem =
   | {
@@ -111,7 +111,7 @@ function Attachments({ urls }: { urls?: string[] }) {
   );
 }
 
-const CHANNEL_ICON: Record<ThreadChannel, React.ComponentType<{ className?: string }>> = { whatsapp: MessageCircle, email: Mail, portal: Monitor, interno: Monitor };
+const CHANNEL_ICON: Record<ThreadChannel, React.ComponentType<{ className?: string }>> = { whatsapp: MessageCircle, email: Mail, portal: Monitor, interno: Monitor, instagram: Camera, messenger: MessagesSquare, telegram: Send, chat: MessageSquareText };
 
 function Item({ item, noRecordingText }: { item: ThreadItem; noRecordingText: string }) {
   if (item.kind === "system") {

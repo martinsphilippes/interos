@@ -22,7 +22,7 @@ export async function logChannelEvent(input: ChannelEventInput): Promise<void> {
   try {
     await create<ChannelEvent>(COLLECTIONS.channelEvents, {
       ...rest,
-      contactMasked: contact ? (input.channel === "email" ? maskEmail(contact) : maskPhone(contact)) : undefined,
+      contactMasked: contact ? (input.channel === "email" ? maskEmail(contact) : input.channel === "whatsapp" || input.channel === "voz" ? maskPhone(contact) : `id •••${contact.slice(-4)}`) : undefined,
       occurredAt: input.occurredAt ?? nowIso(),
     });
   } catch (error) {

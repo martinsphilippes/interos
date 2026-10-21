@@ -11,6 +11,8 @@ import { listTemplates } from "./templates";
 import { getAutoMessages } from "./auto-messages";
 import { getRecordingPolicy } from "./ops-settings";
 import { STATE_SETTING } from "./scheduler";
+import { getSocialStatus, getTelegramStatus } from "./channel-setup";
+import { getSiteChat } from "./site-chat";
 
 export type StepStatus = "pronto" | "pendente" | "opcional" | "depois";
 
@@ -39,7 +41,7 @@ export async function getSchedulerStatus(): Promise<{ lastRunAt?: string; lastRu
 }
 
 export async function getActivationChecklist(now: number = Date.now()): Promise<ActivationGroup[]> {
-  const [queues, users, templates, events, auto, scheduler, policy] = await Promise.all([
+  const [queues, users, templates, events, auto, scheduler, policy, social, telegram, chat] = await Promise.all([
     listQueues(),
     list<User>(COLLECTIONS.users),
     listTemplates(),
@@ -47,6 +49,9 @@ export async function getActivationChecklist(now: number = Date.now()): Promise<
     getAutoMessages(),
     getSchedulerStatus(),
     getRecordingPolicy(),
+    getSocialStatus(),
+    getTelegramStatus(),
+    getSiteChat(),
   ]);
   const weekAgo = new Date(now - 7 * 86_400_000).toISOString();
   const received = (channel: "whatsapp" | "email") => events.filter((e) => e.channel === channel && e.result === "processado" && e.occurredAt >= weekAgo).length;
@@ -117,6 +122,28 @@ export async function getActivationChecklist(now: number = Date.now()): Promise<
           href: "/comunicacao/canais?aba=filas",
         },
         { key: "auto", title: "Mensagens automáticas", status: "opcional", detail: auto.stored ? "Configuradas (cada uma liga e desliga separadamente)." : "Todas desligadas (padrão).", href: "/comunicacao/canais?aba=automaticas" },
+      ],
+    },
+    {
+      key: "novos",
+      title: "Instagram, Messenger, Telegram e chat do site",
+      steps: [
+        {
+          key: "meta",
+          title: "Instagram e Messenger",
+          status: social.connected ? "pronto" : "opcional",
+          detail: social.connected ? `Página ${social.pageName}${social.instagram ? ` e Instagram @${social.instagramUsername ?? ""}` : ""} conectados.` : social.appConfigured ? "App da Meta pronto: falta conectar a página pelo login da Meta." : "Precisa do app da Meta (META_APP_ID e META_APP_SECRET) e de conectar a página.",
+          fix: social.connected ? undefined : social.appConfigured ? "Canais e filas › Instagram e Messenger › Conectar com a Meta." : "Vercel: META_APP_ID, META_APP_SECRET e META_VERIFY_TOKEN; depois, Conectar com a Meta.",
+          href: "/comunicacao/canais?aba=social",
+        },
+        { key: "telegram", title: "Telegram", status: telegram.connected ? "pronto" : "opcional", detail: telegram.connected ? `Bot @${telegram.botUsername} conectado.` : "Crie o bot no @BotFather e cole o token.", href: "/comunicacao/canais?aba=telegram" },
+        {
+          key: "chat",
+          title: "Chat do site",
+          status: chat.enabled ? (chat.allowedDomains.length ? "pronto" : "pendente") : "opcional",
+          detail: chat.enabled ? (chat.allowedDomains.length ? `Ligado em ${chat.allowedDomains.join(", ")}.` : "Ligado em qualquer site: cadastre o domínio da empresa.") : "Desligado. Ligue, cadastre o site e cole o código no site da empresa.",
+          href: "/comunicacao/canais?aba=chat",
+        },
       ],
     },
     {

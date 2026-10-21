@@ -670,6 +670,22 @@ pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`sr
   agendador): diário, semanal ou mensal, período relativo (ontem, semana anterior, mês anterior…), CSV/XLSX/PDF, só
   para pessoas do INTEROS. Cada destinatário recebe o relatório montado com o próprio acesso (quem não vê o tipo é
   pulado); se quem agendou perde a exportação, o envio pausa. Sem e-mail configurado, vai como notificação com o link.
+- **Novos canais** (fase 5): `ConversationChannel` = whatsapp, email, instagram, messenger, telegram, chat
+  (`src/domain/channels.ts`). Nos canais por id (Instagram, Messenger, Telegram, chat) a chave de contato é
+  `<prefixo>:<id do provedor>` (`ig:`, `fb:`, `tg:`, `ch:`), nunca comparada com telefone/e-mail; a pessoa é
+  reconhecida pela conversa anterior do mesmo id já identificada (ou, no chat, pelo e-mail/telefone do formulário).
+  Envio pelo `sendOrRecord` (`channelConnected`/`deliver` em `src/server/integrations/communications.ts`). Canal que
+  nenhuma fila atende cai na fila padrão.
+  - **Instagram e Messenger** (`src/server/integrations/meta-social.ts`): conexão pela tela com o login da Meta
+    (`/api/integrations/meta/callback`, «state» em cookie); o token da página fica cifrado em `channel_connections`
+    (`src/server/integrations/vault.ts`, AES-256-GCM). Webhook `/api/webhooks/meta` com assinatura do App Secret.
+    Janela: 24 h normal; até 7 dias com a etiqueta HUMAN_AGENT; automáticas só nas primeiras 24 h.
+  - **Telegram** (`src/server/integrations/telegram.ts`): token do bot colado na tela; o INTEROS registra o webhook com
+    segredo próprio (conferido em `/api/webhooks/telegram`). Só conversas privadas.
+  - **Chat do site** (`src/server/conversations/site-chat*.ts`): `<script src="/chat/widget.js?k=…">` no site abre um
+    iframe `/chat/embed` (HTML próprio, CSP com nonce e `frame-ancestors` dos sites permitidos). API pública
+    `/api/chat/{start,messages}`: token HMAC do visitante, limites por IP (hash) e por minuto, e o visitante só vê as
+    mensagens do canal `chat` das conversas dele (nota interna e sussurro nunca saem).
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.

@@ -12,7 +12,12 @@ import { TemplatesAdminView } from "@/components/conversations/templates-admin";
 import { QuickRepliesAdminView } from "@/components/conversations/quick-replies-admin";
 import { AutoMessagesAdminView } from "@/components/conversations/auto-messages-admin";
 import { ChannelEventsLog } from "@/components/conversations/channel-events-log";
-import type { ChannelEventResult, ConversationChannel } from "@/domain/types";
+import { CONVERSATION_CHANNELS, type ChannelEventResult, type ConversationChannel } from "@/domain/types";
+import { headers } from "next/headers";
+import { SiteChatAdmin, SocialConnect, TelegramConnect } from "@/components/conversations/channel-connect";
+import type { SocialChannelState } from "@/components/conversations/channels-status";
+import { getSocialStatus, getTelegramStatus } from "@/server/conversations/channel-setup";
+import { getSiteChat } from "@/server/conversations/site-chat";
 import { CANAIS_TABS, type CanaisTab } from "@/components/conversations/model";
 import { cn } from "@/lib/utils";
 import { PauseReasonsAdmin, ManagerAlertsAdmin } from "@/components/conversations/ops-admin";
@@ -23,6 +28,28 @@ async function alertsConfig() {
   const { stored, ...config } = await getManagerAlertsConfig();
   void stored;
   return config;
+}
+
+async function baseUrl(): Promise<string> {
+  const h = await headers();
+  return `${h.get("x-forwarded-proto") ?? "https"}://${h.get("x-forwarded-host") ?? h.get("host") ?? "<dominio>"}`;
+}
+
+async function siteChatConfig() {
+  const { stored, ...config } = await getSiteChat();
+  void stored;
+  return config;
+}
+
+/** Estado dos canais conectados pela tela (Instagram, Messenger, Telegram, chat do site). */
+async function otherChannels(): Promise<SocialChannelState> {
+  const [social, telegram, chat] = await Promise.all([getSocialStatus(), getTelegramStatus(), getSiteChat()]);
+  return {
+    instagram: { connected: social.instagram, detail: social.instagram ? `@${social.instagramUsername ?? "conta ligada"}` : social.appConfigured ? "Conecte pela tela (login da Meta)" : "Falta o app da Meta (META_APP_ID)" },
+    messenger: { connected: social.messenger, detail: social.messenger ? `Página ${social.pageName}` : social.appConfigured ? "Conecte pela tela (login da Meta)" : "Falta o app da Meta (META_APP_ID)" },
+    telegram: { connected: telegram.connected, detail: telegram.connected ? `@${telegram.botUsername}` : "Cole o token do bot" },
+    chat: { connected: chat.enabled, detail: chat.enabled ? (chat.allowedDomains.length ? chat.allowedDomains.join(", ") : "em qualquer site") : "Desligado" },
+  };
 }
 
 async function schedulerRan(): Promise<boolean> {
@@ -39,6 +66,9 @@ const TAB_LABEL: Record<CanaisTab, string> = {
   modelos: "Modelos do WhatsApp",
   respostas: "Respostas rápidas",
   automaticas: "Mensagens automáticas",
+  social: "Instagram e Messenger",
+  telegram: "Telegram",
+  chat: "Chat do site",
   pausas: "Motivos de pausa",
   alertas: "Alertas do gerente",
   registros: "Registros técnicos",
@@ -64,6 +94,9 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Sea
     modelos: can(user, "comunicacao.canais.modelos.ver"),
     respostas: can(user, "comunicacao.canais.respostas.ver"),
     automaticas: can(user, "comunicacao.canais.automaticas.ver"),
+    social: can(user, "comunicacao.canais.social.ver"),
+    telegram: can(user, "comunicacao.canais.telegram.ver"),
+    chat: can(user, "comunicacao.canais.chat.ver"),
     pausas: can(user, "comunicacao.canais.pausas.ver"),
     alertas: can(user, "comunicacao.canais.alertas.ver"),
     registros: can(user, "comunicacao.canais.registros.ver"),
@@ -107,7 +140,14 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Sea
               health={await getChannelHealth()}
               webhookSecured={Boolean(process.env.WHATSAPP_APP_SECRET)}
               emailInbound={process.env.RESEND_WEBHOOK_SECRET ? "resend" : process.env.EMAIL_INBOUND_TOKEN ? "token" : null}
+              others={await otherChannels()}
             />
+          ) : tab === "social" ? (
+            <SocialConnect status={await getSocialStatus()} canEdit={can(user, "comunicacao.canais.social.editar")} base={await baseUrl()} result={first(sp.meta) ? { kind: first(sp.meta)!, reason: first(sp.motivo) } : undefined} />
+          ) : tab === "telegram" ? (
+            <TelegramConnect status={await getTelegramStatus()} canEdit={can(user, "comunicacao.canais.telegram.editar")} />
+          ) : tab === "chat" ? (
+            <SiteChatAdmin config={await siteChatConfig()} canEdit={can(user, "comunicacao.canais.chat.editar")} base={await baseUrl()} />
           ) : tab === "filas" ? (
             <QueuesAdminView data={await getQueuesAdmin()} canEdit={can(user, "comunicacao.canais.filas.editar")} />
           ) : tab === "modelos" ? (
@@ -123,7 +163,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Sea
           ) : (
             <ChannelEventsLog
               data={await getChannelEventsAdmin({
-                channel: (["whatsapp", "email", "voz"] as (ConversationChannel | "voz")[]).find((c) => c === first(sp.canal)),
+                channel: ([...CONVERSATION_CHANNELS, "voz"] as (ConversationChannel | "voz")[]).find((c) => c === first(sp.canal)),
                 result: EVENT_RESULTS.find((r) => r === first(sp.resultado)),
                 q: first(sp.q),
               })}

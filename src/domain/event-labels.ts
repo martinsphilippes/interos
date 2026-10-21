@@ -61,6 +61,7 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "conversation.transferred": "Atendimento transferido",
   "conversation.closed": "Atendimento encerrado",
   "conversation.reopened": "Atendimento reaberto",
+  "conversation.message.received": "Mensagem recebida (Instagram, Messenger, Telegram ou chat do site)",
   "contract.created": "Contrato criado",
   "contract.sent_for_signature": "Documento enviado para assinatura",
   "contract.signed": "Contrato assinado",

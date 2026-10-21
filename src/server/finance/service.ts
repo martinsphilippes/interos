@@ -1528,7 +1528,7 @@ export async function sendBillingMessage(
   const includeBoleto = Boolean(input.includeBoleto);
   if (includeBoleto && !hasBoletoData(billing)) throw new Error("Nenhum boleto ou PIX registrado nesta cobrança. Registre o boleto emitido no banco/ERP antes de enviá-lo.");
   const settings = await getBillingChannelSettings();
-  const channels: SendChannel[] = input.channel === "ambos" ? ["whatsapp", "email"] : [input.channel];
+  const channels: ("whatsapp" | "email")[] = input.channel === "ambos" ? ["whatsapp", "email"] : [input.channel];
   if (input.channel === "whatsapp" && settings.enviarEmailJuntoAoWhatsapp && settings.complementar === "email" && ctx.email) channels.push("email");
   let text = input.text?.trim() || defaultBillingMessage(ctx, { includeBoleto, secondCopy: input.secondCopy });
   // Portal do cliente (D31): `{linkPortal}` gera um link NOVO por envio (30 dias, origem "mensagem"), só quando algum

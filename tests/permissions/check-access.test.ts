@@ -94,8 +94,10 @@ describe("repositório real", () => {
   // Fases 0 e 2: + páginas supervisao, supervisao/tv e ativacao e 7 actions (supervisão, pausas, alertas, gravação).
   // Fase 3: + páginas ligacoes, correio-de-voz e pabx, 8 actions de telefonia e 7 rotas de voz (5 da Twilio, isentas por assinatura).
   // Fase 4: + 4 actions da supervisão de ligações, 4 do envio agendado de relatórios e a rota monitor-end (isenta por assinatura).
-  it("inventário: 101 páginas (10 isentas), 294 funções 'use server' (3 isentas), 18 handlers de API (15 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 294, serverFunctionsExempt: 3, apiHandlers: 18, apiExempt: 15 });
+  // Fase 5: + 6 actions de conexão dos canais (Meta e Telegram), 1 do chat do site; rotas: retorno do login da Meta
+  // (com permissão), webhooks da Meta (GET/POST) e do Telegram e as 3 do chat do site (isentas: assinatura/token).
+  it("inventário: 101 páginas (10 isentas), 300 funções 'use server' (3 isentas), 25 handlers de API (21 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 300, serverFunctionsExempt: 3, apiHandlers: 25, apiExempt: 21 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

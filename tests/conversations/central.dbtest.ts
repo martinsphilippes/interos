@@ -22,6 +22,11 @@ import { handleMonitoredDialResult, joinMonitorTwiml, monitorNoticeFor, supervis
 import { buildAttendanceByQueue, buildCalls } from "@/server/reports/central";
 import { runReportSchedule } from "@/server/reports/schedules";
 import { currentUserFor } from "@/server/auth/session";
+import { addConversationNote } from "@/server/conversations/service";
+import { getSiteChat, saveSiteChat, sendSiteChatMessage, startSiteChat, visitorThread } from "@/server/conversations/site-chat";
+import { connectionToken, removeConnection, saveConnection } from "@/server/integrations/channel-connections";
+import { telegramSecretValid } from "@/server/integrations/telegram";
+import { DEFAULT_SITE_CHAT } from "@/domain/site-chat";
 import { type ReportSchedule, type SupervisionLog } from "@/domain/types";
 import { runCentralSweep } from "@/server/conversations/scheduler";
 import { quickRepliesFor, saveQuickReply, listQuickReplies } from "@/server/conversations/quick-replies";
@@ -42,6 +47,8 @@ let savedQueues: { id: string; data: unknown }[] = [];
 /** Configuração do PABX antes dos testes (null = não existia; undefined = os testes de telefonia não rodaram). */
 let pabxBackup: unknown = undefined;
 const conversationIds = new Set<string>();
+/** Configuração do chat do site antes dos testes (null = não existia; undefined = os testes da fase 5 não rodaram). */
+let chatBackup: unknown = undefined;
 const leadIds = new Set<string>();
 
 beforeAll(async () => {
@@ -73,6 +80,9 @@ afterAll(async () => {
   if (ids.length) await sql`delete from interos.supervision_logs where data->>'conversationId' = any(${ids})`;
   await sql`delete from interos.settings where data->>'key' in ('central_alertas', 'central_alertas_estado')`;
   await sql`delete from interos.supervision_logs where data->>'supervisorId' like ${RUN + "%"}`;
+  await sql`delete from interos.chat_visitors where data->>'name' like ${RUN + "%"}`;
+  if (chatBackup === null) await sql`delete from interos.settings where data->>'key' = 'chat_site'`;
+  else if (chatBackup) await sql`update interos.settings set data = ${sql.json(chatBackup as never)} where data->>'key' = 'chat_site'`;
   await sql`delete from interos.report_schedules where data->>'ownerId' like ${RUN + "%"}`;
   await sql`delete from interos.notifications where data->>'userId' like ${RUN + "%"}`;
   await sql`delete from interos.users where id = ${ADMIN.id}`;
@@ -507,6 +517,98 @@ describe("fase 4: supervisão de ligações, relatórios e envio agendado", () =
     const after = await getById<ReportSchedule>(COLLECTIONS.reportSchedules, ok.id);
     expect(after?.lastOk).toBe(true);
     expect(after!.nextRunAt > new Date().toISOString()).toBe(true);
+  });
+});
+
+describe("fase 5: novos canais", () => {
+  const ACTOR = { id: OP.id, name: OP.name };
+
+  beforeAll(async () => {
+    const [row] = (await docdb.sql()`select data from interos.settings where data->>'key' = 'chat_site'`) as unknown as { data: unknown }[];
+    chatBackup = row ? row.data : null;
+  });
+
+  it("Telegram: a mensagem abre conversa; depois de identificada, o mesmo chat é reconhecido", async () => {
+    const chatId = `9${String(Date.now()).slice(-8)}`;
+    const r1 = await receiveInboundMessage({ channel: "telegram", from: chatId, body: "Oi pelo Telegram", externalId: `${RUN}:${chatId}:1`, displayName: "Ana Telegram" });
+    conversationIds.add(r1.conversationId!);
+    const c1 = await getById<Conversation>(COLLECTIONS.conversations, r1.conversationId!);
+    expect(c1).toMatchObject({ channel: "telegram", contactKey: `tg:${chatId}`, identity: "desconhecido" });
+    // Repetido: ignorado.
+    expect((await receiveInboundMessage({ channel: "telegram", from: chatId, body: "Oi pelo Telegram", externalId: `${RUN}:${chatId}:1` })).duplicate).toBe(true);
+    // O operador identificou como um lead; a conversa encerra; a próxima do mesmo chat já vem identificada.
+    const [lead] = (await docdb.sql()`select id from interos.leads limit 1`) as unknown as { id: string }[];
+    if (!lead) return;
+    await patchFields<Conversation>(COLLECTIONS.conversations, c1!.id, { leadId: lead.id, identity: "lead", status: "encerrada", closedAt: new Date().toISOString() });
+    const r2 = await receiveInboundMessage({ channel: "telegram", from: chatId, body: "Voltei", externalId: `${RUN}:${chatId}:2` });
+    conversationIds.add(r2.conversationId!);
+    expect(r2.conversationId).not.toBe(c1!.id);
+    expect((await getById<Conversation>(COLLECTIONS.conversations, r2.conversationId!))?.leadId).toBe(lead.id);
+  });
+
+  it("conexão: token e segredo cifrados; o segredo do webhook confere", async () => {
+    const before = await connectionToken("telegram");
+    await saveConnection("telegram", { token: "123456:token-de-teste", secret: "segredo-do-webhook", botId: "123456", botUsername: `${RUN}_bot` }, ACTOR);
+    const [raw] = (await docdb.sql()`select data from interos.channel_connections where id = 'telegram'`) as unknown as { data: Record<string, unknown> }[];
+    expect(JSON.stringify(raw.data)).not.toContain("token-de-teste");
+    expect(JSON.stringify(raw.data)).not.toContain("segredo-do-webhook");
+    expect((await connectionToken("telegram"))?.token).toBe("123456:token-de-teste");
+    expect(await telegramSecretValid("segredo-do-webhook")).toBe(true);
+    expect(await telegramSecretValid("outro")).toBe(false);
+    await removeConnection("telegram");
+    expect(await telegramSecretValid("segredo-do-webhook")).toBe(false);
+    expect(before).toBeNull();
+  });
+
+  it("chat do site: começa, a equipe responde, a nota interna nunca aparece para o visitante, e há limites", async () => {
+    const config = await saveSiteChat({ ...DEFAULT_SITE_CHAT, enabled: true, allowedDomains: ["intercert.com.br"] }, ACTOR);
+    expect(config.publicKey.length).toBeGreaterThan(8);
+    expect((await getSiteChat()).allowedDomains).toEqual(["intercert.com.br"]);
+    const ip = `203.0.113.${Date.now() % 250}`;
+    const { visitorId } = await startSiteChat(config, { name: `${RUN} Visitante`, email: `${RUN}.v@exemplo.com.br`, message: "Quero saber o preço", ip });
+    let thread = await visitorThread(visitorId);
+    expect(thread.messages.map((m) => [m.from, m.body])).toEqual([["visitante", "Quero saber o preço"]]);
+    const [conv] = await list<Conversation>(COLLECTIONS.conversations, { where: [["channel", "==", "chat"], ["contactKey", "==", `ch:${visitorId}`]] });
+    conversationIds.add(conv.id);
+    expect(conv.displayName).toBe(`${RUN} Visitante`);
+
+    // A equipe responde (sai pelo próprio INTEROS) e deixa uma nota interna.
+    const sent = await sendConversationMessage(conv.id, { body: "Olá! Já te passo os valores." }, ACTOR);
+    expect(sent.delivery).toBe("enviada");
+    await addConversationNote(conv.id, "NOTA SECRETA da equipe", ACTOR);
+    thread = await visitorThread(visitorId);
+    expect(thread.messages.map((m) => m.body)).toEqual(["Quero saber o preço", "Olá! Já te passo os valores."]);
+    expect(thread.messages[1]).toMatchObject({ from: "equipe", author: "Operadora" });
+    expect(JSON.stringify(thread)).not.toContain("NOTA SECRETA");
+
+    // Mensagem repetida (mesmo id do navegador) não duplica; limite por minuto.
+    await sendSiteChatMessage(visitorId, "Segunda", "abcdef1");
+    await sendSiteChatMessage(visitorId, "Segunda", "abcdef1");
+    expect((await visitorThread(visitorId)).messages.filter((m) => m.body === "Segunda")).toHaveLength(1);
+    let blocked = false;
+    for (let i = 0; i < 20 && !blocked; i += 1) {
+      try {
+        await sendSiteChatMessage(visitorId, `msg ${i}`, `lote${i}xx`);
+      } catch (e) {
+        blocked = /Muitas mensagens/.test(String(e));
+      }
+    }
+    expect(blocked).toBe(true);
+
+    // Limite de novas conversas por IP.
+    let ipBlocked = false;
+    for (let i = 0; i < 6 && !ipBlocked; i += 1) {
+      try {
+        const r = await startSiteChat(config, { name: `${RUN} V${i}`, email: `${RUN}.${i}@exemplo.com.br`, message: "oi", ip });
+        const [cv] = await list<Conversation>(COLLECTIONS.conversations, { where: [["channel", "==", "chat"], ["contactKey", "==", `ch:${r.visitorId}`]] });
+        if (cv) conversationIds.add(cv.id);
+      } catch (e) {
+        ipBlocked = /Muitas conversas/.test(String(e));
+      }
+    }
+    expect(ipBlocked).toBe(true);
+    // Formulário: contato obrigatório.
+    await expect(startSiteChat(config, { name: `${RUN} Sem contato`, message: "oi", ip: "198.51.100.7" })).rejects.toThrow(/e-mail ou telefone/);
   });
 });
 

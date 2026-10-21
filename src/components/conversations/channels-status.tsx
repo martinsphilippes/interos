@@ -1,5 +1,6 @@
 import * as React from "react";
-import { AtSign, Globe, Mail, MessageCircle, MessagesSquare, Phone, Send } from "lucide-react";
+import Link from "next/link";
+import { Camera, Globe, Mail, MessageCircle, MessagesSquare, Phone, Send } from "lucide-react";
 import type { ChannelHealth } from "@/server/conversations/queries";
 import type { IntegrationStatus } from "@/server/integrations/types";
 import { INTEGRATION_STATE_LABELS } from "@/server/integrations/types";
@@ -63,10 +64,23 @@ function ChannelCard({ title, icon, tone, status, health, webhook, note }: { tit
 
 /**
  * Estado real de cada canal: lido das credenciais do servidor (nunca os valores) e dos registros técnicos. Canal
- * sem conexão real não aparece como ativo; os canais das próximas fases aparecem como indisponíveis.
+ * sem conexão real não aparece como ativo. Instagram, Messenger, Telegram e chat do site: conectados pela própria tela.
  */
-export function ChannelsStatus({ whatsapp, email, voip, health, webhookSecured, emailInbound }: { whatsapp: IntegrationStatus; email: IntegrationStatus; voip: IntegrationStatus; health: ChannelHealth[]; webhookSecured: boolean; emailInbound: "resend" | "token" | null }) {
+export interface SocialChannelState {
+  instagram: { connected: boolean; detail: string };
+  messenger: { connected: boolean; detail: string };
+  telegram: { connected: boolean; detail: string };
+  chat: { connected: boolean; detail: string };
+}
+
+export function ChannelsStatus({ whatsapp, email, voip, health, webhookSecured, emailInbound, others }: { whatsapp: IntegrationStatus; email: IntegrationStatus; voip: IntegrationStatus; health: ChannelHealth[]; webhookSecured: boolean; emailInbound: "resend" | "token" | null; others: SocialChannelState }) {
   const h = (c: "whatsapp" | "email") => health.find((x) => x.channel === c);
+  const social = [
+    { channel: "instagram" as const, title: "Instagram Direct", icon: <Camera />, href: "/comunicacao/canais?aba=social", ...others.instagram },
+    { channel: "messenger" as const, title: "Messenger", icon: <MessagesSquare />, href: "/comunicacao/canais?aba=social", ...others.messenger },
+    { channel: "telegram" as const, title: "Telegram", icon: <Send />, href: "/comunicacao/canais?aba=telegram", ...others.telegram },
+    { channel: "chat" as const, title: "Chat do site", icon: <Globe />, href: "/comunicacao/canais?aba=chat", ...others.chat },
+  ];
   return (
     <div className="flex flex-col gap-4">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -91,20 +105,21 @@ export function ChannelsStatus({ whatsapp, email, voip, health, webhookSecured, 
         <ChannelCard title="Telefonia (PABX)" icon={<Phone />} tone="info" status={voip} note="Provedor a definir. Até lá, os botões «Ligar» abrem o discador do aparelho." />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {[
-          { title: "Instagram Direct", icon: <AtSign /> },
-          { title: "Messenger", icon: <MessagesSquare /> },
-          { title: "Telegram", icon: <Send /> },
-          { title: "Chat do site", icon: <Globe /> },
-        ].map((c) => (
-          <div key={c.title} className="flex items-center gap-3 rounded-xl border border-dashed border-border px-4 py-3">
-            <span className="text-muted [&_svg]:size-5">{c.icon}</span>
-            <div>
-              <p className="text-sm font-medium">{c.title}</p>
-              <p className="text-xs text-muted">Integração indisponível · fase 5</p>
-            </div>
-          </div>
-        ))}
+        {social.map((c) => {
+          const hh = health.find((x) => x.channel === c.channel);
+          return (
+            <Link key={c.channel} href={c.href} className="flex items-start gap-3 rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:bg-surface-hover">
+              <span className="mt-0.5 text-muted [&_svg]:size-5">{c.icon}</span>
+              <div className="min-w-0">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                  {c.title} <Badge size="sm" variant={c.connected ? "success" : "muted"}>{c.connected ? "Conectado" : "Não conectado"}</Badge>
+                </p>
+                <p className="truncate text-xs text-muted">{c.detail}</p>
+                {c.connected && hh ? <p className="text-xs text-muted">{hh.received24h} mensagem(ns) em 24 h{hh.failures24h ? ` · ${hh.failures24h} falha(s)` : ""}</p> : null}
+              </div>
+            </Link>
+          );
+        })}
       </div>
     </div>
   );

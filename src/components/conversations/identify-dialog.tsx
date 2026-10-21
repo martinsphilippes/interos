@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
+import { CHANNEL_LABELS } from "./model";
 
 type Choice = { kind: IdentityCandidate["kind"]; id: string } | { kind: "novo_lead" } | { kind: "nenhum" };
 
@@ -75,7 +76,7 @@ export function IdentifyDialog({ detail, open, onOpenChange }: { detail: Convers
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="md">
         <DialogHeader>
-          <DialogTitle>Quem é {c.channel === "whatsapp" ? formatPhone(c.address.replace(/^\+?55/, "")) : c.address}?</DialogTitle>
+          <DialogTitle>Quem é {c.channel === "whatsapp" ? formatPhone(c.address.replace(/^\+?55/, "")) : c.channel === "email" ? c.address : `este contato do ${CHANNEL_LABELS[c.channel]}`}?</DialogTitle>
           <DialogDescription>As mensagens já trocadas passam para o histórico do cadastro escolhido.</DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-2">
@@ -110,7 +111,7 @@ export function IdentifyDialog({ detail, open, onOpenChange }: { detail: Convers
               <input type="radio" name="identity" className="mt-1" checked={isChosen("novo_lead")} onChange={() => setChoice({ kind: "novo_lead" })} />
               <span className="min-w-0 flex-1">
                 <span className="font-medium">Criar lead novo</span>
-                <span className="block text-xs text-muted">origem {c.channel === "whatsapp" ? "WhatsApp" : "e-mail"}</span>
+                <span className="block text-xs text-muted">origem {CHANNEL_LABELS[c.channel]}</span>
                 {isChosen("novo_lead") ? <Input className="mt-2" aria-label="Nome do lead" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do contato" /> : null}
               </span>
             </label>

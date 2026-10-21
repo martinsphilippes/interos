@@ -14,6 +14,7 @@ import { isConnected } from "@/server/integrations/status";
 import { communicationStatusLabel } from "@/server/integrations/communications";
 import { isOpenTicket } from "@/server/support/service";
 import {
+  CONVERSATION_CHANNELS,
   COLLECTIONS,
   type Client,
   type Communication,
@@ -40,6 +41,8 @@ import { templateUsage, usableTemplates, listTemplates } from "./templates";
 import { listQuickReplies, quickRepliesFor } from "./quick-replies";
 import { businessStatus, canAutoSend, getAutoMessages, type AutoMessagesConfig } from "./auto-messages";
 import { fillTemplate, placeholderCount, templateParams } from "@/domain/message-variables";
+import { CHANNEL_INFO, metaReplyWindow } from "@/domain/channels";
+import { channelConnected } from "@/server/integrations/communications";
 
 export const CENTRAL_TABS = ["minhas", "fila", "aguardando", "todas"] as const;
 export type CentralTab = (typeof CENTRAL_TABS)[number];
@@ -154,6 +157,8 @@ export function nameOf(c: Conversation, n: Pick<Names, "clients" | "contacts" | 
   if (contact) return { name: contact.name, subtitle: client?.tradeName ?? "Cliente" };
   if (client) return { name: client.tradeName, subtitle: "Cliente" };
   if (lead) return { name: lead.name, subtitle: lead.company ? `Lead · ${lead.company}` : "Lead" };
+  // Instagram, Messenger, Telegram e chat: o endereço é um id do provedor (não se mostra).
+  if (CHANNEL_INFO[c.channel].addressKind === "id") return { name: c.displayName || `Contato do ${CHANNEL_INFO[c.channel].label}`, subtitle: "Não identificado" };
   const address = c.channel === "whatsapp" ? displayPhone(c.address) : c.address;
   return { name: c.displayName || address, subtitle: c.displayName ? `${address} · não identificado` : "Não identificado" };
 }
@@ -304,12 +309,21 @@ export interface ConversationDetail {
   window: WindowState;
   /** O canal da conversa está conectado ao provedor (senão, tudo é registro manual). */
   channelConnected: boolean;
+  /** Aviso da janela de resposta (Instagram/Messenger: mais de 24 h ou fora dos 7 dias). */
+  windowNote?: string;
   /** Mensagem automática de encerramento que sairia agora (ligada, canal conectado e janela aberta); null = nenhuma. */
   closingMessage: string | null;
   /** Prazo da primeira resposta e da solução (regra da fila). */
   sla?: { state: SlaState; dueAt: string; responseDueAt?: string; respondedAt?: string };
   context: ConversationContext;
   capabilities: ConversationCapabilities;
+}
+
+function metaWindowNote(lastInboundAt: string | undefined, now: number): string | undefined {
+  const w = metaReplyWindow(lastInboundAt, now);
+  if (!w.open) return "Fora da janela da Meta (7 dias): a resposta não sai; a pessoa precisa escrever de novo.";
+  if (w.humanAgentTag) return "Mais de 24 h: a resposta vai como atendimento humano (vale até 7 dias).";
+  return undefined;
 }
 
 /** Linha do tempo da conversa: mensagens (WhatsApp/e-mail), notas internas e o encerramento. */
@@ -327,7 +341,8 @@ export function buildThread(conversation: Conversation, messages: Communication[
       thread.push({ kind: "note", id: m.id, at: m.createdAt, authorName: `Sussurro de ${authorName}`, body: m.body ?? "" });
       continue;
     }
-    if (m.channel !== "whatsapp" && m.channel !== "email") continue;
+    // Ligação (voip) e registros internos não são mensagens da conversa.
+    if (m.channel === "voip" || m.channel === "interno") continue;
     thread.push({
       kind: "message",
       id: m.id,
@@ -410,8 +425,9 @@ export async function getConversationDetail(user: CurrentUser, id: string): Prom
     values,
     row,
     thread,
-    window: conversation.channel === "whatsapp" ? whatsappWindow(conversation.lastInboundAt, now) : { open: true },
-    channelConnected: isConnected(conversation.channel === "whatsapp" ? "whatsapp" : "email"),
+    window: conversation.channel === "whatsapp" ? whatsappWindow(conversation.lastInboundAt, now) : { open: CHANNEL_INFO[conversation.channel].metaWindow ? metaReplyWindow(conversation.lastInboundAt, now).open : true },
+    channelConnected: await channelConnected(conversation.channel),
+    windowNote: CHANNEL_INFO[conversation.channel].metaWindow ? metaWindowNote(conversation.lastInboundAt, now) : undefined,
     closingMessage: open && auto.encerramento.ativa && canAutoSend(conversation, now) ? auto.encerramento.texto : null,
     sla: slaView && sla ? { state: slaView.state, dueAt: slaView.dueAt, responseDueAt: sla.responseDueAt, respondedAt: sla.respondedAt } : undefined,
     context: {
@@ -471,7 +487,7 @@ export interface ChannelHealth {
 export async function getChannelHealth(now: number = Date.now()): Promise<ChannelHealth[]> {
   const since = new Date(now - 24 * 3600_000).toISOString();
   const out: ChannelHealth[] = [];
-  for (const channel of ["whatsapp", "email"] as const) {
+  for (const channel of CONVERSATION_CHANNELS) {
     const events = await list<ChannelEvent>(COLLECTIONS.channelEvents, { where: [["channel", "==", channel]] });
     const recent = events.filter((e) => e.occurredAt >= since);
     out.push({
