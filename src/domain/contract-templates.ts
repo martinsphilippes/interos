@@ -360,3 +360,26 @@ export function currencyInWords(value: number): string {
   if (c) parts.push(`${integerInWords(c)} ${c === 1 ? "centavo" : "centavos"}`);
   return parts.length ? parts.join(" e ") : "zero real";
 }
+
+// ---------------------------------------------------------------------------
+// Clicksign: papel do signatário e nome aceito
+// ---------------------------------------------------------------------------
+
+/** Papel (qualificação) na Clicksign: contratada, testemunha, avalista/fiador ou contratante. */
+export function clicksignRole(s: { party?: string; role?: string }): string {
+  if (isCompanySigner(s)) return "contractee";
+  const role = (s.role ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  if (/testemunha/.test(role)) return "witness";
+  if (/avalista|fiador/.test(role)) return "guarantor";
+  if (/procurador/.test(role)) return "attorney";
+  if (/representante/.test(role)) return "legal_representative";
+  return "contractor";
+}
+
+/** A Clicksign exige nome e sobrenome, sem números. Devolve o problema (ou null quando está ok). */
+export function clicksignSignerNameProblem(name: string): string | null {
+  const n = name.trim();
+  if (/\d/.test(n)) return "o nome não pode ter números (exigência da Clicksign)";
+  if (n.split(/\s+/).filter((p) => p.length > 0).length < 2) return "informe nome e sobrenome (exigência da Clicksign)";
+  return null;
+}

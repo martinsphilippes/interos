@@ -24,6 +24,8 @@ import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
+import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
+import { clicksignConfigured } from "@/server/integrations/clicksign";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { DEFAULT_CLOSING, SALE_PAYMENT_METHOD_LABELS, contractEffectiveItems } from "@/domain/sale-closing";
 import { contractSnapshot, describeReadjustment } from "@/domain/contract-snapshot";
@@ -389,6 +391,8 @@ async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: st
   // Snapshot COMPLETO da versão anterior (itens, totais, condições, signatários, hash): o documento ?versao=N
   // renderiza como o contrato estava antes da revisão.
   const entry: ContractVersionEntry = stripUndefined({ version: contract.version, kind: "revisao" as const, at: nowIso(), by: actor.id, reason, envelopeId: contract.signatureEnvelopeId, snapshot: contractSnapshot(contract) });
+  // A versão enviada pela Clicksign deixa de valer: cancela lá para ninguém assinar o texto antigo.
+  await cancelPreviousClicksignDocument(contract);
   await emitEvent({
     type: "contract.version_created",
     actor,
@@ -411,7 +415,7 @@ async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: st
       signers: contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const, ...(s.party ? { party: s.party } : {}) })),
       previousVersions: [...(contract.previousVersions ?? []), entry],
     },
-    clear: ["signatureEnvelopeId", "documentHash", "signedAt"],
+    clear: ["signatureEnvelopeId", "signatureDocumentId", "documentHash", "signedAt"],
     versioned: true,
   };
 }
@@ -649,19 +653,28 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
   const signers = withCompanySigner(contract.signers, companySignerEntry(settings)).map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const, ...(s.party ? { party: s.party } : {}) }));
   const documentTemplate = template ? await documentTemplateSnapshot(template) : undefined;
   const toSend: Contract = { ...contract, signers, ...(documentTemplate ? { documentTemplate } : {}) };
-  const provider = getSignatureProvider();
+  const provider = activeSignatureProvider();
   const envelope = await provider.createEnvelope(toSend, client.tradeName);
   const manual = envelope.provider === "manual";
+  // Documento de um envio anterior pela Clicksign deixa de valer: cancela lá (melhor esforço).
+  if (contract.signatureEnvelopeId && contract.signatureEnvelopeId !== envelope.envelopeId) await cancelPreviousClicksignDocument(contract);
+  const signerIds = envelope.signerIds ?? {};
+  const sentSigners = signers.map((s) => (signerIds[s.email.toLowerCase()] ? { ...s, providerSignerId: signerIds[s.email.toLowerCase()] } : s));
   const patch: Partial<Contract> = {
     status: contract.status === "pendencia" ? "pendencia" : "aguardando_assinatura",
     signatureProvider: envelope.provider,
     signatureEnvelopeId: envelope.envelopeId,
     documentHash: envelope.documentHash,
-    signers,
+    signers: sentSigners,
     ...(documentTemplate ? { documentTemplate } : {}),
+    ...(envelope.documentId ? { signatureDocumentId: envelope.documentId } : {}),
   };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
-  await clearFields(COLLECTIONS.contracts, contract.id, [...(contract.signedAt ? ["signedAt"] : []), ...(!documentTemplate && contract.documentTemplate ? ["documentTemplate"] : [])]);
+  await clearFields(COLLECTIONS.contracts, contract.id, [
+    ...(contract.signedAt ? ["signedAt"] : []),
+    ...(!documentTemplate && contract.documentTemplate ? ["documentTemplate"] : []),
+    ...(!envelope.documentId && contract.signatureDocumentId ? ["signatureDocumentId"] : []),
+  ]);
   await emitEvent({
     type: "contract.sent_for_signature",
     actor,
@@ -723,30 +736,45 @@ export async function registerManualSignature(input: ManualSignatureInput, actor
     department: "financeiro",
     payload: { contractId: contract.id, email: signer.email, method: "manual", evidence, evidenceUrl, signedAt, documentHash, envelopeId: contract.signatureEnvelopeId, changes: { signer: { from: `${signer.name}: pendente`, to: `${signer.name}: assinado em ${formatDate(signedAt)}` } } },
   });
-  if (done) {
-    const version = contract.version;
-    // Contrato assinado entra nos documentos do cliente (conta para o gate da jornada).
-    await addContractDocument(
-      {
-        contractId: contract.id,
-        name: `Contrato ${contract.number} v${version} assinado · ${contract.signatureEnvelopeId} · ${documentHash.slice(0, 19)}`,
-        url: `/financeiro/contratos/${contract.id}/documento`,
-        category: "Contrato assinado",
-      },
-      actor,
-    );
-    await emitEvent({
-      type: "contract.signed",
-      actor,
-      clientId: contract.clientId,
-      entity: { type: "contract", id: contract.id },
-      title: `Contrato ${contract.number} assinado por todos`,
-      description: `${signers.length} assinatura(s) registrada(s) com evidência · hash ${documentHash.slice(0, 19)}…`,
-      department: "financeiro",
-      payload: { contractId: contract.id, signedAt: patch.signedAt, envelopeId: contract.signatureEnvelopeId, documentHash, ownerId: contract.ownerId, method: "manual", ...auditChanges<Contract>(contract, { ...contract, ...patch }, ["status", "signedAt"]) },
-    });
-  }
+  if (done) await announceContractSigned(contract, patch, { method: "manual", signerCount: signers.length, documentHash }, actor);
   return { allSigned: done };
+}
+
+/**
+ * Todos assinaram: o contrato assinado entra nos documentos do cliente (conta para o gate da jornada) e sai o evento
+ * contract.signed (cobranças, projeto de implantação, notificações). Usado pelo registro manual e pelo aviso da
+ * Clicksign; `patch` é o que acabou de ser gravado no contrato (status/signedAt).
+ */
+export async function announceContractSigned(
+  contract: Contract,
+  patch: Partial<Contract>,
+  input: { method: "manual" | "provedor"; signerCount: number; documentHash: string },
+  actor: UserRef,
+): Promise<void> {
+  const { documentHash } = input;
+  const provider = input.method === "provedor";
+  await addContractDocument(
+    {
+      contractId: contract.id,
+      name: `Contrato ${contract.number} v${contract.version} assinado${provider ? " (Clicksign)" : ""} · ${contract.signatureEnvelopeId} · ${documentHash.slice(0, 19)}`,
+      // Pela Clicksign: o PDF assinado (com o registro das assinaturas); manual: o documento gerado pelo INTEROS.
+      url: provider ? `/api/financeiro/contratos/${contract.id}/assinado` : `/financeiro/contratos/${contract.id}/documento`,
+      category: "Contrato assinado",
+    },
+    actor,
+  );
+  await emitEvent({
+    type: "contract.signed",
+    actor,
+    clientId: contract.clientId,
+    entity: { type: "contract", id: contract.id },
+    title: `Contrato ${contract.number} assinado por todos`,
+    description: provider
+      ? `${input.signerCount} assinatura(s) confirmada(s) pela Clicksign · hash ${documentHash.slice(0, 19)}…`
+      : `${input.signerCount} assinatura(s) registrada(s) com evidência · hash ${documentHash.slice(0, 19)}…`,
+    department: "financeiro",
+    payload: { contractId: contract.id, signedAt: patch.signedAt, envelopeId: contract.signatureEnvelopeId, documentHash, ownerId: contract.ownerId, method: input.method, ...auditChanges<Contract>(contract, { ...contract, ...patch }, ["status", "signedAt"]) },
+  });
 }
 
 /**
@@ -759,6 +787,13 @@ export async function sendSignatureReminder(contractId: string, email: string, a
   const signer = contract.signers.find((s) => s.email.toLowerCase() === email.toLowerCase());
   if (!signer) throw new Error("Signatário não encontrado");
   if (signer.status === "assinado") throw new Error(`${signer.name} já assinou`);
+  // Enviado pela Clicksign: o lembrete sai por ela (e-mail com o link de assinatura).
+  if (contract.signatureProvider === "clicksign" && clicksignConfigured()) {
+    const r = await clicksignSignatureProvider.sendReminder(contract, signer.email);
+    await recordCommunication({ clientId: contract.clientId, channel: "email", direction: "saida", userId: actor.id, entityType: "contract", entityId: contract.id, body: r.message, templateKey: "lembrete_assinatura", status: "enviada", provider: "outro", createdBy: actor.id });
+    await emitEvent({ type: "notification.sent", actor, clientId: contract.clientId, entity: { type: "contract", id: contract.id }, title: `Lembrete de assinatura enviado pela Clicksign para ${signer.name}`, description: `Contrato ${contract.number} · ${signer.email}`, department: "financeiro", payload: { contractId: contract.id, email: signer.email, channel: "clicksign", manual: false, delivered: true } });
+    return { delivered: true, manual: false };
+  }
   const reminder = await getSignatureProvider().sendReminder(contract, signer.email);
   let sent: Awaited<ReturnType<typeof sendEmail>> | null = null;
   if (isConnected("email")) {
@@ -1786,6 +1821,8 @@ export async function cancelContract(input: { contractId: string; reason: string
 
   const patch: Partial<Contract> = { status: "cancelado", cancelledAt, cancelReason: reason, cancelledBy: actor.id };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
+  // Ainda em assinatura na Clicksign: cancela lá também.
+  if (!contract.signedAt) await cancelPreviousClicksignDocument(contract);
 
   // Cobranças em aberto/vencidas deixam de ser devidas (pagas ficam como estão). Emitidas no provedor conectado
   // são canceladas lá também (falha do provedor não impede o cancelamento local: fica na nota do evento).

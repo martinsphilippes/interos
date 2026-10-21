@@ -101,7 +101,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
         {sent ? (
           <div className="rounded-md bg-surface-muted px-3 py-2 text-xs text-muted">
             <p className="flex items-center gap-1.5">
-              <ShieldCheck className="size-3.5 text-success" /> {contract.signatureProvider === "manual" ? "Envio manual · documento" : `Provedor: ${contract.signatureProvider ?? "—"} · envelope`}{" "}
+              <ShieldCheck className="size-3.5 text-success" /> {contract.signatureProvider === "manual" ? "Envio manual · documento" : `Provedor: ${contract.signatureProvider === "clicksign" ? "Clicksign" : (contract.signatureProvider ?? "—")} · envelope`}{" "}
               <span className="font-mono">{contract.signatureEnvelopeId}</span> · v{contract.version}
             </p>
             {contract.documentHash ? (
@@ -134,7 +134,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                     {s.signedAt ? (
                       <p className="text-xs text-success-fg">
                         Assinou em {formatDateTime(s.signedAt)}
-                        {s.method === "manual" ? " · registro manual" : ""}
+                        {s.method === "manual" ? " · registro manual" : s.method === "provedor" ? " · confirmado pela Clicksign" : ""}
                       </p>
                     ) : null}
                     {s.evidence ? (
@@ -253,6 +253,13 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
               <Link href={contractDocumentPath(contract.id)}>
                 <FileText /> Ver contrato
               </Link>
+            </Button>
+          ) : null}
+          {can.documentsView && allSigned && contract.signatureProvider === "clicksign" ? (
+            <Button asChild variant="outline" className="h-11 flex-1 md:h-9">
+              <a href={`/api/financeiro/contratos/${contract.id}/assinado`} target="_blank" rel="noreferrer">
+                <ShieldCheck /> PDF assinado
+              </a>
             </Button>
           ) : null}
           {sent && !allSigned && manual ? (

@@ -16,6 +16,10 @@ import { isConnected } from "@/server/integrations/status";
 export interface EnvelopeResult {
   provider: string;
   envelopeId: string;
+  /** Documento dentro do envelope (provedor real). */
+  documentId?: string;
+  /** Id de cada signatário no provedor, por e-mail (minúsculo). */
+  signerIds?: Record<string, string>;
   /** "sha256:<hex>" do JSON canônico do contrato no momento do envio (evidência de integridade). */
   documentHash: string;
   sentAt: string;
@@ -108,13 +112,15 @@ export const manualSignatureProvider: SignatureProvider = {
 /** @deprecated Nome antigo da implementação local; hoje é o modo manual (nada é simulado). */
 export const mockSignatureProvider = manualSignatureProvider;
 
-/** Provedor em uso. Sem adaptador real implementado, sempre o manual. */
+/**
+ * Provedor manual (sem integração). O provedor em uso de fato é escolhido em `activeSignatureProvider()`
+ * (signature-clicksign.ts): Clicksign quando CLICKSIGN_API_TOKEN está configurado, senão este.
+ */
 export function getSignatureProvider(): SignatureProvider {
-  // Ponto de extensão: `if (isConnected("assinatura")) return clicksignProvider;`
   return manualSignatureProvider;
 }
 
-/** true quando um provedor real envia o envelope (hoje nunca: não há adaptador implementado). */
+/** true quando um provedor real (Clicksign) envia o envelope. */
 export function signatureProviderConnected(): boolean {
-  return isConnected("assinatura") && getSignatureProvider().name !== "manual";
+  return isConnected("assinatura");
 }

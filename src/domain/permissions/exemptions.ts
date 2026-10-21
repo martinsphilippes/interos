@@ -186,6 +186,12 @@ export const EXEMPTIONS = [
     reason: "Telefonia (Twilio): Gravação concluída. Guarda por assinatura.",
   },
   {
+    target: "src/app/api/webhooks/clicksign/route.ts#POST",
+    kind: "api",
+    // Content-Hmac (HMAC-SHA256 do corpo com CLICKSIGN_WEBHOOK_SECRET, tempo constante) → 401; sem segredo → 503.
+    reason: "Assinatura eletrônica (Clicksign): avisos de assinatura, recusa e finalização (SYSTEM_ACTOR). Guarda por assinatura.",
+  },
+  {
     target: "src/app/api/webhooks/meta/route.ts#GET",
     kind: "api",
     reason: "Instagram/Messenger (Meta): verificação do webhook (hub.verify_token = META_VERIFY_TOKEN, comparação em tempo constante). Sem dados.",

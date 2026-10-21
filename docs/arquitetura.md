@@ -563,7 +563,7 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Rate limit**: fica na infraestrutura (Vercel Firewall/WAF para `/portal/*`); o token de 256 bits torna adivinhação
   inviável e cada acesso válido é contado.
 
-## Assinatura eletrônica (Clicksign, `src/server/finance/{contract-templates,contract-document,docx,signature-inbox}.ts`, `/financeiro/assinaturas`)
+## Assinatura eletrônica (Clicksign, `src/server/finance/{contract-templates,contract-document,docx,signature-inbox,signature-clicksign,signature-webhook}.ts`, `/financeiro/assinaturas`)
 
 - **Tela em abas** (`?aba=`, `ASSINATURAS_TABS`): `fila` (aguardando / prontos, como antes), `entrada` (documentos
   criados direto na Clicksign, à espera do cliente certo), `modelos` e `configuracao`. Chaves novas:
@@ -586,10 +586,30 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Caixa de entrada** (`signature_inbox`, id `clicksign_<envelope>`): `recordExternalEnvelope` é idempotente e sugere o
   cliente pelo CNPJ/CPF, e-mail do cliente ou contato, ou domínio corporativo (ignora quem assina pela Intercert);
   vincular cria o documento na ficha do cliente (e no contrato, se escolhido); ignorar pede motivo e pode ser desfeito.
-- **Pendente (depende do sandbox e da rede liberada)**: adaptador `SignatureProvider` da Clicksign (API v3: envelope,
-  signatários, requisitos de autenticação, ativação, lembrete, PDF assinado) e o aviso `/api/webhooks/clicksign` (HMAC
-  com `CLICKSIGN_WEBHOOK_SECRET`) que alimenta a fila e a caixa de entrada. Até lá `integrations.assinatura` fica "não
-  conectado" e o fluxo segue manual com evidência.
+- **Envio pela Clicksign** (`src/server/integrations/clicksign.ts` + `signature-clicksign.ts`): com
+  `CLICKSIGN_API_TOKEN`, `activeSignatureProvider()` é a Clicksign (API v3; `CLICKSIGN_ENV` = `sandbox` padrão ou
+  `producao`). "Enviar para assinatura" confere os nomes (nome e sobrenome, sem números) e o celular quando a
+  autenticação é SMS/WhatsApp, cria o envelope (pt-BR, finalização automática, bloqueio após recusa, lembrete a cada 3
+  dias), sobe o Word preenchido ou o PDF com os metadados `interos_contract_id`/`interos_number`/`interos_version`, cria
+  cada signatário com o papel (`clicksignRole`) e a autenticação, ativa e dispara o e-mail. Falha no meio apaga o
+  rascunho. O contrato guarda `signatureDocumentId` e `providerSignerId` em cada signatário; lembrete sai por
+  `notifySigner`; gerar de novo, mudar o contrato ou cancelá-lo cancela o documento antigo na Clicksign (melhor esforço).
+  O cliente da API repete em 429/5xx e devolve o erro da Clicksign legível.
+- **Avisos** (`POST /api/webhooks/clicksign`, `signature-webhook.ts`): `Content-Hmac` conferido com
+  `CLICKSIGN_WEBHOOK_SECRET` (503 sem o segredo, 401 inválido). O contrato vem dos metadados (ou do id do documento);
+  versão antiga ou contrato encerrado é ignorado; id de contrato que não existe aqui também. `sign` marca o signatário
+  (método `provedor`), `refusal` marca recusado e avisa o dono e o gestor do Financeiro, `auto_close`/`close`/
+  `document_closed` contam todos como assinados, `cancel`/`deadline` viram nota + aviso. A marcação é em transação
+  (avisos simultâneos não se sobrescrevem) e o fechamento sai uma vez só (`announceContractSigned`, compartilhado com o
+  registro manual: documento "Contrato assinado (Clicksign)" + `contract.signed`). Documento sem contrato vai para a
+  caixa de entrada (id `clicksign_<chave do documento>`, andamento e quem assinou atualizados a cada aviso).
+- **PDF assinado** (`signed_files`): ao finalizar, o PDF assinado é baixado (link da API ou do aviso; https, até 20 MB)
+  e guardado no INTEROS, porque os links da Clicksign expiram. `GET /api/financeiro/contratos/[id]/assinado` (mesmo
+  acesso do documento; se ainda não guardado, busca na hora) e `GET /api/financeiro/assinaturas/entrada/[id]/arquivo`
+  (`financeiro.assinaturas.entrada.ver`).
+- **Tela**: a aba Configuração mostra a conexão (token, ambiente de testes x produção, segredo dos avisos), o endereço do
+  webhook e os eventos a marcar na Clicksign. Sem o token, tudo segue manual com evidência. O ambiente de testes da
+  Clicksign não tem validade jurídica. Não há autenticação gov.br na Clicksign (alternativas: ICP-Brasil, biometria).
 
 ## Central de Atendimento (módulo Comunicação, `src/server/conversations/*`, `/comunicacao`)
 

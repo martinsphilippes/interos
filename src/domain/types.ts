@@ -139,6 +139,8 @@ export const COLLECTIONS = {
   contractTemplateFiles: "contract_template_files",
   /** Caixa de entrada: documentos criados direto na Clicksign, à espera de destino (cliente/contrato). */
   signatureInbox: "signature_inbox",
+  /** PDF assinado devolvido pela Clicksign, guardado no INTEROS (os links da Clicksign expiram). */
+  signedFiles: "signed_files",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -652,6 +654,8 @@ export interface ContractSignerEntry {
   registeredAt?: string;
   /** "contratada": quem assina pela Intercert (configuração em Financeiro › Assinaturas). Ausente = contratante. */
   party?: "contratante" | "contratada";
+  /** Id do signatário no provedor de assinatura (Clicksign), para lembretes e para reconhecer o aviso de assinatura. */
+  providerSignerId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -744,6 +748,24 @@ export interface SignatureInboxItem extends BaseEntity {
   resolvedByName?: string;
   resolvedAt?: string;
   ignoreReason?: string;
+  /** PDF assinado guardado em signed_files (id), quando a Clicksign devolveu o arquivo. */
+  signedFileId?: string;
+}
+
+/** Arquivo assinado guardado no INTEROS: do contrato (uma versão) ou de um documento da caixa de entrada. */
+export interface SignedFile extends BaseEntity {
+  ownerType: "contract" | "inbox";
+  ownerId: string;
+  /** Versão do contrato assinada (ownerType "contract"). */
+  version?: number;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  /** "sha256:<hex>" do arquivo. */
+  sha256: string;
+  contentBase64: string;
+  provider: "clicksign";
+  receivedAt: string;
 }
 
 export interface Contract extends BaseEntity {
@@ -766,6 +788,8 @@ export interface Contract extends BaseEntity {
   signers: ContractSignerEntry[];
   signatureProvider?: string;
   signatureEnvelopeId?: string;
+  /** Id do documento no provedor de assinatura (Clicksign): o aviso de assinatura chega por ele. */
+  signatureDocumentId?: string;
   signedAt?: string;
   documentHash?: string;
   paymentCondition?: string;
