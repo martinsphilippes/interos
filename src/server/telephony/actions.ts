@@ -119,7 +119,7 @@ const openRecordingSchema = z.object({ id: z.string().trim().min(1), action: z.e
  * Abrir gravação: confere escopo e política (papel na lista «quem pode ouvir», ou quem atendeu), exige o motivo quando
  * a política manda e grava o acesso. Devolve o endereço do áudio (vale 15 minutos para esse acesso).
  */
-export async function openRecordingAction(input: unknown): Promise<ActionResult<{ url: string }>> {
+export async function openRecordingAction(input: unknown): Promise<ActionResult<{ url: string; urls: string[] }>> {
   try {
     const user = await requirePermission("comunicacao.ligacoes.gravacoes.ouvir");
     const data = openRecordingSchema.parse(input);
@@ -129,7 +129,16 @@ export async function openRecordingAction(input: unknown): Promise<ActionResult<
     if (!policy.listenRoles.includes(user.role) && c.userId !== user.id) throw new BusinessError("A política de gravação não libera esta gravação para o seu papel");
     if (policy.requireReason && (data.reason ?? "").length < 5) throw new BusinessError("Escreva o motivo (a política de gravação exige)");
     const log = await create<RecordingAccessLog>(COLLECTIONS.recordingAccessLogs, { userId: user.id, communicationId: c.id, action: data.action, reason: data.reason || undefined, at: nowIso() });
-    return { ok: true, data: { url: `/api/voice/recordings/${log.id}${data.action === "baixar" ? "?download=1" : ""}` } };
+    // Ligação que passou pela supervisão: a gravação tem mais de uma parte (antes e depois do gerente entrar).
+    const parts = 1 + (c.recordingParts?.length ?? 0);
+    const urls = Array.from({ length: parts }, (_, i) => {
+      const q = new URLSearchParams();
+      if (i > 0) q.set("parte", String(i + 1));
+      if (data.action === "baixar") q.set("download", "1");
+      const qs = q.toString();
+      return `/api/voice/recordings/${log.id}${qs ? `?${qs}` : ""}`;
+    });
+    return { ok: true, data: { url: urls[0], urls } };
   } catch (error) {
     return fail(error, "Não foi possível abrir a gravação");
   }
@@ -148,6 +157,7 @@ const pabxSchema = z.object({
   voicemail: z.boolean(),
   closedMessage: z.string().trim().min(5, "Escreva a mensagem fora do horário").max(400),
   noAgentMessage: z.string().trim().min(5, "Escreva a mensagem sem atendente").max(400),
+  rates: z.object({ fixo: z.coerce.number().min(0, "Tarifa inválida").max(50), movel: z.coerce.number().min(0, "Tarifa inválida").max(50), entrada: z.coerce.number().min(0, "Tarifa inválida").max(50) }),
 });
 
 export async function savePabxAction(input: unknown): Promise<ActionResult<{ saved: true }>> {

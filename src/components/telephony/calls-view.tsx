@@ -44,14 +44,16 @@ function CallIcon({ row }: { row: CallRow }) {
 export function RecordingButton({ id, requireReason, compact }: { id: string; requireReason: boolean; compact?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const [reason, setReason] = React.useState("");
-  const [src, setSrc] = React.useState<string | null>(null);
+  const [src, setSrc] = React.useState<string[] | null>(null);
+  const [downloads, setDownloads] = React.useState<string[] | null>(null);
   const [pending, startTransition] = React.useTransition();
   const go = (action: "ouvir" | "baixar") =>
     startTransition(async () => {
       const r = await openRecordingAction({ id, action, reason: reason.trim() || undefined });
       if (!r.ok) return void toast.error(r.error);
-      if (action === "baixar") window.location.assign(r.data.url);
-      else setSrc(r.data.url);
+      if (action === "ouvir") setSrc(r.data.urls);
+      else if (r.data.urls.length > 1) setDownloads(r.data.urls);
+      else window.location.assign(r.data.url);
     });
   return (
     <>
@@ -64,6 +66,7 @@ export function RecordingButton({ id, requireReason, compact }: { id: string; re
           setOpen(v);
           if (!v) {
             setSrc(null);
+            setDownloads(null);
             setReason("");
           }
         }}
@@ -75,13 +78,27 @@ export function RecordingButton({ id, requireReason, compact }: { id: string; re
           </DialogHeader>
           <DialogBody className="flex flex-col gap-3">
             {src ? (
-              <audio controls autoPlay src={src} className="w-full" />
+              src.map((u, i) => (
+                <div key={u} className="flex flex-col gap-1">
+                  {src.length > 1 ? <p className="text-xs text-muted">{i === 0 ? "Parte 1 (antes da supervisão)" : `Parte ${i + 1} (com a supervisão)`}</p> : null}
+                  <audio controls autoPlay={i === 0} src={u} className="w-full" />
+                </div>
+              ))
+            ) : downloads ? (
+              <div className="flex flex-col gap-2 text-sm">
+                <p className="text-muted">Esta ligação tem a gravação em {downloads.length} partes:</p>
+                {downloads.map((u, i) => (
+                  <a key={u} href={u} className="font-medium text-brand-fg hover:underline">
+                    <Download className="mr-1 inline size-4" /> Baixar a parte {i + 1}
+                  </a>
+                ))}
+              </div>
             ) : (
               <Textarea aria-label="Motivo" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={requireReason ? "Motivo (obrigatório): ex.: conferir o combinado com o cliente" : "Motivo (opcional)"} />
             )}
           </DialogBody>
           <DialogFooter>
-            {!src ? (
+            {!src && !downloads ? (
               <>
                 <Button variant="ghost" onClick={() => go("baixar")} loading={pending} disabled={requireReason && reason.trim().length < 5}>
                   <Download /> Baixar

@@ -40,4 +40,17 @@ describe("Comunicação — acesso ao módulo e à Central", () => {
       expect(kind, `${u.id} (${u.role})`).toBe(MANAGERS.includes(u.role) ? "empresa" : "meus");
     }
   });
+
+  it("fase 4: supervisão de ligações e envio agendado só para gestão; acessos às gravações só admin e diretoria", () => {
+    for (const { u, current } of USERS) {
+      const manager = MANAGERS.includes(u.role);
+      expect(can(current, "comunicacao.supervisao.ligacoes"), `${u.id}`).toBe(manager);
+      expect(can(current, "gestao.relatorios.agendar"), `${u.id}`).toBe(manager);
+      expect(can(current, "comunicacao.pabx.gravacoes.ver"), `${u.id}`).toBe(u.role === "admin" || u.role === "diretoria");
+      // Relatórios da Central: gestão e a equipe de suporte (mesma regra do relatório de Chamados).
+      const report = manager || u.departmentId === "suporte";
+      expect(can(current, "gestao.relatorios.atendimentos.ver"), `${u.id}`).toBe(report);
+      expect(can(current, "gestao.relatorios.ligacoes.exportar"), `${u.id}`).toBe(report);
+    }
+  });
 });

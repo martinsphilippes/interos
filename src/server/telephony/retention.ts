@@ -12,7 +12,9 @@ export async function purgeExpiredRecordings(now: Date = new Date()): Promise<nu
   const old = (await list<Communication>(COLLECTIONS.communications, { where: [["channel", "==", "voip"]] })).filter((c) => c.recordingSid && !c.recordingDeletedAt && c.createdAt < cutoff).slice(0, 100);
   let deleted = 0;
   for (const c of old) {
-    if (await deleteRecording(c.recordingSid!)) {
+    const sids = [c.recordingSid!, ...(c.recordingParts ?? [])];
+    const results = await Promise.all(sids.map((sid) => deleteRecording(sid)));
+    if (results.every(Boolean)) {
       await update<Communication>(COLLECTIONS.communications, c.id, { recordingDeletedAt: nowIso() });
       deleted += 1;
     }

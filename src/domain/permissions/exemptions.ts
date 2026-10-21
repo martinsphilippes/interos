@@ -186,6 +186,13 @@ export const EXEMPTIONS = [
     reason: "Telefonia (Twilio): Gravação concluída. Guarda por assinatura.",
   },
   {
+    target: "src/app/api/voice/monitor-end/route.ts#POST",
+    kind: "api",
+    // Assinatura X-Twilio-Signature (HMAC-SHA1 com TWILIO_AUTH_TOKEN) → 401; sem a env ACEITA fora de produção e
+    // responde 503 em produção.
+    reason: "Telefonia (Twilio): Gerente saiu da supervisão da ligação. Guarda por assinatura.",
+  },
+  {
     target: "src/app/api/webhooks/whatsapp/route.ts#GET",
     kind: "api",
     // Hoje: hub.verify_token timingSafe → 403 (route.ts:39-46)

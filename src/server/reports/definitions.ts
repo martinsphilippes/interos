@@ -7,8 +7,9 @@
  */
 import type { DepartmentKey } from "@/domain/constants";
 import { CLIENT_STATUS_LABELS, TASK_STATUS_LABELS } from "@/domain/constants";
+import { CALL_STATUS_LABELS } from "@/domain/telephony";
 
-export const REPORT_KEYS = ["marketing", "vendas", "financeiro", "implantacao", "cs", "suporte", "diretoria", "tarefas", "oportunidades", "contratos", "chamados", "clientes", "comissoes", "contas_a_pagar", "auditoria"] as const;
+export const REPORT_KEYS = ["marketing", "vendas", "financeiro", "implantacao", "cs", "suporte", "diretoria", "tarefas", "oportunidades", "contratos", "chamados", "clientes", "comissoes", "contas_a_pagar", "auditoria", "atendimentos", "ligacoes"] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 export type ColumnType = "texto" | "numero" | "moeda" | "percentual" | "dias" | "horas" | "minutos" | "nota" | "data" | "status";
@@ -415,6 +416,48 @@ export const REPORT_DEFINITIONS: Record<ReportKey, ReportDefinition> = {
       { key: "status", label: "Situação", type: "texto", width: 10 },
       { key: "origem", label: "Origem", type: "texto", width: 16 },
       { key: "pago_em", label: "Pago em", type: "data" },
+    ],
+  },
+  atendimentos: {
+    key: "atendimentos",
+    title: "Atendimentos por fila",
+    description: "Central de Atendimento: conversas e ligações recebidas por fila no período, com 1ª resposta, tempo de atendimento e ligações perdidas.",
+    group: "operacional",
+    department: "suporte",
+    filters: ["periodo_data", "colaborador"],
+    columns: [
+      { key: "fila", label: "Fila", type: "texto", width: 20 },
+      { key: "conversas", label: "Conversas recebidas", type: "numero", total: "soma", width: 12 },
+      { key: "atendidas", label: "Respondidas", type: "numero", total: "soma" },
+      { key: "encerradas", label: "Encerradas", type: "numero", total: "soma" },
+      { key: "sem_resposta", label: "Encerradas sem resposta do cliente", type: "numero", total: "soma", width: 16 },
+      { key: "primeira_resposta", label: "1ª resposta média (min)", type: "minutos", total: "media", width: 14 },
+      { key: "atendimento_medio", label: "Atendimento médio (min)", type: "minutos", total: "media", width: 14 },
+      { key: "ligacoes", label: "Ligações recebidas", type: "numero", total: "soma", width: 12 },
+      { key: "ligacoes_perdidas", label: "Ligações perdidas", type: "numero", total: "soma", width: 12 },
+      { key: "perdidas_pct", label: "% perdidas", type: "percentual", total: "media" },
+      { key: "duracao_media", label: "Duração média (min)", type: "minutos", total: "media", width: 12 },
+    ],
+  },
+  ligacoes: {
+    key: "ligacoes",
+    title: "Ligações e custo de telefonia",
+    description: "Ligações feitas e recebidas no período, com resultado, duração e custo estimado pelas tarifas do PABX.",
+    group: "operacional",
+    department: "suporte",
+    filters: ["periodo_data", "colaborador", "cliente", "status"],
+    statusOptions: Object.entries(CALL_STATUS_LABELS).map(([value, label]) => ({ value, label })),
+    columns: [
+      { key: "quando", label: "Quando", type: "data" },
+      { key: "direcao", label: "Direção", type: "texto", width: 10 },
+      { key: "numero", label: "Número", type: "texto", width: 16 },
+      { key: "cliente", label: "Cliente", type: "texto", width: 22 },
+      { key: "atendente", label: "Atendente", type: "texto", width: 18 },
+      { key: "fila", label: "Fila", type: "texto", width: 16 },
+      { key: "resultado", label: "Resultado", type: "texto", width: 12 },
+      { key: "origem", label: "Origem", type: "texto", width: 14 },
+      { key: "duracao", label: "Duração (min)", type: "minutos", total: "soma" },
+      { key: "custo", label: "Custo estimado", type: "moeda", total: "soma" },
     ],
   },
 };

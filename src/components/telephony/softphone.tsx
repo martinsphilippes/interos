@@ -2,8 +2,13 @@
 
 import * as React from "react";
 import type { Call, Device } from "@twilio/voice-sdk";
-import { ArrowRightLeft, Grid3x3, Mic, MicOff, Phone, PhoneIncoming, PhoneOff, Settings2, X } from "lucide-react";
+import { ArrowRightLeft, Ear, Eye, Grid3x3, Mic, MicOff, Phone, PhoneIncoming, PhoneOff, Settings2, Users, X } from "lucide-react";
 import { claimCallAction, transferCallAction, transferTargetsAction } from "@/server/telephony/actions";
+import { callMonitorNoticeAction, setCallMonitorModeAction, stopCallMonitorAction } from "@/server/telephony/monitor-actions";
+import type { MonitorNotice } from "@/server/telephony/monitor";
+import type { CallMonitorMode } from "@/domain/types";
+import { CALL_MONITOR_LABELS } from "@/domain/telephony";
+import { MONITOR_CALL_EVENT, type MonitorCallDetail } from "./model";
 import { displayPhone } from "@/domain/phone";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -22,7 +27,12 @@ interface ActiveCall {
   parentCallSid?: string;
   startedAt?: number;
   muted: boolean;
+  /** Ligação do gerente na supervisão de outra ligação. */
+  monitor?: { id: string; label: string; mode: CallMonitorMode };
 }
+
+const NOTICE_POLL_MS = 5_000;
+const MODE_ICON: Record<CallMonitorMode, React.ComponentType<{ className?: string }>> = { ouvir: Ear, sussurrar: Eye, intervir: Users };
 
 async function fetchToken(): Promise<string> {
   const res = await fetch("/api/voice/token", { cache: "no-store" });
@@ -50,7 +60,8 @@ function clock(ms: number): string {
  * Softphone da Central (Twilio Voice no navegador). Aparece só com a telefonia configurada e a permissão de ligar.
  * Recebe as ligações das filas (quem tem ramal e está online), liga pelo discador ou por qualquer link «tel:» do
  * INTEROS, e na ligação: mudo, teclado, transferir e desligar. Primeiro uso: liberar microfone e notificações e
- * testar microfone e fone.
+ * testar microfone e fone. Supervisão: o gerente entra pela Central de Comando (ouvir, sussurrar, entrar) e o
+ * atendente vê, na própria ligação, quem está acompanhando.
  */
 export function Softphone() {
   const deviceRef = React.useRef<Device | null>(null);
@@ -64,6 +75,8 @@ export function Softphone() {
   const [testOpen, setTestOpen] = React.useState(false);
   const [transferOpen, setTransferOpen] = React.useState(false);
   const [needsPermission, setNeedsPermission] = React.useState(false);
+  const [notice, setNotice] = React.useState<MonitorNotice | null>(null);
+  const [modePending, startModeTransition] = React.useTransition();
   const now = useTicker(Boolean(active?.startedAt));
 
   const attach = React.useCallback((call: Call, base: Omit<ActiveCall, "call" | "muted">) => {
@@ -149,6 +162,58 @@ export function Softphone() {
     [active, attach, status],
   );
 
+  // Central de Comando → entrar na supervisão de uma ligação (o servidor já preparou a conferência).
+  React.useEffect(() => {
+    const onMonitor = (e: Event) => {
+      const detail = (e as CustomEvent<MonitorCallDetail>).detail;
+      const device = deviceRef.current;
+      if (!detail?.id) return;
+      if (!device || status !== "pronto") return void toast.error("Telefone ainda não está pronto");
+      if (active) return void toast.error("Encerre a ligação atual para acompanhar outra");
+      void device
+        .connect({ params: { monitor: detail.id } })
+        .then((c) => {
+          attach(c, { direction: "saida", number: "", monitor: { id: detail.id, label: detail.label, mode: "ouvir" } });
+          setOpen(true);
+        })
+        .catch((err: unknown) => toast.error(err instanceof Error ? err.message : "Não foi possível entrar na ligação"));
+    };
+    window.addEventListener(MONITOR_CALL_EVENT, onMonitor);
+    return () => window.removeEventListener(MONITOR_CALL_EVENT, onMonitor);
+  }, [active, attach, status]);
+
+  // Atendente: mostra quando um gerente está na ligação (e em que modo).
+  const watchSid = active && !active.monitor && active.startedAt ? active.parentCallSid : undefined;
+  React.useEffect(() => {
+    if (!watchSid) return;
+    let alive = true;
+    const check = () => void callMonitorNoticeAction({ callSid: watchSid }).then((r) => alive && setNotice(r.ok ? r.data : null));
+    check();
+    const t = setInterval(check, NOTICE_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(t);
+      setNotice(null);
+    };
+  }, [watchSid]);
+
+  const setMode = (mode: CallMonitorMode) => {
+    const m = active?.monitor;
+    if (!m || m.mode === mode) return;
+    startModeTransition(async () => {
+      const r = await setCallMonitorModeAction({ id: m.id, mode });
+      if (!r.ok) return void toast.error(r.error);
+      setActive((a) => (a?.monitor ? { ...a, monitor: { ...a.monitor, mode } } : a));
+    });
+  };
+
+  const hangUp = () => {
+    if (!active) return;
+    const m = active.monitor;
+    active.call.disconnect();
+    if (m) void stopCallMonitorAction({ id: m.id });
+  };
+
   // Qualquer link «tel:» do INTEROS liga pelo softphone quando ele está pronto.
   React.useEffect(() => {
     if (status !== "pronto") return;
@@ -228,8 +293,36 @@ export function Softphone() {
                   </Button>
                 </div>
               </div>
+            ) : active?.monitor ? (
+              <div className="flex flex-col gap-2">
+                <div className="rounded-xl bg-surface-muted p-3">
+                  <p className="text-xs text-muted">Supervisão da ligação</p>
+                  <p className="text-sm font-semibold">{active.monitor.label}</p>
+                  <p className="text-sm tabular-nums text-muted">{active.startedAt ? `${CALL_MONITOR_LABELS[active.monitor.mode]} · ${clock(now - active.startedAt)}` : "entrando…"}</p>
+                </div>
+                <div role="radiogroup" aria-label="Modo da supervisão" className="grid grid-cols-3 gap-1.5">
+                  {(["ouvir", "sussurrar", "intervir"] as const).map((mode) => {
+                    const Icon = MODE_ICON[mode];
+                    return (
+                      <Button key={mode} role="radio" aria-checked={active.monitor!.mode === mode} variant={active.monitor!.mode === mode ? "secondary" : "outline"} size="sm" className="h-auto flex-col gap-0.5 py-2 text-xs" disabled={modePending || !active.startedAt} onClick={() => setMode(mode)}>
+                        <Icon className="size-4" />
+                        {mode === "ouvir" ? "Só ouvir" : mode === "sussurrar" ? "Sussurrar" : "Entrar"}
+                      </Button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted">Sussurrar: só o atendente ouve você. Entrar: o cliente também ouve. O atendente vê que você está na ligação.</p>
+                <Button variant="destructive" onClick={hangUp}>
+                  <PhoneOff /> Sair da ligação
+                </Button>
+              </div>
             ) : active ? (
               <div className="flex flex-col gap-2">
+                {notice ? (
+                  <p role="status" className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning-soft px-2.5 py-2 text-xs text-warning-fg">
+                    <Eye className="mt-0.5 size-3.5 shrink-0" aria-hidden /> {notice.text}
+                  </p>
+                ) : null}
                 <div className="rounded-xl bg-surface-muted p-3">
                   <p className="text-xs text-muted">{active.direction === "entrada" ? "Recebida" : "Ligando para"}</p>
                   <p className="text-lg font-semibold tabular-nums">{displayPhone(active.number) || active.number}</p>
@@ -254,7 +347,7 @@ export function Softphone() {
                   <Button variant="outline" size="icon" className="h-11 w-full" aria-label="Transferir" disabled={active.direction !== "entrada" || !active.parentCallSid} title={active.direction !== "entrada" ? "Transferência só para ligações recebidas" : undefined} onClick={() => setTransferOpen(true)}>
                     <ArrowRightLeft />
                   </Button>
-                  <Button variant="destructive" size="icon" className="h-11 w-full" aria-label="Desligar" onClick={() => active.call.disconnect()}>
+                  <Button variant="destructive" size="icon" className="h-11 w-full" aria-label="Desligar" onClick={hangUp}>
                     <PhoneOff />
                   </Button>
                 </div>
@@ -283,7 +376,7 @@ export function Softphone() {
           aria-expanded={open}
           aria-label={incoming ? "Ligação recebida: abrir o telefone" : "Telefone"}
         >
-          <Phone /> {incoming ? "Atender" : active?.startedAt ? clock(now - active.startedAt) : "Telefone"}
+          {active?.monitor ? <Ear /> : <Phone />} {incoming ? "Atender" : active?.startedAt ? clock(now - active.startedAt) : "Telefone"}
         </Button>
       </div>
       <AudioTestDialog open={testOpen} onOpenChange={setTestOpen} onInputDevice={(id) => void deviceRef.current?.audio?.setInputDevice(id).catch(() => undefined)} />

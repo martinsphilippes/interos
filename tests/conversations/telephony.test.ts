@@ -1,9 +1,10 @@
 /**
- * Telefonia (fase 3): número E.164, resultado da ligação, TwiML, token do softphone e assinatura da Twilio.
+ * Telefonia (fases 3 e 4): número E.164, resultado da ligação, TwiML, token do softphone, assinatura da Twilio, custo
+ * estimado e conferência da supervisão.
  */
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { callStatusFromProvider, callStatusOf, incomingTwiml, isExtension, needsCallback, outgoingTwiml, toE164, transferTwiml, voicemailTwiml, xmlEscape } from "@/domain/telephony";
+import { callCost, callStatusFromProvider, callStatusOf, conferenceName, conferenceTwiml, incomingTwiml, isBrMobile, isExtension, monitorParticipantState, monitoredDuration, needsCallback, outgoingTwiml, toE164, transferTwiml, voicemailTwiml, xmlEscape } from "@/domain/telephony";
 import { twilioSignatureValid, voiceAccessToken } from "@/server/integrations/twilio";
 
 describe("números", () => {
@@ -82,5 +83,49 @@ describe("Twilio", () => {
     expect(s).toBe(createHmac("sha256", "segredo").update(`${h}.${p}`).digest("base64url"));
     for (const k of ["TWILIO_ACCOUNT_SID", "TWILIO_API_KEY_SID", "TWILIO_API_KEY_SECRET", "TWILIO_TWIML_APP_SID"]) delete process.env[k];
     expect(voiceAccessToken("x")).toBeNull();
+  });
+});
+
+describe("custo estimado (fase 4)", () => {
+  const rates = { fixo: 0.1, movel: 0.4, entrada: 0.05 };
+  it("minutos iniciados × tarifa (celular, fixo ou recebida)", () => {
+    expect(isBrMobile("+5588998112040")).toBe(true);
+    expect(isBrMobile("+558835700001")).toBe(false);
+    expect(callCost({ provider: "twilio", direction: "saida", durationSeconds: 61, toNumber: "+5588998112040" }, rates)).toBe(0.8);
+    expect(callCost({ provider: "twilio", direction: "saida", durationSeconds: 60, toNumber: "+558835700001" }, rates)).toBe(0.1);
+    expect(callCost({ provider: "twilio", direction: "entrada", durationSeconds: 125 }, rates)).toBe(0.15);
+    expect(callCost({ provider: "twilio", direction: "saida", durationSeconds: 0, toNumber: "+558835700001" }, rates)).toBe(0);
+  });
+  it("sem custo conhecido: registro manual ou tarifas não configuradas", () => {
+    expect(callCost({ provider: "manual", direction: "saida", durationSeconds: 300 }, rates)).toBeNull();
+    expect(callCost({ provider: "twilio", direction: "saida", durationSeconds: 300 }, { fixo: 0, movel: 0, entrada: 0 })).toBeNull();
+  });
+});
+
+describe("supervisão de ligações (fase 4)", () => {
+  it("conferência sem bipe nem música; o gerente entra mudo e não derruba a ligação ao sair", () => {
+    const name = conferenceName("call_abc");
+    expect(name).toBe("sup_call_abc");
+    const agent = conferenceTwiml({ name, endOnExit: true, recordingCallback: "https://x/api/voice/recording?call=CA1&parte=1" });
+    expect(agent).toContain('beep="false"');
+    expect(agent).toContain('waitUrl=""');
+    expect(agent).toContain('endConferenceOnExit="true"');
+    expect(agent).toContain('record="record-from-start"');
+    expect(agent).toContain("call=CA1&amp;parte=1");
+    const sup = conferenceTwiml({ name, endOnExit: false, muted: true, action: "https://x/api/voice/monitor-end?call=call_abc" });
+    expect(sup).toContain('endConferenceOnExit="false"');
+    expect(sup).toContain('muted="true"');
+    expect(sup).not.toContain("record=");
+    expect(sup).toContain('<Dial action="https://x/api/voice/monitor-end?call=call_abc">');
+  });
+  it("modos: ouvir (mudo), sussurrar (só o atendente ouve), entrar (todos ouvem)", () => {
+    expect(monitorParticipantState("ouvir", "CAag")).toEqual({ muted: true, coaching: false });
+    expect(monitorParticipantState("sussurrar", "CAag")).toEqual({ muted: false, coaching: true, callSidToCoach: "CAag" });
+    expect(monitorParticipantState("intervir", "CAag")).toEqual({ muted: false, coaching: false });
+  });
+  it("duração total = antes de mover + tempo na conferência", () => {
+    const movedAt = new Date(Date.UTC(2026, 9, 21, 12, 0, 0)).toISOString();
+    expect(monitoredDuration({ movedAt, partialSeconds: 90 }, Date.UTC(2026, 9, 21, 12, 2, 0))).toBe(210);
+    expect(monitoredDuration({ partialSeconds: 30 })).toBe(30);
   });
 });

@@ -110,3 +110,52 @@ export async function deleteRecording(recordingSid: string): Promise<boolean> {
   const res = await fetch(`${API}/Accounts/${sid}/Recordings/${encodeURIComponent(recordingSid)}.json`, { method: "DELETE", headers: { authorization: auth } });
   return res.ok || res.status === 404;
 }
+
+// ---------------------------------------------------------------------------
+// Supervisão de ligações (fase 4): conferência sob demanda
+// ---------------------------------------------------------------------------
+
+async function api<T>(path: string, init?: { method?: string; form?: Record<string, string> }): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const auth = basicAuth();
+  const sid = env("TWILIO_ACCOUNT_SID");
+  if (!auth || !sid) return { ok: false, error: "Telefonia não configurada" };
+  try {
+    const res = await fetch(`${API}/Accounts/${sid}${path}`, {
+      method: init?.method ?? (init?.form ? "POST" : "GET"),
+      headers: { authorization: auth, ...(init?.form ? { "content-type": "application/x-www-form-urlencoded" } : {}) },
+      body: init?.form ? new URLSearchParams(init.form).toString() : undefined,
+    });
+    const body = (await res.json().catch(() => null)) as (T & { message?: string }) | null;
+    if (!res.ok) return { ok: false, error: body?.message ?? `HTTP ${res.status}` };
+    return { ok: true, data: body as T };
+  } catch (error) {
+    console.error("[twilio] falha na chamada à API", path, error);
+    return { ok: false, error: "Falha de rede ao chamar a Twilio" };
+  }
+}
+
+/** Pernas em andamento de uma ligação (o atendente, numa recebida; o cliente, numa feita pelo softphone). */
+export async function activeChildCalls(parentCallSid: string): Promise<string[]> {
+  const r = await api<{ calls?: { sid: string }[] }>(`/Calls.json?ParentCallSid=${encodeURIComponent(parentCallSid)}&Status=in-progress`);
+  return r.ok ? (r.data.calls ?? []).map((c) => c.sid) : [];
+}
+
+/** Id da conferência em andamento com esse nome. */
+export async function findConference(name: string): Promise<string | null> {
+  const r = await api<{ conferences?: { sid: string }[] }>(`/Conferences.json?FriendlyName=${encodeURIComponent(name)}&Status=in-progress`);
+  return r.ok ? (r.data.conferences?.[0]?.sid ?? null) : null;
+}
+
+/** Muda o gerente na conferência: mudo (ouvir), sussurro só ao atendente (coaching) ou fala com todos (intervir). */
+export async function updateParticipant(conferenceSid: string, callSid: string, state: { muted: boolean; coaching: boolean; callSidToCoach?: string }): Promise<{ ok: boolean; error?: string }> {
+  const form: Record<string, string> = { Muted: String(state.muted), Coaching: String(state.coaching) };
+  if (state.coaching && state.callSidToCoach) form.CallSidToCoach = state.callSidToCoach;
+  const r = await api(`/Conferences/${encodeURIComponent(conferenceSid)}/Participants/${encodeURIComponent(callSid)}.json`, { form });
+  return r.ok ? { ok: true } : { ok: false, error: r.error };
+}
+
+/** Encerra uma perna (o gerente sai da ligação; cliente e atendente continuam). */
+export async function endCall(callSid: string): Promise<boolean> {
+  const r = await api(`/Calls/${encodeURIComponent(callSid)}.json`, { form: { Status: "completed" } });
+  return r.ok;
+}

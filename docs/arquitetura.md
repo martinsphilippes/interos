@@ -653,7 +653,23 @@ pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`sr
   `/api/voice/token`; links `tel:` do INTEROS ligam por ele), transferência direta para ramal ou número. Gravações
   servidas por `/api/voice/recordings/<acesso>` depois de `openRecordingAction` (escopo, política, motivo e registro em
   `recording_access_logs`); o agendador apaga as vencidas. Telas: Ligações, Correio de voz e PABX (ramais, números,
-  horários, provedor, qualidade, histórico de mudanças).
+  horários, provedor e tarifas, qualidade, histórico de mudanças e acessos às gravações).
+- **Supervisão de ligações** (fase 4, `src/server/telephony/monitor.ts`): a ligação começa como ponte simples; quando o
+  gerente pede para ouvir (Central de Comando › Ligações em andamento), a perna filha é redirecionada para a conferência
+  `sup_<id>` e a principal entra nela pelo `dial-result` (estado em `Communication.monitor`: movendo → ativa →
+  encerrada). O softphone do gerente liga com o parâmetro `monitor` (rota outgoing confere a permissão
+  `comunicacao.supervisao.ligacoes`) e entra mudo; os modos mudam o participante pela API (ouvir = mudo, sussurrar =
+  coaching só para o atendente, entrar = fala com todos). O atendente vê no softphone quem está e em que modo
+  (`callMonitorNoticeAction`). A conferência é gravada como segunda parte (`recordingParts`); a duração final soma o
+  antes e o depois. Cada modo vira uma linha no registro de supervisão; `/api/voice/monitor-end` fecha quando o gerente
+  sai.
+- **Relatórios da Central** (fase 4, `src/server/reports/central.ts`, na Central de Relatórios): «Atendimentos por
+  fila» (conversas e ligações recebidas, 1ª resposta, atendimento médio, perdidas) e «Ligações e custo de telefonia»
+  (custo estimado = minutos iniciados × tarifa do PABX; manuais sem custo).
+- **Envio agendado de relatórios** (`src/server/reports/schedules.ts`, coleção `report_schedules`, passo do
+  agendador): diário, semanal ou mensal, período relativo (ontem, semana anterior, mês anterior…), CSV/XLSX/PDF, só
+  para pessoas do INTEROS. Cada destinatário recebe o relatório montado com o próprio acesso (quem não vê o tipo é
+  pulado); se quem agendou perde a exportação, o envio pausa. Sem e-mail configurado, vai como notificação com o link.
 
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.

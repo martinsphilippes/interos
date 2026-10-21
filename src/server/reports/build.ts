@@ -27,6 +27,7 @@ import { can } from "@/server/auth/permissions";
 import { resolveDataScope, scopeAllows, type DataScope } from "@/server/auth/scope";
 import type { PermissionKey } from "@/domain/permissions";
 import { resolveCommissionScope } from "@/server/commissions/queries";
+import { buildAttendanceByQueue, buildCalls, type CentralReportInput } from "./central";
 
 export type { ReportValue } from "./definitions";
 
@@ -571,6 +572,10 @@ function buildContracts({ period, filters, bundle, inScope }: OperationalInput):
     }));
 }
 
+function centralInput(op: OperationalInput): CentralReportInput {
+  return { period: op.period, filters: op.filters, userById: op.bundle.userById, clientName: (id) => clientName(op.bundle, id), inScope: (owners) => op.inScope(owners) };
+}
+
 const TICKET_STATUS_LABELS: Record<string, string> = Object.fromEntries((REPORT_DEFINITIONS.chamados.statusOptions ?? []).filter((o) => o.value !== "abertos").map((o) => [o.value, o.label]));
 const TICKET_PRIORITY_LABELS: Record<string, string> = { critico: "Crítico", alto: "Alto", medio: "Médio", baixo: "Baixo" };
 const OPEN_TICKET = new Set(["aberto", "em_atendimento", "aguardando_cliente", "reaberto"]);
@@ -994,6 +999,16 @@ export async function buildReport(key: ReportKey, rawFilters: ReportFilters, use
       rows = await buildPayables(range!.months, filters, inScope);
       notes.push("Situação \"Vencido\" = título em aberto (previsto, aprovado ou a pagar) com vencimento anterior a hoje.");
       break;
+    case "atendimentos":
+      rows = await buildAttendanceByQueue(centralInput(op));
+      notes.push("Conversas abertas no período, pela fila. Respondidas = com 1ª resposta; atendimento médio = da abertura ao encerramento. Ligações: só as recebidas.");
+      break;
+    case "ligacoes": {
+      const r = await buildCalls(centralInput(op));
+      rows = r.rows;
+      notes.push(r.ratesConfigured ? "Custo estimado = minutos iniciados × tarifa do PABX (fixo, celular ou recebida); a fatura do provedor é a referência final. Ligações registradas à mão não têm custo." : "Tarifas não configuradas (PABX › Provedor): o custo estimado fica em branco.");
+      break;
+    }
   }
   if (def.group === "departamental" && range && range.months.some((m) => m.key !== currentMonthKey())) {
     notes.push("Indicadores de estado (saúde, backlog, clientes ativos, MRR) de meses fechados usam o snapshot gravado quando o cálculo não é reconstruível.");

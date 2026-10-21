@@ -14,9 +14,12 @@ import { REPORT_DEFINITIONS, type ReportKey } from "@/server/reports/definitions
  */
 export const MODULES_AFTER_T0: readonly string[] = ["comunicacao"];
 
-/** A chave (ou tela) pertence a um módulo criado depois do T0? */
+/** Chaves avulsas criadas depois do T0 em módulos antigos (provadas em comunicacao.test.ts). */
+export const KEYS_AFTER_T0: readonly string[] = ["gestao.relatorios.agendar"];
+
+/** A chave (ou tela) pertence a um módulo criado depois do T0 (ou é uma chave nova)? */
 export function isAfterT0Key(key: string): boolean {
-  return MODULES_AFTER_T0.includes(key.split(".")[0]);
+  return MODULES_AFTER_T0.includes(key.split(".")[0]) || KEYS_AFTER_T0.includes(key);
 }
 
 /** O href é de uma tela de módulo criado depois do T0? (prefixo da rota = módulo) */

@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { saveExtensionsAction, savePabxAction } from "@/server/telephony/actions";
-import type { PabxQuality } from "@/server/telephony/queries";
+import type { PabxQuality, RecordingAccessRow } from "@/server/telephony/queries";
 import type { PabxConfig } from "@/domain/telephony";
 import { formatCallDuration, formatDateTime } from "@/lib/format";
 import { displayPhone } from "@/domain/phone";
@@ -17,6 +17,7 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { FilterBar, FilterField } from "@/components/ui/filter-bar";
 import { toast } from "@/components/ui/toast";
 
 function SaveBar({ dirty, pending, onSave, onReset }: { dirty: boolean; pending: boolean; onSave: () => void; onReset: () => void }) {
@@ -91,8 +92,8 @@ export function ExtensionsAdmin({ rows, canEdit }: { rows: ExtensionRow[]; canEd
   );
 }
 
-/** Números e horário/correio de voz: o mesmo formulário do PABX, em duas abas. */
-export function PabxConfigAdmin({ config, queues, canEdit, part }: { config: PabxConfig; queues: { id: string; name: string }[]; canEdit: boolean; part: "numeros" | "horarios" }) {
+/** Números, horário/correio de voz e tarifas: o mesmo formulário do PABX, em partes (abas). */
+export function PabxConfigAdmin({ config, queues, canEdit, part }: { config: PabxConfig; queues: { id: string; name: string }[]; canEdit: boolean; part: "numeros" | "horarios" | "tarifas" }) {
   const router = useRouter();
   const [c, setC] = React.useState(config);
   const [pending, startTransition] = React.useTransition();
@@ -137,6 +138,24 @@ export function PabxConfigAdmin({ config, queues, canEdit, part }: { config: Pab
             </Button>
           ) : null}
           <p className="text-xs text-muted">O primeiro número ativo é a bina das ligações feitas pelo softphone.</p>
+        </>
+      ) : part === "tarifas" ? (
+        <>
+          <p className="font-medium">Tarifas do provedor (custo estimado)</p>
+          <p className="max-w-3xl text-sm text-muted">Valor por minuto iniciado, como o provedor cobra. Usado no relatório de ligações (custo estimado); a fatura do provedor é a referência final. Deixe 0 para não estimar.</p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {(
+              [
+                ["fixo", "Ligação para fixo (R$/min)"],
+                ["movel", "Ligação para celular (R$/min)"],
+                ["entrada", "Ligação recebida (R$/min)"],
+              ] as const
+            ).map(([k, label]) => (
+              <FormField key={k} label={label} htmlFor={`rate-${k}`}>
+                <Input id={`rate-${k}`} type="number" min={0} step="0.01" inputMode="decimal" value={c.rates[k]} disabled={ro} onChange={(e) => setC((x) => ({ ...x, rates: { ...x.rates, [k]: Number(e.target.value) } }))} />
+              </FormField>
+            ))}
+          </div>
         </>
       ) : (
         <>
@@ -247,7 +266,7 @@ export function QualityView({ q }: { q: PabxQuality }) {
           </Table>
         </div>
       ) : null}
-      <p className="text-xs text-muted">Indicadores das ligações pelo provedor. Métricas de rede (atraso, perda de pacotes) dependem do Voice Insights da Twilio e entram com a supervisão de ligações.</p>
+      <p className="text-xs text-muted">Indicadores das ligações pelo provedor. Métricas de rede (atraso, perda de pacotes) dependem do Voice Insights da Twilio (melhoria futura).</p>
     </div>
   );
 }
@@ -267,5 +286,87 @@ export function ChangesView({ events }: { events: { id: string; at: string; titl
         </li>
       ))}
     </ul>
+  );
+}
+
+const ACCESS_LABEL: Record<RecordingAccessRow["action"], string> = { ouvir: "Ouviu", baixar: "Baixou" };
+
+/** Acessos às gravações: quem ouviu ou baixou, quando, por quê e qual ligação (política de gravação). */
+export function RecordingAccessView({ rows, users, days }: { rows: RecordingAccessRow[]; users: { id: string; name: string }[]; days: number }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const sp = useSearchParams();
+  const setParam = (key: string, value: string) => {
+    const next = new URLSearchParams(sp.toString());
+    if (value) next.set(key, value);
+    else next.delete(key);
+    next.set("aba", "gravacoes");
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      <FilterBar className="mb-0">
+        <FilterField label="Quem acessou" htmlFor="ra-user">
+          <Select id="ra-user" value={sp.get("pessoa") ?? ""} onChange={(e) => setParam("pessoa", e.target.value)} options={[{ value: "", label: "Todos" }, ...users.map((u) => ({ value: u.id, label: u.name }))]} />
+        </FilterField>
+        <FilterField label="Período" htmlFor="ra-dias">
+          <Select
+            id="ra-dias"
+            value={String(days)}
+            onChange={(e) => setParam("dias", e.target.value === "90" ? "" : e.target.value)}
+            options={[
+              { value: "7", label: "Últimos 7 dias" },
+              { value: "30", label: "Últimos 30 dias" },
+              { value: "90", label: "Últimos 90 dias" },
+              { value: "365", label: "Últimos 12 meses" },
+            ]}
+          />
+        </FilterField>
+      </FilterBar>
+      <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-card">
+        <Table className="min-w-[760px]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Quando</TableHead>
+              <TableHead>Quem</TableHead>
+              <TableHead>O que fez</TableHead>
+              <TableHead>Ligação</TableHead>
+              <TableHead>Motivo</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="py-8 text-center text-sm text-muted">
+                  Nenhum acesso às gravações no período.
+                </TableCell>
+              </TableRow>
+            ) : null}
+            {rows.map((r) => (
+              <TableRow key={r.id}>
+                <TableCell className="whitespace-nowrap text-sm tabular-nums">{formatDateTime(r.at)}</TableCell>
+                <TableCell className="text-sm">{r.userName}</TableCell>
+                <TableCell>
+                  <Badge size="sm" variant={r.action === "baixar" ? "warning" : "info"}>
+                    {ACCESS_LABEL[r.action]}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-sm">
+                  <span className="font-medium">{r.callLabel}</span>
+                  <p className="text-xs text-muted">
+                    {r.callAt ? formatDateTime(r.callAt) : ""}
+                    {r.agentName ? ` · atendeu: ${r.agentName}` : ""}
+                  </p>
+                </TableCell>
+                <TableCell className="max-w-[320px] text-sm" title={r.reason}>
+                  {r.reason ?? <span className="text-muted">—</span>}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <p className="text-xs text-muted">Todo acesso a uma gravação fica registrado aqui (não pode ser apagado pela tela). Mostra até 300 registros.</p>
+    </div>
   );
 }

@@ -18,6 +18,11 @@ import { ALERTS_SETTING, writeSetting } from "@/server/conversations/ops-setting
 import { buildThread } from "@/server/conversations/queries";
 import { applyCallResult, applyRecording, availableAgents, callId, getPabx, pabxHistory, recordIncomingCall, recordOutgoingCall, savePabx } from "@/server/telephony/service";
 import { needsCallback } from "@/domain/telephony";
+import { handleMonitoredDialResult, joinMonitorTwiml, monitorNoticeFor, supervisorLeft } from "@/server/telephony/monitor";
+import { buildAttendanceByQueue, buildCalls } from "@/server/reports/central";
+import { runReportSchedule } from "@/server/reports/schedules";
+import { currentUserFor } from "@/server/auth/session";
+import { type ReportSchedule, type SupervisionLog } from "@/domain/types";
 import { runCentralSweep } from "@/server/conversations/scheduler";
 import { quickRepliesFor, saveQuickReply, listQuickReplies } from "@/server/conversations/quick-replies";
 import { patchFields } from "@/server/conversations/store";
@@ -31,6 +36,7 @@ const OVERFLOW_ID = `${RUN}_transbordo`;
 const EMAIL_A = `${RUN}.cliente@exemplo.com.br`;
 const OP = { id: `${RUN}_op`, name: "Operadora Teste" };
 const QUEUE_ID = `${RUN}_fila`;
+const ADMIN = { id: `${RUN}_adm`, name: "Admin Teste" };
 
 let savedQueues: { id: string; data: unknown }[] = [];
 /** Configuração do PABX antes dos testes (null = não existia; undefined = os testes de telefonia não rodaram). */
@@ -66,6 +72,10 @@ afterAll(async () => {
   await sql`delete from interos.quick_replies where data->>'shortcut' like ${RUN + "%"}`;
   if (ids.length) await sql`delete from interos.supervision_logs where data->>'conversationId' = any(${ids})`;
   await sql`delete from interos.settings where data->>'key' in ('central_alertas', 'central_alertas_estado')`;
+  await sql`delete from interos.supervision_logs where data->>'supervisorId' like ${RUN + "%"}`;
+  await sql`delete from interos.report_schedules where data->>'ownerId' like ${RUN + "%"}`;
+  await sql`delete from interos.notifications where data->>'userId' like ${RUN + "%"}`;
+  await sql`delete from interos.users where id = ${ADMIN.id}`;
   await sql`delete from interos.communications where data->>'callSid' like ${RUN + "%"}`;
   if (pabxBackup === null) await sql`delete from interos.settings where data->>'key' = 'pabx'`;
   else if (pabxBackup) await sql`update interos.settings set data = ${sql.json(pabxBackup as never)} where data->>'key' = 'pabx'`;
@@ -408,3 +418,95 @@ describe("fase 3: telefonia", () => {
     expect((await pabxHistory()).some((e) => e.description?.includes("números"))).toBe(true);
   });
 });
+
+describe("fase 4: supervisão de ligações, relatórios e envio agendado", () => {
+  const CALL = `${RUN}CAmon`;
+  const SUP = `${RUN}_sup`;
+  const BASE = "https://interos.test";
+
+  it("supervisão: a ligação vai para a conferência, o atendente vê quem está, e o fim grava a duração total", async () => {
+    const c = await recordIncomingCall({ callSid: CALL, from: "+5591900000001", to: "+558835700001", queueId: QUEUE_ID });
+    await patchFields<Communication>(COLLECTIONS.communications, c.id, { userId: OP.id, callStatus: "em_andamento", monitor: { conference: `sup_${c.id}`, state: "movendo", supervisorId: SUP, supervisorName: "Gerente Teste", mode: "ouvir", since: new Date().toISOString(), agentLegSid: `${RUN}CAagent` } });
+
+    // A perna principal sai do <Dial> (a filha foi para a conferência) e entra também.
+    const moved = await handleMonitoredDialResult(CALL, { DialCallStatus: "completed", DialCallDuration: "30" }, null, BASE);
+    expect(moved?.twiml).toContain(`<Conference`);
+    expect(moved?.twiml).toContain("dial-result?fase=conf");
+    let saved = await getById<Communication>(COLLECTIONS.communications, c.id);
+    expect(saved?.monitor).toMatchObject({ state: "ativa", partialSeconds: 30 });
+    expect(saved?.callStatus).toBe("em_andamento");
+
+    // Outra pessoa não entra; o gerente marcado entra mudo e fica no registro.
+    expect(await joinMonitorTwiml("outra_pessoa", c.id, "CAx", BASE)).toBeNull();
+    const join = await joinMonitorTwiml(SUP, c.id, `${RUN}CAsup`, BASE);
+    expect(join).toContain('muted="true"');
+    expect(join).toContain("monitor-end?call=");
+    const logs = await list<SupervisionLog>(COLLECTIONS.supervisionLogs, { where: [["communicationId", "==", c.id]] });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({ action: "ligacao_ouvir", operatorId: OP.id });
+
+    // O atendente vê; outra pessoa não.
+    expect((await monitorNoticeFor(OP.id, CALL))?.text).toBe("Gerente Teste está ouvindo esta ligação");
+    expect(await monitorNoticeFor(SUP, CALL)).toBeNull();
+
+    // O gerente sai: a ligação continua, o registro fecha e o aviso some.
+    await supervisorLeft(c.id);
+    saved = await getById<Communication>(COLLECTIONS.communications, c.id);
+    expect(saved?.monitor?.supervisorCallSid).toBeUndefined();
+    expect(saved?.monitor?.state).toBe("ativa");
+    expect(await monitorNoticeFor(OP.id, CALL)).toBeNull();
+    expect((await list<SupervisionLog>(COLLECTIONS.supervisionLogs, { where: [["communicationId", "==", c.id]] }))[0].endedAt).toBeTruthy();
+
+    // A gravação da conferência entra como segunda parte (aviso repetido não duplica).
+    await applyRecording(CALL, `${RUN}REp1`, 20, false);
+    await applyRecording(CALL, `${RUN}REp2`, 40, false, true);
+    await applyRecording(CALL, `${RUN}REp2`, 40, false, true);
+    saved = await getById<Communication>(COLLECTIONS.communications, c.id);
+    expect(saved).toMatchObject({ recordingSid: `${RUN}REp1`, recordingParts: [`${RUN}REp2`] });
+
+    // Fim da conferência: atendida, com a duração de antes + a da conferência.
+    const end = await handleMonitoredDialResult(CALL, {}, "conf", BASE);
+    expect(end?.finished).toBe(true);
+    saved = await getById<Communication>(COLLECTIONS.communications, c.id);
+    expect(saved?.callStatus).toBe("atendida");
+    expect(saved?.durationSeconds).toBeGreaterThanOrEqual(30);
+    expect(saved?.monitor?.state).toBe("encerrada");
+  });
+
+  it("relatórios: ligações com custo estimado pelas tarifas e atendimentos por fila", async () => {
+    const { stored, ...config } = await getPabx();
+    void stored;
+    await savePabx({ ...config, rates: { fixo: 0.1, movel: 0.5, entrada: 0.05 } }, OP);
+    const now = Date.now();
+    const input = { period: { start: new Date(now - 86_400_000).toISOString(), end: new Date(now + 60_000).toISOString() }, filters: {}, userById: new Map(), clientName: () => null, inScope: () => true };
+    const calls = await buildCalls(input);
+    expect(calls.ratesConfigured).toBe(true);
+    const mine = calls.rows.find((r) => r.cells.atendente === null && r.cells.fila === "Fila de teste" && r.cells.resultado === "Atendida" && Number(r.cells.duracao) >= 0.5);
+    expect(mine).toBeTruthy();
+    expect(Number(mine!.cells.custo)).toBeGreaterThan(0);
+    const queues = await buildAttendanceByQueue(input);
+    const row = queues.find((r) => r.cells.fila === "Fila de teste");
+    expect(Number(row?.cells.ligacoes)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("envio agendado: cada destinatário recebe com o próprio acesso; quem agendou sem acesso pausa o envio", async () => {
+    await create<User>(COLLECTIONS.users, { name: ADMIN.name, email: `${RUN}.adm@teste.local`, role: "admin", departmentId: "administrativo", active: true } as Omit<User, "id" | "organizationId" | "createdAt" | "updatedAt">, ADMIN.id);
+    const base = { reportKey: "ligacoes", filters: {}, period: "ontem" as const, format: "csv" as const, frequency: "diaria" as const, hour: 8, active: true, nextRunAt: new Date(Date.now() - 60_000).toISOString() };
+    // Operadora (suporte, sem gestão) não pode agendar: o envio pausa sem mandar nada.
+    const paused = await create<ReportSchedule>(COLLECTIONS.reportSchedules, { ...base, ownerId: OP.id, recipientIds: [OP.id] });
+    const r1 = await runReportSchedule(paused);
+    expect(r1.ok).toBe(false);
+    expect((await getById<ReportSchedule>(COLLECTIONS.reportSchedules, paused.id))?.active).toBe(false);
+    await docdb.sql()`delete from interos.report_schedules where id = ${paused.id}`;
+
+    // Admin agenda para si e para a operadora (que vê o relatório de Ligações pelo departamento).
+    const ok = await create<ReportSchedule>(COLLECTIONS.reportSchedules, { ...base, ownerId: ADMIN.id, recipientIds: [ADMIN.id, OP.id] });
+    expect(await currentUserFor((await getById<User>(COLLECTIONS.users, ADMIN.id))!)).toBeTruthy();
+    const r2 = await runReportSchedule(ok);
+    expect(r2.summary).toMatch(/2 enviado\(s\)/);
+    const after = await getById<ReportSchedule>(COLLECTIONS.reportSchedules, ok.id);
+    expect(after?.lastOk).toBe(true);
+    expect(after!.nextRunAt > new Date().toISOString()).toBe(true);
+  });
+});
+

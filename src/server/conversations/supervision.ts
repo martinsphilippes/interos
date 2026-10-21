@@ -320,8 +320,10 @@ export interface SupervisionLogRow {
   durationMs?: number;
   supervisorName: string;
   operatorName?: string;
-  conversationId: string;
-  conversationNumber?: string;
+  /** Link do atendimento: a conversa na Central ou a ligação no histórico. */
+  href?: string;
+  /** Rótulo do link (número da conversa ou «Ligação»). */
+  target?: string;
   action: SupervisionLog["action"];
   detail?: string;
 }
@@ -335,16 +337,17 @@ export async function getSupervisionLog(user: CurrentUser, filters: { days: numb
   if (filters.supervisorId) logs = logs.filter((l) => l.supervisorId === filters.supervisorId);
   if (filters.operatorId) logs = logs.filter((l) => l.operatorId === filters.operatorId);
   logs = logs.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)).slice(0, 300);
-  const convs = await getManyByIds<Conversation>(COLLECTIONS.conversations, logs.map((l) => l.conversationId));
+  const convs = await getManyByIds<Conversation>(COLLECTIONS.conversations, logs.map((l) => l.conversationId ?? "").filter(Boolean));
+  const timed = (a: SupervisionLog["action"]) => a === "acompanhar" || a.startsWith("ligacao_");
   return {
     rows: logs.map((l) => ({
       id: l.id,
       at: l.startedAt,
-      durationMs: l.action === "acompanhar" && l.endedAt ? Math.max(0, new Date(l.endedAt).getTime() - new Date(l.startedAt).getTime()) : undefined,
+      durationMs: timed(l.action) && l.endedAt ? Math.max(0, new Date(l.endedAt).getTime() - new Date(l.startedAt).getTime()) : undefined,
       supervisorName: users.get(l.supervisorId)?.name ?? "Usuário removido",
       operatorName: l.operatorId ? users.get(l.operatorId)?.name : undefined,
-      conversationId: l.conversationId,
-      conversationNumber: convs.get(l.conversationId)?.number,
+      href: l.conversationId ? `/comunicacao?conversa=${l.conversationId}` : l.communicationId ? "/comunicacao/ligacoes" : undefined,
+      target: l.conversationId ? (convs.get(l.conversationId)?.number ?? "abrir") : l.communicationId ? "Ligação" : undefined,
       action: l.action,
       detail: l.detail,
     })),

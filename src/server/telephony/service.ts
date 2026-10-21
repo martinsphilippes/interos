@@ -10,7 +10,7 @@ import { emitEvent } from "@/server/events";
 import { notify } from "@/server/notifications";
 import { BusinessError } from "@/server/auth/error-classes";
 import { COLLECTIONS, type Communication, type DomainEvent, type Settings, type User, type UserRef } from "@/domain/types";
-import { CALL_STATUS_LABELS, DEFAULT_PABX, callStatusFromProvider, needsCallback, toE164, type PabxConfig } from "@/domain/telephony";
+import { CALL_STATUS_LABELS, DEFAULT_PABX, DEFAULT_RATES, callStatusFromProvider, needsCallback, toE164, type PabxConfig } from "@/domain/telephony";
 import { displayPhone } from "@/domain/phone";
 import { formatCallDuration } from "@/lib/format";
 import { listQueues } from "@/server/conversations/queues";
@@ -29,7 +29,8 @@ export function callId(callSid: string): string {
 
 export async function getPabx(): Promise<PabxConfig & { stored: boolean }> {
   const doc = (await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", PABX_SETTING]] }))[0];
-  return { ...DEFAULT_PABX, ...((doc?.value ?? {}) as Partial<PabxConfig>), stored: Boolean(doc) };
+  const v = (doc?.value ?? {}) as Partial<PabxConfig>;
+  return { ...DEFAULT_PABX, ...v, rates: { ...DEFAULT_RATES, ...(v.rates ?? {}) }, stored: Boolean(doc) };
 }
 
 /** Grava a configuração e o histórico de mudanças (evento settings.updated com o que mudou). */
@@ -51,7 +52,7 @@ export async function savePabx(next: PabxConfig, actor: UserRef): Promise<void> 
   }
 }
 
-const PABX_FIELD_LABELS: Record<keyof PabxConfig, string> = { numbers: "números", ringSeconds: "tempo de toque", welcome: "boas-vindas", voicemail: "correio de voz", closedMessage: "mensagem fora do horário", noAgentMessage: "mensagem sem atendente" };
+const PABX_FIELD_LABELS: Record<keyof PabxConfig, string> = { numbers: "números", ringSeconds: "tempo de toque", welcome: "boas-vindas", voicemail: "correio de voz", closedMessage: "mensagem fora do horário", noAgentMessage: "mensagem sem atendente", rates: "tarifas" };
 
 function pick<T extends object>(obj: T, keys: (keyof T)[]): Partial<T> {
   return Object.fromEntries(keys.map((k) => [k, obj[k]])) as Partial<T>;
@@ -164,9 +165,15 @@ export async function claimCall(callSid: string, user: UserRef): Promise<void> {
 }
 
 /** Gravação pronta (ligação gravada ou recado do correio de voz). */
-export async function applyRecording(callSid: string, recordingSid: string, durationSeconds: number | undefined, voicemail: boolean): Promise<void> {
+export async function applyRecording(callSid: string, recordingSid: string, durationSeconds: number | undefined, voicemail: boolean, part = false): Promise<void> {
   const c = await getById<Communication>(COLLECTIONS.communications, callId(callSid));
   if (!c) return;
+  if (part) {
+    // Parte gravada na conferência da supervisão (a primeira parte é a gravação normal da ligação).
+    if (c.recordingSid === recordingSid || c.recordingParts?.includes(recordingSid)) return;
+    await update<Communication>(COLLECTIONS.communications, c.id, { recordingParts: [...(c.recordingParts ?? []), recordingSid] });
+    return;
+  }
   const patch: Partial<Communication> = { recordingSid };
   if (voicemail) {
     patch.voicemail = true;

@@ -93,8 +93,9 @@ describe("repositório real", () => {
   // Parte 3: + página /comunicacao/historico, 3 actions (reabrir, exportar, atendimento do usuário) e o webhook de e-mail.
   // Fases 0 e 2: + páginas supervisao, supervisao/tv e ativacao e 7 actions (supervisão, pausas, alertas, gravação).
   // Fase 3: + páginas ligacoes, correio-de-voz e pabx, 8 actions de telefonia e 7 rotas de voz (5 da Twilio, isentas por assinatura).
-  it("inventário: 101 páginas (10 isentas), 286 funções 'use server' (3 isentas), 17 handlers de API (14 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 286, serverFunctionsExempt: 3, apiHandlers: 17, apiExempt: 14 });
+  // Fase 4: + 4 actions da supervisão de ligações, 4 do envio agendado de relatórios e a rota monitor-end (isenta por assinatura).
+  it("inventário: 101 páginas (10 isentas), 294 funções 'use server' (3 isentas), 18 handlers de API (15 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 294, serverFunctionsExempt: 3, apiHandlers: 18, apiExempt: 15 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {
