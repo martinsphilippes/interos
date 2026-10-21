@@ -230,7 +230,7 @@ export const STATUS_WHITELIST: Record<string, { label: string; fields: Record<st
   cs_accounts: { label: "Conta de CS", fields: { riskLevel: { label: "Nível de risco", values: HEALTH_LEVELS } } },
 };
 
-export const SLA_ENTITY_TYPES = ["tarefa", "workflow_step", "chamado", "projeto", "cs", "oportunidade"] as const;
+export const SLA_ENTITY_TYPES = ["tarefa", "workflow_step", "chamado", "projeto", "cs", "oportunidade", "conversa"] as const;
 export const HANDOFF_DEPARTMENTS = ["vendas", "financeiro", "implantacao", "cs", "suporte"] as const satisfies readonly DepartmentKey[];
 
 const recipient = z.string().trim().min(1, "Informe o destinatário");

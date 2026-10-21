@@ -483,7 +483,7 @@ export async function getInbox(access: LeadAccess = ALL_LEADS): Promise<InboxDat
   // Respondida: marcada como lida ou com mensagem de saída posterior para o mesmo cliente/lead.
   const lastOutgoing = new Map<string, string>();
   for (const o of outgoing) {
-    for (const key of [o.clientId ? `c:${o.clientId}` : null, o.entityType === "lead" && o.entityId ? `l:${o.entityId}` : null]) {
+    for (const key of [o.clientId ? `c:${o.clientId}` : null, o.entityType === "lead" && o.entityId ? `l:${o.entityId}` : null, o.conversationId ? `v:${o.conversationId}` : null]) {
       if (key && (lastOutgoing.get(key) ?? "") < o.createdAt) lastOutgoing.set(key, o.createdAt);
     }
   }
@@ -497,7 +497,8 @@ export async function getInbox(access: LeadAccess = ALL_LEADS): Promise<InboxDat
   const messages: InboxMessage[] = visibleMessages.map((c) => {
     const lead = c.entityType === "lead" && c.entityId ? leadById.get(c.entityId) : undefined;
     const client = c.clientId ? clients.get(c.clientId) : undefined;
-    const answeredAt = [c.clientId ? lastOutgoing.get(`c:${c.clientId}`) : undefined, lead ? lastOutgoing.get(`l:${lead.id}`) : undefined].filter(Boolean).sort().pop();
+    // Resposta pela Central de Atendimento conta (mesma conversa), inclusive para número ainda não identificado.
+    const answeredAt = [c.clientId ? lastOutgoing.get(`c:${c.clientId}`) : undefined, lead ? lastOutgoing.get(`l:${lead.id}`) : undefined, c.conversationId ? lastOutgoing.get(`v:${c.conversationId}`) : undefined].filter(Boolean).sort().pop();
     return {
       id: c.id,
       channel: c.channel,
@@ -507,7 +508,7 @@ export async function getInbox(access: LeadAccess = ALL_LEADS): Promise<InboxDat
       clientName: client?.tradeName,
       leadId: lead?.id,
       leadName: lead?.name,
-      from: lead?.phone ?? client?.whatsapp ?? client?.phone ?? lead?.email ?? client?.email,
+      from: lead?.phone ?? client?.whatsapp ?? client?.phone ?? lead?.email ?? client?.email ?? c.address,
       assigneeId: c.userId,
       assigneeName: c.userId ? users.get(c.userId)?.name : undefined,
       replied: c.status === "lida" || Boolean(answeredAt && answeredAt > c.createdAt),

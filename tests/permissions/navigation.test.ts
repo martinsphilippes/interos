@@ -14,7 +14,7 @@ import { MODULE_KEYS, SCREENS, canSeeHrefIn, type ModuleKey } from "@/domain/per
 import { canSeeHref } from "@/server/auth/permissions";
 import { filterMobileNav, filterNavigation, filterQuickActions, filterShellLinks, hrefAccessMap, visibleScreens } from "@/server/auth/navigation";
 import { ALL_USERS, SEED_USERS, asCurrentUser, label } from "./fixtures";
-import { legacyMenu, legacyMobileNav, legacyQuickActions, legacyUser } from "./legacy";
+import { isAfterT0Href, legacyMenu, legacyMobileNav, legacyQuickActions, legacyUser, MODULES_AFTER_T0 } from "./legacy";
 import { LEGACY_MOBILE_NAV, LEGACY_NAVIGATION, LEGACY_QUICK_ACTIONS } from "./legacy-navigation";
 
 const USERS = ALL_USERS.map((u) => ({ fixture: u, current: asCurrentUser(u), legacy: legacyUser(u) }));
@@ -23,7 +23,8 @@ describe("T0 — tabelas de navegação derivadas ≡ listas anteriores (congela
   it("NAVIGATION: mesmas seções, itens, rótulos, ícones, ordem e onda", () => {
     const strip = (sections: { key: string; label: string; items: { label: string; href: string; icon: string; wave?: number }[] }[]) =>
       sections.map((s) => ({ key: s.key, label: s.label, items: s.items.map((i) => ({ label: i.label, href: i.href, icon: i.icon, wave: i.wave })) }));
-    expect(strip(NAVIGATION)).toEqual(strip(LEGACY_NAVIGATION));
+    // Seções de módulos criados depois do T0 não existiam na lista congelada.
+    expect(strip(NAVIGATION.filter((s) => !MODULES_AFTER_T0.includes(s.key)))).toEqual(strip(LEGACY_NAVIGATION));
   });
 
   it("MOBILE_NAV: mesmos itens, rótulos e ícones na mesma ordem", () => {
@@ -51,7 +52,7 @@ describe("T0 — navegação por usuário ≡ antes, exceto A14/A27", () => {
     const exp: string[] = [];
     for (const { fixture, current, legacy: old } of USERS) {
       const before = new Set(legacyMenu(old).flatMap((s) => s.hrefs));
-      const now = new Set(filterNavigation(current).flatMap((s) => s.items.map((i) => i.href)));
+      const now = new Set(filterNavigation(current).flatMap((s) => s.items.map((i) => i.href)).filter((h) => !isAfterT0Href(h)));
       for (const href of new Set([...before, ...now])) if (before.has(href) !== now.has(href)) diff.push(`${label(fixture)} ${href} ${now.has(href) ? "+" : "-"}`);
       if (fixture.role === "gestor" || fixture.role === "diretoria") exp.push(`${label(fixture)} /admin/departamentos +`, `${label(fixture)} /admin/usuarios +`);
       if (fixture.role === "gestor") exp.push(`${label(fixture)} /gestao/cockpit -`);
@@ -64,7 +65,7 @@ describe("T0 — navegação por usuário ≡ antes, exceto A14/A27", () => {
     const perUser: Record<string, string> = {};
     for (const u of SEED_USERS) {
       const before = new Set(legacyMenu(legacyUser(u)).flatMap((s) => s.hrefs));
-      const now = new Set(filterNavigation(asCurrentUser(u)).flatMap((s) => s.items.map((i) => i.href)));
+      const now = new Set(filterNavigation(asCurrentUser(u)).flatMap((s) => s.items.map((i) => i.href)).filter((h) => !isAfterT0Href(h)));
       const plus = [...now].filter((h) => !before.has(h)).sort();
       const minus = [...before].filter((h) => !now.has(h)).sort();
       if (plus.length || minus.length) perUser[u.name] = [...plus.map((h) => `+${h}`), ...minus.map((h) => `-${h}`)].join(" ");

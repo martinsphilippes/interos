@@ -110,6 +110,20 @@ export { fillPortalLink, portalLinkLine } from "@/domain/portal";
  * `options.linkPortal` o marcador é PRESERVADO para `sendBillingMessage` gerar o link no envio (um link novo por
  * mensagem); com `linkPortal: ""` (tarefa/notificação interna) some; com uma URL vira "Portal do cliente: <url>".
  */
+/** Valores das variáveis de mensagem para a cobrança (modelos do WhatsApp): sem rótulos, só o dado. */
+export function billingTemplateValues(ctx: Pick<BillingMessageContext, "billing" | "client" | "contactName">): Record<string, string> {
+  const b = ctx.billing;
+  return {
+    cliente: ctx.client.tradeName,
+    contato: ctx.contactName.split(" ")[0] ?? ctx.contactName,
+    valor: formatCurrency(b.amount),
+    vencimento: formatDate(b.dueDate),
+    parcela: billingLabel(b).toLowerCase(),
+    linhaDigitavel: b.boleto?.linhaDigitavel ?? "",
+    linkBoleto: b.boleto?.pdfUrl ?? b.paymentUrl ?? "",
+  };
+}
+
 export function renderBillingTemplate(template: string, ctx: Pick<BillingMessageContext, "billing" | "client" | "contactName">, options: { linkPortal?: string } = {}): string {
   const b = ctx.billing;
   const vars: Record<string, string> = {

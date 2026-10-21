@@ -155,6 +155,8 @@ function describe(s: SlaInstance, data: LoadedData): { reference: string; title:
       const o = data.opportunities.get(s.entityId);
       return { reference: "Oportunidade", title: o?.title ?? s.ruleName, href: `/vendas/oportunidades?oportunidade=${s.entityId}`, department: s.department ?? "vendas", clientId: s.clientId ?? o?.clientId };
     }
+    case "conversa":
+      return { reference: "Conversa", title: s.ruleName, href: `/comunicacao?conversa=${s.entityId}`, department: s.department, clientId: s.clientId };
     default:
       return { reference: "CS", title: s.ruleName, href: s.clientId ? `/clientes/${s.clientId}?aba=cs` : "/cs", department: s.department ?? "cs", clientId: s.clientId };
   }

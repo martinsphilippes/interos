@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 11 módulos, 66 telas, 133 seções e 250 ações (460 chaves únicas) — etapa CP/CR 1: + Cadastros financeiros (tela, 3 abas, 12 ações)", () => {
-    expect(MODULES.length).toBe(11);
-    expect(SCREENS.length).toBe(66);
-    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(133);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(250);
-    expect(PERMISSION_KEYS.length).toBe(460);
+  it("tem 12 módulos, 68 telas, 139 seções e 260 ações (479 chaves únicas) — Central de Atendimento: + módulo Comunicação (2 telas, 6 abas, 10 ações)", () => {
+    expect(MODULES.length).toBe(12);
+    expect(SCREENS.length).toBe(68);
+    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(139);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(260);
+    expect(PERMISSION_KEYS.length).toBe(479);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -201,8 +201,8 @@ describe("catálogo — cobertura de páginas", () => {
       .filter((s) => s && !/^\(.*\)$/.test(s))
       .join("/");
 
-  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (92 páginas — migração Supabase: + /redefinir-senha e /login/microsoft)", () => {
-    expect(pages.length).toBe(92);
+  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (94 páginas — Central de Atendimento: + /comunicacao e /comunicacao/canais)", () => {
+    expect(pages.length).toBe(94);
     const exempt = new Set<string>(EXEMPTIONS.filter((e) => e.kind === "page").map((e) => e.target));
     const routes = new Set(SCREENS.flatMap((s) => [...s.routes, ...s.sections.flatMap((x) => x.routes ?? [])]));
     const missing = pages.filter((p) => !exempt.has(p) && !routes.has(toRoute(p)));
@@ -231,11 +231,13 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
     const { SETTINGS_TABS } = await import("@/components/admin/admin-model");
     const { CLIENT_TABS } = await import("@/components/clients/client-tabs");
     const { REGISTRY_TABS } = await import("@/components/finance-registry/registry-tabs");
+    const { CANAIS_TABS } = await import("@/components/conversations/model");
     const pageTabs: Record<string, readonly string[]> = {
       "admin.configuracoes": SETTINGS_TABS,
       "financeiro.configuracoes": SETTINGS_TABS,
       "operacao.clientes": CLIENT_TABS.map((t) => t.key),
       "financeiro.cadastros": REGISTRY_TABS,
+      "comunicacao.canais": CANAIS_TABS,
     };
     const modeled = new Set<string>();
     for (const screen of SCREENS) {

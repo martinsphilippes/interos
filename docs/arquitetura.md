@@ -563,6 +563,59 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Rate limit**: fica na infraestrutura (Vercel Firewall/WAF para `/portal/*`); o token de 256 bits torna adivinhação
   inviável e cada acesso válido é contado.
 
+## Central de Atendimento (módulo Comunicação, `src/server/conversations/*`, `/comunicacao`)
+
+Fase 1 da Central omnichannel: WhatsApp e e-mail numa tela só. Nada é duplicado — mensagens continuam em
+`communications` (agora com `conversationId` e `address`), o envio continua pelo helper único `sendOrRecord`, o SLA
+pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`src/domain/permissions/comunicacao.ts`).
+
+- **Conversa** (`conversations`): uma aberta por canal + contato. A chave do contato vem de `src/domain/phone.ts`
+  (DDD + 8 últimos dígitos: une o celular com e sem o 9, que o WhatsApp costuma omitir). Id determinístico
+  `cv_<hash do contato>_<n>` criado com `createIfAbsent`: duas mensagens simultâneas do mesmo número abrem UMA conversa.
+  Status `nova → na_fila | em_atendimento ⇄ aguardando_cliente → encerrada`.
+- **Entrada** (`inbound.ts`, chamada pelo webhook do WhatsApp): (1) aviso repetido do provedor é ignorado — a
+  comunicação tem id derivado do id da Meta; (2) identificação única (`identity.ts`: contato > cliente > lead >
+  desconhecido; o lead passa a ser reconhecido); (3) conversa encontrada ou aberta e distribuída; (4) chamado aberto
+  do cliente recebe a mensagem também (comportamento anterior); (5) registro técnico em `channel_events`.
+- **Filas** (`service_queues`, `queues.ts`): criadas na primeira leitura (Suporte N1/N2, Financeiro, Comercial,
+  Atendimento geral = padrão) com os usuários ativos de cada departamento; depois o gestor edita em
+  `/comunicacao/canais?aba=filas`. Entrada sem menu (fase 1): chamado aberto → Suporte; lead → Comercial; resto → padrão.
+  Distribuição pura em `src/domain/conversations.ts#pickAssignee` (menor carga, rodízio, responsável primeiro, manual),
+  só para quem está **online** e abaixo do limite. Roda ao chegar mensagem, ao ficar online (`setPresence`), ao
+  encerrar/transferir e ao abrir a Central (no máximo a cada 30 s). Fila sem operador: o que espera nela fica visível
+  para todos os operadores (ninguém deixa de ver).
+- **Janela de 24 h do WhatsApp**: fora dela a Meta recusa texto livre. Com o canal conectado e a janela fechada, o
+  operador usa um **modelo aprovado** (botão «Enviar modelo» ou «Novo atendimento» com modelo) ou envia pelo aparelho.
+- **Nota interna**: `communications` do canal `interno` com `templateKey: "nota_interna"`, ligada só à conversa
+  (sem `clientId`: não aparece em outras telas). Transferência grava nota; o SLA continua de onde estava.
+- **Escopo** (`comunicacao.central`): "meus" = comigo + sem responsável nas minhas filas (e filas sem operador);
+  gestão = empresa. Fora do escopo, a conversa por id responde "não encontrada" (actions e `?conversa=`).
+- **Tela**: 3 colunas (lista | conversa | contexto do cliente), atualização automática a cada 15 s com a aba visível
+  (fase 1 sem tempo real). Usuário desativado sai das filas e as conversas dele voltam para a fila.
+- **Registros técnicos** (`channel_events`): contato mascarado, nunca o texto; retenção de 30 dias (limpeza pelo
+  agendador). Leitura em `/comunicacao/canais?aba=registros` (filtros por canal, resultado e busca) e saúde do canal.
+- **Variáveis de mensagem** (`src/domain/message-variables.ts`): lista única para modelos ({{n}} ligado a uma variável),
+  respostas rápidas (`{contato}`, `{operador}`…) e régua (`{valor}`, `{linkBoleto}`…). Variável sem valor bloqueia o
+  envio — nunca sai «{contato}» para o cliente.
+- **Modelos do WhatsApp** (`message_templates`, `templates.ts`): id `tpl_<nome>_<idioma>`; sincronizados com a Meta
+  (Graph v20, `WHATSAPP_BUSINESS_ACCOUNT_ID`) a cada hora pelo agendador ou no botão; sem a conta configurada, ficam
+  como rascunho. Contexto `conversa` (Central) ou `cobranca` (régua: cada etapa de WhatsApp pode apontar um modelo;
+  sem valor para alguma variável, a régua cai no texto livre).
+- **Respostas rápidas** (`quick_replies`, `quick-replies.ts`): «/atalho» no campo de mensagem; da empresa ou de uma
+  fila; contagem de uso.
+- **Mensagens automáticas** (setting `central_automaticas`, `auto-messages.ts`): tudo nasce desligado. Menu de
+  boas-vindas (a resposta escolhe a fila; regra pura `pickMenuOption` exige o número no começo), fora do horário
+  (setting `horario_comercial` + feriados), aviso de posição na fila, cliente sem resposta (lembrete → encerramento) e
+  encerramento (o operador pode desmarcar). Só saem pelo provedor conectado e dentro da janela; nunca viram registro
+  manual; cada tipo no máximo 1×/12 h por conversa.
+- **Agendador** (`scheduler.ts`, `/api/cron/central`, `CRON_SECRET`): pg_cron + pg_net do Supabase a cada 5 min
+  (`supabase/agendador-central.sql`, rodado uma vez no SQL Editor; o segredo fica no Vault como `interos_cron_secret`),
+  porque o plano atual da Vercel só agenda uma vez por dia. Passos independentes: menu sem resposta (10 min), transbordo,
+  distribuição, posição na fila, cliente sem resposta, limpeza de registros e sincronização de modelos.
+
+Próxima entrega da fase 1: histórico de atendimentos, e-mail de entrada e as mudanças no Cliente 360, Usuário, Caixa de
+Entrada e Chamado.
+
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.
 - Banco local: Postgres 15+ e `DATABASE_ADMIN_URL=postgres://postgres@127.0.0.1:5432/interos npm run db:local`

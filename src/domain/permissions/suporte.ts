@@ -159,6 +159,8 @@ export const SUPORTE = {
             "src/server/support/actions.ts#createTicketAction",
             "src/server/support/actions.ts#loadClientTicketContext",
           ],
+          // Central de Atendimento: encerrar a conversa abrindo um chamado com o resumo.
+          checkedIn: ["src/server/conversations/actions.ts#closeConversationAction?abrir chamado"],
         },
         {
           key: "suporte.chamados.assumir",

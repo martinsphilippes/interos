@@ -161,6 +161,16 @@ async function syncAuthDisabled(uid: string, active: boolean): Promise<void> {
  * (getCurrentUser confere users.sessionsRevokedAt) e ele precisa entrar de novo com o papel/situação atuais.
  * Usuário sem login (só documento) não bloqueia a operação.
  */
+/** Usuário desativado sai das filas da Central e as conversas dele voltam para a fila (nunca falha a desativação). */
+async function releaseFromCentral(uid: string): Promise<void> {
+  try {
+    const { releaseUserFromCentral } = await import("@/server/conversations/service");
+    await releaseUserFromCentral(uid);
+  } catch (error) {
+    console.error("[usuarios] falha ao liberar as conversas do usuário desativado", error);
+  }
+}
+
 async function revokeSessions(uid: string): Promise<void> {
   try {
     await authAdmin.revokeRefreshTokens(uid);
@@ -363,6 +373,7 @@ export async function updateUser(input: unknown): Promise<ActionResult<{ id: str
     if ((current.active !== false) !== data.active) await syncAuthDisabled(data.id, data.active);
     // Desativado ou com papel alterado: derruba as sessões abertas para valer o novo acesso.
     if ((!data.active && current.active !== data.active) || current.role !== data.role) await revokeSessions(data.id);
+    if (!data.active && current.active !== false) await releaseFromCentral(data.id);
     if (current.name !== data.name) {
       await authAdmin.updateUser(data.id, { displayName: data.name }).catch((error: unknown) => {
         if (!isAuthNotFound(error)) throw error;
@@ -408,7 +419,10 @@ export async function setUserActive(input: unknown): Promise<ActionResult<{ acti
 
     await syncAuthDisabled(data.id, data.active);
     await update<User>(COLLECTIONS.users, data.id, { active: data.active });
-    if (!data.active) await revokeSessions(data.id);
+    if (!data.active) {
+      await revokeSessions(data.id);
+      await releaseFromCentral(data.id);
+    }
 
     const audit = auditChanges<Record<string, unknown>>({ active: current.active === false ? "Inativo" : "Ativo" }, { active: data.active ? "Ativo" : "Inativo" }, ["active"]);
     await emitEvent({

@@ -108,6 +108,17 @@ export const EXEMPTIONS = [
     reason: "Idem GET (mesmo handler).",
   },
   {
+    target: "src/app/api/cron/central/route.ts#GET",
+    kind: "api",
+    // Bearer CRON_SECRET com timingSafeEqual (route.ts:authorized); chamado pelo pg_cron do Supabase a cada 5 min.
+    reason: "Agendador da Central de Atendimento (ator de sistema). Guarda por token.",
+  },
+  {
+    target: "src/app/api/cron/central/route.ts#POST",
+    kind: "api",
+    reason: "Idem GET (mesmo handler; o pg_net envia POST).",
+  },
+  {
     target: "src/app/api/csat/[ticketId]/route.ts#POST",
     kind: "api",
     // Hoje: isValidCsatToken → 403 (route.ts:22-24)

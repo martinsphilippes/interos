@@ -3,6 +3,7 @@
  * módulo → tela → seção → ação. Puro (sem imports de servidor).
  */
 import { ADMIN } from "./admin";
+import { COMUNICACAO } from "./comunicacao";
 import { CS } from "./cs";
 import { FINANCEIRO } from "./financeiro";
 import { GESTAO } from "./gestao";
@@ -16,7 +17,7 @@ import { VENDAS } from "./vendas";
 import type { AccessRule, ModuleDef, ModuleKey, ScreenDef, SectionDef } from "./types";
 
 /** Módulos na ordem do menu. */
-export const MODULES = [INICIO, OPERACAO, MARKETING, VENDAS, FINANCEIRO, IMPLANTACAO, CS, SUPORTE, PERFORMANCE, GESTAO, ADMIN] as const;
+export const MODULES = [INICIO, OPERACAO, MARKETING, VENDAS, FINANCEIRO, IMPLANTACAO, CS, SUPORTE, COMUNICACAO, PERFORMANCE, GESTAO, ADMIN] as const;
 
 type AnyScreen = (typeof MODULES)[number]["screens"][number];
 export type ScreenKey = AnyScreen["key"];

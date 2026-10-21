@@ -50,6 +50,7 @@ const CATALOG: CatalogEntry[] = [
       { name: "WHATSAPP_VERIFY_TOKEN", description: "Token do handshake GET do webhook /api/webhooks/whatsapp." },
       { name: "WHATSAPP_APP_SECRET", description: "App Secret da Meta: valida a assinatura X-Hub-Signature-256 do POST do webhook (mensagens e statuses reais)." },
       { name: "WHATSAPP_WEBHOOK_TOKEN", description: "Token alternativo exigido no header x-interos-token do POST do webhook (integradores/testes)." },
+      { name: "WHATSAPP_BUSINESS_ACCOUNT_ID", description: "ID da conta do WhatsApp Business: a Central lê e envia à análise os modelos aprovados (necessários fora da janela de 24 h)." },
     ],
     descriptions: {
       WHATSAPP_ACCESS_TOKEN: "Token permanente do usuário do sistema no Meta Business (whatsapp_business_messaging).",

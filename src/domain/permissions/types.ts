@@ -5,7 +5,7 @@
 import type { DepartmentKey, RoleKey } from "../constants";
 
 /** Módulos do sistema (as mesmas chaves de MODULE_ACCESS). */
-export const MODULE_KEYS = ["inicio", "operacao", "marketing", "vendas", "financeiro", "implantacao", "cs", "suporte", "performance", "gestao", "admin"] as const;
+export const MODULE_KEYS = ["inicio", "operacao", "marketing", "vendas", "financeiro", "implantacao", "cs", "suporte", "comunicacao", "performance", "gestao", "admin"] as const;
 export type ModuleKey = (typeof MODULE_KEYS)[number];
 
 /**

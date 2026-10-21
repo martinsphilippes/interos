@@ -53,6 +53,7 @@ import {
   Wallet,
   Zap,
   type LucideIcon,
+  MessagesSquare,
 } from "lucide-react";
 import type { EventType } from "@/domain/constants";
 import { cn } from "@/lib/utils";
@@ -183,6 +184,8 @@ const CATEGORY_ICON: Record<EventCategory, LucideIcon> = {
 /** Ícones específicos que fogem do padrão da categoria (marcos do circuito de receita com ícone próprio). */
 const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "call.completed": Phone,
+  "conversation.opened": MessagesSquare,
+  "conversation.closed": MessagesSquare,
   "comment.added": MessageSquare,
   "upsell.created": TrendingUp,
   "opportunity.won": Handshake,

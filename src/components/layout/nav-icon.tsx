@@ -30,6 +30,7 @@ import {
   MapPin,
   Megaphone,
   Menu,
+  MessagesSquare,
   Plug,
   Network,
   Package,
@@ -58,6 +59,7 @@ import {
   BadgePercent,
   HandCoins,
   LayoutGrid,
+  SlidersHorizontal,
   type LucideIcon,
   type LucideProps,
 } from "lucide-react";
@@ -122,6 +124,8 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   BadgePercent,
   HandCoins,
   LayoutGrid,
+  MessagesSquare,
+  SlidersHorizontal,
 };
 
 export interface NavIconProps extends LucideProps {
