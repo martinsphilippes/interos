@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Hand, Inbox, Mail, MessageCircle, Reply, UserPlus } from "lucide-react";
+import { CheckCircle2, Hand, Inbox, Mail, MessageCircle, MessagesSquare, Reply, UserPlus } from "lucide-react";
 import type { ActionResult } from "@/domain/types";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -64,7 +64,7 @@ export function InboxView({ data, currentUserId, channels }: { data: InboxData; 
         <SectionTitle
           title="Mensagens recebidas"
           count={pendingCount}
-          description="WhatsApp e e-mail dos últimos 30 dias"
+          description="Leads e números desconhecidos, últimos 30 dias"
           actions={
             <SegmentedControl
               size="sm"
@@ -206,8 +206,29 @@ function MessageItem({
             )}
           </div>
           {m.body ? <p className="mt-1 whitespace-pre-line text-sm">{m.body}</p> : null}
+          {m.conversation ? (
+            <p className="mt-1 text-xs text-muted">
+              {m.conversation.number} ·{" "}
+              {m.conversation.open ? (
+                m.conversation.assigneeName ? (
+                  <span className="text-success-fg">{m.conversation.assigneeId === currentUserId ? "com você na Central" : `com ${m.conversation.assigneeName} na Central`}</span>
+                ) : (
+                  <span className="text-warning-fg">{m.conversation.queueName ? `na fila ${m.conversation.queueName}, sem operador` : "sem operador"}</span>
+                )
+              ) : (
+                "atendimento encerrado"
+              )}
+            </p>
+          ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            {m.assigneeName ? (
+            {m.conversation && canSee("/comunicacao") ? (
+              <Button asChild size="sm" variant="outline" className="h-11 md:h-8">
+                <Link href={`/comunicacao?conversa=${m.conversation.id}`}>
+                  <MessagesSquare /> Abrir na Central
+                </Link>
+              </Button>
+            ) : null}
+            {m.conversation?.assigneeName && !m.assigneeName ? null : m.assigneeName ? (
               <span className="flex items-center gap-1.5 text-xs text-muted">
                 <Avatar name={m.assigneeName} size="xs" /> {m.assigneeId === currentUserId ? "Com você" : `Com ${m.assigneeName}`}
               </span>

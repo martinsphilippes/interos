@@ -6,6 +6,7 @@ import { PROTECTED_KEYS } from "@/domain/permissions";
 import { can, requireScreen } from "@/server/auth/session";
 import { NEVER_DENIED_KEYS } from "@/server/auth/invariants";
 import { listUsersForAdmin } from "@/server/admin/queries";
+import { getUserCentral } from "@/server/conversations/queues";
 import { getModulesTabData, getProfilesTabData, getUserAccessView, loadAccessState, userAccessCapabilities } from "@/server/admin/access";
 import { buildAccessTree, buildModuleInfo, buildScopeOptions, inactiveModulesFrom } from "@/server/auth/access-admin";
 import { formatNumber } from "@/lib/format";
@@ -109,6 +110,8 @@ export default async function UsuariosPage({ searchParams }: { searchParams: Sea
     }
   }
 
+  // Atendimento na Central (filas e jeito de atender): quem vê as filas vê; quem edita filas edita.
+  const central = selected && can(user, "comunicacao.canais.filas.ver") ? { view: await getUserCentral(selected), canEdit: can(user, "comunicacao.canais.filas.editar") } : null;
   const active = users.filter((u) => u.active !== false).length;
   const inactive = users.length - active;
   const admins = users.filter((u) => u.role === "admin" && u.active !== false).length;
@@ -136,7 +139,7 @@ export default async function UsuariosPage({ searchParams }: { searchParams: Sea
 
       <Suspense fallback={null}>
         <UsersTable users={users} departments={departments} currentUserId={user.id} />
-        <UserDrawer user={selected} users={users} departments={departments} abilities={abilities} currentUserId={user.id} access={access} />
+        <UserDrawer user={selected} users={users} departments={departments} abilities={abilities} currentUserId={user.id} access={access} central={central} />
       </Suspense>
     </PageContainer>
   );

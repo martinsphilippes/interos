@@ -7,6 +7,8 @@ import { getTicket, getTicketTitle, listArticles } from "@/server/support/querie
 import { ROOT_CAUSE_LABELS } from "@/server/support/schemas";
 import { checkTicketAccess, supportCapabilities } from "@/server/support/access";
 import { getSupportChannelStatus } from "@/server/support/integrations";
+import { ticketConversations } from "@/server/conversations/service";
+import { whatsappWindow } from "@/domain/conversations";
 import { formatDateTime } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +46,12 @@ export default async function TicketPage({ params }: { params: Params }) {
   if (!detail) notFound();
   const { ticket } = detail;
   const showSuggestions = can(user, "suporte.chamados.sugestoes.ver");
+  // Conversas da Central ligadas ao chamado: a primeira é a de origem; a janela do WhatsApp sai da mais recente.
+  const linked = await ticketConversations(ticket.id);
+  const origin = linked[0];
+  const lastWhatsapp = linked.filter((c) => c.channel === "whatsapp").sort((a, b) => ((a.lastInboundAt ?? "") < (b.lastInboundAt ?? "") ? 1 : -1))[0];
+  const composerChannels = lastWhatsapp ? { ...channels, whatsappWindow: whatsappWindow(lastWhatsapp.lastInboundAt).open ? ("aberta" as const) : ("fechada" as const) } : channels;
+  const centralLinks = canSeeHref(user, "/comunicacao");
 
   return (
     <PageContainer>
@@ -95,6 +103,20 @@ export default async function TicketPage({ params }: { params: Params }) {
         </div>
       ) : null}
 
+      {origin ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm">
+          <span>
+            {ticket.openedAt >= origin.openedAt ? "Aberto a partir do atendimento" : "Ligado ao atendimento"} {origin.number} por {origin.channel === "whatsapp" ? "WhatsApp" : "e-mail"} de {formatDateTime(origin.openedAt)}
+            {linked.length > 1 ? ` · ${linked.length} atendimentos ligados` : ""}.
+          </span>
+          {centralLinks ? (
+            <Link href={`/comunicacao?conversa=${linked[linked.length - 1].id}`} className="font-medium text-brand-fg hover:underline">
+              Ver conversa completa
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex min-w-0 flex-col gap-4">
           {ticket.solution || ticket.csatScore !== undefined ? (
@@ -116,7 +138,7 @@ export default async function TicketPage({ params }: { params: Params }) {
               </CardContent>
             </Card>
           ) : null}
-          <TicketConversation detail={detail} capabilities={caps} channels={channels} />
+          <TicketConversation detail={detail} capabilities={caps} channels={composerChannels} />
         </div>
 
         <aside className="flex flex-col gap-4">

@@ -65,7 +65,7 @@ function ChannelCard({ title, icon, tone, status, health, webhook, note }: { tit
  * Estado real de cada canal: lido das credenciais do servidor (nunca os valores) e dos registros técnicos. Canal
  * sem conexão real não aparece como ativo; os canais das próximas fases aparecem como indisponíveis.
  */
-export function ChannelsStatus({ whatsapp, email, voip, health, webhookSecured }: { whatsapp: IntegrationStatus; email: IntegrationStatus; voip: IntegrationStatus; health: ChannelHealth[]; webhookSecured: boolean }) {
+export function ChannelsStatus({ whatsapp, email, voip, health, webhookSecured, emailInbound }: { whatsapp: IntegrationStatus; email: IntegrationStatus; voip: IntegrationStatus; health: ChannelHealth[]; webhookSecured: boolean; emailInbound: "resend" | "token" | null }) {
   const h = (c: "whatsapp" | "email") => health.find((x) => x.channel === c);
   return (
     <div className="flex flex-col gap-4">
@@ -79,7 +79,15 @@ export function ChannelsStatus({ whatsapp, email, voip, health, webhookSecured }
           webhook={webhookSecured ? "assinatura da Meta conferida em todo aviso" : "sem App Secret: a assinatura da Meta não é conferida"}
           note="Só texto nesta fase: foto, áudio e documento chegam como aviso para o operador."
         />
-        <ChannelCard title="E-mail" icon={<Mail />} tone="secondary" status={email} note="Envio pelo Resend. O recebimento de e-mails na Central chega numa próxima entrega." />
+        <ChannelCard
+          title="E-mail"
+          icon={<Mail />}
+          tone="secondary"
+          status={email}
+          health={h("email")}
+          webhook={emailInbound === "resend" ? "recebimento pelo Resend, assinatura conferida em todo aviso" : emailInbound === "token" ? "recebimento por encaminhador próprio (token)" : "recebimento não configurado: e-mails dos clientes ainda não entram na Central"}
+          note="Envio pelo Resend. As respostas saem encadeadas no e-mail do cliente, com a assinatura de quem responde."
+        />
         <ChannelCard title="Telefonia (PABX)" icon={<Phone />} tone="info" status={voip} note="Provedor a definir. Até lá, os botões «Ligar» abrem o discador do aparelho." />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">

@@ -317,6 +317,8 @@ describe("escopo por registro (Marketing)", () => {
     expect(inbox.messages.map((m) => m.id).sort()).toEqual(["msg_fila", "msg_lead_luciano"]);
     expect(inbox.newLeads.map((l) => l.id)).toEqual(["lead_semdono"]);
     const everything = await getInbox();
-    expect(everything.messages).toHaveLength(3);
+    // Central de Atendimento (fase 1, parte 3): mensagens de clientes (msg_cliente) ficam na Central; a Caixa de
+    // Entrada mostra só leads e números desconhecidos.
+    expect(everything.messages.map((m) => m.id).sort()).toEqual(["msg_fila", "msg_lead_luciano"]);
   });
 });

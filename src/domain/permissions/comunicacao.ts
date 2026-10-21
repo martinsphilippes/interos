@@ -112,6 +112,65 @@ export const COMUNICACAO = {
       },
     },
     {
+      key: "comunicacao.historico",
+      module: "comunicacao",
+      label: "Histórico de atendimentos",
+      description: "Conversas encerradas de qualquer canal, com busca no texto, filtros (fila, operador, motivo, SLA, período), prévia da conversa, reabertura e exportação.",
+      routes: ["/comunicacao/historico"],
+      rule: "all",
+      nav: {
+        menu: "comunicacao",
+        href: "/comunicacao/historico",
+        order: 2,
+        label: "Histórico de atendimentos",
+        icon: "History",
+        wave: 5,
+      },
+      sections: [],
+      actions: [
+        {
+          key: "comunicacao.historico.reabrir",
+          label: "Reabrir atendimento encerrado",
+          verb: "reabrir",
+          rule: "all",
+          guards: ["src/server/conversations/actions.ts#reopenConversationAction"],
+          recordCondition: "conversa dentro do escopo do histórico",
+        },
+        {
+          key: "comunicacao.historico.exportar",
+          label: "Exportar o histórico (CSV)",
+          verb: "exportar",
+          rule: "all",
+          guards: ["src/server/conversations/actions.ts#exportHistoryAction"],
+          recordCondition: "só as conversas dentro do escopo do histórico",
+        },
+      ],
+      // Proposta aprovada (tela «Histórico de atendimentos»): operador vê as suas; gestor, as da equipe; direção, todas.
+      scope: {
+        entity: "conversations",
+        ownerFields: ["assigneeId"],
+        allowed: ["meus", "equipe", "empresa"],
+        defaultByRole: {
+          admin: "empresa",
+          diretoria: "empresa",
+          gestor: "equipe",
+          marketing: "meus",
+          vendas: "meus",
+          financeiro: "meus",
+          implantacao: "meus",
+          cs: "meus",
+          suporte: "meus",
+          colaborador: "meus",
+        },
+        variants: {
+          equipe: { reportLevels: 1, includeSelf: true, description: "Você e seus liderados diretos" },
+        },
+        // Com "meus", as encerradas sem responsável (ex.: encerradas pelo sistema) das filas da pessoa continuam visíveis.
+        poolUnassigned: true,
+        applyAt: ["src/server/conversations/history.ts#getHistory", "src/server/conversations/actions.ts (reopenConversationAction, exportHistoryAction)"],
+      },
+    },
+    {
       key: "comunicacao.canais",
       module: "comunicacao",
       label: "Canais e filas",
@@ -121,7 +180,7 @@ export const COMUNICACAO = {
       nav: {
         menu: "comunicacao",
         href: "/comunicacao/canais",
-        order: 2,
+        order: 3,
         label: "Canais e filas",
         icon: "SlidersHorizontal",
         wave: 5,
@@ -137,10 +196,10 @@ export const COMUNICACAO = {
       actions: [
         {
           key: "comunicacao.canais.filas.editar",
-          label: "Criar e editar filas",
+          label: "Criar e editar filas (e o atendimento de cada pessoa na ficha do usuário)",
           verb: "editar",
           rule: { manager: true },
-          guards: ["src/server/conversations/actions.ts#saveQueueAction"],
+          guards: ["src/server/conversations/actions.ts#saveQueueAction", "src/server/conversations/actions.ts#saveUserCentralAction"],
         },
         {
           key: "comunicacao.canais.modelos.editar",

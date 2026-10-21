@@ -316,6 +316,8 @@ export interface InboxMessage {
   assigneeId?: string;
   assigneeName?: string;
   replied: boolean;
+  /** Conversa da Central a que a mensagem pertence (situação, fila e responsável de lá). */
+  conversation?: { id: string; number: string; open: boolean; statusLabel: string; queueName?: string; assigneeId?: string; assigneeName?: string };
 }
 
 export interface InboxData {

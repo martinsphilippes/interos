@@ -23,7 +23,20 @@ const KIND_LABEL: Record<ConversationTarget["kind"], string> = { contato: "Conta
  * fila. WhatsApp: quem não escreveu nas últimas 24 h só recebe modelo aprovado — até os modelos chegarem, o envio é
  * pelo WhatsApp do aparelho (registro manual).
  */
-export function NewConversationDialog({ queues, whatsappConnected, templates = [] }: { queues: { id: string; name: string }[]; whatsappConnected: boolean; templates?: { id: string; name: string; body: string }[] }) {
+export function NewConversationDialog({
+  queues,
+  whatsappConnected,
+  templates = [],
+  suggestions = [],
+  label = "Novo atendimento",
+}: {
+  queues: { id: string; name: string }[];
+  whatsappConnected: boolean;
+  templates?: { id: string; name: string; body: string }[];
+  /** Pessoas sugeridas antes de buscar (ex.: os contatos do cliente, no Cliente 360). */
+  suggestions?: ConversationTarget[];
+  label?: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [term, setTerm] = React.useState("");
@@ -113,7 +126,7 @@ export function NewConversationDialog({ queues, whatsappConnected, templates = [
     >
       <DialogTrigger asChild>
         <Button className="min-h-[44px] md:min-h-0">
-          <MessageCirclePlus /> Novo atendimento
+          <MessageCirclePlus /> {label}
         </Button>
       </DialogTrigger>
       <DialogContent size="md">
@@ -152,6 +165,19 @@ export function NewConversationDialog({ queues, whatsappConnected, templates = [
                   <Input id="new-target" leadingIcon={<Search />} value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Ex.: Joana, (88) 99612-7659 ou nome@empresa.com" autoFocus />
                 )}
               </FormField>
+              {!target && term.trim().length < 2 && suggestions.length > 0 ? (
+                <ul className="-mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto rounded-lg border border-border p-1" aria-label="Sugestões">
+                  {suggestions.map((r) => (
+                    <li key={`${r.kind}_${r.id}`}>
+                      <button type="button" onClick={() => pick(r)} className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-surface-hover">
+                        <span className="font-medium">{r.name}</span>
+                        <span className="text-muted"> · {KIND_LABEL[r.kind]}</span>
+                        <span className="block text-xs text-muted">{[r.whatsapp ? formatPhone(r.whatsapp) : null, r.email].filter(Boolean).join(" · ") || "sem telefone ou e-mail"}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
               {!target && (results.length > 0 || searching) ? (
                 <ul className="-mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto rounded-lg border border-border p-1" aria-label="Resultados">
                   {searching && results.length === 0 ? <li className="px-2 py-1.5 text-xs text-muted">Buscando…</li> : null}
@@ -205,7 +231,7 @@ export function NewConversationDialog({ queues, whatsappConnected, templates = [
               )}
               {manual && !useTemplate ? (
                 <p className={cn("rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-warning-fg")}>
-                  No WhatsApp, quem não escreveu nas últimas 24 h só recebe modelo aprovado pela Meta. Até os modelos chegarem, nesse caso a mensagem vai pelo WhatsApp do aparelho e fica registrada na conversa.
+                  No WhatsApp, quem não escreveu nas últimas 24 h só recebe modelo aprovado pela Meta. Sem modelo, nesse caso a mensagem vai pelo WhatsApp do aparelho e fica registrada na conversa.
                 </p>
               ) : null}
             </>

@@ -163,3 +163,59 @@ export async function removeFromAllQueues(userId: string): Promise<number> {
   }
   return changed;
 }
+
+// ---------------------------------------------------------------------------
+// Atendimento na Central por usuário (ficha do usuário)
+// ---------------------------------------------------------------------------
+
+export interface UserCentralView {
+  settings: { attends: boolean; maxConcurrent?: number; channels?: ConversationChannel[]; emailSignature?: string };
+  queues: { id: string; name: string; maxConcurrent: number; member: boolean; channels: ConversationChannel[] }[];
+}
+
+export async function getUserCentral(user: Pick<User, "id" | "central">): Promise<UserCentralView> {
+  const queues = await listQueues();
+  return {
+    settings: { attends: user.central?.attends !== false, maxConcurrent: user.central?.maxConcurrent, channels: user.central?.channels, emailSignature: user.central?.emailSignature },
+    queues: queues
+      .filter((q) => q.active || q.memberIds.includes(user.id))
+      .map((q) => ({ id: q.id, name: q.name, maxConcurrent: q.maxConcurrent, member: q.memberIds.includes(user.id), channels: q.channels })),
+  };
+}
+
+export interface SaveUserCentralInput {
+  userId: string;
+  attends: boolean;
+  queueIds: string[];
+  maxConcurrent?: number;
+  channels?: ConversationChannel[];
+  emailSignature?: string;
+}
+
+/** Grava como a pessoa atende na Central e em quais filas está (service_queues.memberIds continua a fonte das filas). */
+export async function saveUserCentral(input: SaveUserCentralInput): Promise<{ queuesChanged: number }> {
+  const user = await getById<User>(COLLECTIONS.users, input.userId);
+  if (!user) throw new BusinessError("Usuário não encontrado");
+  if (user.active === false && input.queueIds.length > 0) throw new BusinessError("Usuário inativo não pode entrar em filas");
+  const queues = await listQueues();
+  const unknown = input.queueIds.find((id) => !queues.some((q) => q.id === id));
+  if (unknown) throw new BusinessError("Fila não encontrada");
+  const channels = input.channels?.length && input.channels.length < 2 ? input.channels : undefined;
+  await patchFields<User>(COLLECTIONS.users, user.id, {
+    central: {
+      attends: input.attends,
+      ...(input.maxConcurrent ? { maxConcurrent: input.maxConcurrent } : {}),
+      ...(channels ? { channels } : {}),
+      ...(input.emailSignature?.trim() ? { emailSignature: input.emailSignature.trim() } : {}),
+    },
+  });
+  let changed = 0;
+  for (const q of queues) {
+    const isMember = q.memberIds.includes(user.id);
+    const wants = input.queueIds.includes(q.id);
+    if (isMember === wants) continue;
+    await update<ServiceQueue>(COLLECTIONS.serviceQueues, q.id, { memberIds: wants ? [...q.memberIds, user.id] : q.memberIds.filter((id) => id !== user.id) });
+    changed += 1;
+  }
+  return { queuesChanged: changed };
+}

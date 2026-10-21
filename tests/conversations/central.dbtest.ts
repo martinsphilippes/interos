@@ -11,7 +11,8 @@ import { closeDocdb, docdb } from "@/server/docdb";
 import { create, getById, list, update } from "@/server/db";
 import { COLLECTIONS, type ChannelEvent, type Communication, type Conversation, type ServiceQueue, type User } from "@/domain/types";
 import { receiveInboundMessage } from "@/server/conversations/inbound";
-import { closeConversation, distributeWaiting, linkConversationIdentity, NOTE_TEMPLATE_KEY, sendConversationMessage, transferConversation } from "@/server/conversations/service";
+import { closeConversation, distributeWaiting, linkConversationIdentity, NOTE_TEMPLATE_KEY, reopenConversation, sendConversationMessage, transferConversation } from "@/server/conversations/service";
+import { saveUserCentral } from "@/server/conversations/queues";
 import { runCentralSweep } from "@/server/conversations/scheduler";
 import { quickRepliesFor, saveQuickReply, listQuickReplies } from "@/server/conversations/quick-replies";
 import { patchFields } from "@/server/conversations/store";
@@ -22,6 +23,7 @@ const PHONE_B = `5585${String(Date.now() + 7).slice(-8)}`;
 const PHONE_C = `5586${String(Date.now() + 13).slice(-8)}`;
 const PHONE_D = `5587${String(Date.now() + 29).slice(-8)}`;
 const OVERFLOW_ID = `${RUN}_transbordo`;
+const EMAIL_A = `${RUN}.cliente@exemplo.com.br`;
 const OP = { id: `${RUN}_op`, name: "Operadora Teste" };
 const QUEUE_ID = `${RUN}_fila`;
 
@@ -218,5 +220,71 @@ describe("respostas rápidas", () => {
     const after = (await listQuickReplies()).filter((r) => r.shortcut.startsWith(RUN));
     expect(after.find((r) => r.id === q.id)?.queueId).toBeUndefined(); // sem fila = empresa inteira
     expect(quickRepliesFor(after, [QUEUE_ID]).map((r) => r.shortcut)).toEqual([`${RUN}-segunda-via`]);
+  });
+});
+
+describe("parte 3: reabrir, e-mail de entrada e atendimento por pessoa", () => {
+  let emailConversation = "";
+  beforeAll(async () => {
+    // Volta ao cenário simples: operadora online, sem transbordo.
+    await update<User>(COLLECTIONS.users, OP.id, { presence: "online" });
+    await update<ServiceQueue>(COLLECTIONS.serviceQueues, QUEUE_ID, { overflowQueueId: undefined, overflowAfterMinutes: undefined });
+  });
+
+  it("e-mail recebido abre conversa com assunto e Message-ID; o aviso repetido é ignorado", async () => {
+    const r = await receiveInboundMessage({ channel: "email", from: EMAIL_A, body: "Não recebi o boleto de outubro.", externalId: `${RUN}_mail1@exemplo`, subject: "Boleto de outubro", messageId: `${RUN}_mail1@exemplo` });
+    conversationIds.add(r.conversationId!);
+    emailConversation = r.conversationId!;
+    const c = await conv(r.conversationId!);
+    expect(c).toMatchObject({ channel: "email", subject: "Boleto de outubro", lastInboundMessageId: `${RUN}_mail1@exemplo`, assigneeId: OP.id });
+    const [m] = await list<Communication>(COLLECTIONS.communications, { where: [["conversationId", "==", c.id]] });
+    expect(m.body).toBe("Assunto: Boleto de outubro\n\nNão recebi o boleto de outubro.");
+    const again = await receiveInboundMessage({ channel: "email", from: EMAIL_A, body: "Não recebi o boleto de outubro.", externalId: `${RUN}_mail1@exemplo`, subject: "Boleto de outubro" });
+    expect(again.duplicate).toBe(true);
+
+    // A resposta do cliente entra na mesma conversa, sem repetir o assunto, e atualiza o Message-ID.
+    const reply = await receiveInboundMessage({ channel: "email", from: EMAIL_A.toUpperCase(), body: "Obrigada!", externalId: `${RUN}_mail2@exemplo`, subject: "Re: Boleto de outubro", messageId: `${RUN}_mail2@exemplo` });
+    expect(reply.conversationId).toBe(c.id);
+    const after = await conv(c.id);
+    expect(after).toMatchObject({ subject: "Boleto de outubro", lastInboundMessageId: `${RUN}_mail2@exemplo` });
+    const bodies = (await list<Communication>(COLLECTIONS.communications, { where: [["conversationId", "==", c.id]] })).map((x) => x.body);
+    expect(bodies).toContain("Obrigada!");
+  });
+
+  it("reabrir: volta para quem atendeu (disponível), com nota; com outra aberta do mesmo contato, recusa", async () => {
+    const open = await conv(emailConversation);
+    await closeConversation(open.id, { reason: "resolvida", ticket: "nenhum" }, OP);
+    const reopened = await reopenConversation(open.id, OP);
+    expect(reopened).toMatchObject({ status: "em_atendimento", assigneeId: OP.id, reopenCount: 1 });
+    const fresh = await conv(open.id);
+    expect(fresh.closedAt).toBeUndefined();
+    expect(fresh.closeReason).toBeUndefined();
+    const notes = (await list<Communication>(COLLECTIONS.communications, { where: [["conversationId", "==", open.id]] })).filter((m) => m.templateKey === NOTE_TEMPLATE_KEY);
+    expect(notes.some((n) => n.body?.includes("reaberto"))).toBe(true);
+    await expect(reopenConversation(open.id, OP)).rejects.toThrow(/já está aberto/);
+
+    // Encerrada de novo; nova mensagem abre outra conversa; a antiga não reabre enquanto a nova estiver aberta.
+    await closeConversation(open.id, { reason: "resolvida", ticket: "nenhum" }, OP);
+    const next = await receiveInboundMessage({ channel: "email", from: EMAIL_A, body: "Outra dúvida", externalId: `${RUN}_mail3@exemplo`, subject: "Nota fiscal" });
+    conversationIds.add(next.conversationId!);
+    expect(next.conversationId).not.toBe(open.id);
+    await expect(reopenConversation(open.id, OP)).rejects.toThrow(/Já existe um atendimento aberto/);
+  });
+
+  it("quem não recebe conversas fica de fora da distribuição; voltar a receber libera", async () => {
+    await saveUserCentral({ userId: OP.id, attends: false, queueIds: [QUEUE_ID] });
+    const r = await receiveInboundMessage({ channel: "whatsapp", from: `5589${String(Date.now() + 41).slice(-8)}`, body: "Oi", externalId: `${RUN}_x1` });
+    conversationIds.add(r.conversationId!);
+    expect(await conv(r.conversationId!)).toMatchObject({ status: "na_fila", queueId: QUEUE_ID });
+    expect((await getById<User>(COLLECTIONS.users, OP.id))?.central).toEqual({ attends: false });
+
+    await saveUserCentral({ userId: OP.id, attends: true, queueIds: [QUEUE_ID], channels: ["email"] });
+    await distributeWaiting();
+    // Só e-mail: a conversa de WhatsApp continua na fila.
+    expect((await conv(r.conversationId!)).assigneeId).toBeUndefined();
+
+    await saveUserCentral({ userId: OP.id, attends: true, queueIds: [QUEUE_ID] });
+    await distributeWaiting();
+    expect((await conv(r.conversationId!)).assigneeId).toBe(OP.id);
   });
 });

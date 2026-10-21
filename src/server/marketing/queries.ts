@@ -5,6 +5,7 @@ import {
   type Campaign,
   type Client,
   type Communication,
+  type Conversation,
   type DomainEvent,
   type Lead,
   type LeadSource,
@@ -13,9 +14,11 @@ import {
   type Product,
   type Prospect,
   type ProspectList,
+  type ServiceQueue,
   type User,
 } from "@/domain/types";
 import { dateKey, formatDateKey } from "@/lib/format";
+import { CONVERSATION_STATUS_LABELS, isOpenConversation } from "@/domain/conversations";
 import {
   LEAD_STATUSES,
   TEMPERATURES,
@@ -474,10 +477,19 @@ export async function getInbox(access: LeadAccess = ALL_LEADS): Promise<InboxDat
     loadEnrichedLeads(),
   ]);
   const since = new Date(Date.now() - INBOX_DAYS * DAY_MS).toISOString();
-  const recent = incoming.filter((c) => (c.channel === "whatsapp" || c.channel === "email") && c.createdAt >= since).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  // Mensagens de clientes ficam com a Central de Atendimento (e o Suporte); aqui, só leads e números desconhecidos.
+  const recent = incoming.filter((c) => (c.channel === "whatsapp" || c.channel === "email") && !c.clientId && c.createdAt >= since).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
   const clientIds = recent.map((c) => c.clientId).filter((id): id is string => Boolean(id));
-  const [clients, users] = await Promise.all([getManyByIds<Client>(COLLECTIONS.clients, clientIds), userMap()]);
+  const conversationIds = recent.map((c) => c.conversationId ?? "").filter(Boolean);
+  // Só leitura (sem criar as filas padrão): nomes das filas das conversas da Central.
+  const [clients, users, conversations, queues] = await Promise.all([
+    getManyByIds<Client>(COLLECTIONS.clients, clientIds),
+    userMap(),
+    getManyByIds<Conversation>(COLLECTIONS.conversations, conversationIds),
+    conversationIds.length ? list<ServiceQueue>(COLLECTIONS.serviceQueues) : Promise.resolve([] as ServiceQueue[]),
+  ]);
+  const queueName = new Map(queues.map((q) => [q.id, q.name]));
   const leadById = new Map(leads.map((l) => [l.id, l]));
 
   // Respondida: marcada como lida ou com mensagem de saída posterior para o mesmo cliente/lead.
@@ -512,6 +524,19 @@ export async function getInbox(access: LeadAccess = ALL_LEADS): Promise<InboxDat
       assigneeId: c.userId,
       assigneeName: c.userId ? users.get(c.userId)?.name : undefined,
       replied: c.status === "lida" || Boolean(answeredAt && answeredAt > c.createdAt),
+      conversation: (() => {
+        const v = c.conversationId ? conversations.get(c.conversationId) : undefined;
+        if (!v) return undefined;
+        return {
+          id: v.id,
+          number: v.number,
+          open: isOpenConversation(v),
+          statusLabel: CONVERSATION_STATUS_LABELS[v.status],
+          queueName: v.queueId ? queueName.get(v.queueId) : undefined,
+          assigneeId: v.assigneeId,
+          assigneeName: v.assigneeId ? users.get(v.assigneeId)?.name : undefined,
+        };
+      })(),
     };
   });
 

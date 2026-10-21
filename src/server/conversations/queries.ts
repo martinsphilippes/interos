@@ -91,15 +91,16 @@ export interface CentralOverview {
 // Escopo
 // ---------------------------------------------------------------------------
 
-interface AccessContext {
+export interface AccessContext {
   scope: DataScope;
   myQueueIds: Set<string>;
   /** Filas ativas sem nenhum operador: o que espera nelas fica visível para qualquer operador (ninguém fica sem ver). */
   orphanQueueIds: Set<string>;
 }
 
-async function accessContext(user: CurrentUser, queues?: ServiceQueue[]): Promise<AccessContext> {
-  const [scope, all] = await Promise.all([resolveDataScope(user, "comunicacao.central"), queues ? Promise.resolve(queues) : listQueues()]);
+/** Escopo da tela (Central ou Histórico) + filas da pessoa. */
+export async function accessContext(user: CurrentUser, queues?: ServiceQueue[], screen: "comunicacao.central" | "comunicacao.historico" = "comunicacao.central"): Promise<AccessContext> {
+  const [scope, all] = await Promise.all([resolveDataScope(user, screen), queues ? Promise.resolve(queues) : listQueues()]);
   return { scope, myQueueIds: new Set(queuesOf(all, user.id).map((q) => q.id)), orphanQueueIds: new Set(all.filter((q) => q.active && q.memberIds.length === 0).map((q) => q.id)) };
 }
 
@@ -123,7 +124,7 @@ export async function loadConversationInScope(user: CurrentUser, id: string): Pr
 // Lista
 // ---------------------------------------------------------------------------
 
-interface Names {
+export interface Names {
   clients: Map<string, Client>;
   contacts: Map<string, Contact>;
   leads: Map<string, Lead>;
@@ -132,7 +133,7 @@ interface Names {
   slas: Map<string, SlaInstance>;
 }
 
-async function loadNames(items: Conversation[], queues: ServiceQueue[]): Promise<Names> {
+export async function loadNames(items: Conversation[], queues: ServiceQueue[]): Promise<Names> {
   const ids = (f: (c: Conversation) => string | undefined) => items.map(f).filter((x): x is string => Boolean(x));
   const [clients, contacts, leads, users, slas] = await Promise.all([
     getManyByIds<Client>(COLLECTIONS.clients, ids((c) => c.clientId)),
@@ -144,7 +145,7 @@ async function loadNames(items: Conversation[], queues: ServiceQueue[]): Promise
   return { clients, contacts, leads, users, slas, queues: new Map(queues.map((q) => [q.id, q])) };
 }
 
-function nameOf(c: Conversation, n: Pick<Names, "clients" | "contacts" | "leads">): { name: string; subtitle: string } {
+export function nameOf(c: Conversation, n: Pick<Names, "clients" | "contacts" | "leads">): { name: string; subtitle: string } {
   const client = c.clientId ? n.clients.get(c.clientId) : undefined;
   const contact = c.contactId ? n.contacts.get(c.contactId) : undefined;
   const lead = c.leadId ? n.leads.get(c.leadId) : undefined;
@@ -307,6 +308,41 @@ export interface ConversationDetail {
   capabilities: ConversationCapabilities;
 }
 
+/** Linha do tempo da conversa: mensagens (WhatsApp/e-mail), notas internas e o encerramento. */
+export function buildThread(conversation: Conversation, messages: Communication[], authors: Map<string, User>, ctx: { viewerId: string; customerName: string; customerRole?: string }): ThreadEntry[] {
+  const thread: ThreadEntry[] = [];
+  for (const m of messages.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))) {
+    const author = m.userId ?? m.createdBy;
+    const authorName = author ? (authors.get(author)?.name ?? (author === "sistema" ? "Central de Atendimento" : "Equipe")) : "Equipe";
+    if (m.templateKey === NOTE_TEMPLATE_KEY) {
+      thread.push({ kind: "note", id: m.id, at: m.createdAt, authorName, body: m.body ?? "" });
+      continue;
+    }
+    if (m.channel !== "whatsapp" && m.channel !== "email") continue;
+    thread.push({
+      kind: "message",
+      id: m.id,
+      at: m.createdAt,
+      direction: m.direction,
+      authorName: m.direction === "entrada" ? ctx.customerName : author === ctx.viewerId ? "Você" : authorName,
+      authorRole: m.direction === "entrada" ? ctx.customerRole : undefined,
+      body: m.body ?? "",
+      channel: m.channel,
+      manual: m.status === "manual",
+      delivered: m.status === "entregue" || m.status === "lida",
+      statusLabel: communicationStatusLabel(m.status),
+    });
+    if (m.direction === "saida" && (m.status === "falha" || m.status === "nao_enviada")) {
+      thread.push({ kind: "system", id: `${m.id}_erro`, at: m.createdAt, title: m.status === "falha" ? "Falha no envio" : "Não enviada", description: m.error });
+    }
+  }
+  if (conversation.status === "encerrada" && conversation.closedAt) {
+    const closer = conversation.closedById ? (authors.get(conversation.closedById)?.name ?? "") : "";
+    thread.push({ kind: "system", id: `${conversation.id}_fim`, at: conversation.closedAt, title: `Atendimento encerrado${closer ? ` por ${closer}` : ""}`, description: [conversation.closeReason ? CLOSE_REASON_LABELS[conversation.closeReason] : undefined, conversation.closeSummary].filter(Boolean).join(" · ") });
+  }
+  return thread;
+}
+
 export async function getConversationDetail(user: CurrentUser, id: string): Promise<ConversationDetail | null> {
   const conversation = await loadConversationInScope(user, id);
   if (!conversation) return null;
@@ -326,36 +362,7 @@ export async function getConversationDetail(user: CurrentUser, id: string): Prom
   const authors = await getManyByIds<User>(COLLECTIONS.users, [...authorIds, ...previous.map((p) => p.assigneeId ?? "")]);
   const customerName = row.name;
 
-  const thread: ThreadEntry[] = [];
-  for (const m of messages.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))) {
-    const author = m.userId ?? m.createdBy;
-    const authorName = author ? (authors.get(author)?.name ?? (author === "sistema" ? "Central de Atendimento" : "Equipe")) : "Equipe";
-    if (m.templateKey === NOTE_TEMPLATE_KEY) {
-      thread.push({ kind: "note", id: m.id, at: m.createdAt, authorName, body: m.body ?? "" });
-      continue;
-    }
-    if (m.channel !== "whatsapp" && m.channel !== "email") continue;
-    thread.push({
-      kind: "message",
-      id: m.id,
-      at: m.createdAt,
-      direction: m.direction,
-      authorName: m.direction === "entrada" ? customerName : author === user.id ? "Você" : authorName,
-      authorRole: m.direction === "entrada" ? row.subtitle : undefined,
-      body: m.body ?? "",
-      channel: m.channel,
-      manual: m.status === "manual",
-      delivered: m.status === "entregue" || m.status === "lida",
-      statusLabel: communicationStatusLabel(m.status),
-    });
-    if (m.direction === "saida" && (m.status === "falha" || m.status === "nao_enviada")) {
-      thread.push({ kind: "system", id: `${m.id}_erro`, at: m.createdAt, title: m.status === "falha" ? "Falha no envio" : "Não enviada", description: m.error });
-    }
-  }
-  if (conversation.status === "encerrada" && conversation.closedAt) {
-    const closer = conversation.closedById ? (authors.get(conversation.closedById)?.name ?? "") : "";
-    thread.push({ kind: "system", id: `${conversation.id}_fim`, at: conversation.closedAt, title: `Atendimento encerrado${closer ? ` por ${closer}` : ""}`, description: [conversation.closeReason ? CLOSE_REASON_LABELS[conversation.closeReason] : undefined, conversation.closeSummary].filter(Boolean).join(" · ") });
-  }
+  const thread = buildThread(conversation, messages, authors, { viewerId: user.id, customerName, customerRole: row.subtitle });
 
   const client = conversation.clientId ? names.clients.get(conversation.clientId) : undefined;
   const contact = conversation.contactId ? names.contacts.get(conversation.contactId) : undefined;

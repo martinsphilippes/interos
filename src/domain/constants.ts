@@ -338,6 +338,7 @@ export const EVENT_TYPES = [
   "conversation.assigned",
   "conversation.transferred",
   "conversation.closed",
+  "conversation.reopened",
   // financeiro (Onda 2)
   "contract.created",
   "contract.sent_for_signature",
@@ -417,6 +418,7 @@ export const EVENT_TYPES = [
   "knowledge.article.voted",
   "opportunity.reassigned",
   "email.sent",
+  "email.received",
   "settings.updated",
   // comissões v2 e contas a pagar (circuito de receita, etapa 2)
   "commission.paid",

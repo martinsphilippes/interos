@@ -77,7 +77,12 @@ const CATALOG: CatalogEntry[] = [
       { label: "Resend", vars: ["RESEND_API_KEY", "EMAIL_FROM"], implemented: true },
       { label: "SMTP", vars: ["SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM"], implemented: false },
     ],
-    optional: [{ name: "SMTP_PORT", description: "Porta SMTP (padrão 587)." }],
+    optional: [
+      { name: "SMTP_PORT", description: "Porta SMTP (padrão 587)." },
+      { name: "EMAIL_REPLY_TO", description: "Caixa que recebe as respostas dos clientes (endereço de recebimento do Resend): as respostas voltam para a Central." },
+      { name: "RESEND_WEBHOOK_SECRET", description: "Segredo (whsec_…) do webhook de e-mails recebidos do Resend: o e-mail do cliente entra na Central." },
+      { name: "EMAIL_INBOUND_TOKEN", description: "Token do webhook de e-mail recebido para encaminhadores próprios (header x-interos-token)." },
+    ],
     descriptions: {
       RESEND_API_KEY: "Chave de API do Resend (domínio remetente verificado).",
       EMAIL_FROM: "Remetente, ex.: Intercert <financeiro@intercert.com.br>.",

@@ -1,7 +1,6 @@
 import "server-only";
 /**
- * Entrada de mensagens na Central de Atendimento (o webhook do WhatsApp chama aqui; o e-mail de entrada usará o mesmo
- * caminho).
+ * Entrada de mensagens na Central de Atendimento (webhooks do WhatsApp e do e-mail chamam aqui).
  *
  * 1. Repetida? O provedor reenvia o mesmo aviso quando não recebe 200 a tempo: a comunicação tem id derivado do id da
  *    mensagem no provedor (createIfAbsent) — o segundo aviso não grava nada.
@@ -20,6 +19,7 @@ import { COLLECTIONS, type Communication, type Conversation, type ConversationCh
 import { resolveIdentity } from "./identity";
 import { applyInbound, conversationHref, displayNameOf, findOrOpenConversation, routeNewConversation } from "./service";
 import { logChannelEvent } from "./channel-events";
+import { inboundEmailBody } from "@/domain/email-inbound";
 import { businessStatus, canAutoSend, getAutoMessages, menuText, pickMenuOption, sendAutoMessage } from "./auto-messages";
 
 export interface InboundMessage {
@@ -33,6 +33,9 @@ export interface InboundMessage {
   displayName?: string;
   /** Quando o provedor diz que a mensagem foi enviada (ISO). */
   at?: string;
+  /** E-mail: assunto (vira o assunto da conversa) e Message-ID (a resposta sai encadeada nele). */
+  subject?: string;
+  messageId?: string;
 }
 
 export interface InboundResult {
@@ -63,6 +66,17 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
   const identity = await resolveIdentity(input.channel, input.from);
   const ticket = identity.clientId ? await findOpenTicketForClient(identity.clientId) : undefined;
   const { conversation, created } = await findOrOpenConversation({ channel: input.channel, address: input.from, identity, displayName: input.displayName, ticketId: ticket?.id, at });
+  // E-mail: o assunto entra no texto só na mensagem que abre a conversa (nas respostas ele se repete à toa).
+  const body = input.channel === "email" && created ? inboundEmailBody({ subject: input.subject ?? "", text: input.body }, true) : input.body;
+  if (input.channel === "email") {
+    const patch: Partial<Conversation> = {};
+    if (input.subject && !conversation.subject) patch.subject = input.subject;
+    if (input.messageId) patch.lastInboundMessageId = input.messageId;
+    if (Object.keys(patch).length) {
+      await update<Conversation>(COLLECTIONS.conversations, conversation.id, patch);
+      Object.assign(conversation, patch);
+    }
+  }
 
   const entity = ticket ? { type: "ticket", id: ticket.id } : identity.leadId && !identity.clientId ? { type: "lead", id: identity.leadId } : { type: "conversation", id: conversation.id };
   const data = {
@@ -72,7 +86,7 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
     direction: "entrada" as const,
     entityType: entity.type,
     entityId: entity.id,
-    body: input.body,
+    body,
     status: "recebida" as const,
     externalId: input.externalId,
     provider: (input.channel === "whatsapp" && isConnected("whatsapp") ? "meta" : input.channel === "email" ? "resend" : "outro") as Communication["provider"],
@@ -93,7 +107,7 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
   }
 
   const wasWaiting = conversation.awaitingReply;
-  let current = await applyInbound({ conversation, body: input.body, at, communicationId: communication.id });
+  let current = await applyInbound({ conversation, body, at, communicationId: communication.id });
   const who = identity.name ?? input.displayName ?? input.from;
 
   // Mensagens automáticas (desligadas por padrão): fora do horário e menu de boas-vindas.
@@ -111,7 +125,7 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
     }
   } else if (!created && current.menuPending) {
     // Resposta ao menu: a opção escolhe a fila; inválida → repete uma vez; depois vai para a fila padrão.
-    const option = pickMenuOption(input.body, auto.menu.opcoes);
+    const option = pickMenuOption(body, auto.menu.opcoes);
     if (option) current = await routeNewConversation(current, { hasOpenTicket: Boolean(ticket), queueId: option.filaId });
     else if ((current.menuAttempts ?? 0) < 1 && (await sendAutoMessage(current, "menu", `Não entendi. ${menuText(auto.menu)}`, { allowRepeat: true }))) {
       await update<Conversation>(COLLECTIONS.conversations, current.id, { menuAttempts: (current.menuAttempts ?? 0) + 1 });
@@ -142,15 +156,15 @@ export async function receiveInboundMessage(input: InboundMessage): Promise<Inbo
   }
 
   if (ticket) {
-    await recordInboundOnTicket(ticket, { channel: input.channel, body: input.body, who, communicationId: communication.id, from: input.from, conversationId: current.id });
-  } else if (input.channel === "whatsapp") {
+    await recordInboundOnTicket(ticket, { channel: input.channel, body, who, communicationId: communication.id, from: input.from, conversationId: current.id });
+  } else {
     await emitEvent({
-      type: "whatsapp.message.received",
+      type: input.channel === "email" ? "email.received" : "whatsapp.message.received",
       actor: { id: CUSTOMER.id, name: who },
       clientId: identity.clientId,
       entity: identity.leadId && !identity.clientId ? { type: "lead", id: identity.leadId } : { type: "communication", id: communication.id },
-      title: `WhatsApp recebido de ${who}`,
-      description: input.body,
+      title: input.channel === "email" ? `E-mail recebido de ${who}${input.subject ? `: ${input.subject}` : ""}` : `WhatsApp recebido de ${who}`,
+      description: body,
       department: "marketing",
       payload: { communicationId: communication.id, from: input.from, conversationId: current.id, leadId: identity.leadId },
     });

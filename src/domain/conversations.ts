@@ -61,6 +61,8 @@ export interface QueueCandidate {
   available: boolean;
   /** Conversas abertas com ele agora. */
   load: number;
+  /** Limite próprio (ficha do usuário); ausente = o da fila. */
+  limit?: number;
 }
 
 export interface PickAssigneeInput {
@@ -74,7 +76,8 @@ export interface PickAssigneeInput {
 }
 
 /**
- * Escolhe o operador da conversa, ou undefined (fica na fila). Só entra quem está disponível e abaixo do limite.
+ * Escolhe o operador da conversa, ou undefined (fica na fila). Só entra quem está disponível e abaixo do limite (o
+ * próprio, quando a ficha do usuário define; senão, o da fila).
  * - manual: ninguém (o gestor distribui);
  * - responsavel_primeiro: o responsável natural, se puder; senão, menor carga;
  * - menor_carga: menor carga, empate pela ordem da fila;
@@ -83,8 +86,7 @@ export interface PickAssigneeInput {
  */
 export function pickAssignee(input: PickAssigneeInput): string | undefined {
   if (input.strategy === "manual") return undefined;
-  const max = Math.max(1, input.maxConcurrent);
-  const able = input.candidates.filter((c) => c.available && c.load < max);
+  const able = input.candidates.filter((c) => c.available && c.load < Math.max(1, c.limit ?? input.maxConcurrent));
   if (able.length === 0) return undefined;
   if (input.preferredId) {
     const preferred = able.find((c) => c.id === input.preferredId);
