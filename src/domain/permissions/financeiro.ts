@@ -207,12 +207,12 @@ export const FINANCEIRO = {
         },
         {
           key: "financeiro.contratos.assinatura.editar",
-          label: "Adicionar/remover signatários",
+          label: "Adicionar/remover signatários; escolher o modelo do documento e a autenticação",
           verb: "editar",
           // Hoje: finance/actions.ts:178-200 → finance/actions.ts:86-93 requireFinanceOperator =
           // canAccessModule(financeiro) && canOperateFinance (finance/schemas.ts:45-47)
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
-          guards: ["src/server/finance/actions.ts#addSignerAction", "src/server/finance/actions.ts#removeSignerAction"],
+          guards: ["src/server/finance/actions.ts#addSignerAction", "src/server/finance/actions.ts#removeSignerAction", "src/server/finance/signature-actions.ts#setContractSignatureOptionsAction"],
         },
         {
           key: "financeiro.contratos.assinatura.enviar",
@@ -410,7 +410,8 @@ export const FINANCEIRO = {
       key: "financeiro.assinaturas",
       module: "financeiro",
       label: "Assinaturas",
-      description: "Fila de contratos aguardando assinatura e prontos para gerar o documento. As operações usam as chaves financeiro.contratos.assinatura.*.",
+      description:
+        "Assinatura eletrônica. Abas (?aba=): fila (aguardando assinatura e prontos para gerar o documento; operações pelas chaves financeiro.contratos.assinatura.*), entrada (documentos criados direto na Clicksign, à espera do cliente certo), modelos (contrato gerado pelo INTEROS ou Word da Clicksign) e configuracao (quem assina pela Intercert e a autenticação padrão).",
       routes: ["/financeiro/assinaturas"],
       // Hoje: src/app/(app)/financeiro/assinaturas/page.tsx:24-25 (M financeiro); botões com canOperateFinance
       // :27,52,63
@@ -429,17 +430,60 @@ export const FINANCEIRO = {
         {
           key: "financeiro.assinaturas.aguardando.ver",
           label: "Aguardando assinatura",
-          // Onde: assinaturas/page.tsx:45-54 · Hoje: page.tsx:24-25
+          // Onde: assinaturas/page.tsx (aba fila) · Hoje: page.tsx:24-25
           rule: "all",
+          tab: "fila",
         },
         {
           key: "financeiro.assinaturas.prontos.ver",
           label: "Prontos para gerar o documento",
-          // Onde: assinaturas/page.tsx:56-65 · Hoje: page.tsx:24-25
+          // Onde: assinaturas/page.tsx (aba fila) · Hoje: page.tsx:24-25
           rule: "all",
+          tab: "fila",
+        },
+        {
+          key: "financeiro.assinaturas.entrada.ver",
+          label: "Caixa de entrada da Clicksign",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          tab: "entrada",
+        },
+        {
+          key: "financeiro.assinaturas.modelos.ver",
+          label: "Modelos de contrato",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          tab: "modelos",
+        },
+        {
+          key: "financeiro.assinaturas.configuracao.ver",
+          label: "Configuração da assinatura",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          tab: "configuracao",
         },
       ],
-      actions: [],
+      actions: [
+        {
+          key: "financeiro.assinaturas.entrada.vincular",
+          label: "Vincular ao cliente ou ignorar documentos da Clicksign",
+          verb: "editar",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/finance/signature-actions.ts#assignInboxItemAction", "src/server/finance/signature-actions.ts#ignoreInboxItemAction", "src/server/finance/signature-actions.ts#reopenInboxItemAction"],
+        },
+        {
+          key: "financeiro.assinaturas.modelos.editar",
+          label: "Criar e alterar modelos de contrato (texto do INTEROS ou Word da Clicksign)",
+          verb: "editar",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/finance/signature-actions.ts#saveInterosTemplateAction", "src/server/finance/signature-actions.ts#saveTemplateVariablesAction", "src/server/finance/signature-actions.ts#setTemplateStateAction", "src/app/api/financeiro/modelos/route.ts#POST"],
+        },
+        {
+          key: "financeiro.assinaturas.configuracao.editar",
+          label: "Definir quem assina pela Intercert e a autenticação padrão",
+          verb: "editar",
+          rule: { manager: true },
+          guards: ["src/server/finance/signature-actions.ts#saveSignatureSettingsAction"],
+          sensitive: true,
+        },
+      ],
       scope: {
         entity: "contract",
         ownerFields: ["sellerId", "ownerId"],

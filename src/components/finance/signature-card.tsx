@@ -20,6 +20,7 @@ import { useFinanceAction } from "./use-finance-action";
 import { useOrigin } from "@/components/ui/use-origin";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { useFinanceAccess } from "./finance-access";
+import { SignatureDocumentOptions, type SignatureDocumentInfo } from "./signature-document-options";
 
 export interface SignatureCardProps {
   contract: Pick<Contract, "id" | "number" | "version" | "status" | "signers" | "signatureEnvelopeId" | "signatureProvider" | "documentHash" | "signedAt">;
@@ -30,6 +31,8 @@ export interface SignatureCardProps {
   clientName: string;
   /** Estado real das integrações (e-mail e assinatura decidem envio automático x manual). */
   integrations: IntegrationFlags;
+  /** Modelo do documento, autenticação e download do PDF/Word. */
+  documentInfo?: SignatureDocumentInfo;
 }
 
 const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "danger" } as const;
@@ -38,7 +41,7 @@ const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "da
  * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
  * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
  */
-export function SignatureCard({ contract, sentAt, reminders, editable, clientName, integrations }: SignatureCardProps) {
+export function SignatureCard({ contract, sentAt, reminders, editable, clientName, integrations, documentInfo }: SignatureCardProps) {
   const id = React.useId();
   // Capacidades do servidor (assinatura: editar signatários, enviar/lembrar, registrar assinatura; documento: ver).
   const { contracts: can } = useFinanceAccess();
@@ -117,7 +120,14 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
               <li key={s.email} className="flex flex-col gap-2 px-3 py-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{s.name}</p>
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                      {s.name}
+                      {s.party === "contratada" ? (
+                        <Badge variant="info" size="sm">
+                          Intercert
+                        </Badge>
+                      ) : null}
+                    </p>
                     <p className="truncate text-xs text-muted">
                       {s.role} · {s.email}
                     </p>
@@ -216,6 +226,8 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
           )
         ) : null}
 
+        {documentInfo && !closed ? <SignatureDocumentOptions contractId={contract.id} info={documentInfo} canEdit={can.signersEdit && editable && !allSigned} /> : null}
+
         {can.signatureSend && editable ? (
           <Button
             onClick={() =>
@@ -252,7 +264,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
           ) : null}
         </div>
         {sent && !allSigned && manual ? (
-          <p className="text-xs text-muted">Envio manual: salve o documento em PDF (Ver contrato → Imprimir) e anexe ao e-mail. Depois registre cada assinatura com a evidência.</p>
+          <p className="text-xs text-muted">Envio manual: baixe o PDF (ou o Word preenchido) e anexe ao e-mail. Depois registre cada assinatura com a evidência.</p>
         ) : null}
       </CardContent>
 

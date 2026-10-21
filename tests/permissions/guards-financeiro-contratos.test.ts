@@ -14,7 +14,7 @@ import type { Billing, Contract, ContractAmendment } from "@/domain/types";
 import { buildContractSummary, redactContractSummary } from "@/components/finance/contract-summary";
 import { NO_FINANCE_CAPABILITIES, hasBillingActions } from "@/components/finance/access-model";
 import { asCurrentUser, ALL_USERS, SEED_USERS, SYNTHETIC_USERS, label, type FixtureUser } from "./fixtures";
-import { legacyCanAccessModule, legacyCanOperateFinance, legacyUser } from "./legacy";
+import { isAfterT0Key, legacyCanAccessModule, legacyCanOperateFinance, legacyUser } from "./legacy";
 
 // ---------------------------------------------------------------------------
 // Banco em memória (mesmo padrão de guards-vendas.test.ts)
@@ -132,7 +132,8 @@ describe("capacidades padrão ≡ comportamento anterior", () => {
   });
 
   it("seções das telas do Financeiro: todas para quem tem o módulo (exceto o Portal do cliente, seção nova de quem opera)", () => {
-    const sections = FINANCE_SCREENS.flatMap((s) => SCREENS.find((x) => x.key === s)!.sections.map((x) => x.key)).filter((k) => k !== "financeiro.contratos.portal.ver");
+    // Abas novas da assinatura eletrônica (depois do T0) têm regra própria, provada em assinatura.test.ts.
+    const sections = FINANCE_SCREENS.flatMap((s) => SCREENS.find((x) => x.key === s)!.sections.map((x) => x.key)).filter((k) => k !== "financeiro.contratos.portal.ver" && !isAfterT0Key(k));
     expect(sections.length).toBeGreaterThan(10);
     for (const u of ALL_USERS) {
       const cu = asCurrentUser(u);

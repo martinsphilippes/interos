@@ -7,6 +7,7 @@ import { getById, ORG_ID } from "@/server/db";
 import { getContract } from "@/server/finance/queries";
 import { canSeeContractValues, contractAccessById } from "@/server/finance/access";
 import { redactAmendment } from "@/server/finance/redact";
+import { contractDocumentData } from "@/server/finance/contract-document";
 import { contractAtSnapshot } from "@/domain/contract-snapshot";
 import { COLLECTIONS, type Organization } from "@/domain/types";
 import { formatDateTime } from "@/lib/format";
@@ -84,6 +85,8 @@ export default async function ContractDocumentPage({ params, searchParams }: { p
   const entry = requested && requested !== detail.contract.version ? detail.contract.previousVersions?.find((v) => v.version === requested) : undefined;
   if (requested && requested !== detail.contract.version && !entry) notFound();
   const contract = entry ? contractAtSnapshot(detail.contract, entry.snapshot) : detail.contract;
+  // Cláusulas do modelo (fixado no documento gerado ou, antes disso, o atual): só na versão atual.
+  const clauses = entry ? undefined : (await contractDocumentData(detail.contract.id))?.clauses;
   return (
     <Shell contractId={detail.contract.id}>
       {entry ? (
@@ -106,6 +109,7 @@ export default async function ContractDocumentPage({ params, searchParams }: { p
         companyName={companyName}
         hidden={hidden}
         amendmentLinks={can(user, "financeiro.contratos.aditivos.ver")}
+        clauses={clauses}
       />
     </Shell>
   );

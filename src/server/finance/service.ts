@@ -23,6 +23,7 @@ import { cancelTaskInternal, completeTaskInternal, createTaskInternal } from "@/
 import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
+import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { DEFAULT_CLOSING, SALE_PAYMENT_METHOD_LABELS, contractEffectiveItems } from "@/domain/sale-closing";
 import { contractSnapshot, describeReadjustment } from "@/domain/contract-snapshot";
@@ -182,6 +183,7 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
   const items: ProposalItem[] = proposal?.status === "aceita" && proposal.items.length > 0 ? proposal.items : opp.products.map((p) => ({ ...p, discountPct: 0 }));
   const totals = proposalTotals(items);
   const signerEmail = primary?.email ?? opp.billingData?.email ?? client.email;
+  const companySigner = companySignerEntry(await getSignatureSettings());
   const contract = await create<Contract>(COLLECTIONS.contracts, {
     clientId: client.id,
     opportunityId: opp.id,
@@ -198,7 +200,7 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
     firstDueDate: closing?.firstDueDate,
     recurrence: closing?.recurrence ?? DEFAULT_CLOSING.recurrence,
     termMonths: closing?.termMonths ?? DEFAULT_CLOSING.termMonths,
-    signers: signerEmail ? [{ name: primary?.name ?? opp.billingData?.legalName ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [],
+    signers: withCompanySigner(signerEmail ? [{ name: primary?.name ?? opp.billingData?.legalName ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [], companySigner),
     paymentCondition: opp.billingData?.paymentCondition,
     financialStatus: "pendente",
     ownerId: financeManager?.id,
@@ -341,6 +343,7 @@ export async function createManualContract(input: { clientId: string; recurrence
   const [contacts, financeManager] = await Promise.all([list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", client.id]] }), getDepartmentManager("financeiro")]);
   const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
   const signerEmail = primary?.email ?? client.email;
+  const companySigner = companySignerEntry(await getSignatureSettings());
   const contract = await create<Contract>(COLLECTIONS.contracts, {
     clientId: client.id,
     number: await nextContractNumber(),
@@ -353,7 +356,7 @@ export async function createManualContract(input: { clientId: string; recurrence
     billingDay: input.billingDay,
     recurrence: input.recurrence,
     termMonths: input.termMonths,
-    signers: signerEmail ? [{ name: primary?.name ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [],
+    signers: withCompanySigner(signerEmail ? [{ name: primary?.name ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [], companySigner),
     financialStatus: "pendente",
     ownerId: financeManager?.id ?? actor.id,
     documentIds: [],
@@ -405,7 +408,7 @@ async function versionPatchIfSent(contract: Contract, actor: UserRef, reason: st
     patch: {
       version,
       status: contract.status === "pendencia" ? "pendencia" : "aguardando_contrato",
-      signers: contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const })),
+      signers: contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const, ...(s.party ? { party: s.party } : {}) })),
       previousVersions: [...(contract.previousVersions ?? []), entry],
     },
     clear: ["signatureEnvelopeId", "documentHash", "signedAt"],
@@ -641,19 +644,24 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
   if (contract.items.length === 0) throw new Error("Adicione pelo menos um item antes de gerar o documento do contrato");
   if (contract.signers.length === 0) throw new Error("Adicione pelo menos um signatário antes de gerar o documento do contrato");
   const client = await loadClient(contract.clientId);
+  // Quem assina pela Intercert (configuração) e o modelo do documento ficam fixados agora: entram no hash.
+  const [settings, template] = await Promise.all([getSignatureSettings(), templateForContract(contract)]);
+  const signers = withCompanySigner(contract.signers, companySignerEntry(settings)).map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const, ...(s.party ? { party: s.party } : {}) }));
+  const documentTemplate = template ? await documentTemplateSnapshot(template) : undefined;
+  const toSend: Contract = { ...contract, signers, ...(documentTemplate ? { documentTemplate } : {}) };
   const provider = getSignatureProvider();
-  const envelope = await provider.createEnvelope(contract, client.tradeName);
+  const envelope = await provider.createEnvelope(toSend, client.tradeName);
   const manual = envelope.provider === "manual";
-  const signers = contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const }));
   const patch: Partial<Contract> = {
     status: contract.status === "pendencia" ? "pendencia" : "aguardando_assinatura",
     signatureProvider: envelope.provider,
     signatureEnvelopeId: envelope.envelopeId,
     documentHash: envelope.documentHash,
     signers,
+    ...(documentTemplate ? { documentTemplate } : {}),
   };
   await update<Contract>(COLLECTIONS.contracts, contract.id, patch);
-  await clearFields(COLLECTIONS.contracts, contract.id, contract.signedAt ? ["signedAt"] : []);
+  await clearFields(COLLECTIONS.contracts, contract.id, [...(contract.signedAt ? ["signedAt"] : []), ...(!documentTemplate && contract.documentTemplate ? ["documentTemplate"] : [])]);
   await emitEvent({
     type: "contract.sent_for_signature",
     actor,

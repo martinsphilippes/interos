@@ -133,6 +133,12 @@ export const COLLECTIONS = {
   channelConnections: "channel_connections",
   /** Visitantes do chat do site (sessão anônima, limite de uso). */
   chatVisitors: "chat_visitors",
+  /** Modelos de contrato (gerado pelo INTEROS ou Word usado na Clicksign). */
+  contractTemplates: "contract_templates",
+  /** Arquivos Word dos modelos, um por versão (imutáveis: o contrato aponta para a versão usada). */
+  contractTemplateFiles: "contract_template_files",
+  /** Caixa de entrada: documentos criados direto na Clicksign, à espera de destino (cliente/contrato). */
+  signatureInbox: "signature_inbox",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -644,6 +650,100 @@ export interface ContractSignerEntry {
   evidenceUrl?: string;
   registeredBy?: string;
   registeredAt?: string;
+  /** "contratada": quem assina pela Intercert (configuração em Financeiro › Assinaturas). Ausente = contratante. */
+  party?: "contratante" | "contratada";
+}
+
+// ---------------------------------------------------------------------------
+// Assinatura eletrônica: modelos de contrato e caixa de entrada da Clicksign
+// ---------------------------------------------------------------------------
+
+/** Como o signatário prova quem é na hora de assinar (o provedor pede o código/certificado). */
+export const SIGNATURE_AUTH_METHODS = ["email", "whatsapp", "sms", "icp_brasil"] as const;
+export type SignatureAuthMethod = (typeof SIGNATURE_AUTH_METHODS)[number];
+
+/** interos: o INTEROS gera o PDF (dados do contrato + cláusulas do modelo). word: arquivo .docx com {{variáveis}}. */
+export const CONTRACT_TEMPLATE_KINDS = ["interos", "word"] as const;
+export type ContractTemplateKind = (typeof CONTRACT_TEMPLATE_KINDS)[number];
+
+/** Variável {{nome}} do modelo ligada a um campo do contrato (CONTRACT_FIELDS) ou a um texto fixo. */
+export interface ContractTemplateVariable {
+  name: string;
+  field?: string;
+  fixed?: string;
+}
+
+export interface ContractTemplate extends BaseEntity {
+  name: string;
+  kind: ContractTemplateKind;
+  description?: string;
+  active: boolean;
+  /** Modelo usado quando o contrato não escolhe outro (só um por vez). */
+  isDefault?: boolean;
+  /** Sobe a cada mudança de conteúdo (cláusulas, arquivo ou variáveis). */
+  version: number;
+  /** interos: título do documento e cláusulas (texto com {{variáveis}}), impressas depois dos dados do contrato. */
+  title?: string;
+  clauses?: string;
+  /** word: arquivo da versão atual (o conteúdo fica em contract_template_files). */
+  fileName?: string;
+  fileSize?: number;
+  variables: ContractTemplateVariable[];
+  /** Chave do modelo registrado na Clicksign (preenchida quando a integração estiver ligada). */
+  providerTemplateKey?: string;
+  createdBy: string;
+  createdByName?: string;
+  updatedBy?: string;
+  updatedByName?: string;
+}
+
+export interface ContractTemplateFile extends BaseEntity {
+  templateId: string;
+  version: number;
+  fileName: string;
+  size: number;
+  /** "sha256:<hex>" do arquivo. */
+  sha256: string;
+  contentBase64: string;
+}
+
+/** Modelo fixado no contrato ao gerar o documento: o mesmo PDF/Word sai de novo mesmo se o modelo mudar depois. */
+export interface ContractDocumentTemplate {
+  id: string;
+  name: string;
+  kind: ContractTemplateKind;
+  version: number;
+  /** "sha256:<hex>" do conteúdo do modelo (cláusulas ou arquivo + ligações das variáveis). */
+  contentHash: string;
+  title?: string;
+  clauses?: string;
+  variables?: ContractTemplateVariable[];
+}
+
+export const SIGNATURE_INBOX_STATES = ["pendente", "vinculado", "ignorado"] as const;
+export type SignatureInboxState = (typeof SIGNATURE_INBOX_STATES)[number];
+
+/** Documento criado direto na Clicksign (sem contrato no INTEROS): alguém escolhe o cliente certo. */
+export interface SignatureInboxItem extends BaseEntity {
+  provider: "clicksign";
+  envelopeId: string;
+  documentKey?: string;
+  name: string;
+  providerStatus: "em_andamento" | "finalizado" | "cancelado" | "recusado";
+  signers: { name: string; email: string; document?: string; signedAt?: string }[];
+  receivedAt: string;
+  finishedAt?: string;
+  state: SignatureInboxState;
+  /** Sugestão automática (e-mail ou CNPJ/CPF de um signatário bate com um cliente). */
+  suggestedClientId?: string;
+  suggestionReason?: string;
+  clientId?: string;
+  contractId?: string;
+  documentId?: string;
+  resolvedBy?: string;
+  resolvedByName?: string;
+  resolvedAt?: string;
+  ignoreReason?: string;
 }
 
 export interface Contract extends BaseEntity {
@@ -706,6 +806,13 @@ export interface Contract extends BaseEntity {
   amendmentIds?: string[];
   /** Versões anteriores: snapshot completo de cada revisão pré-assinatura e de cada aditivo aplicado. */
   previousVersions?: ContractVersionEntry[];
+  // Assinatura eletrônica — opcionais.
+  /** Modelo escolhido para o documento (ausente = o modelo padrão). */
+  templateId?: string;
+  /** Como os signatários provam quem são (ausente = o padrão da configuração). */
+  signatureAuth?: SignatureAuthMethod;
+  /** Modelo fixado ao gerar o documento (entra no código de integridade). */
+  documentTemplate?: ContractDocumentTemplate;
 }
 
 /**
