@@ -96,7 +96,17 @@ describe("representante do cliente (de qual contato vem o CPF)", () => {
     const companyContact = { name: "Padaria X", email: "contato@x.com" };
     expect(resolveRepresentativeDocument(sig("Padaria X", "contato@x.com"), [companyContact], { legalName: "Padaria X", tradeName: "Padaria X" }, { legalName: "Padaria X" })).toMatchObject({ ambiguous: "empresa" });
     expect(resolveRepresentativeDocument(sig("Padaria X", "contato@x.com"), [{ ...companyContact, document: "52998224725" }], { legalName: "Padaria X" }, { legalName: "Padaria X", document: "12345678000190" })).toMatchObject({ document: "52998224725" });
-    // Nome da empresa + o e-mail de um contato com outro nome: é a empresa (escolher quem assina).
-    expect(resolveRepresentativeDocument(sig("Padaria X Ltda", "geral@x.com"), [{ name: "Maria", email: "geral@x.com" }], { legalName: "Padaria X Ltda" }, { legalName: "Padaria X Ltda", document: "12345678000190" })).toMatchObject({ ambiguous: "empresa" });
+    // Nome do cliente + o e-mail de um contato com outro nome: o conflito vale (o link vai para esse e-mail), mesmo
+    // quando o nome bate com o do faturamento pessoa física — nunca sai pronto com o CPF do cliente.
+    expect(resolveRepresentativeDocument(sig("Padaria X Ltda", "geral@x.com"), [{ name: "Maria", email: "geral@x.com" }], { legalName: "Padaria X Ltda" }, { legalName: "Padaria X Ltda", document: "12345678000190" })).toMatchObject({ ambiguous: "outro_nome", otherName: "Maria" });
+    const accountant = resolveRepresentativeDocument(
+      sig("Maria Souza", "pedro@contabil.com"),
+      [{ name: "Maria Souza" }, { name: "Pedro Contador", email: "pedro@contabil.com", document: "11144477735" }],
+      { legalName: "Maria Souza", tradeName: "Maria Souza" },
+      { legalName: "Maria Souza", document: "52998224725" },
+    );
+    expect(accountant).toMatchObject({ ambiguous: "outro_nome", otherName: "Pedro Contador" });
+    expect(accountant.document).toBeUndefined();
+    expect(accountant.fromClient).toBeUndefined();
   });
 });

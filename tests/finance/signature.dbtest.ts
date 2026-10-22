@@ -208,7 +208,8 @@ describe("assinatura eletrônica", () => {
     expect(r?.representative).toMatchObject({ ambiguous: "empresa" });
     const contact = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Maria Cliente", email: CLIENT_EMAIL, isPrimary: true });
     r = await documentReadiness(current);
-    expect(r?.representative).toMatchObject({ contactFound: false, ambiguous: "empresa" });
+    // Com um contato de OUTRO nome dono do e-mail, o conflito vale (o link de assinatura vai para esse e-mail).
+    expect(r?.representative).toMatchObject({ contactFound: false, ambiguous: "outro_nome", otherName: "Maria Cliente" });
     // Quem assina passa a ser a Maria (contato), ainda sem CPF: a pendência continua, agora apontando o contato.
     await update<Contract>(COLLECTIONS.contracts, c.id, { signers: current.signers.map((x) => (x.party === "contratada" ? x : { ...x, name: "Maria Cliente" })) });
     current = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;

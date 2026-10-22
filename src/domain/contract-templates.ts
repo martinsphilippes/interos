@@ -150,8 +150,9 @@ export function resolveRepresentativeDocument<S extends { party?: string; role?:
     if (companyNamed && !r.contact.document) return { signer, ambiguous: "empresa" };
     return { ...r, document: r.contact.document };
   }
-  // Duplicados com CPFs diferentes da mesma pessoa: corrigir os contatos, qualquer que seja o nome.
-  if (r.ambiguous === "cpf" || (r.ambiguous && !companyNamed)) return r;
+  // Conflito nos contatos (o e-mail é de outra pessoa, de várias, ou duplicados com CPFs diferentes): vale sempre,
+  // mesmo com o nome do cliente — o link de assinatura vai para esse e-mail, então o CPF de ninguém entra.
+  if (r.ambiguous) return r;
   const doc = billing.document?.replace(/\D/g, "") ?? "";
   if (doc.length === 11 && billing.legalName?.trim() && samePersonName(billing.legalName, signer.name)) return { signer, document: doc, fromClient: true };
   if (companyNamed) return { signer, ambiguous: "empresa" };
