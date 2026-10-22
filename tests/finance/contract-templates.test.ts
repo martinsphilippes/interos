@@ -62,6 +62,12 @@ describe("variáveis do modelo", () => {
     expect(suggestField("valor_mensal")).toBe("valores.mensalidade");
     expect(suggestField("contrato.numero")).toBe("contrato.numero");
     expect(suggestField("contrato_numero")).toBe("contrato.numero");
+    expect(suggestField("Bairro")).toBe("contratante.bairro");
+    expect(suggestField("logradouro")).toBe("contratante.logradouro");
+    expect(suggestField("Número do endereço")).toBe("contratante.numero");
+    expect(suggestField("numero")).toBe("contrato.numero");
+    expect(suggestField("complemento")).toBe("contratante.complemento");
+    expect(suggestField("Cidade/UF")).toBe("contratante.cidade_uf");
     expect(suggestField("cor_favorita")).toBeUndefined();
   });
   it("mantém as ligações já salvas e sugere as novas", () => {
@@ -95,7 +101,7 @@ describe("campos do contrato", () => {
     const f = contractFieldValues({
       contract: CONTRACT,
       client: { legalName: "ACME Comércio LTDA", tradeName: "ACME" },
-      billingData: { document: "12345678000190", email: "fin@acme.com.br", address: { street: "Rua A", number: "10", city: "Crato", state: "CE", zip: "63100-000" } },
+      billingData: { document: "12345678000190", email: "fin@acme.com.br", address: { street: "Rua A", number: "10", complement: "Sala 2", district: "Centro", city: "Crato", state: "CE", zip: "63100-000" } },
       companyName: "Intercert",
       companyAddress: "Juazeiro do Norte/CE",
       issuedAt: "2026-10-21T15:00:00.000Z",
@@ -103,7 +109,12 @@ describe("campos do contrato", () => {
     });
     expect(f["contratante.razao_social"]).toBe("ACME Comércio LTDA");
     expect(f["contratante.cnpj_cpf"]).toBe("12.345.678/0001-90");
-    expect(f["contratante.endereco"]).toBe("Rua A, 10 - Crato/CE - CEP 63100-000");
+    expect(f["contratante.endereco"]).toBe("Rua A, 10 - Sala 2 - Centro - Crato/CE - CEP 63100-000");
+    expect(f["contratante.logradouro"]).toBe("Rua A");
+    expect(f["contratante.numero"]).toBe("10");
+    expect(f["contratante.complemento"]).toBe("Sala 2");
+    expect(f["contratante.bairro"]).toBe("Centro");
+    expect(f["contratante.cidade_uf"]).toBe("Crato/CE");
     expect(f["contratante.representante"]).toBe("Maria Cliente");
     expect(f["contratada.representante"]).toBe("Hércules Andrade");
     expect(f["contrato.data_emissao"]).toBe("21 de outubro de 2026");

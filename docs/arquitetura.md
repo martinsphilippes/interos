@@ -586,7 +586,8 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Modelos** (`contract_templates`): `interos` (título + cláusulas com `{{variáveis}}`, impressas depois dos dados do
   contrato) ou `word` (.docx da Clicksign; arquivo por versão em `contract_template_files`, id `<modelo>_v<N>`, imutável).
   Variáveis ligadas a `CONTRACT_FIELDS` (sugestão pelo nome: `{{razao_social}}` → `contratante.razao_social`) ou a texto
-  fixo; sem ligação sai lacuna. Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
+  fixo; sem ligação sai lacuna. O endereço do cliente existe inteiro (`contratante.endereco`) e em partes (logradouro,
+  número, complemento, bairro, cidade, cidade/UF, UF, CEP); `{{numero}}` continua sendo o número do contrato. Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
   `POST /api/financeiro/modelos` (multipart; acima do limite das Server Actions), até 4 MB.
 - **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
   modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o
