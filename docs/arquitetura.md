@@ -124,9 +124,10 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - Estados obrigatórios em toda lista/tela: vazio, carregando (loading.tsx), erro.
 - Sem números fixos "de enfeite": todo indicador vem do banco.
 - Troca de versão com a aba aberta (a Vercel Hobby não tem Skew Protection): uma Server Action da versão anterior
-  recebe 404 e o Next lança `UnrecognizedActionError`; `src/app/(app)/error.tsx` reconhece (`isNewVersionError`,
-  `src/lib/version.ts`), explica que o envio não foi salvo e recarrega uma vez (trava de 30 s no `sessionStorage`
-  contra laço). Antes disso, `VersionWatcher` (shell) compara `NEXT_PUBLIC_BUILD_ID` (id do deploy embutido em
+  recebe 404 e o Next lança `UnrecognizedActionError`; `AppErrorView` (`src/components/layout/app-error-view.tsx`,
+  usada por `src/app/(app)/error.tsx` para as páginas e por `src/app/error.tsx` para o próprio shell: presença,
+  softphone, notificações) reconhece (`isNewVersionError`, `src/lib/version.ts`), explica que o envio não foi salvo e
+  recarrega uma vez (trava de 30 s no `sessionStorage` contra laço). Antes disso, `VersionWatcher` (shell) compara `NEXT_PUBLIC_BUILD_ID` (id do deploy embutido em
   `next.config.ts`) com `GET /api/versao` ao voltar para a aba e a cada 10 min, e avisa com um toast fixo "Recarregar"
   (não recarrega sozinho: pode haver formulário aberto).
 
@@ -581,8 +582,8 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   nome/e-mail do cadastro (contato precisa ser do cliente do contrato e ter e-mail que a assinatura aceite,
   `isSignerEmail` = `z.email()`, pois o cadastro de contatos/usuários é mais frouxo; usuário precisa estar ativo). Quem
   já assina sai da lista; contato sem e-mail ou com e-mail inválido aparece desabilitado com o motivo. Remover, lembrar
-  e assinar à mão identificam o signatário pelo e-mail gravado sem revalidá-lo (`signerRefSchema`), para contratos
-  antigos que copiaram o e-mail do contato principal sem conferir. Com a Clicksign ligada, nome sem sobrenome é
+  e assinar à mão (contrato e aditivo) identificam o signatário pelo e-mail gravado sem revalidá-lo (`signerEmailRef`),
+  para contratos antigos que copiaram o e-mail do contato principal sem conferir. Com a Clicksign ligada, nome sem sobrenome é
   apontado com link para corrigir no cadastro. "Cadastrar novo contato" (`addContactAsSignerAction`: chave de
   assinatura + `operacao.clientes.contatos.editar` + cliente no escopo de Clientes, a opção só aparece quando a action
   vai aceitar) valida tudo ANTES de gravar (e-mail ainda não signatário, papel, nome para a Clicksign) e só então cria

@@ -180,11 +180,18 @@ export type AmendmentInput = z.input<typeof amendmentInputSchema>;
 
 export const amendmentIdSchema = z.object({ amendmentId: id("Aditivo") });
 export const cancelAmendmentSchema = z.object({ amendmentId: id("Aditivo"), reason: z.string().trim().min(5, "Descreva o motivo (mín. 5 caracteres)").max(500, "Motivo muito longo") });
+/**
+ * Referência a um signatário já gravado (contrato ou aditivo): o e-mail só identifica, sem revalidar o formato.
+ * Contratos antigos copiaram o e-mail do contato principal sem conferir; esses signatários ainda precisam poder ser
+ * removidos, lembrados e assinados à mão.
+ */
+const signerEmailRef = z.string().trim().min(1, "Informe o signatário").max(254, "E-mail do signatário inválido");
+
 /** Assinatura manual do aditivo: mesma evidência exigida no contrato. */
 export const amendmentSignatureSchema = z
   .object({
     amendmentId: id("Aditivo"),
-    email: z.email("E-mail do signatário inválido"),
+    email: signerEmailRef,
     signedAt: dateKey("Data da assinatura"),
     evidenceUrl: z.union([z.literal(""), url]).optional(),
     description: z.string().trim().max(500, "Descrição muito longa").optional(),
@@ -235,11 +242,6 @@ export const newContactSignerSchema = z.object({
 });
 export type NewContactSignerInput = z.input<typeof newContactSignerSchema>;
 
-/**
- * Referência a um signatário já gravado: o e-mail só identifica (sem revalidar o formato). Contratos antigos copiaram o
- * e-mail do contato principal sem conferir; esses signatários ainda precisam poder ser removidos, lembrados e assinados.
- */
-const signerEmailRef = z.string().trim().min(1, "Informe o signatário").max(254, "E-mail do signatário inválido");
 export const signerRefSchema = z.object({ contractId: id("Contrato"), email: signerEmailRef });
 
 /** Assinatura registrada manualmente: exige evidência (link do documento assinado ou descrição) e a data. */
