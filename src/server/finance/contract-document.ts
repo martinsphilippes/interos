@@ -51,8 +51,11 @@ export interface ClientRepresentativeInfo {
   email: string;
   /** O signatário é um contato do cliente (pelo e-mail e, se o e-mail for compartilhado, pelo nome): o CPF vem dele. */
   contactFound: boolean;
-  /** Mais de um contato do cliente usa este e-mail e nenhum tem o nome do signatário: não dá para saber de quem é o CPF. */
-  sharedEmail?: boolean;
+  /**
+   * Não dá para saber de quem é o CPF: `nome` — mais de um contato usa o e-mail e nenhum tem o nome do signatário;
+   * `cpf` — contatos duplicados (mesmo nome e e-mail) com CPFs diferentes.
+   */
+  ambiguous?: "nome" | "cpf";
 }
 
 const normName = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -60,16 +63,21 @@ const normName = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "
 /**
  * Representante do cliente: o 1º signatário qualificado como contratante, representante legal ou procurador
  * (`clientRepresentative`, na ordem do contrato). O CPF vem do contato que É essa pessoa: o único contato com o e-mail
- * do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo nome. Nunca "o que tem CPF":
- * CPF de outra pessoa no contrato é pior do que a pendência.
+ * do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo nome (duplicados da mesma
+ * pessoa: vale o CPF, se só houver um). Nunca "o que tem CPF" entre pessoas diferentes: CPF de outra pessoa no contrato
+ * é pior do que a pendência.
  */
-function resolveRepresentative(signers: ContractSignerEntry[], contacts: Contact[]): { signer?: ContractSignerEntry; contact?: Contact; sharedEmail: boolean } {
+function resolveRepresentative(signers: ContractSignerEntry[], contacts: Contact[]): { signer?: ContractSignerEntry; contact?: Contact; ambiguous?: "nome" | "cpf" } {
   const signer = clientRepresentative(signers);
-  if (!signer) return { signer, sharedEmail: false };
+  if (!signer) return { signer };
   const sameEmail = contacts.filter((c) => c.email?.trim().toLowerCase() === signer.email.trim().toLowerCase());
-  if (sameEmail.length <= 1) return { signer, contact: sameEmail[0], sharedEmail: false };
+  if (sameEmail.length <= 1) return { signer, contact: sameEmail[0] };
   const byName = sameEmail.filter((c) => normName(c.name) === normName(signer.name));
-  return byName.length === 1 ? { signer, contact: byName[0], sharedEmail: false } : { signer, sharedEmail: true };
+  if (byName.length === 0) return { signer, ambiguous: "nome" };
+  // Mesmo nome e mesmo e-mail é a mesma pessoa cadastrada mais de uma vez: vale o CPF, se só houver um.
+  const cpfs = new Set(byName.map((c) => c.document).filter(Boolean));
+  if (cpfs.size > 1) return { signer, ambiguous: "cpf" };
+  return { signer, contact: byName.find((c) => c.document) ?? byName[0] };
 }
 
 interface FieldsContext {
@@ -83,7 +91,7 @@ const COMPANY_ADDRESS = HEADQUARTERS.label.replace("Sede Intercert — ", "");
 
 /** Valores dos campos do contrato (mesma regra para a prévia, o envio e a prontidão). */
 function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string): { fields: Record<string, string>; representative?: ClientRepresentativeInfo } {
-  const { signer, contact, sharedEmail } = resolveRepresentative(contract.signers, ctx.contacts);
+  const { signer, contact, ambiguous } = resolveRepresentative(contract.signers, ctx.contacts);
   const fields = contractFieldValues({
     contract,
     client: ctx.client,
@@ -94,7 +102,7 @@ function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string
     labels: { recurrence: RECURRENCE_LABELS[contract.recurrence], paymentMethod: contract.paymentMethod ? paymentMethodLabel(contract.paymentMethod) : undefined },
     representative: signer ? { name: signer.name, email: signer.email, document: contact?.document } : undefined,
   });
-  return { fields, representative: signer ? { name: signer.name, email: signer.email, contactFound: Boolean(contact), ...(sharedEmail ? { sharedEmail } : {}) } : undefined };
+  return { fields, representative: signer ? { name: signer.name, email: signer.email, contactFound: Boolean(contact), ...(ambiguous ? { ambiguous } : {}) } : undefined };
 }
 
 async function clientContacts(clientId: string): Promise<Contact[]> {

@@ -630,10 +630,11 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   contrato, qualificado como contratante, representante legal ou procurador (`clientRepresentative`, pela mesma regra
   de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa: o único
   contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
-  nome; nunca "o que tem CPF" (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é
+  nome (o mesmo contato cadastrado mais de uma vez, com mesmo nome e e-mail, vale como uma pessoa se houver um só CPF);
+  nunca "o que tem CPF" entre pessoas diferentes (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é
   validado por `isValidCpf` (`src/domain/documents.ts`) e editável em Clientes e no "cadastrar novo contato" do
   contrato. A pendência diz quem é e o que fazer (cadastrar o CPF do contato; escolher como signatário um contato do
-  cliente; e-mail compartilhado sem contato com o nome). Na sugestão de variáveis, `{{cpf}}` ao lado de um `{{cnpj}}`
+  cliente; e-mail compartilhado sem contato com o nome; duplicados com CPFs diferentes). Na sugestão de variáveis, `{{cpf}}` ao lado de um `{{cnpj}}`
   é o CPF do representante.
 - **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
   modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o

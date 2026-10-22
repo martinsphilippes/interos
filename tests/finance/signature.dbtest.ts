@@ -251,17 +251,28 @@ describe("assinatura eletrônica", () => {
     let r = await setSigners([{ name: "João Silva", email: shared, role: "Contratante", status: "pendente" }]);
     expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
     expect(r?.representative).toMatchObject({ name: "João Silva", contactFound: true });
-    expect(r?.representative?.sharedEmail).toBeUndefined();
+    expect(r?.representative?.ambiguous).toBeUndefined();
 
     // Nome que não é de nenhum dos contatos do e-mail compartilhado: não dá para saber de quem é o CPF.
     r = await setSigners([{ name: "Financeiro Acme", email: shared, role: "Contratante", status: "pendente" }]);
     expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
-    expect(r?.representative).toMatchObject({ contactFound: false, sharedEmail: true });
+    expect(r?.representative).toMatchObject({ contactFound: false, ambiguous: "nome" });
 
     // Maria assina com o mesmo e-mail: o nome decide, o CPF é o dela.
     r = await setSigners([{ name: "Maria Souza", email: shared, role: "Contratante", status: "pendente" }]);
     expect(r?.gaps).toEqual([]);
     expect((await contractDocumentData(c.id))?.clauses?.text).toContain("Maria Souza, CPF 529.982.247-25.");
+
+    // A mesma Maria cadastrada de novo (mesmo nome e e-mail, sem CPF): é a mesma pessoa, o CPF continua valendo.
+    const dup = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Maria  Souza", email: shared.toUpperCase(), isPrimary: false });
+    r = await setSigners([{ name: "Maria Souza", email: shared, role: "Contratante", status: "pendente" }]);
+    expect(r?.gaps).toEqual([]);
+    // Duplicado com OUTRO CPF: não dá para saber qual é o certo; a pendência pede para corrigir o duplicado.
+    await update<Contact>(COLLECTIONS.contacts, dup.id, { document: "11144477735" });
+    r = await setSigners([{ name: "Maria Souza", email: shared, role: "Contratante", status: "pendente" }]);
+    expect(r?.representative).toMatchObject({ contactFound: false, ambiguous: "cpf" });
+    expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
+    await update<Contact>(COLLECTIONS.contacts, dup.id, { document: "52998224725" });
 
     // Testemunha e avalista antes dela não viram representante; a ordem dos demais vale.
     r = await setSigners([
