@@ -126,7 +126,7 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - Troca de versão com a aba aberta (a Vercel Hobby não tem Skew Protection): uma Server Action da versão anterior
   recebe 404 e o Next lança `UnrecognizedActionError`; `AppErrorView` (`src/components/layout/app-error-view.tsx`,
   usada por `src/app/(app)/error.tsx` para as páginas e por `src/app/error.tsx` para o próprio shell: presença,
-  softphone, notificações) reconhece (`isNewVersionError`, `src/lib/version.ts`), explica que o envio não foi salvo e
+  softphone, notificações, e as páginas públicas, sem o atalho "Ir para Meu Dia") reconhece (`isNewVersionError`, `src/lib/version.ts`), explica que o envio não foi salvo e
   recarrega depois de 2,5 s (trava de 30 s no `sessionStorage` contra laço; dentro dela o texto pede para recarregar à
   mão); após a recarga o `VersionWatcher` mostra um toast "repita a ação" (marca `NEW_VERSION_NOTICE_KEY`). A busca
   global, que chama a action fora de transição, trata a rejeição com mensagem própria. Antes disso, `VersionWatcher` (shell) compara `NEXT_PUBLIC_BUILD_ID` (id do deploy embutido em

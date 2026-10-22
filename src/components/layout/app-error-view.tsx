@@ -35,8 +35,11 @@ export function reloadForNewVersion() {
   window.location.reload();
 }
 
-/** Tela de erro do app: troca de versão recarrega; o resto mostra "Algo deu errado" com o código. Usada pelos dois error.tsx. */
-export function AppErrorView({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+/**
+ * Tela de erro do app: troca de versão recarrega; o resto mostra "Algo deu errado" com o código. Usada pelos dois
+ * error.tsx; `inApp` liga o atalho "Ir para Meu Dia" (só faz sentido dentro do shell, não no portal, CSAT ou login).
+ */
+export function AppErrorView({ error, reset, retry, inApp = true }: { error: Error & { digest?: string }; reset: () => void; retry?: () => void; inApp?: boolean }) {
   const newVersion = isNewVersionError(error);
   const [autoReload, setAutoReload] = useState<boolean | null>(null);
 
@@ -79,16 +82,19 @@ export function AppErrorView({ error, reset }: { error: Error & { digest?: strin
             title="Algo deu errado"
             description={
               <>
-                Não foi possível carregar esta página. Tente novamente; se persistir, avise o administrador.
+                {inApp ? "Não foi possível carregar esta página. Tente novamente; se persistir, avise o administrador." : "Não foi possível carregar esta página. Tente novamente em instantes."}
                 {error.digest ? <span className="mt-2 block font-mono text-xs text-muted-light">Código: {error.digest}</span> : null}
               </>
             }
             action={
               <>
-                <Button onClick={reset}>Tentar novamente</Button>
-                <Button asChild variant="outline">
-                  <Link href="/meu-dia">Ir para Meu Dia</Link>
-                </Button>
+                {/* retry (Next 16.3) refaz a busca no servidor; reset só re-renderiza e repetiria o mesmo erro. */}
+                <Button onClick={retry ?? reset}>Tentar novamente</Button>
+                {inApp ? (
+                  <Button asChild variant="outline">
+                    <Link href="/meu-dia">Ir para Meu Dia</Link>
+                  </Button>
+                ) : null}
               </>
             }
           />
