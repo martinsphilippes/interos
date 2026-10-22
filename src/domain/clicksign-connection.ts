@@ -50,10 +50,12 @@ export interface InterosWebhookCheck {
   /** Endereço com parâmetros (?…): funciona; só desempata na escolha do principal. */
   hasQuery: boolean;
   /**
-   * Endereço completo como cadastrado (é o do próprio INTEROS, sem segredo). A Clicksign não aceita dois webhooks com o
-   * mesmo endereço, então ele identifica cada um sem ambiguidade — é por ele que a tela diz qual manter e qual apagar.
+   * Endereço como cadastrado, para a tela dizer qual manter e qual apagar (a Clicksign não aceita dois webhooks com o
+   * mesmo endereço). Em outro domínio, sem os parâmetros: pode ser outro sistema com o mesmo caminho.
    */
   endpoint: string;
+  /** Posição na lista de webhooks da Clicksign (1 = primeiro): desempata endereços que saem iguais na tela. */
+  position: number;
 }
 
 export interface ClicksignWebhooksReport {
@@ -70,11 +72,23 @@ export interface ClicksignWebhooksReport {
 /** Eventos sem os quais o INTEROS não fica sabendo de assinatura, recusa, finalização, cancelamento ou prazo. */
 const OPTIONAL_EVENTS = new Set(["upload"]);
 
-function parseEndpoint(endpoint: string): { host: string; path: string; protocol: string; hasQuery: boolean; display: string } | null {
+/**
+ * Endereço como foi cadastrado (é por ele que a pessoa acha o webhook na Clicksign): só a senha de "usuário:senha@" é
+ * mascarada e, quando pedido, os parâmetros (?…). Endereço muito longo mantém o começo e o fim.
+ */
+function displayEndpoint(raw: string, maskQuery: boolean): string {
+  let out = raw.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#@:]*):[^/?#@]*@/i, "$1:•••@");
+  if (maskQuery) {
+    const q = out.search(/[?#]/);
+    if (q >= 0) out = `${out.slice(0, q)}${out[q] === "?" ? "?…" : ""}`;
+  }
+  return out.length > 300 ? `${out.slice(0, 150)}…${out.slice(-140)}` : out;
+}
+
+function parseEndpoint(endpoint: string): { host: string; path: string; protocol: string; hasQuery: boolean } | null {
   try {
     const url = new URL(endpoint.trim());
-    const display = `${url.protocol}//${url.host.toLowerCase()}${url.pathname}${url.search}`;
-    return { host: url.host.toLowerCase(), path: url.pathname, protocol: url.protocol, hasQuery: url.search.length > 1, display: display.length > 160 ? `${display.slice(0, 157)}…` : display };
+    return { host: url.host.toLowerCase(), path: url.pathname, protocol: url.protocol, hasQuery: url.search.length > 1 };
   } catch {
     return null;
   }
@@ -88,7 +102,7 @@ function parseEndpoint(endpoint: string): { host: string; path: string; protocol
 export function classifyClicksignWebhooks(hooks: ClicksignWebhookInfo[], expectedHost?: string | null, opts: { secretConfigured?: boolean } = {}): ClicksignWebhooksReport {
   const expected = expectedHost?.trim().toLowerCase() || null;
   const report: ClicksignWebhooksReport = { expectedHost: expected, secretConfigured: opts.secretConfigured ?? true, interos: [], others: [] };
-  for (const hook of hooks) {
+  for (const [index, hook] of hooks.entries()) {
     const active = hook.status === "active";
     const parsed = parseEndpoint(hook.endpoint);
     if (!parsed || parsed.path.replace(/\/+$/, "") !== CLICKSIGN_WEBHOOK_PATH) {
@@ -106,9 +120,17 @@ export function classifyClicksignWebhooks(hooks: ClicksignWebhookInfo[], expecte
       otherHost: expected !== null && parsed.host !== expected,
       addressProblem: parsed.protocol !== "https:" ? "http" : parsed.path !== CLICKSIGN_WEBHOOK_PATH ? "barra_final" : null,
       hasQuery: parsed.hasQuery,
-      endpoint: parsed.display,
+      // Neste domínio o endereço é do próprio INTEROS: mostra como cadastrado (os parâmetros distinguem um webhook do
+      // outro). Em outro domínio pode ser OUTRO sistema com o mesmo caminho: parâmetros ocultos (podem carregar chave).
+      endpoint: displayEndpoint(hook.endpoint, expected !== null && parsed.host !== expected),
+      position: index + 1,
     });
   }
+  // Dois endereços diferentes para a Clicksign que saem iguais na tela (senha mascarada, parâmetros ocultos): numera
+  // pela posição na lista, para "manter este / apagar aquele" nunca ser ambíguo.
+  const seen = new Map<string, number>();
+  for (const h of report.interos) seen.set(h.endpoint, (seen.get(h.endpoint) ?? 0) + 1);
+  report.interos = report.interos.map((h) => ((seen.get(h.endpoint) ?? 0) < 2 ? h : { ...h, endpoint: `${h.endpoint} [${h.position}º da lista de webhooks]` }));
   return report;
 }
 
@@ -146,10 +168,6 @@ export function interosWebhookReceives(check: InterosWebhookCheck): boolean {
   return check.active && check.addressProblem === null && check.secretMatches === true && !check.missingEssential;
 }
 
-/** Cadastrado certo do lado da Clicksign (ativo, endereço exato, eventos essenciais); o segredo pode faltar na Vercel. */
-function registeredRight(check: InterosWebhookCheck): boolean {
-  return check.active && check.addressProblem === null && !check.missingEssential;
-}
 
 /** O que o webhook tem de pior, em poucas palavras. */
 function flaws(hook: InterosWebhookCheck, report: ClicksignWebhooksReport): string[] {
@@ -165,24 +183,33 @@ function flaws(hook: InterosWebhookCheck, report: ClicksignWebhooksReport): stri
 }
 
 /**
- * Qual webhook do INTEROS é o principal: o mais completo primeiro (pronto; recebe os avisos no domínio deste INTEROS;
- * recebe em outro domínio; sem o segredo na Vercel, o cadastrado certo neste domínio com todos os eventos...).
- * Parâmetros no endereço só desempatam. A ordem em que a Clicksign lista não decide nada.
+ * Qual webhook do INTEROS é o principal — sempre um, o melhor para manter: pronto; recebe os avisos neste domínio;
+ * recebe em outro domínio; depois, do que dá menos trabalho de corrigir (neste domínio, endereço exato, ativo, segredo
+ * certo, eventos). Parâmetros no endereço só desempatam. A ordem em que a Clicksign lista não decide nada. Só o
+ * principal recebe instruções de correção; os demais são sobras ("pode apagá-lo"), para a tela nunca dar instruções
+ * concorrentes (ex.: ativar um e copiar o segredo de outro).
  */
-function rank(h: InterosWebhookCheck): number {
+function rank(h: InterosWebhookCheck, report: ClicksignWebhooksReport): number {
   const tie = h.hasQuery ? 0.5 : 0;
   if (interosWebhookReady(h)) return tie;
   if (interosWebhookReceives(h)) return (h.otherHost ? 2 : 1) + tie;
-  if (registeredRight(h) && h.secretMatches !== false) return 3 + (h.otherHost ? 2 : 0) + (h.missingEvents.length > 0 ? 1 : 0) + tie;
-  return 99;
+  return (
+    10 +
+    (h.otherHost ? 16 : 0) +
+    (h.addressProblem ? 8 : 0) +
+    (h.active ? 0 : 4) +
+    (report.secretConfigured && h.secretMatches === false ? 2 : 0) +
+    (h.missingEssential ? 2 : h.missingEvents.length > 0 ? 1 : 0) +
+    tie
+  );
 }
 
 function webhookLine(hook: InterosWebhookCheck, report: ClicksignWebhooksReport): CheckLine {
   if (interosWebhookReady(hook)) return { tone: "ok", text: `Webhook do INTEROS ativo (${hook.endpoint}), com todos os eventos e o mesmo segredo da Vercel.` };
   const problems: string[] = [];
   if (!hook.active) problems.push("está inativo na Clicksign (ative-o)");
-  if (hook.addressProblem === "http") problems.push("o endereço começa com http://; o INTEROS redireciona para https e a Clicksign não segue redirecionamento, então os avisos não chegam (cadastre exatamente o endereço abaixo)");
-  if (hook.addressProblem === "barra_final") problems.push("o endereço termina com barra; o INTEROS redireciona para o endereço sem barra e a Clicksign não segue redirecionamento, então os avisos não chegam (cadastre exatamente o endereço abaixo)");
+  if (hook.addressProblem === "http") problems.push("o endereço começa com http://; o INTEROS redireciona para https e a Clicksign não segue redirecionamento, então os avisos não chegam (edite o endereço deste webhook na Clicksign para exatamente o endereço abaixo)");
+  if (hook.addressProblem === "barra_final") problems.push("o endereço termina com barra; o INTEROS redireciona para o endereço sem barra e a Clicksign não segue redirecionamento, então os avisos não chegam (edite o endereço deste webhook na Clicksign para exatamente o endereço abaixo)");
   if (hook.missingEvents.length) problems.push(`faltam os eventos ${hook.missingEvents.join(", ")}: esses avisos não chegam ao INTEROS`);
   // Sem segredo na Vercel a instrução de copiar sai uma vez só, no topo (com qual webhook copiar).
   if (report.secretConfigured && hook.secretMatches === false) problems.push("o segredo na Clicksign é diferente do CLICKSIGN_WEBHOOK_SECRET da Vercel, então os avisos são recusados (copie o segredo do webhook para a Vercel e publique de novo)");
@@ -204,34 +231,33 @@ export function connectionCheckLines(check: ClicksignConnectionCheck): CheckLine
     lines.push({ tone: "warn", text: `Não deu para ler os webhooks da Clicksign: ${hooks.error}` });
     return lines;
   }
-  // O webhook principal: o que recebe os avisos (ou receberia, faltando só o segredo na Vercel), o mais completo
-  // primeiro. Os demais com o caminho do INTEROS são sobras: cada um pelo endereço completo (a Clicksign não aceita
-  // dois iguais), para não apagar o certo. Instruir a "corrigir" uma sobra poderia trocar o segredo da Vercel e
-  // quebrar o que funciona.
-  const candidates = hooks.interos.filter((h) => interosWebhookReceives(h) || (!hooks.secretConfigured && registeredRight(h)));
-  const primary = candidates.length > 0 ? candidates.reduce((best, h) => (rank(h) < rank(best) ? h : best)) : undefined;
+  // Um principal sempre (o melhor para manter); só ele recebe instruções de correção. Os demais são sobras: neste
+  // domínio, "pode apagá-lo"; em outro domínio, pode ser outro sistema com o mesmo caminho — só se for este INTEROS.
+  const primary = hooks.interos.length > 0 ? hooks.interos.reduce((best, h) => (rank(h, hooks) < rank(best, hooks) ? h : best)) : undefined;
   const leftovers = primary ? hooks.interos.filter((h) => h !== primary) : [];
   if (!hooks.secretConfigured) {
     lines.push({
       tone: "error",
       text: primary
-        ? `Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Na Clicksign, copie o segredo do webhook ${primary.endpoint} para a Vercel e publique de novo${leftovers.length > 0 ? "; os outros webhooks do INTEROS listados abaixo podem ser apagados" : ""}.`
-        : "Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Cadastre (ou corrija) o webhook abaixo na Clicksign, copie o segredo dele para a Vercel e publique de novo.",
+        ? `Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Na Clicksign, copie o segredo do webhook ${primary.endpoint} para a Vercel e publique de novo.`
+        : "Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Cadastre o webhook abaixo na Clicksign, copie o segredo dele para a Vercel e publique de novo.",
     });
   }
-  if (hooks.interos.length === 0) {
+  if (!primary) {
     lines.push({ tone: "error", text: "Nenhum webhook da Clicksign aponta para o INTEROS: assinaturas, recusas e o PDF assinado não voltam sozinhos. Cadastre o endereço abaixo na Clicksign (Configurações › API › Webhooks)." });
-  } else if (primary) {
+  } else {
     lines.push(webhookLine(primary, hooks));
     for (const extra of leftovers) {
+      if (extra.otherHost) {
+        lines.push({ tone: "warn", text: `Webhook com o caminho do INTEROS em outro domínio (${extra.endpoint}): se for um endereço antigo deste INTEROS, pode apagá-lo na Clicksign; se for outro sistema, não mexa.` });
+        continue;
+      }
       const notes = flaws(extra, hooks);
       // Também recebe os avisos: a Clicksign manda cada aviso mais de uma vez (o INTEROS ignora o repetido).
       const twice = interosWebhookReceives(extra) ? "também recebe os avisos (cada aviso chega mais de uma vez)" : "";
       const detail = [twice, ...notes].filter(Boolean).join(", ");
       lines.push({ tone: "warn", text: `Outro webhook do INTEROS (${extra.endpoint}${detail ? `: ${detail}` : ""}) não é o principal: pode apagá-lo na Clicksign (Configurações › API › Webhooks).` });
     }
-  } else {
-    lines.push(...hooks.interos.map((h) => webhookLine(h, hooks)));
   }
   if (hooks.others.length) {
     const list = hooks.others.map((o) => `${o.host} (${o.active ? "ativo" : "inativo"})`).join(", ");
