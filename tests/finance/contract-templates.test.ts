@@ -20,6 +20,8 @@ import {
   suggestUnbound,
   templateDataGaps,
   templateRequirements,
+  clientRepresentative,
+  isWitnessSigner,
   unmappedVariables,
   variableValues,
 } from "@/domain/contract-templates";
@@ -308,12 +310,28 @@ describe("dados obrigatórios do modelo", () => {
     companyAddress: "Juazeiro do Norte/CE",
     issuedAt: "2026-10-21T15:00:00.000Z",
     labels: { recurrence: "Mensal" },
-    representativeDocument: "52998224725",
+    representative: { name: "Maria Cliente", email: "maria@acme.com.br", document: "52998224725" },
   });
 
-  it("CPF do representante vem do contato do 1º signatário, formatado", () => {
+  it("CPF do representante vem do contato do 1º signatário, formatado; \"cpf\" ao lado de um CNPJ é o do representante", () => {
     expect(base["contratante.representante_cpf"]).toBe("529.982.247-25");
+    expect(base["contratante.representante"]).toBe("Maria Cliente");
     expect(suggestField("CPF do Representante Legal")).toBe("contratante.representante_cpf");
+    expect(suggestField("CPF", ["CNPJ", "CPF"])).toBe("contratante.representante_cpf");
+    expect(suggestField("cpf", ["razao_social", "cpf_cnpj", "cpf"])).toBe("contratante.representante_cpf");
+    expect(suggestField("CPF", ["razao_social", "CPF"])).toBe("contratante.cnpj_cpf");
+    expect(mergeVariables(["CNPJ", "Representante", "CPF"]).map((v) => v.field)).toEqual(["contratante.cnpj_cpf", "contratante.representante", "contratante.representante_cpf"]);
+  });
+
+  it("representante do cliente: 1º signatário que não é da Intercert nem testemunha", () => {
+    const signers = [
+      { name: "Pedro Equipe", email: "pedro@intercert.com.br", role: "Testemunha" },
+      { name: "Diretor Intercert", email: "dir@intercert.com.br", role: "Diretor", party: "contratada" as const },
+      { name: "Maria Cliente", email: "maria@acme.com.br", role: "Contratante" },
+    ];
+    expect(clientRepresentative(signers)?.name).toBe("Maria Cliente");
+    expect(clientRepresentative(signers.slice(0, 2))).toBeUndefined();
+    expect(isWitnessSigner({ role: "TESTEMUNHA 1" })).toBe(true);
   });
 
   it("lista o que falta: campo sem dado (com a origem) e variável sem ligação; texto fixo e opcionais não contam", () => {
@@ -332,7 +350,17 @@ describe("dados obrigatórios do modelo", () => {
     expect(gaps).toEqual([
       { variable: "Bairro", reason: "sem_dado", field: "contratante.bairro", label: "Bairro do cliente", source: "cliente" },
       { variable: "Forma de pagamento", reason: "sem_dado", field: "contrato.forma_pagamento", label: "Forma de pagamento", source: "contrato" },
+      { variable: "Início", reason: "apos_liberacao", field: "contrato.inicio_vigencia", label: "Início da vigência" },
       { variable: "Sistema Operacional", reason: "sem_ligacao", label: "Sem campo ligado nem texto fixo no modelo" },
+    ]);
+  });
+
+  it("1º vencimento e condição de pagamento são obrigatórios quando o modelo usa (editáveis nas condições)", () => {
+    const fields = { ...base, "contrato.primeiro_vencimento": "", "contrato.condicao_pagamento": "" };
+    const gaps = templateDataGaps([{ name: "venc", field: "contrato.primeiro_vencimento" }, { name: "cond", field: "contrato.condicao_pagamento" }], fields);
+    expect(gaps.map((g) => [g.variable, g.reason, g.source])).toEqual([
+      ["venc", "sem_dado", "contrato"],
+      ["cond", "sem_dado", "contrato"],
     ]);
   });
 
@@ -352,6 +380,7 @@ describe("dados obrigatórios do modelo", () => {
       { name: "CPF", field: "contratante.representante_cpf" },
       { name: "Complemento", field: "contratante.complemento" },
       { name: "Mensalidade", field: "valores.mensalidade" },
+      { name: "Fim", field: "contrato.fim_vigencia" },
       { name: "Foro", fixed: "Crato/CE" },
       { name: "Sistema Operacional" },
     ]);
@@ -361,5 +390,6 @@ describe("dados obrigatórios do modelo", () => {
       { source: "contrato", labels: ["Mensalidade"] },
     ]);
     expect(req.unbound).toEqual(["Sistema Operacional"]);
+    expect(req.afterRelease).toEqual(["Fim da vigência"]);
   });
 });

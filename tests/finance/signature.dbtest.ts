@@ -8,10 +8,10 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { docdb } from "@/server/docdb";
-import { create, getById, list } from "@/server/db";
-import { COLLECTIONS, type Client, type Contract, type User, type ContractTemplate, type ContractTemplateFile, type Document, type SignatureInboxItem } from "@/domain/types";
+import { create, getById, list, update } from "@/server/db";
+import { COLLECTIONS, type Client, type Contact, type Contract, type User, type ContractTemplate, type ContractTemplateFile, type Document, type SignatureInboxItem } from "@/domain/types";
 import { getSignatureSettings, saveInterosTemplate, saveSignatureSettings, saveTemplateVariables, setTemplateState, signatureDocumentInfo, uploadWordTemplate } from "@/server/finance/contract-templates";
-import { contractDocumentData, contractDocx, contractPdf } from "@/server/finance/contract-document";
+import { contractDocumentData, contractDocx, contractPdf, documentReadiness } from "@/server/finance/contract-document";
 import { createManualContract, sendForSignature, updateContractItems } from "@/server/finance/service";
 import { contractDocumentHash } from "@/server/finance/signature";
 import { assignInboxItem, ignoreInboxItem, recordExternalEnvelope, reopenInboxItem } from "@/server/finance/signature-inbox";
@@ -53,6 +53,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const sql = docdb.sql();
+  await sql`delete from interos.contacts where data->>'clientId' = ${CLIENT_ID}`;
   if (settingsBackup === null) await sql`delete from interos.settings where data->>'key' = ${SIGNATURE_SETTING}`;
   else if (settingsBackup) await sql`update interos.settings set data = ${sql.json(settingsBackup as never)} where data->>'key' = ${SIGNATURE_SETTING}`;
   if (templateIds.length) {
@@ -184,5 +185,50 @@ describe("assinatura eletrônica", () => {
     expect((await getById<SignatureInboxItem>(COLLECTIONS.signatureInbox, other.item.id))!.state).toBe("ignorado");
     await reopenInboxItem(other.item.id, ACTOR);
     expect((await getById<SignatureInboxItem>(COLLECTIONS.signatureInbox, other.item.id))!.state).toBe("pendente");
+  });
+
+  it("pendências do PRÓXIMO envio: signatário da Intercert incluído, CPF do contato que assina e o modelo atual (não o fixado)", async () => {
+    const t = await saveInterosTemplate({ name: `${RUN} Prontidão`, title: "Contrato", clauses: "CLÁUSULA ÚNICA\n\n{{contratada.representante}} assina pela {{contratada.razao_social}}; {{contratante.representante}}, CPF {{contratante.representante_cpf}}, pelo cliente." }, ACTOR);
+    templateIds.push(t.id);
+    const c = await createManualContract({ clientId: CLIENT_ID, recurrence: "mensal", termMonths: 12, billingDay: 10 }, ACTOR);
+    contractIds.push(c.id);
+    await updateContractItems(c.id, [{ productId: "p1", productName: "INTEROS", quantity: 1, setupValue: 0, monthlyValue: 150, hardwareValue: 0, discountPct: 0 }] as never, ACTOR);
+    // Contrato gravado SEM o signatário da Intercert (ex.: criado com a configuração incompleta): o envio o inclui.
+    const stored = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    await update<Contract>(COLLECTIONS.contracts, c.id, { templateId: t.id, signers: stored.signers.filter((x) => x.party !== "contratada") });
+    let current = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+
+    // O signatário do cliente não é contato: o CPF não tem de onde vir.
+    let r = await documentReadiness(current);
+    expect(r?.gaps.map((g) => [g.field, g.reason])).toEqual([["contratante.representante_cpf", "sem_dado"]]);
+    expect(r?.representative).toMatchObject({ email: CLIENT_EMAIL, contactFound: false });
+    await expect(sendForSignature(c.id, ACTOR)).rejects.toThrow(/preencha no cadastro: CPF do representante do cliente/);
+
+    // Vira contato do cliente, ainda sem CPF: a pendência continua, agora apontando o contato.
+    const contact = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Maria Cliente", email: CLIENT_EMAIL, isPrimary: true });
+    r = await documentReadiness(current);
+    expect(r?.representative).toMatchObject({ contactFound: true });
+    expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
+
+    // Com o CPF no contato: nada em aberto; a prévia já traz quem assina pela Intercert e o CPF formatado.
+    await update<Contact>(COLLECTIONS.contacts, contact.id, { document: "52998224725" });
+    r = await documentReadiness(current);
+    expect(r?.gaps).toEqual([]);
+    const preview = await contractDocumentData(c.id);
+    expect(preview?.gaps).toEqual([]);
+    expect(preview?.clauses?.text).toContain(`${(await getSignatureSettings()).companySigner.name} assina pela`);
+    expect(preview?.clauses?.text).toContain("CPF 529.982.247-25");
+
+    await sendForSignature(c.id, ACTOR);
+    current = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(current.signers.some((x) => x.party === "contratada")).toBe(true);
+
+    // O modelo muda depois do envio: a tela avalia o modelo ATUAL (o reenvio usa ele), não a fotografia fixada.
+    await saveInterosTemplate({ id: t.id, name: t.name, title: "Contrato", clauses: "CLÁUSULA ÚNICA\n\nGarantia: {{garantia}}." }, ACTOR);
+    r = await documentReadiness(current);
+    expect(r?.gaps.map((g) => [g.variable, g.reason])).toEqual([["garantia", "sem_ligacao"]]);
+    await expect(sendForSignature(c.id, ACTOR)).rejects.toThrow(/ligue no modelo: \{\{garantia\}\}/);
+    // O documento já gerado continua com o modelo fixado (sem pendências).
+    expect((await contractDocumentData(c.id))?.gaps).toEqual([]);
   });
 });

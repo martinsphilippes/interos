@@ -58,6 +58,16 @@ export function isCompanySigner(s: { party?: string; role?: string }): boolean {
   return s.party === "contratada" || /\bcontratada\b/i.test(s.role ?? "");
 }
 
+/** Testemunha (pelo papel no contrato, sem acento e sem caixa). */
+export function isWitnessSigner(s: { role?: string }): boolean {
+  return /testemunha/.test((s.role ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
+}
+
+/** Quem assina pelo cliente: o 1º signatário que não é da Intercert nem testemunha. */
+export function clientRepresentative<T extends { party?: string; role?: string }>(signers: T[]): T | undefined {
+  return signers.find((s) => !isCompanySigner(s) && !isWitnessSigner(s));
+}
+
 /** O signatário da Intercert está completo (nome e e-mail válidos)? */
 export function companySignerReady(signer: CompanySignerSetting): boolean {
   return signer.enabled && signer.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signer.email.trim());
@@ -77,16 +87,18 @@ export interface ContractField {
   source: FieldSource;
   /** Como sai quando falta: lacuna (________) para preencher à mão, ou vazio (partes do endereço). Padrão: lacuna. */
   empty?: "lacuna" | "vazio";
-  /** Vazio é aceitável (complemento, vigência antes da assinatura): não entra nas pendências do documento. */
+  /** Vazio é aceitável (complemento): não entra nas pendências do documento. */
   optional?: boolean;
+  /** O dado só existe depois da liberação (vigência): no modelo, a variável precisa de texto fixo. */
+  afterRelease?: boolean;
 }
 
 /** Origem de cada dado do contrato: diz à tela onde o usuário completa o que falta. */
 export type FieldSource = "cliente" | "contato" | "signatario" | "contrato" | "intercert";
 
 export const FIELD_SOURCE_LABELS: Record<FieldSource, string> = {
-  cliente: "Cadastro do cliente (ou dados de cobrança do contrato)",
-  contato: "Contato do cliente",
+  cliente: "Cadastro do cliente",
+  contato: "Contatos do cliente",
   signatario: "Signatários do contrato",
   contrato: "Dados do contrato",
   intercert: "Configuração da assinatura",
@@ -119,12 +131,12 @@ export const CONTRACT_FIELDS: readonly ContractField[] = [
   { key: "contrato.prazo_meses", label: "Prazo em meses", group: "Contrato", source: "contrato", aliases: ["prazo", "prazo_meses", "vigencia_meses", "prazo_contrato", "meses"] },
   { key: "contrato.recorrencia", label: "Recorrência", group: "Contrato", source: "contrato", aliases: ["recorrencia", "periodicidade"] },
   { key: "contrato.dia_vencimento", label: "Dia do vencimento", group: "Contrato", source: "contrato", aliases: ["dia_vencimento", "vencimento"] },
-  { key: "contrato.primeiro_vencimento", label: "Primeiro vencimento", group: "Contrato", source: "contrato", optional: true, aliases: ["primeiro_vencimento", "data_primeiro_vencimento"] },
-  { key: "contrato.inicio_vigencia", label: "Início da vigência", group: "Contrato", source: "contrato", optional: true, aliases: ["inicio_vigencia", "data_inicio", "inicio"] },
-  { key: "contrato.fim_vigencia", label: "Fim da vigência", group: "Contrato", source: "contrato", optional: true, aliases: ["fim_vigencia", "data_fim", "termino", "fim"] },
+  { key: "contrato.primeiro_vencimento", label: "Primeiro vencimento", group: "Contrato", source: "contrato", aliases: ["primeiro_vencimento", "data_primeiro_vencimento"] },
+  { key: "contrato.inicio_vigencia", label: "Início da vigência", group: "Contrato", source: "contrato", afterRelease: true, aliases: ["inicio_vigencia", "data_inicio", "inicio"] },
+  { key: "contrato.fim_vigencia", label: "Fim da vigência", group: "Contrato", source: "contrato", afterRelease: true, aliases: ["fim_vigencia", "data_fim", "termino", "fim"] },
   { key: "contrato.forma_pagamento", label: "Forma de pagamento", group: "Contrato", source: "contrato", aliases: ["forma_pagamento", "meio_pagamento"] },
   { key: "contrato.parcelas_adesao", label: "Parcelas da adesão", group: "Contrato", source: "contrato", aliases: ["parcelas", "parcelas_adesao", "parcelas_setup"] },
-  { key: "contrato.condicao_pagamento", label: "Condição de pagamento (texto)", group: "Contrato", source: "contrato", optional: true, aliases: ["condicao_pagamento", "condicoes_pagamento", "pagamento"] },
+  { key: "contrato.condicao_pagamento", label: "Condição de pagamento (texto)", group: "Contrato", source: "contrato", aliases: ["condicao_pagamento", "condicoes_pagamento", "pagamento"] },
   { key: "contrato.itens", label: "Produtos e serviços (lista)", group: "Contrato", source: "contrato", aliases: ["itens", "produtos", "servicos", "objeto", "lista_produtos"] },
   { key: "valores.adesao", label: "Valor da adesão/setup", group: "Valores", source: "contrato", aliases: ["adesao", "setup", "valor_adesao", "taxa_adesao", "implantacao", "valor_implantacao", "valor_setup"] },
   { key: "valores.adesao_extenso", label: "Adesão por extenso", group: "Valores", source: "contrato", aliases: ["adesao_extenso", "valor_adesao_extenso", "setup_extenso"] },
@@ -176,6 +188,8 @@ export function suggestField(variable: string, siblings: string[] = []): string 
   if (direct) return direct;
   const n = normalizeVariableName(variable);
   if (!n) return undefined;
+  // "cpf" ao lado de um CNPJ ("CNPJ nº X, representada por Fulano, CPF nº Y"): é o CPF do representante.
+  if (n === "cpf" && siblings.map(normalizeVariableName).some((s) => s !== n && /^(cnpj|cnpj_|cpf_cnpj)/.test(s))) return "contratante.representante_cpf";
   if (n === "numero") {
     const others = siblings.map(normalizeVariableName).filter((s) => s !== n);
     const hasStreet = others.some((s) => STREET_VARIABLE_NAMES.has(s));
@@ -235,7 +249,8 @@ export function unmappedVariables(variables: ContractTemplateVariable[]): string
 /** Uma variável do modelo que não sairia preenchida: sem campo ligado (ajuste no modelo) ou sem o dado (cadastro). */
 export interface TemplateDataGap {
   variable: string;
-  reason: "sem_ligacao" | "sem_dado";
+  /** sem_ligacao: ligar no modelo · sem_dado: preencher no cadastro · apos_liberacao: dado só existe depois (texto fixo). */
+  reason: "sem_ligacao" | "sem_dado" | "apos_liberacao";
   field?: string;
   /** Rótulo do campo (ou aviso de variável sem ligação). */
   label: string;
@@ -259,24 +274,29 @@ export function templateDataGaps(variables: ContractTemplateVariable[], fields: 
       gaps.push({ variable: name, reason: "sem_ligacao", label: "Sem campo ligado nem texto fixo no modelo" });
       continue;
     }
-    if (def.optional) continue;
-    if (!(fields[def.key] ?? "").trim()) gaps.push({ variable: name, reason: "sem_dado", field: def.key, label: def.label, source: def.source });
+    if (def.optional || (fields[def.key] ?? "").trim()) continue;
+    gaps.push(def.afterRelease ? { variable: name, reason: "apos_liberacao", field: def.key, label: def.label } : { variable: name, reason: "sem_dado", field: def.key, label: def.label, source: def.source });
   }
   return gaps;
 }
 
-/** O que o modelo exige do cadastro (campos ligados, não opcionais), agrupado pela origem, e as variáveis sem ligação. */
-export function templateRequirements(variables: ContractTemplateVariable[]): { bySource: { source: FieldSource; labels: string[] }[]; unbound: string[] } {
+/**
+ * O que o modelo exige do cadastro (campos ligados, não opcionais), agrupado pela origem; as variáveis sem ligação; e
+ * as ligadas a dados que só existem depois da liberação (vigência), que precisam de texto fixo.
+ */
+export function templateRequirements(variables: ContractTemplateVariable[]): { bySource: { source: FieldSource; labels: string[] }[]; unbound: string[]; afterRelease: string[] } {
   const seen = new Set<string>();
   const bySource = new Map<FieldSource, string[]>();
+  const afterRelease: string[] = [];
   for (const v of variables) {
     const def = v.field && !v.fixed?.trim() ? CONTRACT_FIELDS.find((f) => f.key === v.field) : undefined;
     if (!def || def.optional || seen.has(def.key)) continue;
     seen.add(def.key);
-    bySource.set(def.source, [...(bySource.get(def.source) ?? []), def.label]);
+    if (def.afterRelease) afterRelease.push(def.label);
+    else bySource.set(def.source, [...(bySource.get(def.source) ?? []), def.label]);
   }
   const order: FieldSource[] = ["cliente", "contato", "signatario", "contrato", "intercert"];
-  return { bySource: order.filter((o) => bySource.has(o)).map((source) => ({ source, labels: bySource.get(source)! })), unbound: unmappedVariables(variables) };
+  return { bySource: order.filter((o) => bySource.has(o)).map((source) => ({ source, labels: bySource.get(source)! })), unbound: unmappedVariables(variables), afterRelease };
 }
 
 export const BLANK = "________________";
@@ -316,8 +336,11 @@ export interface FieldValuesInput {
   issuedAt: string;
   /** Rótulos já resolvidos (as listas ficam no servidor/financeiro). */
   labels: { recurrence: string; paymentMethod?: string };
-  /** CPF do contato do cliente que assina em 1º lugar (vem do cadastro de contatos). */
-  representativeDocument?: string;
+  /**
+   * Quem assina pelo cliente, já resolvido no servidor (signatário casado com um contato do cliente, com o CPF do
+   * contato). Sem ele, vale o 1º signatário que não é da Intercert nem testemunha, sem CPF.
+   */
+  representative?: { name: string; email: string; document?: string };
 }
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -372,7 +395,7 @@ function moneyWithWords(v: number): string {
 
 export function contractFieldValues(input: FieldValuesInput): Record<string, string> {
   const { contract: c, client, billingData: b } = input;
-  const customer = c.signers.find((s) => !isCompanySigner(s));
+  const customer = input.representative ?? clientRepresentative(c.signers);
   const company = c.signers.find((s) => isCompanySigner(s));
   const items = c.items.map((i) => `${i.quantity}x ${i.productName}`).join("; ");
   return {
@@ -391,7 +414,7 @@ export function contractFieldValues(input: FieldValuesInput): Record<string, str
     "contratante.email": b.email ?? "",
     "contratante.representante": customer?.name ?? "",
     "contratante.representante_email": customer?.email ?? "",
-    "contratante.representante_cpf": docFormat(input.representativeDocument),
+    "contratante.representante_cpf": docFormat(input.representative?.document),
     "contratada.razao_social": input.companyName,
     "contratada.endereco": input.companyAddress,
     "contratada.representante": company?.name ?? "",

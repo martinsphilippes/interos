@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { CheckCircle2, Download, FileDown, TriangleAlert } from "lucide-react";
 import type { SignatureAuthMethod } from "@/domain/types";
-import { FIELD_SOURCE_LABELS, SIGNATURE_AUTH_LABELS, type FieldSource, type TemplateDataGap } from "@/domain/contract-templates";
+import { SIGNATURE_AUTH_LABELS, type FieldSource, type TemplateDataGap } from "@/domain/contract-templates";
 import { SIGNATURE_AUTH_METHODS } from "@/domain/types";
 import { setContractSignatureOptionsAction } from "@/server/finance/signature-actions";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,8 @@ export interface DocumentReadiness {
   templateName: string;
   variableCount: number;
   gaps: TemplateDataGap[];
+  /** Quem assina pelo cliente e se é um contato do cliente (de onde vem o CPF). */
+  representative?: { name: string; email: string; contactFound: boolean };
 }
 
 /** Para onde ir para completar cada origem de dado. */
@@ -39,7 +41,7 @@ function fixLink(source: FieldSource | undefined, clientId: string): { href?: st
     case "cliente":
       return { href: `/clientes/${clientId}`, label: "cadastro do cliente ou dados de cobrança abaixo" };
     case "contato":
-      return { href: `/clientes/${clientId}`, label: "contatos do cliente (CPF)" };
+      return { href: `/clientes/${clientId}`, label: "contatos do cliente" };
     case "signatario":
       return { label: "signatários acima" };
     case "intercert":
@@ -67,6 +69,8 @@ function DocumentReadinessPanel({ readiness, clientId }: { readiness: DocumentRe
   }
   const data = gaps.filter((g) => g.reason === "sem_dado");
   const unbound = gaps.filter((g) => g.reason === "sem_ligacao");
+  const afterRelease = gaps.filter((g) => g.reason === "apos_liberacao");
+  const rep = readiness.representative;
   return (
     <div className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs" role="status">
       <p className="flex items-start gap-1.5 font-medium text-warning-fg">
@@ -78,20 +82,32 @@ function DocumentReadinessPanel({ readiness, clientId }: { readiness: DocumentRe
       <ul className="mt-1.5 flex flex-col gap-1 pl-5">
         {data.map((g) => {
           const fix = fixLink(g.source, clientId);
+          const link = fix.href ? (
+            <Link href={fix.href} className="underline">
+              {fix.label}
+            </Link>
+          ) : (
+            fix.label
+          );
+          // Dados de quem assina pelo cliente: dizer QUEM e o que fazer (o CPF vem do contato com o e-mail do signatário).
+          let action: React.ReactNode = <>preencha em {link}</>;
+          if ((g.source === "signatario" || g.source === "contato") && !rep) action = "adicione quem assina pelo cliente (signatários acima)";
+          else if (g.source === "contato" && rep && !rep.contactFound) action = `${rep.name} (${rep.email}) não é contato do cliente: escolha como signatário um contato do cliente com CPF`;
+          else if (g.source === "contato" && rep) action = <>cadastre o CPF de {rep.name} em {link}</>;
           return (
             <li key={g.variable}>
-              <span className="font-medium text-foreground">{g.label}</span> <span className="font-mono">{`{{${g.variable}}}`}</span> · preencha em{" "}
-              {fix.href ? (
-                <Link href={fix.href} className="underline">
-                  {fix.label}
-                </Link>
-              ) : (
-                fix.label
-              )}
-              {g.source ? <span className="text-muted"> ({FIELD_SOURCE_LABELS[g.source]})</span> : null}
+              <span className="font-medium text-foreground">{g.label}</span> <span className="font-mono">{`{{${g.variable}}}`}</span> · {action}
             </li>
           );
         })}
+        {afterRelease.map((g) => (
+          <li key={g.variable}>
+            <span className="font-medium text-foreground">{g.label}</span> <span className="font-mono">{`{{${g.variable}}}`}</span> · só existe depois da liberação: use texto fixo no modelo (ex.: «a data da assinatura») ·{" "}
+            <Link href="/financeiro/assinaturas?aba=modelos" className="underline">
+              ligar variáveis no modelo
+            </Link>
+          </li>
+        ))}
         {unbound.map((g) => (
           <li key={g.variable}>
             <span className="font-mono">{`{{${g.variable}}}`}</span> sem campo nem texto fixo ·{" "}

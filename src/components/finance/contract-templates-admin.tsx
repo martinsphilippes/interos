@@ -43,7 +43,7 @@ E, por estarem de acordo, as partes assinam eletronicamente, em {{contrato.data_
 const GROUPS = ["Contratante", "Contratada", "Contrato", "Valores"] as const;
 
 function fieldOptions() {
-  return [{ value: "", label: "— texto fixo / deixar em branco —" }, ...GROUPS.flatMap((g) => CONTRACT_FIELDS.filter((f) => f.group === g).map((f) => ({ value: f.key, label: `${g} · ${f.label}` })))];
+  return [{ value: "", label: "— texto fixo / deixar em branco —" }, ...GROUPS.flatMap((g) => CONTRACT_FIELDS.filter((f) => f.group === g).map((f) => ({ value: f.key, label: `${g} · ${f.label}${f.afterRelease ? " (só depois da liberação)" : ""}` })))];
 }
 
 /** Modelos de contrato: gerado pelo INTEROS (cláusulas com variáveis) ou Word da Clicksign (arquivo .docx). */
@@ -124,9 +124,14 @@ export function ContractTemplatesAdmin({ templates, canEdit }: { templates: Temp
                       {requirements.bySource.map((r, i) => (
                         <span key={r.source}>
                           {i > 0 ? " · " : ""}
-                          <span className="font-medium text-foreground">{FIELD_SOURCE_LABELS[r.source].split(" (")[0]}</span>: {r.labels.join(", ")}
+                          <span className="font-medium text-foreground">{FIELD_SOURCE_LABELS[r.source]}</span>: {r.labels.join(", ")}
                         </span>
                       ))}
+                    </p>
+                  ) : null}
+                  {requirements.afterRelease.length > 0 ? (
+                    <p className="text-xs text-warning-fg">
+                      {requirements.afterRelease.join(", ")}: só existe(m) depois da liberação. Use texto fixo nessas variáveis (ex.: «a data da assinatura»), senão o contrato não é gerado.
                     </p>
                   ) : null}
                   {t.kind === "word" ? <p className="text-xs text-muted">{t.providerTemplateKey ? "Registrado na Clicksign." : "Será registrado na Clicksign quando a integração estiver conectada."}</p> : null}

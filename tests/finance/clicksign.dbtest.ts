@@ -76,9 +76,9 @@ async function eventsOf(contractId: string, type: string): Promise<DomainEvent[]
 }
 
 beforeAll(async () => {
+  if (!process.env.DATABASE_URL) throw new Error("Defina DATABASE_URL (veja scripts/db-local.sh)");
   previousDefault = (await list<ContractTemplate>(COLLECTIONS.contractTemplates, { where: [["isDefault", "==", true]] }))[0]?.id;
   if (previousDefault) await docdb.sql()`update interos.contract_templates set data = jsonb_set(data, '{isDefault}', 'false') where id = ${previousDefault}`;
-  if (!process.env.DATABASE_URL) throw new Error("Defina DATABASE_URL (veja scripts/db-local.sh)");
   process.env.CLICKSIGN_API_TOKEN = "tok-teste";
   process.env.CLICKSIGN_ENV = "sandbox";
   vi.stubGlobal("fetch", vi.fn(fakeFetch));

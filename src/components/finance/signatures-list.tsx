@@ -31,7 +31,8 @@ function waitingTone(days: number): string {
  * Contratos aguardando assinatura (ou geração do documento): signatários pendentes, espera, lembretes e
  * ações. Sem provedor de assinatura: lembrete pelo e-mail do usuário e assinatura registrada com evidência.
  */
-export function SignaturesList({ rows, mode, integrations }: { rows: SignatureRow[]; mode: "waiting" | "toSend"; integrations: IntegrationFlags }) {
+/** `blocked`: contrato → motivo (dados do modelo em aberto); o botão de gerar fica desabilitado com o motivo. */
+export function SignaturesList({ rows, mode, integrations, blocked = {} }: { rows: SignatureRow[]; mode: "waiting" | "toSend"; integrations: IntegrationFlags; blocked?: Record<string, string> }) {
   // Capacidades do servidor: lembrete/gerar documento (enviar), registrar assinatura, ver documento, valores.
   const { contracts: can, contractValues } = useFinanceAccess();
   const emailConnected = integrations.email === "conectado";
@@ -121,7 +122,8 @@ export function SignaturesList({ rows, mode, integrations }: { rows: SignatureRo
                 size="sm"
                 className="h-10 sm:h-8"
                 loading={busy === `send:${r.contractId}`}
-                disabled={pending || r.signers.length === 0}
+                disabled={pending || r.signers.length === 0 || Boolean(blocked[r.contractId])}
+                title={blocked[r.contractId]}
                 onClick={() => act(`send:${r.contractId}`, () => run(() => sendForSignatureAction({ contractId: r.contractId }), providerConnected ? "Contrato enviado para assinatura pela Clicksign" : "Documento gerado: aguardando assinatura (envio manual)"))}
               >
                 {providerConnected ? <Send /> : <FileText />} {providerConnected ? "Enviar para assinatura" : "Gerar documento para assinatura"}
@@ -135,6 +137,7 @@ export function SignaturesList({ rows, mode, integrations }: { rows: SignatureRo
                 <Link href={`/financeiro/contratos/${r.contractId}`}>Revisar contrato</Link>
               </Button>
               {r.signers.length === 0 ? <p className="self-center text-xs text-danger-fg">Cadastre os signatários no contrato antes de gerar o documento.</p> : null}
+              {r.signers.length > 0 && blocked[r.contractId] ? <p className="basis-full text-xs text-warning-fg">{blocked[r.contractId]}</p> : null}
             </div>
           ) : null}
         </Card>

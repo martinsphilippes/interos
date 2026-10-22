@@ -48,7 +48,7 @@ async function phonesFor(contract: Contract): Promise<Map<string, string>> {
 export const clicksignSignatureProvider: SignatureProvider = {
   name: "clicksign",
 
-  async createEnvelope(contract, clientName) {
+  async createEnvelope(contract, clientName, prepared) {
     // Confere antes de criar qualquer coisa na Clicksign (nome com sobrenome, celular quando a autenticação pede).
     for (const s of contract.signers) {
       const problem = clicksignSignerNameProblem(s.name);
@@ -62,7 +62,7 @@ export const clicksignSignatureProvider: SignatureProvider = {
       if (missing.length) throw new BusinessError(`Código por ${auth === "sms" ? "SMS" : "WhatsApp"} precisa do celular de: ${missing.join(", ")}. Cadastre o celular no contato (ou use código por e-mail).`);
     }
 
-    const data = await contractDocumentData(contract.id, contract);
+    const data = prepared ?? (await contractDocumentData(contract.id, contract));
     if (!data) throw new BusinessError("Contrato não encontrado");
     const word = data.template?.kind === "word" ? await contractDocx(data) : null;
     const file = word ? { filename: word.fileName, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", content: word.buffer } : await contractPdf(data).then((p) => ({ filename: p.fileName, mimeType: "application/pdf", content: p.buffer }));

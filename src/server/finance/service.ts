@@ -757,19 +757,24 @@ export async function removeSigner(input: { contractId: string; email: string },
 // Assinatura: documento gerado no INTEROS + assinatura registrada com evidência
 // ---------------------------------------------------------------------------
 
+/** Mensagem única com as pendências do modelo: o que preencher no cadastro e o que ligar no modelo. */
+function documentGapsMessage(templateName: string, gaps: TemplateDataGap[]): string {
+  const data = gaps.filter((g) => g.reason === "sem_dado").map((g) => g.label);
+  const unbound = gaps.filter((g) => g.reason === "sem_ligacao").map((g) => `{{${g.variable}}}`);
+  const later = gaps.filter((g) => g.reason === "apos_liberacao").map((g) => `{{${g.variable}}}`);
+  const parts = [
+    data.length ? `preencha no cadastro: ${data.join(", ")}` : "",
+    unbound.length ? `ligue no modelo: ${unbound.join(", ")}` : "",
+    later.length ? `use texto fixo no modelo (o dado só existe depois da liberação): ${later.join(", ")}` : "",
+  ].filter(Boolean);
+  return `O modelo «${templateName}» ainda tem dados em aberto — ${parts.join("; ")}. O contrato só é gerado completo.`;
+}
+
 /**
  * Gera o documento do contrato para assinatura: hash SHA-256 do conteúdo, identificador do documento e
  * status "aguardando assinatura". Sem provedor de assinatura conectado (situação atual) o envio ao cliente é
  * MANUAL (e-mail/WhatsApp do usuário, com o PDF salvo de /financeiro/contratos/[id]/documento).
  */
-/** Mensagem única com as pendências do modelo: o que preencher no cadastro e o que ligar no modelo. */
-function documentGapsMessage(templateName: string, gaps: TemplateDataGap[]): string {
-  const data = gaps.filter((g) => g.reason === "sem_dado").map((g) => g.label);
-  const unbound = gaps.filter((g) => g.reason === "sem_ligacao").map((g) => `{{${g.variable}}}`);
-  const parts = [data.length ? `preencha no cadastro: ${data.join(", ")}` : "", unbound.length ? `ligue no modelo: ${unbound.join(", ")}` : ""].filter(Boolean);
-  return `O modelo «${templateName}» ainda tem dados em aberto — ${parts.join("; ")}. O contrato só é gerado completo.`;
-}
-
 export async function sendForSignature(contractId: string, actor: UserRef): Promise<Contract> {
   const contract = await loadContract(contractId);
   assertEditable(contract);
@@ -790,7 +795,8 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
   const document = await contractDocumentData(contract.id, toSend);
   if (document?.gaps.length) throw new Error(documentGapsMessage(documentTemplate?.name ?? "do contrato", document.gaps));
   const provider = activeSignatureProvider();
-  const envelope = await provider.createEnvelope(toSend, client.tradeName);
+  // O documento já calculado vai junto: o provedor não relê o contrato inteiro para montar o PDF/Word.
+  const envelope = await provider.createEnvelope(toSend, client.tradeName, document ?? undefined);
   const manual = envelope.provider === "manual";
   const signerIds = envelope.signerIds ?? {};
   const sentSigners = signers.map((s) => (signerIds[s.email.toLowerCase()] ? { ...s, providerSignerId: signerIds[s.email.toLowerCase()] } : s));

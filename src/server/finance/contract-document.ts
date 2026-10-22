@@ -12,11 +12,13 @@ import { HEADQUARTERS, formatAddressLine } from "@/server/sales/maps";
 import { RECURRENCE_LABELS, paymentMethodLabel } from "./schemas";
 import { getContract } from "./queries";
 import { contractDocumentHash } from "./signature";
-import { documentTemplateSnapshot, getTemplateFile, templateForContract } from "./contract-templates";
+import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, getTemplateFile, templateForContract, withCompanySigner } from "./contract-templates";
+import { mergedBillingData } from "./service";
 import { fillDocx } from "./docx";
 import { pdfSafe } from "@/server/reports/export-pdf";
-import { BLANK, isCompanySigner, contractFieldValues, contractFirstYear, extractVariables, fillTemplateText, templateDataGaps, variableValues, type TemplateDataGap } from "@/domain/contract-templates";
-import { COLLECTIONS, type Client, type Contact, type Contract, type ContractDocumentTemplate, type Organization } from "@/domain/types";
+import { BLANK, isCompanySigner, isWitnessSigner, contractFieldValues, contractFirstYear, extractVariables, fillTemplateText, templateDataGaps, variableValues, type TemplateDataGap } from "@/domain/contract-templates";
+import { COLLECTIONS, type Client, type Contact, type Contract, type ContractDocumentTemplate, type ContractSignerEntry, type Opportunity, type Organization } from "@/domain/types";
+import type { DocumentReadiness } from "@/components/finance/signature-document-options";
 import { formatDocument } from "@/lib/format";
 import { netItem } from "@/components/sales/model";
 
@@ -43,40 +45,77 @@ export interface ContractDocumentData {
   hash: string;
 }
 
+/** Quem assina pelo cliente e o contato do cliente que é essa pessoa (de onde vem o CPF). */
+export interface ClientRepresentativeInfo {
+  name: string;
+  email: string;
+  /** O signatário é um contato do cliente (pelo e-mail): o CPF vem desse contato. */
+  contactFound: boolean;
+}
+
+/**
+ * Representante do cliente: entre os signatários que não são da Intercert nem testemunhas, o 1º que é contato do
+ * cliente (pelo e-mail); sem nenhum, o 1º deles. Dois contatos com o mesmo e-mail: vale o que tem CPF.
+ */
+function resolveRepresentative(signers: ContractSignerEntry[], contacts: Contact[]): { signer?: ContractSignerEntry; contact?: Contact } {
+  const contactOf = (email: string) =>
+    contacts.filter((c) => c.email?.trim().toLowerCase() === email.trim().toLowerCase()).sort((a, b) => Number(Boolean(b.document)) - Number(Boolean(a.document)))[0];
+  const candidates = signers.filter((s) => !isCompanySigner(s) && !isWitnessSigner(s));
+  const signer = candidates.find((s) => contactOf(s.email)) ?? candidates[0];
+  return { signer, contact: signer ? contactOf(signer.email) : undefined };
+}
+
+interface FieldsContext {
+  client: Pick<Client, "id" | "legalName" | "tradeName">;
+  billingData: { legalName?: string; document?: string; email?: string; address?: Client["address"] };
+  companyName: string;
+  contacts: Contact[];
+}
+
+const COMPANY_ADDRESS = HEADQUARTERS.label.replace("Sede Intercert — ", "");
+
+/** Valores dos campos do contrato (mesma regra para a prévia, o envio e a prontidão). */
+function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string): { fields: Record<string, string>; representative?: ClientRepresentativeInfo } {
+  const { signer, contact } = resolveRepresentative(contract.signers, ctx.contacts);
+  const fields = contractFieldValues({
+    contract,
+    client: ctx.client,
+    billingData: { ...ctx.billingData, address: ctx.billingData.address ?? {} },
+    companyName: ctx.companyName,
+    companyAddress: COMPANY_ADDRESS,
+    issuedAt,
+    labels: { recurrence: RECURRENCE_LABELS[contract.recurrence], paymentMethod: contract.paymentMethod ? paymentMethodLabel(contract.paymentMethod) : undefined },
+    representative: signer ? { name: signer.name, email: signer.email, document: contact?.document } : undefined,
+  });
+  return { fields, representative: signer ? { name: signer.name, email: signer.email, contactFound: Boolean(contact) } : undefined };
+}
+
+async function clientContacts(clientId: string): Promise<Contact[]> {
+  return list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", clientId]] });
+}
+
 /**
  * `sending`: o contrato como está sendo enviado agora para assinatura (signatários e modelo já fixados, ainda não
- * gravados): o documento sai exatamente com eles.
+ * gravados): o documento sai exatamente com eles. Na prévia (antes de gerar), o signatário da Intercert entra como o
+ * envio o incluirá, para o documento e as pendências baterem com o que será enviado.
  */
 export async function contractDocumentData(contractId: string, sending?: Contract): Promise<ContractDocumentData | null> {
   const [detail, organization] = await Promise.all([getContract(contractId), getById<Organization>(COLLECTIONS.organizations, ORG_ID)]);
   if (!detail) return null;
   const { client, billingData } = detail;
-  const contract = sending ?? detail.contract;
+  let contract = sending ?? detail.contract;
   // Documento já gerado (ou sendo enviado): vale o modelo fixado nele (contrato gerado antes dos modelos fica sem
   // cláusulas, como foi gerado). Antes de gerar: prévia com o modelo atual.
   const generated = Boolean(sending) || Boolean(contract.signatureEnvelopeId);
   let template: ContractDocumentTemplate | null = contract.documentTemplate ?? null;
   if (!generated) {
-    const current = await templateForContract(contract);
+    const [current, settings] = await Promise.all([templateForContract(contract), getSignatureSettings()]);
     template = current ? await documentTemplateSnapshot(current).catch(() => null) : null;
+    contract = { ...contract, signers: withCompanySigner(contract.signers, companySignerEntry(settings)) };
   }
   const companyName = organization?.name ?? "Intercert";
-  const companyAddress = HEADQUARTERS.label.replace("Sede Intercert — ", "");
   const issuedAt = sending ? new Date().toISOString() : (detail.sentAt ?? new Date().toISOString());
-  // CPF do representante: o contato do cliente cujo e-mail é o do 1º signatário pelo cliente.
-  const representative = contract.signers.find((s) => !isCompanySigner(s));
-  const contacts = representative ? await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", client.id]] }) : [];
-  const representativeDocument = contacts.find((c) => c.email?.trim().toLowerCase() === representative?.email.trim().toLowerCase())?.document;
-  const fields = contractFieldValues({
-    contract,
-    client,
-    billingData: { ...billingData, address: billingData.address ?? {} },
-    companyName,
-    companyAddress,
-    issuedAt,
-    labels: { recurrence: RECURRENCE_LABELS[contract.recurrence], paymentMethod: contract.paymentMethod ? paymentMethodLabel(contract.paymentMethod) : undefined },
-    representativeDocument,
-  });
+  const { fields } = documentFields(contract, { client, billingData, companyName, contacts: await clientContacts(client.id) }, issuedAt);
   const names = template?.kind === "interos" ? extractVariables(`${template.title ?? ""}\n${template.clauses ?? ""}`) : [];
   const values = variableValues(template?.variables ?? [], fields, names);
   const gaps = template ? templateDataGaps(template.variables ?? [], fields, names) : [];
@@ -87,7 +126,7 @@ export async function contractDocumentData(contractId: string, sending?: Contrac
     client,
     billingData: { ...billingData, address: billingData.address ?? {} },
     companyName,
-    companyAddress,
+    companyAddress: COMPANY_ADDRESS,
     issuedAt,
     template,
     preview: !generated,
@@ -96,6 +135,33 @@ export async function contractDocumentData(contractId: string, sending?: Contrac
     gaps,
     variableCount,
     hash: sending ? contractDocumentHash(sending) : (contract.documentHash ?? contractDocumentHash(contract)),
+  };
+}
+
+/**
+ * Pendências do PRÓXIMO envio (gerar ou reenviar): modelo atual (escolhido ou padrão) e o signatário da Intercert
+ * incluído, exatamente como `sendForSignature` montará o documento — e não a fotografia do envio anterior. Leve:
+ * não lê o arquivo do Word nem o detalhe completo do contrato (serve para a página e para a fila de assinaturas).
+ */
+export async function documentReadiness(contract: Contract): Promise<DocumentReadiness | null> {
+  const template = await templateForContract(contract);
+  if (!template) return null;
+  const [settings, client, opportunity, organization, contacts] = await Promise.all([
+    getSignatureSettings(),
+    getById<Client>(COLLECTIONS.clients, contract.clientId),
+    contract.opportunityId ? getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : Promise.resolve(null),
+    getById<Organization>(COLLECTIONS.organizations, ORG_ID),
+    clientContacts(contract.clientId),
+  ]);
+  if (!client) return null;
+  const toSend: Contract = { ...contract, signers: withCompanySigner(contract.signers, companySignerEntry(settings)) };
+  const { fields, representative } = documentFields(toSend, { client, billingData: mergedBillingData(client, opportunity), companyName: organization?.name ?? "Intercert", contacts }, new Date().toISOString());
+  const names = template.kind === "interos" ? extractVariables(`${template.title ?? ""}\n${template.clauses ?? ""}`) : [];
+  return {
+    templateName: template.name,
+    variableCount: new Set([...template.variables.map((v) => v.name), ...names]).size,
+    gaps: templateDataGaps(template.variables, fields, names),
+    representative,
   };
 }
 

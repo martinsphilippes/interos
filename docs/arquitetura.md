@@ -610,16 +610,26 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   nada é aplicado sozinho (sem campo pode ser escolha, e salvar por outro motivo não grava o que ninguém pediu). Mudar
   texto, arquivo ou ligações sobe a versão. Envio do Word por `POST /api/financeiro/modelos` (multipart; acima do
   limite das Server Actions), até 4 MB.
-- **Dados obrigatórios do modelo** (`templateDataGaps` em `src/domain/contract-templates.ts`; `contractDocumentData`
-  devolve `gaps` e `variableCount`): toda variável do modelo efetivo precisa de texto fixo ou de um campo com dado;
-  campos `optional` (complemento, vigência e 1º vencimento, que só existem depois) não contam. Cada campo do catálogo
-  tem `source` (cliente, contato, signatário, contrato, Intercert): o cartão de assinatura mostra "N de M variáveis
-  preenchidas" e cada pendência com onde corrigir (link para o cliente, contatos, configuração), o botão de gerar/enviar
-  fica desabilitado e `sendForSignature` recusa com a lista ("preencha no cadastro: …; ligue no modelo: {{x}}"). O
-  documento só é gerado completo e único para o cliente, sem lacunas; a prévia (PDF/Word) continua disponível com as
-  lacunas para conferência. O cartão do modelo em Assinaturas › Modelos lista o que ele exige do cadastro
-  (`templateRequirements`). `contratante.representante_cpf` vem do CPF (`Contact.document`, validado por
-  `isValidCpf` em `src/domain/documents.ts`) do contato cujo e-mail é o do 1º signatário pelo cliente.
+- **Dados obrigatórios do modelo** (`templateDataGaps` em `src/domain/contract-templates.ts`): toda variável do modelo
+  precisa de texto fixo ou de um campo com dado. Só o complemento é `optional`; 1º vencimento e condição de pagamento
+  são obrigatórios quando o modelo os usa (editáveis nas condições); início/fim da vigência são `afterRelease` (só
+  existem depois da liberação), então a variável precisa de texto fixo no modelo (pendência `apos_liberacao`; o cartão
+  do modelo e o seletor de campos avisam). Cada campo tem `source` (cliente, contato, signatário, contrato, Intercert).
+  A prontidão é sempre a do PRÓXIMO envio — `documentReadiness(contract)` em `contract-document.ts`: modelo atual
+  (escolhido ou padrão, não a fotografia do envio anterior) e o signatário da Intercert incluído como o envio o
+  incluirá; é leve (cliente, oportunidade, contatos, organização, modelo; não lê o Word nem o detalhe do contrato). O
+  cartão de assinatura mostra "N de M variáveis preenchidas" e cada pendência com onde corrigir; o botão de gerar/
+  reenviar fica desabilitado; a fila "Prontos para gerar" faz o mesmo (até 40 contratos; acima disso o envio confere);
+  `sendForSignature` recusa com a lista ("preencha no cadastro: …; ligue no modelo: {{x}}; use texto fixo…") e passa o
+  documento já calculado ao provedor (`createEnvelope(contract, cliente, document)`), que não relê o contrato. A
+  prévia (PDF/Word) também inclui o signatário da Intercert e continua disponível com as lacunas, para conferência.
+  O cartão do modelo em Assinaturas › Modelos lista o que ele exige do cadastro (`templateRequirements`).
+- **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): entre os signatários que não são da
+  Intercert nem testemunhas (`isWitnessSigner`), o 1º que é contato do cliente pelo e-mail (dois contatos com o mesmo
+  e-mail: vale o que tem CPF); sem nenhum, o 1º deles. O CPF vem do contato (`Contact.document`, validado por
+  `isValidCpf` em `src/domain/documents.ts`, editável em Clientes e no "cadastrar novo contato" do contrato); a
+  pendência diz quem é e o que falta (cadastrar o CPF do contato, ou escolher como signatário um contato do cliente).
+  Na sugestão de variáveis, `{{cpf}}` ao lado de um `{{cnpj}}` é o CPF do representante.
 - **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
   modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o
   hash antigo). `GET /api/financeiro/contratos/[id]/documento?formato=pdf|docx` gera o PDF (pdfkit) ou o Word preenchido
