@@ -76,15 +76,23 @@ describe("representante do cliente (de qual contato vem o CPF)", () => {
     expect(lead.ambiguous).toBeUndefined();
     // Empresário individual (razão social = nome civil, CNPJ) com contato: CPF do contato.
     expect(resolveRepresentativeDocument(sig("Ana Paula Ribeiro", "ana@x.com"), [{ name: "Ana Paula Ribeiro", email: "ana@x.com", document: "52998224725" }], { legalName: "Ana Paula Ribeiro" }, { legalName: "Ana Paula Ribeiro", document: "12345678000190" })).toMatchObject({ document: "52998224725" });
-    // Faturamento em nome de OUTRA pessoa física; a signatária (contato, sem CPF) tem o nome do cadastro: pendência, nunca o CPF de outro.
+    // Faturamento em nome de OUTRA pessoa física; a signatária (contato, sem CPF) tem o nome do cadastro: pendência
+    // (o CPF dela vai na ficha do contato), nunca o CPF de outro.
     const other = resolveRepresentativeDocument(sig("Ana Lima", "ana@x.com"), [{ name: "Ana Lima", email: "ana@x.com" }], { legalName: "Ana Lima", tradeName: "Ana Lima" }, { legalName: "Paulo Mendes", document: "11144477735" });
     expect(other.document).toBeUndefined();
     expect(other.fromClient).toBeUndefined();
-    expect(other.contact?.name).toBe("Ana Lima");
+    expect(other.ambiguous).toBe("empresa");
+    // Com o CPF dela na ficha do contato: vale o dela.
+    expect(resolveRepresentativeDocument(sig("Ana Lima", "ana@x.com"), [{ name: "Ana Lima", email: "ana@x.com", document: "52998224725" }], { legalName: "Ana Lima" }, { legalName: "Paulo Mendes", document: "11144477735" })).toMatchObject({ document: "52998224725" });
     // Nome da empresa: nem o contato sem e-mail com esse nome recebe CPF.
     const pj = resolveRepresentativeDocument(sig("Padaria X", "contato@x.com"), [{ name: "Padaria X", document: "52998224725" }], { legalName: "Padaria X Ltda", tradeName: "Padaria X" }, { legalName: "Padaria X Ltda", document: "12345678000190" });
     expect(pj).toMatchObject({ ambiguous: "empresa" });
     expect(pj.document).toBeUndefined();
+    // Contato com o nome da empresa E com e-mail, sem CPF (lista importada só com a empresa): é a empresa; com CPF já
+    // na ficha (empresário individual), vale o CPF dele.
+    const companyContact = { name: "Padaria X", email: "contato@x.com" };
+    expect(resolveRepresentativeDocument(sig("Padaria X", "contato@x.com"), [companyContact], { legalName: "Padaria X", tradeName: "Padaria X" }, { legalName: "Padaria X" })).toMatchObject({ ambiguous: "empresa" });
+    expect(resolveRepresentativeDocument(sig("Padaria X", "contato@x.com"), [{ ...companyContact, document: "52998224725" }], { legalName: "Padaria X" }, { legalName: "Padaria X", document: "12345678000190" })).toMatchObject({ document: "52998224725" });
     // Nome da empresa + o e-mail de um contato com outro nome: é a empresa (escolher quem assina).
     expect(resolveRepresentativeDocument(sig("Padaria X Ltda", "geral@x.com"), [{ name: "Maria", email: "geral@x.com" }], { legalName: "Padaria X Ltda" }, { legalName: "Padaria X Ltda", document: "12345678000190" })).toMatchObject({ ambiguous: "empresa" });
   });

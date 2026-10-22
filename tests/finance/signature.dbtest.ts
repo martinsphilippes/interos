@@ -373,6 +373,12 @@ describe("assinatura eletrônica", () => {
     await expect(save("52998224725", firma)).rejects.toThrow(/nome do cliente/);
     expect(await contactsOf(firma.email)).toHaveLength(0);
     expect((await getById<Contact>(COLLECTIONS.contacts, firmaContact.id))?.document).toBeUndefined();
+    // O mesmo com um contato da empresa COM o e-mail do signatário (lista importada só com a empresa): nada é gravado.
+    const firmaEmail = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: firma.name, email: firma.email, isPrimary: false });
+    current = await setSigners([{ ...firma, role: "Contratante", status: "pendente" }]);
+    expect((await documentReadiness(current))?.representative).toMatchObject({ ambiguous: "empresa" });
+    await expect(save("52998224725", firma)).rejects.toThrow(/nome do cliente/);
+    expect((await getById<Contact>(COLLECTIONS.contacts, firmaEmail.id))?.document).toBeUndefined();
 
     // Sem quem assina pelo cliente (só testemunha): pede o signatário primeiro.
     await setSigners([{ name: "Pedro Equipe", email: `pedro2.${RUN}@intercert.com.br`, role: "Testemunha", status: "pendente" }]);

@@ -769,7 +769,7 @@ export async function setRepresentativeDocument(
   if (ambiguous === "nome") throw new Error(`${signer.email} é usado por mais de um contato do cliente e nenhum se chama ${signer.name}: corrija nos contatos do cliente`);
   if (ambiguous === "outro_nome") throw new Error(`${signer.email} é o e-mail do contato ${otherName}, não de ${signer.name}: confira o signatário ou os contatos do cliente`);
   if (ambiguous === "cpf") throw new Error(`Há contatos ${signer.name} duplicados com CPFs diferentes: corrija nos contatos do cliente`);
-  if (ambiguous === "empresa") throw new Error(`Quem assina pelo cliente está com o nome do cliente (${signer.name}): se for empresa, escolha como signatário a pessoa que assina; se for pessoa física, informe o CPF nos dados do cliente`);
+  if (ambiguous === "empresa") throw new Error(`Quem assina pelo cliente está com o nome do cliente (${signer.name}): se for a empresa, escolha como signatário a pessoa que assina; se for uma pessoa, informe o CPF no cadastro do contato (ou nos dados do cliente, se for pessoa física)`);
   if (fromClient) throw new Error(`${signer.name} é o próprio cliente: o CPF já vem dos dados do cliente`);
   if (contact) {
     if (contact.document === cpf) return { contactId: contact.id, created: false, name: contact.name };

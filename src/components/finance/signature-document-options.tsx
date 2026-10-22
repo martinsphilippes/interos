@@ -161,11 +161,12 @@ function RepresentativeFix({ group, readiness, contractId, clientId, fix }: { gr
     return (
       <>
         <p>
-          {joinNodes(labelsOf(group.gaps))}: quem assina pelo cliente está com o nome do próprio cliente ({rep.name}). Se for empresa, escolha como signatário a pessoa que assina; se o cliente é pessoa física, informe o CPF dele nos dados do cliente.
+          {joinNodes(labelsOf(group.gaps))}: quem assina pelo cliente está com o nome do próprio cliente ({rep.name}). Se for a empresa, escolha como signatário a pessoa que assina. Se for uma pessoa (ex.: empresário individual), informe o CPF dela no cadastro do contato — ou, se o cliente é pessoa física, nos dados do cliente.
         </p>
         <div className="mt-1.5 flex flex-wrap gap-2">
           {fix.onAddSigner ? <FixButton onClick={fix.onAddSigner}>Adicionar signatário</FixButton> : null}
           {seeSigners}
+          <FixLink href={contacts}>Abrir contatos do cliente</FixLink>
           {fix.canEditBilling ? <FixButton onClick={() => goToSection(CONTRACT_SECTION_IDS.cliente)}>Dados do cliente</FixButton> : <FixLink href={`/clientes/${clientId}`}>Cadastro do cliente</FixLink>}
         </div>
       </>
