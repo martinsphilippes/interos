@@ -73,28 +73,45 @@ export function clientRepresentative<T extends { party?: string; role?: string }
 
 const normPersonName = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 
+/** Nome comparável: sem acento, caixa e espaços repetidos. */
+export function samePersonName(a: string, b: string): boolean {
+  return normPersonName(a) === normPersonName(b);
+}
+
+/** A mesma pessoa cadastrada mais de uma vez: vale o CPF, se só houver um; CPFs diferentes = ambíguo. */
+function pickSamePerson<C extends { document?: string }>(list: C[]): { contact?: C; ambiguous?: "cpf" } {
+  const cpfs = new Set(list.map((c) => c.document).filter(Boolean));
+  if (cpfs.size > 1) return { ambiguous: "cpf" };
+  return { contact: list.find((c) => c.document) ?? list[0] };
+}
+
 /**
  * Representante do cliente: o 1º signatário qualificado como contratante, representante legal ou procurador
- * (`clientRepresentative`, na ordem do contrato). O CPF vem do contato que É essa pessoa: o único contato com o e-mail
- * do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo nome (duplicados da mesma
- * pessoa: vale o CPF, se só houver um). Nunca "o que tem CPF" entre pessoas diferentes: CPF de outra pessoa no contrato
- * é pior do que a pendência. `ambiguous`: `nome` — mais de um contato usa o e-mail e nenhum tem o nome do signatário;
- * `cpf` — contatos duplicados (mesmo nome e e-mail) com CPFs diferentes.
+ * (`clientRepresentative`, na ordem do contrato). O CPF vem do contato que É essa pessoa — e-mail E nome batem:
+ * - contatos com o e-mail do signatário: o que tem o mesmo nome (duplicados da mesma pessoa valem como um, se houver
+ *   um só CPF). O único contato com o e-mail, mas com OUTRO nome, não é a pessoa (`outro_nome`: ex.: signatário criado
+ *   com o e-mail geral do cliente, que é de outro contato); vários sem o nome = `nome`;
+ * - nenhum contato com o e-mail: o contato SEM e-mail com o mesmo nome (contato principal sem e-mail, assinando com o
+ *   e-mail do cliente).
+ * Nunca "o que tem CPF" entre pessoas diferentes: CPF de outra pessoa no contrato é pior do que a pendência.
+ * `ambiguous`: `nome` — o e-mail é de mais de um contato e nenhum tem o nome; `outro_nome` — o e-mail é de um contato
+ * com outro nome (`otherName`); `cpf` — a mesma pessoa cadastrada mais de uma vez com CPFs diferentes.
  */
 export function resolveClientRepresentative<S extends { party?: string; role?: string; name: string; email: string }, C extends { name: string; email?: string; document?: string }>(
   signers: S[],
   contacts: C[],
-): { signer?: S; contact?: C; ambiguous?: "nome" | "cpf" } {
+): { signer?: S; contact?: C; ambiguous?: "nome" | "outro_nome" | "cpf"; otherName?: string } {
   const signer = clientRepresentative(signers);
   if (!signer) return { signer };
-  const sameEmail = contacts.filter((c) => c.email?.trim().toLowerCase() === signer.email.trim().toLowerCase());
-  if (sameEmail.length <= 1) return { signer, contact: sameEmail[0] };
-  const byName = sameEmail.filter((c) => normPersonName(c.name) === normPersonName(signer.name));
-  if (byName.length === 0) return { signer, ambiguous: "nome" };
-  // Mesmo nome e mesmo e-mail é a mesma pessoa cadastrada mais de uma vez: vale o CPF, se só houver um.
-  const cpfs = new Set(byName.map((c) => c.document).filter(Boolean));
-  if (cpfs.size > 1) return { signer, ambiguous: "cpf" };
-  return { signer, contact: byName.find((c) => c.document) ?? byName[0] };
+  const email = signer.email.trim().toLowerCase();
+  const sameEmail = contacts.filter((c) => c.email?.trim().toLowerCase() === email);
+  if (sameEmail.length === 0) {
+    const noEmailSameName = contacts.filter((c) => !c.email?.trim() && samePersonName(c.name, signer.name));
+    return noEmailSameName.length === 0 ? { signer } : { signer, ...pickSamePerson(noEmailSameName) };
+  }
+  const byName = sameEmail.filter((c) => samePersonName(c.name, signer.name));
+  if (byName.length === 0) return sameEmail.length === 1 ? { signer, ambiguous: "outro_nome", otherName: sameEmail[0].name } : { signer, ambiguous: "nome" };
+  return { signer, ...pickSamePerson(byName) };
 }
 
 /** O signatário da Intercert está completo (nome e e-mail válidos)? */

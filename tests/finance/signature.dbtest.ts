@@ -204,8 +204,13 @@ describe("assinatura eletrônica", () => {
     expect(r?.representative).toMatchObject({ email: CLIENT_EMAIL, contactFound: false });
     await expect(sendForSignature(c.id, ACTOR)).rejects.toThrow(/preencha no cadastro: CPF do representante do cliente/);
 
-    // Vira contato do cliente, ainda sem CPF: a pendência continua, agora apontando o contato.
+    // O e-mail vira de um contato com OUTRO nome (o signatário padrão tem a razão social): não é a mesma pessoa.
     const contact = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Maria Cliente", email: CLIENT_EMAIL, isPrimary: true });
+    r = await documentReadiness(current);
+    expect(r?.representative).toMatchObject({ contactFound: false, ambiguous: "outro_nome", otherName: "Maria Cliente" });
+    // Quem assina passa a ser a Maria (contato), ainda sem CPF: a pendência continua, agora apontando o contato.
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signers: current.signers.map((x) => (x.party === "contratada" ? x : { ...x, name: "Maria Cliente" })) });
+    current = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
     r = await documentReadiness(current);
     expect(r?.representative).toMatchObject({ contactFound: true });
     expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
@@ -292,7 +297,7 @@ describe("assinatura eletrônica", () => {
     expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
   });
 
-  it("CPF informado no contrato: grava no contato que é a pessoa ou cadastra o signatário como contato; ambíguo e inválido não gravam", async () => {
+  it("CPF informado no contrato: grava no contato que é a pessoa ou cadastra o signatário como contato; nunca em outra pessoa", async () => {
     const t = await saveInterosTemplate({ name: `${RUN} CPF no contrato`, title: "Contrato", clauses: "CLÁUSULA ÚNICA\n\n{{contratante.representante}}, CPF {{contratante.representante_cpf}}." }, ACTOR);
     templateIds.push(t.id);
     const c = await createManualContract({ clientId: CLIENT_ID, recurrence: "mensal", termMonths: 12, billingDay: 10 }, ACTOR);
@@ -304,41 +309,70 @@ describe("assinatura eletrônica", () => {
       return (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
     };
     const contactsOf = async (email: string) => (await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", CLIENT_ID]] })).filter((x) => x.email?.toLowerCase() === email.toLowerCase());
+    const save = (document: string, expected: { name: string; email: string }) => setRepresentativeDocument({ contractId: c.id, document, expected }, ACTOR);
 
     // Quem assina não é contato do cliente: o CPF cadastra a pessoa como contato (nome e e-mail do signatário).
     const outsider = `externo.${RUN}@acme-teste.com.br`;
-    let current = await setSigners([{ name: "Carlos Externo", email: outsider, role: "Contratante", status: "pendente" }]);
+    const carlos = { name: "Carlos Externo", email: outsider };
+    let current = await setSigners([{ ...carlos, role: "Contratante", status: "pendente" }]);
     expect((await documentReadiness(current))?.representative).toMatchObject({ contactFound: false });
-    await expect(setRepresentativeDocument({ contractId: c.id, document: "123.456.789-00" }, ACTOR)).rejects.toThrow(/CPF inválido/);
+    await expect(save("123.456.789-00", carlos)).rejects.toThrow(/CPF inválido/);
     expect(await contactsOf(outsider)).toHaveLength(0);
-    const created = await setRepresentativeDocument({ contractId: c.id, document: "529.982.247-25" }, ACTOR);
-    expect(created).toMatchObject({ created: true, name: "Carlos Externo" });
+    expect(await save("529.982.247-25", carlos)).toMatchObject({ created: true, name: "Carlos Externo" });
     expect((await contactsOf(outsider)).map((x) => [x.name, x.document])).toEqual([["Carlos Externo", "52998224725"]]);
     expect((await documentReadiness(current))?.gaps).toEqual([]);
     expect((await contractDocumentData(c.id))?.clauses?.text).toContain("Carlos Externo, CPF 529.982.247-25.");
 
-    // Contato já existe, sem CPF: grava nele (não cria outro).
+    // Contato já existe, sem CPF: grava nele (não cria outro). Já com CPF: não troca daqui (é na ficha do contato).
     const known = `conhecida.${RUN}@acme-teste.com.br`;
-    const contact = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Beatriz Lima", email: known, isPrimary: false });
-    current = await setSigners([{ name: "Beatriz Lima", email: known, role: "Representante legal", status: "pendente" }]);
-    const saved = await setRepresentativeDocument({ contractId: c.id, document: "11144477735" }, ACTOR);
-    expect(saved).toMatchObject({ created: false, contactId: contact.id });
+    const beatriz = { name: "Beatriz Lima", email: known };
+    const contact = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, ...beatriz, isPrimary: false });
+    current = await setSigners([{ ...beatriz, role: "Representante legal", status: "pendente" }]);
+    expect(await save("11144477735", beatriz)).toMatchObject({ created: false, contactId: contact.id });
     expect((await getById<Contact>(COLLECTIONS.contacts, contact.id))?.document).toBe("11144477735");
     expect(await contactsOf(known)).toHaveLength(1);
     expect((await documentReadiness(current))?.gaps).toEqual([]);
+    await expect(save("52998224725", beatriz)).rejects.toThrow(/já tem CPF no cadastro/);
+    expect((await getById<Contact>(COLLECTIONS.contacts, contact.id))?.document).toBe("11144477735");
 
-    // E-mail compartilhado sem contato com o nome do signatário: não dá para saber de quem é; nada é gravado.
+    // A tela abriu com outra pessoa (o signatário mudou depois): nada é gravado.
+    await expect(save("52998224725", { name: "Ana Souza", email: `ana.${RUN}@acme-teste.com.br` })).rejects.toThrow(/Quem assina pelo cliente mudou/);
+
+    // O único contato com o e-mail tem OUTRO nome (signatário com o e-mail geral do cliente): não é a pessoa.
+    const general = `geral.${RUN}@acme-teste.com.br`;
+    await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Maria Financeiro", email: general, isPrimary: false });
+    const joao = { name: "João Pereira", email: general };
+    current = await setSigners([{ ...joao, role: "Contratante", status: "pendente" }]);
+    expect((await documentReadiness(current))?.representative).toMatchObject({ contactFound: false, ambiguous: "outro_nome", otherName: "Maria Financeiro" });
+    await expect(save("52998224725", joao)).rejects.toThrow(/é o e-mail do contato Maria Financeiro/);
+    expect((await contactsOf(general)).map((x) => x.document ?? null)).toEqual([null]);
+
+    // Contato principal sem e-mail, assinando com o e-mail do cliente: é ele (pelo nome), sem criar outro.
+    const pedro = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Pedro Sem Email", isPrimary: false });
+    const pedroSigner = { name: "Pedro  sem email", email: `contato.${RUN}@acme-teste.com.br` };
+    current = await setSigners([{ ...pedroSigner, role: "Contratante", status: "pendente" }]);
+    expect((await documentReadiness(current))?.representative).toMatchObject({ contactFound: true });
+    expect(await save("52998224725", pedroSigner)).toMatchObject({ created: false, contactId: pedro.id });
+    expect(await contactsOf(pedroSigner.email)).toHaveLength(0);
+
+    // E-mail compartilhado por dois contatos e nenhum com o nome: não dá para saber de quem é; nada é gravado.
     const shared = `compartilhado.${RUN}@acme-teste.com.br`;
     await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "João Um", email: shared, isPrimary: false });
     await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Ana Dois", email: shared, isPrimary: false });
-    await setSigners([{ name: "Financeiro Geral", email: shared, role: "Contratante", status: "pendente" }]);
-    await expect(setRepresentativeDocument({ contractId: c.id, document: "52998224725" }, ACTOR)).rejects.toThrow(/mais de um contato/);
+    const geral = { name: "Financeiro Geral", email: shared };
+    await setSigners([{ ...geral, role: "Contratante", status: "pendente" }]);
+    await expect(save("52998224725", geral)).rejects.toThrow(/mais de um contato/);
     expect((await contactsOf(shared)).every((x) => !x.document)).toBe(true);
-    expect(await contactsOf(shared)).toHaveLength(2);
+
+    // "Signatário" com o nome da empresa não vira contato.
+    const firma = { name: `ACME ${RUN} LTDA`, email: `firma.${RUN}@acme-teste.com.br` };
+    await setSigners([{ ...firma, role: "Contratante", status: "pendente" }]);
+    await expect(save("52998224725", firma)).rejects.toThrow(/nome da empresa/);
+    expect(await contactsOf(firma.email)).toHaveLength(0);
 
     // Sem quem assina pelo cliente (só testemunha): pede o signatário primeiro.
     await setSigners([{ name: "Pedro Equipe", email: `pedro2.${RUN}@intercert.com.br`, role: "Testemunha", status: "pendente" }]);
-    await expect(setRepresentativeDocument({ contractId: c.id, document: "52998224725" }, ACTOR)).rejects.toThrow(/adicione o signatário/);
+    await expect(save("52998224725", carlos)).rejects.toThrow(/adicione o signatário/);
   });
 });
 

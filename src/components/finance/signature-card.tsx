@@ -49,6 +49,10 @@ export interface SignatureCardProps {
   readiness?: DocumentReadiness;
   /** Pode abrir «Ligar variáveis» do modelo (financeiro.assinaturas.modelos.editar): botão nas pendências do modelo. */
   canEditTemplates?: boolean;
+  /** O cartão «Cliente e faturamento» do contrato é editável: as pendências de dados do cliente levam até ele. */
+  canEditBilling?: boolean;
+  /** Pode alterar quem assina pela Intercert (financeiro.assinaturas.configuracao.editar). */
+  canEditSignatureSettings?: boolean;
 }
 
 const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "danger" } as const;
@@ -57,7 +61,7 @@ const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "da
  * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
  * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
  */
-export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo, readiness, canEditTemplates = false }: SignatureCardProps) {
+export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo, readiness, canEditTemplates = false, canEditBilling = false, canEditSignatureSettings = false }: SignatureCardProps) {
   const id = React.useId();
   // Capacidades do servidor (assinatura: editar signatários, enviar/lembrar, registrar assinatura; documento: ver).
   const { contracts: can } = useFinanceAccess();
@@ -355,6 +359,8 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
             fix={{
               canFixCpf: Boolean(canCreateContact) && can.signersEdit && editable && !allSigned,
               canEditTemplates,
+              canEditBilling,
+              canEditSignatureSettings,
               onAddSigner: can.signersEdit && editable && !allSigned ? openNewSigner : undefined,
             }}
           />

@@ -39,7 +39,7 @@ export interface DocumentReadiness {
   variableCount: number;
   gaps: TemplateDataGap[];
   /** Quem assina pelo cliente e se é um contato do cliente (de onde vem o CPF). */
-  representative?: { name: string; email: string; contactFound: boolean; ambiguous?: "nome" | "cpf" };
+  representative?: { name: string; email: string; contactFound: boolean; ambiguous?: "nome" | "outro_nome" | "cpf"; otherName?: string };
 }
 
 /** O que o usuário pode corrigir daqui (calculado no servidor e no cartão Assinatura). */
@@ -48,13 +48,20 @@ export interface ReadinessFixOptions {
   canFixCpf: boolean;
   /** Abrir «Ligar variáveis» do modelo em Assinaturas › Modelos. */
   canEditTemplates: boolean;
+  /** O cartão «Cliente e faturamento» do contrato tem o formulário (quem edita o contrato); senão, o cadastro do cliente. */
+  canEditBilling?: boolean;
+  /** Pode alterar quem assina pela Intercert (Assinaturas › Configuração). */
+  canEditSignatureSettings?: boolean;
   /** Abre o formulário de novo signatário no cartão Assinatura (quem edita signatários). */
   onAddSigner?: () => void;
 }
 
+/** Botão que cabe na coluna estreita do cartão (quebra linha em vez de vazar). */
+const FIX_CLASS = "h-auto min-h-9 max-w-full whitespace-normal py-1 text-left md:min-h-7";
+
 function FixButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <Button type="button" variant="outline" size="sm" className="h-9 md:h-7" onClick={onClick}>
+    <Button type="button" variant="outline" size="sm" className={FIX_CLASS} onClick={onClick}>
       {children}
       <ArrowRight aria-hidden />
     </Button>
@@ -63,7 +70,7 @@ function FixButton({ children, onClick }: { children: React.ReactNode; onClick: 
 
 function FixLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <Button asChild variant="outline" size="sm" className="h-9 md:h-7">
+    <Button asChild variant="outline" size="sm" className={FIX_CLASS}>
       <Link href={href}>
         {children}
         <ArrowRight aria-hidden />
@@ -94,7 +101,7 @@ function RepresentativeCpfForm({ contractId, rep }: { contractId: string; rep: N
   const invalid = digits.length === 11 && !isValidCpf(digits);
   const save = () =>
     void run(
-      () => setRepresentativeDocumentAction({ contractId, document: digits }),
+      () => setRepresentativeDocumentAction({ contractId, document: digits, expected: { name: rep.name, email: rep.email } }),
       (d) => (d.created ? `${d.name} cadastrado como contato do cliente, com CPF` : `CPF de ${d.name} salvo`),
       () => setCpf(""),
     );
@@ -150,6 +157,19 @@ function RepresentativeFix({ group, readiness, contractId, clientId, fix }: { gr
       </>
     );
   }
+  if (rep.ambiguous === "outro_nome") {
+    return (
+      <>
+        <p>
+          {joinNodes(labelsOf(group.gaps))}: {rep.email} é o e-mail do contato {rep.otherName ?? "de outra pessoa"}, não de {rep.name}. Escolha como signatário a pessoa certa ou corrija os contatos do cliente.
+        </p>
+        <div className="mt-1.5 flex flex-wrap gap-2">
+          {seeSigners}
+          <FixLink href={contacts}>Abrir contatos do cliente</FixLink>
+        </div>
+      </>
+    );
+  }
   if (rep.ambiguous === "cpf") {
     return (
       <>
@@ -166,7 +186,9 @@ function RepresentativeFix({ group, readiness, contractId, clientId, fix }: { gr
     <>
       <p>
         {joinNodes(labelsOf(group.gaps))}:{" "}
-        {rep.contactFound ? `falta o CPF de ${rep.name} no cadastro do contato.` : `${rep.name} (${rep.email}) assina pelo cliente, mas não é contato dele.`}
+        {rep.contactFound
+          ? `falta o CPF de ${rep.name} no cadastro do contato.`
+          : `${rep.name} (${rep.email}) assina pelo cliente, mas não é contato dele.${fix.canFixCpf ? "" : " Escolha como signatário um contato do cliente com CPF."}`}
       </p>
       {fix.canFixCpf ? <RepresentativeCpfForm contractId={contractId} rep={rep} /> : null}
       <div className="mt-1.5 flex flex-wrap gap-2">
@@ -213,7 +235,11 @@ function DocumentReadinessPanel({ readiness, contractId, clientId, fix }: { read
                 <>
                   <p>Dados do cliente: {joinNodes(labelsOf(group.gaps))}.</p>
                   <div className="mt-1.5">
-                    <FixButton onClick={() => goToSection(CONTRACT_SECTION_IDS.cliente)}>Completar dados do cliente</FixButton>
+                    {fix.canEditBilling ? (
+                      <FixButton onClick={() => goToSection(CONTRACT_SECTION_IDS.cliente)}>Completar dados do cliente</FixButton>
+                    ) : (
+                      <FixLink href={`/clientes/${clientId}`}>Corrigir no cadastro do cliente</FixLink>
+                    )}
                   </div>
                 </>
               );
@@ -243,7 +269,11 @@ function DocumentReadinessPanel({ readiness, contractId, clientId, fix }: { read
                 <>
                   <p>Quem assina pela Intercert: {joinNodes(labelsOf(group.gaps))}.</p>
                   <div className="mt-1.5">
-                    <FixLink href="/financeiro/assinaturas?aba=configuracao">Abrir configuração da assinatura</FixLink>
+                    {fix.canEditSignatureSettings ? (
+                      <FixLink href="/financeiro/assinaturas?aba=configuracao">Abrir configuração</FixLink>
+                    ) : (
+                      <p className="text-muted">Peça a um gestor (Financeiro › Assinaturas › Configuração).</p>
+                    )}
                   </div>
                 </>
               );

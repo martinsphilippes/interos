@@ -53,9 +53,11 @@ export interface ClientRepresentativeInfo {
   contactFound: boolean;
   /**
    * Não dá para saber de quem é o CPF: `nome` — mais de um contato usa o e-mail e nenhum tem o nome do signatário;
-   * `cpf` — contatos duplicados (mesmo nome e e-mail) com CPFs diferentes.
+   * `outro_nome` — o e-mail é de um contato com outro nome (`otherName`); `cpf` — contatos duplicados (mesmo nome e
+   * e-mail) com CPFs diferentes.
    */
-  ambiguous?: "nome" | "cpf";
+  ambiguous?: "nome" | "outro_nome" | "cpf";
+  otherName?: string;
 }
 
 interface FieldsContext {
@@ -69,7 +71,7 @@ const COMPANY_ADDRESS = HEADQUARTERS.label.replace("Sede Intercert — ", "");
 
 /** Valores dos campos do contrato (mesma regra para a prévia, o envio e a prontidão). */
 function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string): { fields: Record<string, string>; representative?: ClientRepresentativeInfo } {
-  const { signer, contact, ambiguous } = resolveClientRepresentative(contract.signers, ctx.contacts);
+  const { signer, contact, ambiguous, otherName } = resolveClientRepresentative(contract.signers, ctx.contacts);
   const fields = contractFieldValues({
     contract,
     client: ctx.client,
@@ -80,7 +82,7 @@ function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string
     labels: { recurrence: RECURRENCE_LABELS[contract.recurrence], paymentMethod: contract.paymentMethod ? paymentMethodLabel(contract.paymentMethod) : undefined },
     representative: signer ? { name: signer.name, email: signer.email, document: contact?.document } : undefined,
   });
-  return { fields, representative: signer ? { name: signer.name, email: signer.email, contactFound: Boolean(contact), ...(ambiguous ? { ambiguous } : {}) } : undefined };
+  return { fields, representative: signer ? { name: signer.name, email: signer.email, contactFound: Boolean(contact), ...(ambiguous ? { ambiguous } : {}), ...(otherName ? { otherName } : {}) } : undefined };
 }
 
 async function clientContacts(clientId: string): Promise<Contact[]> {

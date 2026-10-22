@@ -56,4 +56,13 @@ describe("representante do cliente (de qual contato vem o CPF)", () => {
     expect(resolveClientRepresentative([signer("Maria", "fin@x.com")], [...shared, { name: "Maria", email: "fin@x.com", document: "11144477735" }]).ambiguous).toBe("cpf");
     expect(resolveClientRepresentative([signer("Pedro", "p@x.com", "Testemunha")], []).signer).toBeUndefined();
   });
+
+  it("e-mail e nome precisam bater: o único contato com o e-mail, mas outro nome, não é a pessoa; contato sem e-mail vale pelo nome", () => {
+    const only = resolveClientRepresentative([signer("João Pereira", "geral@x.com")], [{ name: "Maria Financeiro", email: "geral@x.com", document: "52998224725" }]);
+    expect(only).toMatchObject({ ambiguous: "outro_nome", otherName: "Maria Financeiro" });
+    expect(only.contact).toBeUndefined();
+    const noEmail = resolveClientRepresentative([signer("João  Pereira", "geral@x.com")], [{ name: "joão pereira" }, { name: "Outro", email: "o@x.com" }]);
+    expect(noEmail.contact?.name).toBe("joão pereira");
+    expect(resolveClientRepresentative([signer("João", "geral@x.com")], [{ name: "João" }, { name: "João", document: "52998224725" }, { name: "João", document: "11144477735" }]).ambiguous).toBe("cpf");
+  });
 });

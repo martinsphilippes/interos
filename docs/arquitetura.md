@@ -641,13 +641,17 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   CPF de quem assina pelo cliente: informado ali mesmo (`setRepresentativeDocumentAction`, mesmas exigências de
   cadastrar contato pelo contrato: `financeiro.contratos.assinatura.editar` + `operacao.clientes.contatos.editar` +
   cliente no escopo) — grava no contato que é a pessoa (`resolveClientRepresentative`, a mesma regra do documento) ou,
-  se o signatário ainda não é contato, cadastra o contato com nome, e-mail e CPF; ambíguo não grava (botão para os
-  contatos do cliente). O histórico registra que o CPF foi informado/alterado, sem o número. Sem signatário do
-  cliente: «Adicionar signatário» abre o formulário no próprio cartão.
+  se o signatário ainda não é contato, cadastra o contato com nome, e-mail e CPF. Nunca em outra pessoa: a tela manda
+  quem ela mostrava (`expected`) e o servidor recusa se o signatário mudou; ambíguo, contato que já tem CPF (trocar é
+  na ficha do contato) e "signatário" com o nome da empresa também são recusados. O histórico registra que o CPF foi
+  informado, sem o número. Dados do cliente levam ao cartão do contrato só para quem o edita (senão, ao cadastro do
+  cliente); a configuração da assinatura, só para quem pode alterá-la. Sem signatário do cliente: «Adicionar
+  signatário» abre o formulário no próprio cartão.
 - **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): o 1º signatário, na ordem do
   contrato, qualificado como contratante, representante legal ou procurador (`clientRepresentative`, pela mesma regra
   de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa
-  (`resolveClientRepresentative`, no domínio): o único
+  (`resolveClientRepresentative`, no domínio; e-mail E nome batem — o único contato com o e-mail, mas com outro nome,
+  é `outro_nome`; sem contato com o e-mail, vale o contato SEM e-mail com o mesmo nome): o único
   contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
   nome (o mesmo contato cadastrado mais de uma vez, com mesmo nome e e-mail, vale como uma pessoa se houver um só CPF);
   nunca "o que tem CPF" entre pessoas diferentes (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é
