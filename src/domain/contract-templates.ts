@@ -100,7 +100,7 @@ function pickSamePerson<C extends { document?: string }>(list: C[]): { contact?:
 export function resolveClientRepresentative<S extends { party?: string; role?: string; name: string; email: string }, C extends { name: string; email?: string; document?: string }>(
   signers: S[],
   contacts: C[],
-  /** Nomes que não são de pessoa (razão social, nome fantasia): o atalho do contato sem e-mail não vale para eles. */
+  /** Nomes do cliente (razão social, nome fantasia): o atalho do contato sem e-mail só vale para eles com CPF na ficha. */
   notPersonNames: (string | undefined)[] = [],
 ): { signer?: S; contact?: C; ambiguous?: "nome" | "outro_nome" | "cpf"; otherName?: string } {
   const signer = clientRepresentative(signers);
@@ -108,8 +108,10 @@ export function resolveClientRepresentative<S extends { party?: string; role?: s
   const email = signer.email.trim().toLowerCase();
   const sameEmail = contacts.filter((c) => c.email?.trim().toLowerCase() === email);
   if (sameEmail.length === 0) {
-    if (notPersonNames.some((n) => n?.trim() && samePersonName(n, signer.name))) return { signer };
-    const noEmailSameName = contacts.filter((c) => !c.email?.trim() && samePersonName(c.name, signer.name));
+    // Com o nome da empresa, o contato sem e-mail só vale se o CPF JÁ foi informado na ficha dele (empresário
+    // individual, lead com o nome da pessoa): quem informou ali sabia que é uma pessoa.
+    const companyNamed = notPersonNames.some((n) => n?.trim() && samePersonName(n, signer.name));
+    const noEmailSameName = contacts.filter((c) => !c.email?.trim() && samePersonName(c.name, signer.name) && (!companyNamed || Boolean(c.document)));
     return noEmailSameName.length === 0 ? { signer } : { signer, ...pickSamePerson(noEmailSameName) };
   }
   const byName = sameEmail.filter((c) => samePersonName(c.name, signer.name));
@@ -123,7 +125,7 @@ export function resolveClientRepresentative<S extends { party?: string; role?: s
  * 1. o contato que é a pessoa (`resolveClientRepresentative`: e-mail e nome) — vale mesmo com o nome igual ao do
  *    cliente quando o contato JÁ tem CPF (empresário individual, lead com o nome da pessoa); com o nome da empresa e
  *    sem CPF é `empresa` (um contato "Padaria X" não recebe o CPF de alguém pelo contrato); o atalho do contato SEM
- *    e-mail não vale para o nome da empresa;
+ *    e-mail com o nome da empresa só vale com o CPF já na ficha;
  * 2. sem contato, o signatário com o nome de quem está no documento de faturamento, que é um CPF: o próprio cliente
  *    pessoa física — o CPF é esse (`fromClient`);
  * 3. sem contato, o signatário com o nome do cliente (razão social de faturamento, razão social ou nome fantasia do

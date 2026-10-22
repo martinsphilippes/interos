@@ -652,8 +652,8 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa
   (`resolveRepresentativeDocument`, no domínio — a mesma regra na leitura e na escrita, nesta ordem: 1) o contato que
   é a pessoa, por `resolveClientRepresentative` — e-mail E nome batem (o único contato com o e-mail, mas com outro
-  nome, é `outro_nome`; sem contato com o e-mail, vale o contato SEM e-mail com o mesmo nome, menos para o nome da
-  empresa), mesmo que o nome seja igual ao do cliente quando o contato JÁ tem CPF (empresário individual, lead com o
+  nome, é `outro_nome`; sem contato com o e-mail, vale o contato SEM e-mail com o mesmo nome — com o nome da empresa,
+  só se o CPF já estiver na ficha), mesmo que o nome seja igual ao do cliente quando o contato JÁ tem CPF (empresário individual, lead com o
   nome da pessoa) — com o nome do cliente e sem CPF é `empresa` (o CPF de uma pessoa vai na ficha do contato, nunca
   pelo contrato num contato "Padaria X"); 2) sem
   contato, o signatário com o nome de quem está no documento de faturamento, que é um CPF: o próprio cliente pessoa

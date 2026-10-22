@@ -373,6 +373,11 @@ describe("assinatura eletrônica", () => {
     await expect(save("52998224725", firma)).rejects.toThrow(/nome do cliente/);
     expect(await contactsOf(firma.email)).toHaveLength(0);
     expect((await getById<Contact>(COLLECTIONS.contacts, firmaContact.id))?.document).toBeUndefined();
+    // Se for uma pessoa (empresário individual), o CPF vai na ficha do contato — e aí vale.
+    await update<Contact>(COLLECTIONS.contacts, firmaContact.id, { document: "11144477735" });
+    expect((await documentReadiness(current))?.gaps).toEqual([]);
+    await docdb.sql()`update interos.contacts set data = data - 'document' where id = ${firmaContact.id}`;
+    expect((await getById<Contact>(COLLECTIONS.contacts, firmaContact.id))?.document).toBeUndefined();
     // O mesmo com um contato da empresa COM o e-mail do signatário (lista importada só com a empresa): nada é gravado.
     const firmaEmail = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: firma.name, email: firma.email, isPrimary: false });
     current = await setSigners([{ ...firma, role: "Contratante", status: "pendente" }]);
