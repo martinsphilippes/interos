@@ -420,13 +420,17 @@ describe("Clicksign: envio e avisos", () => {
     const mine = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Carla Souza", email: `carla.${RUN}@acme-teste.com.br`, isPrimary: false });
     const noEmail = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Sem Email", isPrimary: false });
     const other = await create<Contact>(COLLECTIONS.contacts, { clientId: `${RUN}_outro_cliente`, name: "Outra Pessoa", email: `outra.${RUN}@x.com.br`, isPrimary: false });
+    const badEmail = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Email Ruim", email: `a..b.${RUN}@acme-teste.com.br`, isPrimary: false });
     await addSignerFrom({ contractId: c.id, source: "contact", id: mine.id, role: "Contratante" }, ACTOR);
     await addSignerFrom({ contractId: c.id, source: "user", id: OWNER_ID, role: "Testemunha" }, ACTOR);
     await expect(addSignerFrom({ contractId: c.id, source: "contact", id: noEmail.id, role: "Contratante" }, ACTOR)).rejects.toThrow(/e-mail/);
+    // O cadastro aceita "a..b@": a assinatura não; barra na hora, com o caminho para corrigir.
+    await expect(addSignerFrom({ contractId: c.id, source: "contact", id: badEmail.id, role: "Contratante" }, ACTOR)).rejects.toThrow(/e-mail inválido para assinatura.*ficha do cliente/);
     await expect(addSignerFrom({ contractId: c.id, source: "contact", id: other.id, role: "Contratante" }, ACTOR)).rejects.toThrow(/não encontrado neste cliente/);
     await expect(addSignerFrom({ contractId: c.id, source: "user", id: `${RUN}_ninguem`, role: "Testemunha" }, ACTOR)).rejects.toThrow(/inativo/);
     const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
     expect(after.signers.map((s) => [s.email, s.role])).toEqual(expect.arrayContaining([[mine.email, "Contratante"], [`${RUN}.dono@intercert.com.br`, "Testemunha"]]));
+    expect(after.signers.some((s) => s.email === badEmail.email)).toBe(false);
     await docdb.sql()`delete from interos.contacts where id = ${other.id}`;
   });
 

@@ -15,7 +15,9 @@ import {
   isDefaultCompanySignerName,
   mergeVariables,
   normalizeVariableName,
+  isSignerEmail,
   suggestField,
+  suggestUnbound,
   unmappedVariables,
   variableValues,
 } from "@/domain/contract-templates";
@@ -68,7 +70,30 @@ describe("variáveis do modelo", () => {
     expect(suggestField("numero")).toBe("contrato.numero");
     expect(suggestField("complemento")).toBe("contratante.complemento");
     expect(suggestField("Cidade/UF")).toBe("contratante.cidade_uf");
+    expect(suggestField("Nº do endereço")).toBe("contratante.numero");
+    expect(suggestField("Valor de Mensalidade")).toBe("valores.mensalidade");
     expect(suggestField("cor_favorita")).toBeUndefined();
+  });
+
+  it("\"numero\" ao lado de um logradouro separado é o número do endereço; sozinho (ou só com bairro/cep) é o do contrato", () => {
+    expect(suggestField("Número", ["Logradouro", "Número", "Bairro"])).toBe("contratante.numero");
+    expect(suggestField("numero", ["rua", "numero"])).toBe("contratante.numero");
+    expect(suggestField("Número", ["Contrato", "Número"])).toBe("contrato.numero");
+    expect(suggestField("Número", ["endereco", "Número", "bairro", "cep"])).toBe("contrato.numero");
+    expect(mergeVariables(["Logradouro", "Número", "Bairro"]).map((v) => v.field)).toEqual(["contratante.logradouro", "contratante.numero", "contratante.bairro"]);
+    expect(mergeVariables(["numero"]).map((v) => v.field)).toEqual(["contrato.numero"]);
+  });
+
+  it("suggestUnbound: só quem está sem ligação e sem texto fixo recebe sugestão (com o contexto do modelo)", () => {
+    const out = suggestUnbound([{ name: "Razão Social", field: "contratante.razao_social" }, { name: "Logradouro" }, { name: "Número", field: "contrato.numero" }, { name: "Bairro" }, { name: "Foro", fixed: "Crato/CE" }, { name: "Sistema Operacional" }]);
+    expect(out).toEqual([
+      { name: "Razão Social", field: "contratante.razao_social" },
+      { name: "Logradouro", field: "contratante.logradouro" },
+      { name: "Número", field: "contrato.numero" },
+      { name: "Bairro", field: "contratante.bairro" },
+      { name: "Foro", fixed: "Crato/CE" },
+      { name: "Sistema Operacional" },
+    ]);
   });
   it("mantém as ligações já salvas e sugere as novas", () => {
     const merged = mergeVariables(["cnpj", "cor_favorita", "data"], [{ name: "cnpj", fixed: "00.000.000/0001-00" }]);
@@ -78,6 +103,39 @@ describe("variáveis do modelo", () => {
   it("preenche: campo, texto fixo e lacuna", () => {
     const values = variableValues([{ name: "nome", field: "contratante.razao_social" }, { name: "foro", fixed: "Juazeiro do Norte/CE" }, { name: "x" }], { "contratante.razao_social": "ACME LTDA" });
     expect(fillTemplateText("{{nome}} · {{foro}} · {{x}} · {{y}}", values)).toBe(`ACME LTDA · Juazeiro do Norte/CE · ${BLANK} · ${BLANK}`);
+  });
+
+  it("sem ligação gravada: nome exato de campo vale, apelido não (o documento bate com a tela, 'Sem campo' = lacuna)", () => {
+    const fields = { "contratante.cidade": "Crato", "contratante.bairro": "Centro" };
+    const values = variableValues([{ name: "contratante.cidade" }, { name: "bairro" }], fields, ["contratante_cidade"]);
+    expect(values["contratante.cidade"]).toBe("Crato");
+    expect(values["contratante_cidade"]).toBe("Crato");
+    expect(values["bairro"]).toBe(BLANK);
+  });
+
+  it("partes opcionais do endereço vazias saem vazias, não como lacuna; dado faltante continua lacuna", () => {
+    const f = contractFieldValues({
+      contract: CONTRACT,
+      client: { legalName: "ACME Comércio LTDA", tradeName: "ACME" },
+      billingData: { document: "", email: "fin@acme.com.br", address: { street: "Sítio Boa Vista", city: "Crato", state: "CE" } },
+      companyName: "Intercert",
+      companyAddress: "Juazeiro do Norte/CE",
+      issuedAt: "2026-10-21T15:00:00.000Z",
+      labels: { recurrence: "Mensal", paymentMethod: "Boleto" },
+    });
+    const values = variableValues(
+      [
+        { name: "logradouro", field: "contratante.logradouro" },
+        { name: "numero", field: "contratante.numero" },
+        { name: "complemento", field: "contratante.complemento" },
+        { name: "bairro", field: "contratante.bairro" },
+        { name: "cep", field: "contratante.cep" },
+        { name: "cnpj", field: "contratante.cnpj_cpf" },
+      ],
+      f,
+    );
+    expect(fillTemplateText("{{logradouro}}, {{numero}} {{complemento}} - {{bairro}} - {{cep}} - {{cnpj}}", values)).toBe(`Sítio Boa Vista,   -  - ${BLANK} - ${BLANK}`);
+    expect(f["contratante.endereco"]).toBe("Sítio Boa Vista - Crato/CE");
   });
 });
 
@@ -222,5 +280,13 @@ describe("PDF do contrato", () => {
     expect(fileName).toBe("contrato-CTR-2026-0042-v2.pdf");
     expect(buffer.subarray(0, 5).toString()).toBe("%PDF-");
     expect(buffer.length).toBeGreaterThan(3000);
+  });
+});
+
+describe("isSignerEmail", () => {
+  it("segue a regra do zod (a mesma dos schemas): o cadastro de contatos aceita mais do que a assinatura", () => {
+    expect(isSignerEmail("Maria@Acme.com.br")).toBe(true);
+    expect(isSignerEmail(" ana.lima+fin@intercert.com.br ")).toBe(true);
+    for (const bad of ["a..b@acme.com", "joão@acme.com.br", ".ab@acme.com", "x@y_z.com", "sem-arroba", ""]) expect(isSignerEmail(bad), bad).toBe(false);
   });
 });

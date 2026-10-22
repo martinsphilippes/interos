@@ -6,7 +6,7 @@ import { BellRing, CheckCircle2, FileText, Mail, PenLine, Plus, Send, ShieldChec
 import type { Contract } from "@/domain/types";
 import type { IntegrationFlags } from "@/server/integrations/types";
 import { addContactAsSignerAction, addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
-import { clicksignSignerNameProblem } from "@/domain/contract-templates";
+import { clicksignSignerNameProblem, isSignerEmail } from "@/domain/contract-templates";
 import { DEFAULT_CLIENT_SIGNER_ROLE, NEW_CONTACT_VALUE, signerChoices, type SignerChoice, type SignerOptions } from "./signer-options";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
 import { formatDateTime } from "@/lib/format";
@@ -94,7 +94,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
   // Mesmas regras do servidor, para o erro aparecer antes de clicar (o servidor confere tudo de novo antes de gravar).
   const newContactProblem = providerConnected && newContact.name.trim() ? clicksignSignerNameProblem(newContact.name) : null;
   const newEmail = newContact.email.trim().toLowerCase();
-  const newEmailProblem = !newEmail ? null : contract.signers.some((s) => s.email.trim().toLowerCase() === newEmail) ? "Este e-mail já é signatário do contrato" : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail) ? "E-mail inválido" : null;
+  const newEmailProblem = !newEmail ? null : contract.signers.some((s) => s.email.trim().toLowerCase() === newEmail) ? "Este e-mail já é signatário do contrato" : !isSignerEmail(newEmail) ? "E-mail inválido" : null;
   const roleProblem = !role.trim() ? null : role.trim().length < 2 ? "Informe o papel" : role.trim().length > 60 ? "Papel muito longo" : null;
   const canSubmit = creating
     ? Boolean(newContact.name.trim() && newEmail && role.trim() && !newContactProblem && !newEmailProblem && !roleProblem)

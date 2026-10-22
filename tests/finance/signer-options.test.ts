@@ -11,19 +11,21 @@ const options = {
     { id: "c2", name: "TESTE", email: "teste@acme.com.br" },
     { id: "c3", name: "João Sem Email" },
     { id: "c4", name: "Ana Já Assina", email: "ana@acme.com.br" },
+    { id: "c5", name: "Beto Email Ruim", email: "a..b@acme.com.br" },
   ],
   users: [
     { id: "u1", name: "Pedro Testemunha", email: "pedro@intercert.com.br" },
     { id: "u2", name: "Hércules", email: "hercules@intercert.com.br" },
+    { id: "u3", name: "Zé Email Ruim", email: "zé@intercert.com.br" },
   ],
 };
 
 describe("signerChoices", () => {
   it("lista contatos e equipe com rótulo, e-mail em minúsculas e papel sugerido; quem já assina sai", () => {
     const { contacts, users } = signerChoices(options, [{ email: "ANA@acme.com.br" }], false);
-    expect(contacts.map((c) => c.name)).toEqual(["Maria Silva", "TESTE", "João Sem Email"]);
+    expect(contacts.map((c) => c.name)).toEqual(["Maria Silva", "TESTE", "Beto Email Ruim", "João Sem Email"]);
     expect(contacts[0]).toMatchObject({ value: "contact:c1", email: "maria@acme.com.br", label: "Maria Silva · Sócia · maria@acme.com.br", suggestedRole: DEFAULT_CLIENT_SIGNER_ROLE });
-    expect(users.map((u) => u.value)).toEqual(["user:u2", "user:u1"]);
+    expect(users.map((u) => u.value)).toEqual(["user:u2", "user:u1", "user:u3"]);
     expect(users[1]).toMatchObject({ suggestedRole: DEFAULT_TEAM_SIGNER_ROLE, email: "pedro@intercert.com.br" });
   });
 
@@ -33,6 +35,14 @@ describe("signerChoices", () => {
     expect(contacts.at(-1)).toBe(semEmail);
     expect(semEmail.disabledReason).toMatch(/sem e-mail/);
     expect(semEmail.label).toContain("sem e-mail");
+  });
+
+  it("e-mail que a assinatura não aceita (cadastro mais frouxo) desabilita contato e usuário, apontando onde corrigir", () => {
+    const { contacts, users } = signerChoices(options, [], false);
+    expect(contacts.find((c) => c.name === "Beto Email Ruim")?.disabledReason).toMatch(/inválido.*ficha do cliente/);
+    expect(users.find((u) => u.name === "Zé Email Ruim")?.disabledReason).toMatch(/inválido.*cadastro do usuário/);
+    expect(users.at(-1)?.name).toBe("Zé Email Ruim");
+    expect(users.find((u) => u.name === "Pedro Testemunha")?.disabledReason).toBeUndefined();
   });
 
   it("com a Clicksign ligada, nome sem sobrenome é marcado (sem ela, não)", () => {

@@ -123,6 +123,12 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - Textos da interface em português do Brasil. Identificadores em inglês.
 - Estados obrigatórios em toda lista/tela: vazio, carregando (loading.tsx), erro.
 - Sem números fixos "de enfeite": todo indicador vem do banco.
+- Troca de versão com a aba aberta (a Vercel Hobby não tem Skew Protection): uma Server Action da versão anterior
+  recebe 404 e o Next lança `UnrecognizedActionError`; `src/app/(app)/error.tsx` reconhece (`isNewVersionError`,
+  `src/lib/version.ts`), explica que o envio não foi salvo e recarrega uma vez (trava de 30 s no `sessionStorage`
+  contra laço). Antes disso, `VersionWatcher` (shell) compara `NEXT_PUBLIC_BUILD_ID` (id do deploy embutido em
+  `next.config.ts`) com `GET /api/versao` ao voltar para a aba e a cada 10 min, e avisa com um toast fixo "Recarregar"
+  (não recarrega sozinho: pode haver formulário aberto).
 
 ## Circuito de receita (venda → contrato → financeiro → comissões → contas a pagar → implantação)
 - **Venda** = `Opportunity` com stage `ganho` (não existe entidade Venda). No ganho a oportunidade recebe
@@ -572,8 +578,11 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Signatários do contrato** (`SignatureCard` + `src/components/finance/signer-options.ts`): quem assina é escolhido
   entre os contatos do cliente e a equipe ativa da Intercert (testemunha/representante), nunca digitado solto — e a
   regra vale no servidor: `addSignerAction` recebe `{ source: contact | user, id, role }` e `addSignerFrom` resolve
-  nome/e-mail do cadastro (contato precisa ser do cliente do contrato e ter e-mail; usuário precisa estar ativo). Quem
-  já assina sai da lista; contato sem e-mail aparece desabilitado; com a Clicksign ligada, nome sem sobrenome é
+  nome/e-mail do cadastro (contato precisa ser do cliente do contrato e ter e-mail que a assinatura aceite,
+  `isSignerEmail` = `z.email()`, pois o cadastro de contatos/usuários é mais frouxo; usuário precisa estar ativo). Quem
+  já assina sai da lista; contato sem e-mail ou com e-mail inválido aparece desabilitado com o motivo. Remover, lembrar
+  e assinar à mão identificam o signatário pelo e-mail gravado sem revalidá-lo (`signerRefSchema`), para contratos
+  antigos que copiaram o e-mail do contato principal sem conferir. Com a Clicksign ligada, nome sem sobrenome é
   apontado com link para corrigir no cadastro. "Cadastrar novo contato" (`addContactAsSignerAction`: chave de
   assinatura + `operacao.clientes.contatos.editar` + cliente no escopo de Clientes, a opção só aparece quando a action
   vai aceitar) valida tudo ANTES de gravar (e-mail ainda não signatário, papel, nome para a Clicksign) e só então cria
@@ -586,8 +595,12 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Modelos** (`contract_templates`): `interos` (título + cláusulas com `{{variáveis}}`, impressas depois dos dados do
   contrato) ou `word` (.docx da Clicksign; arquivo por versão em `contract_template_files`, id `<modelo>_v<N>`, imutável).
   Variáveis ligadas a `CONTRACT_FIELDS` (sugestão pelo nome: `{{razao_social}}` → `contratante.razao_social`) ou a texto
-  fixo; sem ligação sai lacuna. O endereço do cliente existe inteiro (`contratante.endereco`) e em partes (logradouro,
-  número, complemento, bairro, cidade, cidade/UF, UF, CEP); `{{numero}}` continua sendo o número do contrato. Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
+  fixo; sem ligação sai lacuna (só o nome exato de um campo, `{{contratante.cidade}}`, vale sem ligação; apelidos não
+  são adivinhados ao gerar, para o documento bater com o "Sem campo" da tela). O endereço do cliente existe inteiro
+  (`contratante.endereco`) e em partes (logradouro, número, complemento, bairro, cidade, cidade/UF, UF, CEP); número,
+  complemento e bairro são `optional` (vazio sai vazio, não lacuna). `{{numero}}` é o número do contrato, salvo quando o
+  modelo tem um logradouro separado (`suggestField(nome, irmãs)`): aí é o número do endereço. O diálogo de variáveis abre
+  o que está sem ligação já com a sugestão pelo nome (`suggestUnbound`), marcada como sugestão, e só grava ao salvar. Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
   `POST /api/financeiro/modelos` (multipart; acima do limite das Server Actions), até 4 MB.
 - **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
   modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o

@@ -7,6 +7,7 @@
  *   (o modelo Word da Clicksign usa nomes livres: {{razao_social}}, {{valor_mensal}}…).
  * - Preenchimento do texto e valor por extenso (contratos brasileiros pedem "R$ 1.500,00 (mil e quinhentos reais)").
  */
+import { z } from "zod";
 import type { Address, Contract, ContractTemplateVariable, SignatureAuthMethod } from "./types";
 
 export const SIGNATURE_SETTING = "assinatura_eletronica";
@@ -72,6 +73,8 @@ export interface ContractField {
   group: "Contratante" | "Contratada" | "Contrato" | "Valores";
   /** Nomes que costumam aparecer nos modelos Word (já normalizados). */
   aliases?: string[];
+  /** Vazio é normal (complemento, número "s/n", bairro): no documento sai vazio, não a lacuna de preencher à mão. */
+  optional?: boolean;
 }
 
 export const CONTRACT_FIELDS: readonly ContractField[] = [
@@ -80,9 +83,9 @@ export const CONTRACT_FIELDS: readonly ContractField[] = [
   { key: "contratante.cnpj_cpf", label: "CNPJ/CPF do cliente", group: "Contratante", aliases: ["cnpj", "cpf", "cnpj_cpf", "cpf_cnpj", "documento", "cnpj_cliente", "cnpj_contratante", "inscricao"] },
   { key: "contratante.endereco", label: "Endereço completo do cliente", group: "Contratante", aliases: ["endereco", "endereco_completo", "endereco_cliente", "endereco_contratante"] },
   { key: "contratante.logradouro", label: "Logradouro do cliente (rua/avenida)", group: "Contratante", aliases: ["logradouro", "rua", "avenida", "endereco_logradouro"] },
-  { key: "contratante.numero", label: "Número do endereço do cliente", group: "Contratante", aliases: ["numero_endereco", "numero_do_endereco", "endereco_numero", "n_endereco", "numero_imovel"] },
-  { key: "contratante.complemento", label: "Complemento do endereço do cliente", group: "Contratante", aliases: ["complemento", "endereco_complemento"] },
-  { key: "contratante.bairro", label: "Bairro do cliente", group: "Contratante", aliases: ["bairro", "endereco_bairro"] },
+  { key: "contratante.numero", label: "Número do endereço do cliente", group: "Contratante", optional: true, aliases: ["numero_endereco", "numero_do_endereco", "endereco_numero", "n_endereco", "n_do_endereco", "numero_imovel"] },
+  { key: "contratante.complemento", label: "Complemento do endereço do cliente", group: "Contratante", optional: true, aliases: ["complemento", "endereco_complemento"] },
+  { key: "contratante.bairro", label: "Bairro do cliente", group: "Contratante", optional: true, aliases: ["bairro", "endereco_bairro"] },
   { key: "contratante.cidade", label: "Cidade do cliente", group: "Contratante", aliases: ["cidade", "municipio"] },
   { key: "contratante.cidade_uf", label: "Cidade/UF do cliente", group: "Contratante", aliases: ["cidade_uf", "cidade_estado", "municipio_uf"] },
   { key: "contratante.uf", label: "UF do cliente", group: "Contratante", aliases: ["uf", "estado"] },
@@ -109,8 +112,8 @@ export const CONTRACT_FIELDS: readonly ContractField[] = [
   { key: "contrato.itens", label: "Produtos e serviços (lista)", group: "Contrato", aliases: ["itens", "produtos", "servicos", "objeto", "lista_produtos"] },
   { key: "valores.adesao", label: "Valor da adesão/setup", group: "Valores", aliases: ["adesao", "setup", "valor_adesao", "taxa_adesao", "implantacao", "valor_implantacao", "valor_setup"] },
   { key: "valores.adesao_extenso", label: "Adesão por extenso", group: "Valores", aliases: ["adesao_extenso", "valor_adesao_extenso", "setup_extenso"] },
-  { key: "valores.mensalidade", label: "Mensalidade", group: "Valores", aliases: ["mensalidade", "valor_mensal", "valor_mensalidade", "mensal"] },
-  { key: "valores.mensalidade_extenso", label: "Mensalidade por extenso", group: "Valores", aliases: ["mensalidade_extenso", "valor_mensal_extenso", "valor_mensalidade_extenso"] },
+  { key: "valores.mensalidade", label: "Mensalidade", group: "Valores", aliases: ["mensalidade", "valor_mensal", "valor_mensalidade", "valor_de_mensalidade", "valor_da_mensalidade", "mensal"] },
+  { key: "valores.mensalidade_extenso", label: "Mensalidade por extenso", group: "Valores", aliases: ["mensalidade_extenso", "valor_mensal_extenso", "valor_mensalidade_extenso", "valor_de_mensalidade_extenso", "valor_da_mensalidade_extenso"] },
   { key: "valores.hardware", label: "Valor do hardware", group: "Valores", aliases: ["hardware", "valor_hardware", "equipamentos"] },
   { key: "valores.primeiro_ano", label: "Valor no 1º ano", group: "Valores", aliases: ["valor_primeiro_ano", "primeiro_ano", "valor_anual"] },
   { key: "valores.total", label: "Valor total do contrato (prazo inteiro)", group: "Valores", aliases: ["valor_total", "total", "valor_contrato", "valor_global"] },
@@ -138,12 +141,31 @@ export function normalizeVariableName(name: string): string {
 }
 
 /** Campo sugerido para uma variável do modelo (ou undefined quando não há um claro). */
-export function suggestField(variable: string): string | undefined {
+/** Nomes de variável que mostram o endereço em partes: ao lado deles, "numero" é o número do endereço, não o do contrato. */
+const STREET_VARIABLE_NAMES = new Set(["logradouro", "rua", "avenida", "endereco_logradouro"]);
+
+/** Campo cujo nome é exatamente a variável ({{contratante.razao_social}} ou {{contratante_razao_social}}), sem apelidos. */
+function exactField(variable: string): string | undefined {
   const n = normalizeVariableName(variable);
   if (!n) return undefined;
-  const direct = CONTRACT_FIELDS.find((f) => normalizeVariableName(f.key) === n || f.key === variable.trim());
-  if (direct) return direct.key;
+  return CONTRACT_FIELDS.find((f) => normalizeVariableName(f.key) === n || f.key === variable.trim())?.key;
+}
+
+/**
+ * Sugere o campo pelo nome da variável: nome exato do campo, depois apelidos. `siblings` são as outras variáveis do
+ * mesmo modelo: com um logradouro separado, "numero" vira o número do endereço (sozinho, é o número do contrato).
+ */
+export function suggestField(variable: string, siblings: string[] = []): string | undefined {
+  const direct = exactField(variable);
+  if (direct) return direct;
+  const n = normalizeVariableName(variable);
+  if (!n) return undefined;
+  if (n === "numero" && siblings.some((s) => STREET_VARIABLE_NAMES.has(normalizeVariableName(s)))) return "contratante.numero";
   return CONTRACT_FIELDS.find((f) => f.aliases?.includes(n))?.key;
+}
+
+function fieldOptional(key: string): boolean {
+  return CONTRACT_FIELDS.find((f) => f.key === key)?.optional === true;
 }
 
 const VARIABLE_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -163,8 +185,18 @@ export function mergeVariables(found: string[], previous: ContractTemplateVariab
   return found.map((name) => {
     const old = previous.find((v) => v.name === name);
     if (old) return old;
-    const field = suggestField(name);
+    const field = suggestField(name, found);
     return field ? { name, field } : { name };
+  });
+}
+
+/** Variáveis ainda sem ligação nem texto fixo recebem a sugestão pelo nome (para a tela mostrar antes de salvar). */
+export function suggestUnbound(variables: ContractTemplateVariable[]): ContractTemplateVariable[] {
+  const names = variables.map((v) => v.name);
+  return variables.map((v) => {
+    if (isContractField(v.field) || v.fixed?.trim()) return v;
+    const field = suggestField(v.name, names);
+    return field ? { ...v, field } : v;
   });
 }
 
@@ -181,9 +213,11 @@ export function variableValues(variables: ContractTemplateVariable[], fields: Re
   const all = new Set([...variables.map((v) => v.name), ...names]);
   for (const name of all) {
     const v = variables.find((x) => x.name === name);
-    const field = v?.field ?? suggestField(name);
+    // Sem ligação gravada só vale o nome exato de um campo ({{contratante.razao_social}} no modelo INTEROS). Apelidos
+    // não são adivinhados na hora de gerar: o documento tem de bater com a tela ("Sem campo" = lacuna).
+    const field = v?.field ?? exactField(name);
     const value = v?.fixed?.trim() ? v.fixed.trim() : field && fields[field] !== undefined ? fields[field] : "";
-    out[name] = value || BLANK;
+    out[name] = value || (field && fieldOptional(field) ? "" : BLANK);
   }
   return out;
 }
@@ -384,6 +418,11 @@ export function clicksignRole(s: { party?: string; role?: string }): string {
   if (/procurador/.test(role)) return "attorney";
   if (/representante/.test(role)) return "legal_representative";
   return "contractor";
+}
+
+/** E-mail aceito para assinatura: a regra do zod, a mesma dos schemas do servidor (o cadastro de contatos é mais frouxo). */
+export function isSignerEmail(email: string): boolean {
+  return z.email().safeParse(email.trim()).success;
 }
 
 /** A Clicksign exige nome e sobrenome, sem números. Devolve o problema (ou null quando está ok). */

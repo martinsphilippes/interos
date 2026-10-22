@@ -24,7 +24,7 @@ import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
-import { clicksignSignerNameProblem } from "@/domain/contract-templates";
+import { clicksignSignerNameProblem, isSignerEmail } from "@/domain/contract-templates";
 import { createContact } from "@/server/clients/contacts";
 import type { DepartmentKey } from "@/domain/constants";
 import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
@@ -700,6 +700,11 @@ export async function addSignerFrom(input: { contractId: string; source: "contac
     const user = await getById<User>(COLLECTIONS.users, input.id);
     if (!user || user.active === false || !user.email) throw new Error("Usuário não encontrado ou inativo");
     person = { name: user.name, email: user.email };
+  }
+  // O cadastro aceita e-mails que a assinatura recusa: barrar aqui, senão o signatário entra e depois não pode ser
+  // removido, lembrado nem assinado à mão (as actions conferem o e-mail de novo).
+  if (!isSignerEmail(person.email)) {
+    throw new Error(`${person.name} tem e-mail inválido para assinatura (${person.email.trim()}): corrija na ficha do ${input.source === "contact" ? "cliente" : "usuário"}`);
   }
   await addSigner({ contractId: contract.id, name: person.name, email: person.email, role: input.role }, actor);
 }

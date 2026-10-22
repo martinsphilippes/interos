@@ -1,9 +1,10 @@
 /**
  * Opções de quem pode assinar um contrato (regras puras, sem banco): contatos do cliente, equipe da Intercert e
- * "cadastrar novo contato". Quem já é signatário sai da lista; contato sem e-mail aparece, mas desabilitado (a
- * assinatura eletrônica é por e-mail). Nome sem sobrenome é marcado quando a Clicksign está ligada.
+ * "cadastrar novo contato". Quem já é signatário sai da lista; contato sem e-mail, ou com e-mail que a assinatura não
+ * aceita (o cadastro é mais frouxo que a regra do servidor), aparece desabilitado com o motivo. Nome sem sobrenome é
+ * marcado quando a Clicksign está ligada.
  */
-import { clicksignSignerNameProblem } from "@/domain/contract-templates";
+import { clicksignSignerNameProblem, isSignerEmail } from "@/domain/contract-templates";
 
 export interface SignerContactOption {
   id: string;
@@ -39,7 +40,7 @@ export interface SignerChoice {
   label: string;
   /** Papel sugerido no contrato (editável). */
   suggestedRole: string;
-  /** Motivo de não poder ser escolhido (sem e-mail), se houver. */
+  /** Motivo de não poder ser escolhido (sem e-mail ou e-mail inválido para assinatura), se houver. */
   disabledReason?: string;
   /** Problema no nome para a Clicksign (nome sem sobrenome, números), se houver. */
   nameProblem?: string;
@@ -66,23 +67,27 @@ export function signerChoices(options: SignerOptions, existing: { email: string 
         email,
         label: `${c.name.trim()}${c.role ? ` · ${c.role}` : ""}${email ? ` · ${email}` : " · sem e-mail"}`,
         suggestedRole: DEFAULT_CLIENT_SIGNER_ROLE,
-        disabledReason: email ? undefined : "Contato sem e-mail: cadastre o e-mail na ficha do cliente",
+        disabledReason: !email ? "Contato sem e-mail: cadastre o e-mail na ficha do cliente" : !isSignerEmail(email) ? "E-mail inválido para assinatura: corrija na ficha do cliente" : undefined,
         nameProblem: problem(c.name),
       };
     })
     .sort((a, b) => Number(Boolean(a.disabledReason)) - Number(Boolean(b.disabledReason)) || a.name.localeCompare(b.name, "pt-BR"));
   const users = options.users
     .filter((u) => !taken.has(u.email.trim().toLowerCase()))
-    .map<SignerChoice>((u) => ({
-      value: `user:${u.id}`,
-      kind: "user",
-      id: u.id,
-      name: u.name.trim(),
-      email: u.email.trim().toLowerCase(),
-      label: `${u.name.trim()} · ${u.email.trim().toLowerCase()}`,
-      suggestedRole: DEFAULT_TEAM_SIGNER_ROLE,
-      nameProblem: problem(u.name),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    .map<SignerChoice>((u) => {
+      const email = u.email.trim().toLowerCase();
+      return {
+        value: `user:${u.id}`,
+        kind: "user",
+        id: u.id,
+        name: u.name.trim(),
+        email,
+        label: `${u.name.trim()} · ${email}`,
+        suggestedRole: DEFAULT_TEAM_SIGNER_ROLE,
+        disabledReason: isSignerEmail(email) ? undefined : "E-mail inválido para assinatura: corrija no cadastro do usuário",
+        nameProblem: problem(u.name),
+      };
+    })
+    .sort((a, b) => Number(Boolean(a.disabledReason)) - Number(Boolean(b.disabledReason)) || a.name.localeCompare(b.name, "pt-BR"));
   return { contacts, users };
 }

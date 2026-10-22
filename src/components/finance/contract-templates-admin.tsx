@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Download, FilePlus2, FileText, FileUp, Link2, Pencil, Star } from "lucide-react";
 import type { ContractTemplate, ContractTemplateVariable } from "@/domain/types";
-import { CONTRACT_FIELDS, extractVariables, fieldLabel, mergeVariables, unmappedVariables } from "@/domain/contract-templates";
+import { CONTRACT_FIELDS, extractVariables, fieldLabel, mergeVariables, suggestUnbound, unmappedVariables } from "@/domain/contract-templates";
 import { saveInterosTemplateAction, saveTemplateVariablesAction, setTemplateStateAction } from "@/server/finance/signature-actions";
 import { formatRelative } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -299,7 +299,9 @@ function WordUploadDialog({ template, onClose }: { template: TemplateRow | null;
 
 function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose: () => void }) {
   const { pending, run } = useFinanceAction();
-  const [vars, setVars] = React.useState<ContractTemplateVariable[]>(template.variables);
+  // Variáveis sem ligação abrem com a sugestão pelo nome (bairro → Bairro do cliente): o usuário confere e salva.
+  const [vars, setVars] = React.useState<ContractTemplateVariable[]>(() => suggestUnbound(template.variables));
+  const suggested = React.useMemo(() => new Set(template.variables.filter((v) => !v.field && !v.fixed?.trim()).map((v) => v.name)), [template.variables]);
   const options = React.useMemo(() => fieldOptions(), []);
   const set = (name: string, patch: Partial<ContractTemplateVariable>) => setVars((list) => list.map((v) => (v.name === name ? { ...v, ...patch } : v)));
   const save = async () => {
@@ -311,7 +313,9 @@ function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose
       <DialogContent size="xl">
         <DialogHeader>
           <DialogTitle>Variáveis de «{template.name}»</DialogTitle>
-          <DialogDescription>Cada variável do modelo puxa um dado do contrato ou um texto fixo. Sem nada, sai uma lacuna (________) para preencher à mão.</DialogDescription>
+          <DialogDescription>
+            Cada variável do modelo puxa um dado do contrato ou um texto fixo. Sem nada, sai uma lacuna (________) para preencher à mão. Variáveis ainda sem ligação abrem com uma sugestão pelo nome: confira antes de salvar.
+          </DialogDescription>
         </DialogHeader>
         <DialogBody className="max-h-[60vh] overflow-y-auto">
           <ul className="flex flex-col divide-y divide-border">
@@ -319,7 +323,11 @@ function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose
               <li key={v.name} className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:items-center">
                 <div className="min-w-0">
                   <p className="truncate font-mono text-xs">{`{{${v.name}}}`}</p>
-                  {v.field ? <p className="text-xs text-muted">{fieldLabel(v.field)}</p> : <p className="text-xs text-warning-fg">{v.fixed ? "Texto fixo" : "Sem campo"}</p>}
+                  {v.field ? (
+                    <p className={suggested.has(v.name) ? "text-xs text-warning-fg" : "text-xs text-muted"}>{suggested.has(v.name) ? `Sugestão: ${fieldLabel(v.field)}` : fieldLabel(v.field)}</p>
+                  ) : (
+                    <p className="text-xs text-warning-fg">{v.fixed ? "Texto fixo" : "Sem campo"}</p>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Select aria-label={`Campo de ${v.name}`} value={v.field ?? ""} onChange={(e) => set(v.name, { field: e.target.value || undefined })} options={options} size="sm" />

@@ -3,6 +3,7 @@ import { can, requireUser } from "@/server/auth/session";
 import { filterMobileNav, filterNavigation, filterQuickActions, filterShellLinks, hrefAccessMap } from "@/server/auth/navigation";
 import { listNotifications } from "@/server/notifications";
 import { AppShell, type ShellLinks, type ShellUser } from "@/components/layout/app-shell";
+import { VersionWatcher } from "@/components/layout/version-watcher";
 import { getPauseReasons } from "@/server/conversations/ops-settings";
 import { twilioConfigured } from "@/server/integrations/twilio";
 
@@ -58,6 +59,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <AppShell user={shellUser} sections={sections} mobileNav={mobileNav} links={links} unreadCount={unreadCount} quickActions={quickActions} showPresence={showPresence} softphone={twilioConfigured() && can(user, "comunicacao.ligacoes.ligar")}>
       {children}
+      <VersionWatcher />
     </AppShell>
   );
 }
