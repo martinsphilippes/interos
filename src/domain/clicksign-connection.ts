@@ -47,8 +47,13 @@ export interface InterosWebhookCheck {
   /** Aponta para outro domínio que não o endereço deste INTEROS (ex.: um endereço de prévia da Vercel). */
   otherHost: boolean;
   addressProblem: WebhookAddressProblem | null;
-  /** Endereço com parâmetros (?…): funciona, mas distingue o webhook de outro igual. */
+  /** Endereço com parâmetros (?…): funciona; só desempata na escolha do principal. */
   hasQuery: boolean;
+  /**
+   * Endereço completo como cadastrado (é o do próprio INTEROS, sem segredo). A Clicksign não aceita dois webhooks com o
+   * mesmo endereço, então ele identifica cada um sem ambiguidade — é por ele que a tela diz qual manter e qual apagar.
+   */
+  endpoint: string;
 }
 
 export interface ClicksignWebhooksReport {
@@ -65,10 +70,11 @@ export interface ClicksignWebhooksReport {
 /** Eventos sem os quais o INTEROS não fica sabendo de assinatura, recusa, finalização, cancelamento ou prazo. */
 const OPTIONAL_EVENTS = new Set(["upload"]);
 
-function parseEndpoint(endpoint: string): { host: string; path: string; protocol: string; hasQuery: boolean } | null {
+function parseEndpoint(endpoint: string): { host: string; path: string; protocol: string; hasQuery: boolean; display: string } | null {
   try {
     const url = new URL(endpoint.trim());
-    return { host: url.host.toLowerCase(), path: url.pathname, protocol: url.protocol, hasQuery: url.search.length > 1 };
+    const display = `${url.protocol}//${url.host.toLowerCase()}${url.pathname}${url.search}`;
+    return { host: url.host.toLowerCase(), path: url.pathname, protocol: url.protocol, hasQuery: url.search.length > 1, display: display.length > 160 ? `${display.slice(0, 157)}…` : display };
   } catch {
     return null;
   }
@@ -100,6 +106,7 @@ export function classifyClicksignWebhooks(hooks: ClicksignWebhookInfo[], expecte
       otherHost: expected !== null && parsed.host !== expected,
       addressProblem: parsed.protocol !== "https:" ? "http" : parsed.path !== CLICKSIGN_WEBHOOK_PATH ? "barra_final" : null,
       hasQuery: parsed.hasQuery,
+      endpoint: parsed.display,
     });
   }
   return report;
@@ -144,13 +151,12 @@ function registeredRight(check: InterosWebhookCheck): boolean {
   return check.active && check.addressProblem === null && !check.missingEssential;
 }
 
-/** O que torna o webhook diferente do principal, em poucas palavras (para dizer qual apagar). Vazio = repetido. */
-function differences(hook: InterosWebhookCheck, report: ClicksignWebhooksReport): string[] {
+/** O que o webhook tem de pior, em poucas palavras. */
+function flaws(hook: InterosWebhookCheck, report: ClicksignWebhooksReport): string[] {
   const out: string[] = [];
   if (!hook.active) out.push("inativo");
   if (hook.addressProblem === "barra_final") out.push("endereço termina com barra");
   if (hook.addressProblem === "http") out.push("endereço começa com http://");
-  if (hook.hasQuery) out.push("endereço com parâmetros (?…)");
   if (hook.secretMatches === false) out.push("segredo diferente do da Vercel");
   if (report.secretConfigured && hook.secretMatches === null) out.push("segredo não conferido");
   if (hook.missingEvents.length) out.push(hook.missingEssential ? "faltam eventos" : `sem o evento ${hook.missingEvents.join(", ")}`);
@@ -160,18 +166,19 @@ function differences(hook: InterosWebhookCheck, report: ClicksignWebhooksReport)
 
 /**
  * Qual webhook do INTEROS é o principal: o mais completo primeiro (pronto; recebe os avisos no domínio deste INTEROS;
- * recebe em outro domínio; e, sem o segredo na Vercel, o cadastrado certo com todos os eventos neste domínio...). A
- * ordem em que a Clicksign lista não decide nada.
+ * recebe em outro domínio; sem o segredo na Vercel, o cadastrado certo neste domínio com todos os eventos...).
+ * Parâmetros no endereço só desempatam. A ordem em que a Clicksign lista não decide nada.
  */
 function rank(h: InterosWebhookCheck): number {
-  if (interosWebhookReady(h)) return 0;
-  if (interosWebhookReceives(h)) return h.otherHost ? 2 : 1;
-  if (registeredRight(h) && h.secretMatches !== false) return 3 + (h.missingEvents.length > 0 ? 1 : 0) + (h.otherHost ? 2 : 0) + (h.hasQuery ? 4 : 0);
+  const tie = h.hasQuery ? 0.5 : 0;
+  if (interosWebhookReady(h)) return tie;
+  if (interosWebhookReceives(h)) return (h.otherHost ? 2 : 1) + tie;
+  if (registeredRight(h) && h.secretMatches !== false) return 3 + (h.otherHost ? 2 : 0) + (h.missingEvents.length > 0 ? 1 : 0) + tie;
   return 99;
 }
 
 function webhookLine(hook: InterosWebhookCheck, report: ClicksignWebhooksReport): CheckLine {
-  if (interosWebhookReady(hook)) return { tone: "ok", text: `Webhook do INTEROS ativo (${hook.host}), com todos os eventos e o mesmo segredo da Vercel.` };
+  if (interosWebhookReady(hook)) return { tone: "ok", text: `Webhook do INTEROS ativo (${hook.endpoint}), com todos os eventos e o mesmo segredo da Vercel.` };
   const problems: string[] = [];
   if (!hook.active) problems.push("está inativo na Clicksign (ative-o)");
   if (hook.addressProblem === "http") problems.push("o endereço começa com http://; o INTEROS redireciona para https e a Clicksign não segue redirecionamento, então os avisos não chegam (cadastre exatamente o endereço abaixo)");
@@ -182,9 +189,9 @@ function webhookLine(hook: InterosWebhookCheck, report: ClicksignWebhooksReport)
   else if (report.secretConfigured && hook.secretMatches === null) problems.push("a Clicksign não informou o segredo deste webhook; não deu para conferir");
   // Outro domínio pode ser o mesmo sistema (ex.: endereço .vercel.app e domínio próprio): só alerta.
   if (hook.otherHost) problems.push(`o endereço deste INTEROS é ${report.expectedHost ?? "outro"}; confira se os dois são o mesmo sistema`);
-  if (problems.length === 0) return { tone: "ok", text: `Webhook do INTEROS (${hook.host}) cadastrado certo na Clicksign: ativo, com o endereço exato e os eventos.` };
+  if (problems.length === 0) return { tone: "ok", text: `Webhook do INTEROS (${hook.endpoint}) cadastrado certo na Clicksign: ativo, com o endereço exato e os eventos.` };
   const blocking = !hook.active || hook.addressProblem !== null || hook.missingEssential || (report.secretConfigured && hook.secretMatches === false);
-  return { tone: blocking ? "error" : "warn", text: `Webhook do INTEROS (${hook.host}): ${problems.join("; ")}.` };
+  return { tone: blocking ? "error" : "warn", text: `Webhook do INTEROS (${hook.endpoint}): ${problems.join("; ")}.` };
 }
 
 /** Transforma o resultado do teste em linhas legíveis (certo / atenção / problema). */
@@ -198,32 +205,30 @@ export function connectionCheckLines(check: ClicksignConnectionCheck): CheckLine
     return lines;
   }
   // O webhook principal: o que recebe os avisos (ou receberia, faltando só o segredo na Vercel), o mais completo
-  // primeiro. Os demais com o caminho do INTEROS são repetidos (iguais a ele) ou sobras (com a diferença dita, para
-  // não apagar o certo). Instruir a "corrigir" uma sobra poderia trocar o segredo da Vercel e quebrar o que funciona.
+  // primeiro. Os demais com o caminho do INTEROS são sobras: cada um pelo endereço completo (a Clicksign não aceita
+  // dois iguais), para não apagar o certo. Instruir a "corrigir" uma sobra poderia trocar o segredo da Vercel e
+  // quebrar o que funciona.
   const candidates = hooks.interos.filter((h) => interosWebhookReceives(h) || (!hooks.secretConfigured && registeredRight(h)));
   const primary = candidates.length > 0 ? candidates.reduce((best, h) => (rank(h) < rank(best) ? h : best)) : undefined;
-  const rest = primary ? hooks.interos.filter((h) => h !== primary) : [];
-  const repeated = rest.filter((h) => differences(h, hooks).length === 0);
-  const leftovers = rest.filter((h) => differences(h, hooks).length > 0);
+  const leftovers = primary ? hooks.interos.filter((h) => h !== primary) : [];
   if (!hooks.secretConfigured) {
     lines.push({
       tone: "error",
-      text: !primary
-        ? "Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Cadastre (ou corrija) o webhook abaixo na Clicksign, copie o segredo dele para a Vercel e publique de novo."
-        : repeated.length > 0
-          ? `Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Há ${repeated.length + 1} webhooks iguais em ${primary.host}: apague os repetidos na Clicksign, deixe um só e copie o segredo dele para a Vercel; depois publique de novo.`
-          : `Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Copie o segredo do webhook ${primary.host} (o ativo, com o endereço exato${leftovers.length > 0 ? ", sem as diferenças apontadas abaixo" : ""}) na Clicksign para a Vercel e publique de novo.`,
+      text: primary
+        ? `Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Na Clicksign, copie o segredo do webhook ${primary.endpoint} para a Vercel e publique de novo${leftovers.length > 0 ? "; os outros webhooks do INTEROS listados abaixo podem ser apagados" : ""}.`
+        : "Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel: o INTEROS recusa todos os avisos. Cadastre (ou corrija) o webhook abaixo na Clicksign, copie o segredo dele para a Vercel e publique de novo.",
     });
   }
   if (hooks.interos.length === 0) {
     lines.push({ tone: "error", text: "Nenhum webhook da Clicksign aponta para o INTEROS: assinaturas, recusas e o PDF assinado não voltam sozinhos. Cadastre o endereço abaixo na Clicksign (Configurações › API › Webhooks)." });
   } else if (primary) {
     lines.push(webhookLine(primary, hooks));
-    if (repeated.length > 0 && hooks.secretConfigured) {
-      lines.push({ tone: "warn", text: `Há ${repeated.length + 1} webhooks iguais com o endereço do INTEROS (${primary.host}): a Clicksign manda cada aviso mais de uma vez. Apague os repetidos na Clicksign e deixe um só.` });
-    }
     for (const extra of leftovers) {
-      lines.push({ tone: "warn", text: `Outro webhook com o caminho do INTEROS (${extra.host}: ${differences(extra, hooks).join(", ")}) não é o principal: pode apagá-lo na Clicksign (Configurações › API › Webhooks).` });
+      const notes = flaws(extra, hooks);
+      // Também recebe os avisos: a Clicksign manda cada aviso mais de uma vez (o INTEROS ignora o repetido).
+      const twice = interosWebhookReceives(extra) ? "também recebe os avisos (cada aviso chega mais de uma vez)" : "";
+      const detail = [twice, ...notes].filter(Boolean).join(", ");
+      lines.push({ tone: "warn", text: `Outro webhook do INTEROS (${extra.endpoint}${detail ? `: ${detail}` : ""}) não é o principal: pode apagá-lo na Clicksign (Configurações › API › Webhooks).` });
     }
   } else {
     lines.push(...hooks.interos.map((h) => webhookLine(h, hooks)));

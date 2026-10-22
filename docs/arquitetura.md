@@ -717,8 +717,11 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   e a Clicksign não segue redirecionamento), segredo igual ao `CLICKSIGN_WEBHOOK_SECRET` (comparado no servidor; o
   segredo nunca vai para a tela) e no domínio deste INTEROS. Rota, selo e teste leem o segredo pelo mesmo
   `clicksignWebhookSecret()` (sem espaço/quebra de linha nas pontas), para o teste não dizer "confere" quando a rota
-  recusaria. Com um webhook do INTEROS pronto, os demais com o mesmo caminho são sobras (só alerta, "pode apagar"). Os
-  de outros serviços (ex.: Pluga) aparecem só pelo domínio, porque o endereço completo pode carregar chave de acesso.
+  recusaria. O principal é o mais completo (pronto; recebe no domínio deste INTEROS; recebe em outro domínio; sem o
+  segredo na Vercel, o cadastrado certo), não o primeiro da lista; os demais com o caminho do INTEROS são sobras (só
+  alerta, "pode apagar"). Os do INTEROS aparecem pelo endereço completo (é o do próprio sistema, e a Clicksign não
+  aceita dois iguais), para a tela dizer sem ambiguidade qual manter, de qual copiar o segredo e qual apagar. Os de
+  outros serviços (ex.: Pluga) aparecem só pelo domínio, porque o endereço completo pode carregar chave de acesso.
 
 ## Central de Atendimento (módulo Comunicação, `src/server/conversations/*`, `/comunicacao`)
 
