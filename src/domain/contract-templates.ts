@@ -144,17 +144,22 @@ export function resolveRepresentativeDocument<S extends { party?: string; role?:
   const companyNames = [billing.legalName, client.legalName, client.tradeName];
   const r = resolveClientRepresentative(signers, contacts, companyNames);
   const companyNamed = companyNames.some((n) => n?.trim() && samePersonName(n, signer.name));
+  const doc = billing.document?.replace(/\D/g, "") ?? "";
+  // O faturamento é um CPF em nome de quem assina: é a mesma pessoa (o cliente pessoa física).
+  const billedToSigner = doc.length === 11 && Boolean(billing.legalName?.trim()) && samePersonName(billing.legalName!, signer.name);
   if (r.contact) {
+    if (r.contact.document) return { ...r, document: r.contact.document };
+    // O contato (e-mail e nome) é o próprio cliente pessoa física: o CPF do faturamento, no nome dele.
+    if (billedToSigner) return { ...r, document: doc, fromClient: true };
     // Contato com o nome da empresa e sem CPF (ex.: lista importada só com o nome da empresa): pode ser a empresa — o
     // CPF de uma pessoa não entra por aqui; se for pessoa (empresário individual), o CPF vai na ficha do contato.
-    if (companyNamed && !r.contact.document) return { signer, ambiguous: "empresa" };
-    return { ...r, document: r.contact.document };
+    if (companyNamed) return { signer, ambiguous: "empresa" };
+    return { ...r, document: undefined };
   }
   // Conflito nos contatos (o e-mail é de outra pessoa, de várias, ou duplicados com CPFs diferentes): vale sempre,
   // mesmo com o nome do cliente — o link de assinatura vai para esse e-mail, então o CPF de ninguém entra.
   if (r.ambiguous) return r;
-  const doc = billing.document?.replace(/\D/g, "") ?? "";
-  if (doc.length === 11 && billing.legalName?.trim() && samePersonName(billing.legalName, signer.name)) return { signer, document: doc, fromClient: true };
+  if (billedToSigner) return { signer, document: doc, fromClient: true };
   if (companyNamed) return { signer, ambiguous: "empresa" };
   return r;
 }

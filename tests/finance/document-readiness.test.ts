@@ -68,6 +68,8 @@ describe("representante do cliente (de qual contato vem o CPF)", () => {
 
   it("ordem: o contato que é a pessoa; sem contato, o cliente pessoa física pelo faturamento; sem contato, o nome da empresa", () => {
     const sig = (name: string, email: string) => [signer(name, email)];
+    // Cliente PF que assina como o próprio contato (e-mail, sem CPF na ficha): o CPF do faturamento em nome dele.
+    expect(resolveRepresentativeDocument(sig("Carlos Pereira", "carlos@x.com"), [{ name: "Carlos Pereira", email: "carlos@x.com" }], { legalName: "Carlos Pereira", tradeName: "Carlos Pereira" }, { legalName: "Carlos Pereira", document: "529.982.247-25" })).toMatchObject({ fromClient: true, document: "52998224725" });
     // Cliente PF sem contatos: o CPF do faturamento em nome dele.
     expect(resolveRepresentativeDocument(sig("Carlos Pereira", "carlos@x.com"), [], { legalName: "Carlos Pereira", tradeName: "Carlos Pereira" }, { legalName: "Carlos Pereira", document: "529.982.247-25" })).toMatchObject({ fromClient: true, document: "52998224725" });
     // Lead que virou cliente com o nome da pessoa; faturamento numa empresa; o contato É a pessoa: CPF do contato.

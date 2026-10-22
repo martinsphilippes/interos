@@ -656,7 +656,8 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   só se o CPF já estiver na ficha), mesmo que o nome seja igual ao do cliente quando o contato JÁ tem CPF (empresário individual, lead com o
   nome da pessoa) — com o nome do cliente e sem CPF é `empresa` (o CPF de uma pessoa vai na ficha do contato, nunca
   pelo contrato num contato "Padaria X"). Conflito nos contatos (`outro_nome`, `nome`, `cpf`) vale sempre, mesmo com o
-  nome do cliente: o link de assinatura vai para aquele e-mail, então nenhum CPF entra; 2) sem
+  nome do cliente: o link de assinatura vai para aquele e-mail, então nenhum CPF entra. Contato sem CPF que é o próprio
+  cliente pessoa física (faturamento com CPF no nome dele) usa o CPF do faturamento; 2) sem
   contato, o signatário com o nome de quem está no documento de faturamento, que é um CPF: o próprio cliente pessoa
   física; 3) sem contato, o signatário com o nome do cliente: a empresa (`empresa`, sem CPF de ninguém): o único
   contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
