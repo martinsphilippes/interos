@@ -141,6 +141,7 @@ export const CONTRACT_FIELDS: readonly ContractField[] = [
   { key: "contrato.parcelas_adesao", label: "Parcelas da adesão", group: "Contrato", source: "contrato", aliases: ["parcelas", "parcelas_adesao", "parcelas_setup"] },
   { key: "contrato.condicao_pagamento", label: "Condição de pagamento (texto)", group: "Contrato", source: "contrato", aliases: ["condicao_pagamento", "condicoes_pagamento", "pagamento"] },
   { key: "contrato.itens", label: "Produtos e serviços (lista)", group: "Contrato", source: "contrato", aliases: ["itens", "produtos", "servicos", "objeto", "lista_produtos"] },
+  { key: "contrato.produto", label: "Produto contratado (sistema vendido)", group: "Contrato", source: "contrato", aliases: ["produto", "produto_contratado", "produtos_contratados", "nome_produto", "nome_do_produto", "sistema", "sistema_operacional", "sistema_contratado", "nome_do_sistema", "software", "solucao"] },
   { key: "valores.adesao", label: "Valor da adesão/setup", group: "Valores", source: "contrato", aliases: ["adesao", "setup", "valor_adesao", "taxa_adesao", "implantacao", "valor_implantacao", "valor_setup"] },
   { key: "valores.adesao_extenso", label: "Adesão por extenso", group: "Valores", source: "contrato", aliases: ["adesao_extenso", "valor_adesao_extenso", "setup_extenso"] },
   { key: "valores.mensalidade", label: "Mensalidade", group: "Valores", source: "contrato", aliases: ["mensalidade", "valor_mensal", "valor_mensalidade", "valor_de_mensalidade", "valor_da_mensalidade", "mensal"] },
@@ -356,6 +357,11 @@ function docFormat(value: string | undefined): string {
   return value ?? "";
 }
 
+/** "A", "A e B", "A, B e C". */
+function joinPt(parts: string[]): string {
+  return parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} e ${parts[parts.length - 1]}`;
+}
+
 /** "2026-10-21..." → "21/10/2026" (sem fuso: a data do contrato é um dia, não um instante). */
 function dayBr(iso: string | undefined): string {
   if (!iso) return "";
@@ -435,6 +441,7 @@ export function contractFieldValues(input: FieldValuesInput): Record<string, str
     "contrato.parcelas_adesao": c.setupInstallments && c.setupInstallments > 1 ? `${c.setupInstallments} parcelas` : "à vista",
     "contrato.condicao_pagamento": c.paymentCondition ?? "",
     "contrato.itens": items,
+    "contrato.produto": joinPt(Array.from(new Set(c.items.map((i) => i.productName.trim()).filter(Boolean)))),
     "valores.adesao": money(c.setupTotal),
     "valores.adesao_extenso": moneyWithWords(c.setupTotal),
     "valores.mensalidade": money(c.monthlyTotal),

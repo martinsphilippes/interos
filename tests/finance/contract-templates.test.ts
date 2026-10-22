@@ -91,14 +91,15 @@ describe("variáveis do modelo", () => {
   });
 
   it("suggestUnbound: só quem está sem ligação e sem texto fixo recebe sugestão (com o contexto do modelo)", () => {
-    const out = suggestUnbound([{ name: "Razão Social", field: "contratante.razao_social" }, { name: "Logradouro" }, { name: "Número", field: "contrato.numero" }, { name: "Bairro" }, { name: "Foro", fixed: "Crato/CE" }, { name: "Sistema Operacional" }]);
+    const out = suggestUnbound([{ name: "Razão Social", field: "contratante.razao_social" }, { name: "Logradouro" }, { name: "Número", field: "contrato.numero" }, { name: "Bairro" }, { name: "Foro", fixed: "Crato/CE" }, { name: "Sistema Operacional" }, { name: "Cor favorita" }]);
     expect(out).toEqual([
       { name: "Razão Social", field: "contratante.razao_social" },
       { name: "Logradouro", field: "contratante.logradouro" },
       { name: "Número", field: "contrato.numero" },
       { name: "Bairro", field: "contratante.bairro" },
       { name: "Foro", fixed: "Crato/CE" },
-      { name: "Sistema Operacional" },
+      { name: "Sistema Operacional", field: "contrato.produto" },
+      { name: "Cor favorita" },
     ]);
   });
   it("mantém as ligações já salvas e sugere as novas", () => {
@@ -355,6 +356,24 @@ describe("dados obrigatórios do modelo", () => {
       { variable: "Início", reason: "apos_liberacao", field: "contrato.inicio_vigencia", label: "Início da vigência" },
       { variable: "Sistema Operacional", reason: "sem_ligacao", label: "Sem campo ligado nem texto fixo no modelo" },
     ]);
+  });
+
+  it("produto contratado: nomes dos produtos dos itens, sem repetir; \"Sistema Operacional\" sugere esse campo", () => {
+    expect(base["contrato.produto"]).toBe("INTEROS Gestão");
+    const items = [
+      { productId: "p1", productName: "ERP Gdoor Web", quantity: 1, setupValue: 0, monthlyValue: 290, hardwareValue: 0, discountPct: 0 },
+      { productId: "p2", productName: "TEF Pay", quantity: 2, setupValue: 0, monthlyValue: 50, hardwareValue: 0, discountPct: 0 },
+      { productId: "p1", productName: "ERP Gdoor Web ", quantity: 1, setupValue: 0, monthlyValue: 0, hardwareValue: 0, discountPct: 0 },
+    ];
+    const f = contractFieldValues({ contract: { ...CONTRACT, items }, client: { legalName: "ACME", tradeName: "ACME" }, billingData: { address: {} }, companyName: "Intercert", companyAddress: "x", issuedAt: "2026-10-21T15:00:00.000Z", labels: { recurrence: "Mensal" } });
+    expect(f["contrato.produto"]).toBe("ERP Gdoor Web e TEF Pay");
+    const three = contractFieldValues({ contract: { ...CONTRACT, items: [...items, { ...items[0], productId: "p3", productName: "Maquininha" }] }, client: { legalName: "ACME", tradeName: "ACME" }, billingData: { address: {} }, companyName: "Intercert", companyAddress: "x", issuedAt: "2026-10-21T15:00:00.000Z", labels: { recurrence: "Mensal" } });
+    expect(three["contrato.produto"]).toBe("ERP Gdoor Web, TEF Pay e Maquininha");
+    expect(suggestField("Sistema Operacional")).toBe("contrato.produto");
+    expect(suggestField("Produto")).toBe("contrato.produto");
+    expect(suggestField("produtos")).toBe("contrato.itens");
+    const empty = contractFieldValues({ contract: { ...CONTRACT, items: [] }, client: { legalName: "ACME", tradeName: "ACME" }, billingData: { address: {} }, companyName: "Intercert", companyAddress: "x", issuedAt: "2026-10-21T15:00:00.000Z", labels: { recurrence: "Mensal" } });
+    expect(templateDataGaps([{ name: "Sistema Operacional", field: "contrato.produto" }], empty).map((g) => [g.reason, g.source])).toEqual([["sem_dado", "contrato"]]);
   });
 
   it("1º vencimento e condição de pagamento são obrigatórios quando o modelo usa (editáveis nas condições)", () => {
