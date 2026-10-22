@@ -16,6 +16,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { useFinanceAction } from "./use-finance-action";
 import { useFinanceAccess } from "./finance-access";
 import { money, RESTRICTED_LABEL } from "./values";
+import { CONTRACT_SECTION_IDS } from "./contract-sections";
 
 export interface ContractItemsCardProps {
   contractId: string;
@@ -179,7 +180,7 @@ export function ContractItemsCard({ contractId, items, products, canEdit, sent, 
   };
 
   return (
-    <Card>
+    <Card id={CONTRACT_SECTION_IDS.itens} className="scroll-mt-24 transition-shadow">
       <CardHeader className="flex-row items-start justify-between gap-3">
         <div>
           <CardTitle>Itens</CardTitle>

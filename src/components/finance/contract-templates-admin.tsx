@@ -46,11 +46,15 @@ function fieldOptions() {
   return [{ value: "", label: "— texto fixo / deixar em branco —" }, ...GROUPS.flatMap((g) => CONTRACT_FIELDS.filter((f) => f.group === g).map((f) => ({ value: f.key, label: `${g} · ${f.label}${f.afterRelease ? " (só depois da liberação)" : ""}` })))];
 }
 
-/** Modelos de contrato: gerado pelo INTEROS (cláusulas com variáveis) ou Word da Clicksign (arquivo .docx). */
-export function ContractTemplatesAdmin({ templates, canEdit }: { templates: TemplateRow[]; canEdit: boolean }) {
+/**
+ * Modelos de contrato: gerado pelo INTEROS (cláusulas com variáveis) ou Word da Clicksign (arquivo .docx).
+ * `openVariablesFor`: abre direto o «Ligar variáveis» desse modelo (link «Ligar variáveis do modelo» das pendências
+ * de um contrato), só para quem edita.
+ */
+export function ContractTemplatesAdmin({ templates, canEdit, openVariablesFor }: { templates: TemplateRow[]; canEdit: boolean; openVariablesFor?: string }) {
   const [editing, setEditing] = React.useState<TemplateRow | "new" | null>(null);
   const [uploading, setUploading] = React.useState<TemplateRow | "new" | null>(null);
-  const [mapping, setMapping] = React.useState<TemplateRow | null>(null);
+  const [mapping, setMapping] = React.useState<TemplateRow | null>(() => (canEdit && openVariablesFor ? (templates.find((t) => t.id === openVariablesFor && t.variables.length > 0) ?? null) : null));
   const { pending, run } = useFinanceAction();
 
   return (

@@ -24,6 +24,10 @@ import { useOrigin } from "@/components/ui/use-origin";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { useFinanceAccess } from "./finance-access";
 import { SignatureDocumentOptions, type DocumentReadiness, type SignatureDocumentInfo } from "./signature-document-options";
+import { CONTRACT_SECTION_IDS } from "./contract-sections";
+import { goToSection } from "@/lib/go-to-section";
+
+const NEW_SIGNER_SECTION_ID = "novo-signatario";
 
 export interface SignatureCardProps {
   contract: Pick<Contract, "id" | "number" | "version" | "status" | "signers" | "signatureEnvelopeId" | "signatureProvider" | "documentHash" | "signedAt">;
@@ -43,6 +47,8 @@ export interface SignatureCardProps {
   documentInfo?: SignatureDocumentInfo;
   /** Variáveis do modelo e o que falta para o documento sair completo. */
   readiness?: DocumentReadiness;
+  /** Pode abrir «Ligar variáveis» do modelo (financeiro.assinaturas.modelos.editar): botão nas pendências do modelo. */
+  canEditTemplates?: boolean;
 }
 
 const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "danger" } as const;
@@ -51,7 +57,7 @@ const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "da
  * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
  * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
  */
-export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo, readiness }: SignatureCardProps) {
+export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo, readiness, canEditTemplates = false }: SignatureCardProps) {
   const id = React.useId();
   // Capacidades do servidor (assinatura: editar signatários, enviar/lembrar, registrar assinatura; documento: ver).
   const { contracts: can } = useFinanceAccess();
@@ -67,6 +73,11 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
   const closed = contract.status === "liberado" || contract.status === "cancelado";
   const signedCount = contract.signers.filter((s) => s.status === "assinado").length;
   const allSigned = sent && contract.signers.length > 0 && signedCount === contract.signers.length;
+  // Pendência "falta quem assina pelo cliente": abre o formulário de novo signatário e leva até ele.
+  const openNewSigner = () => {
+    setAdding(true);
+    window.requestAnimationFrame(() => goToSection(NEW_SIGNER_SECTION_ID));
+  };
   const providerConnected = integrations.assinatura === "conectado";
   const emailConnected = integrations.email === "conectado";
   // Envio ATUAL foi manual (mailto, registro com evidência)? E o PRÓXIMO envio será manual? Com a Clicksign conectada,
@@ -159,7 +170,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
           </div>
         ) : null}
 
-        <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
+        <ul id={CONTRACT_SECTION_IDS.signatarios} className="flex scroll-mt-24 flex-col divide-y divide-border rounded-lg border border-border transition-shadow">
           {contract.signers.length === 0 ? <li className="px-3 py-4 text-center text-sm text-muted">Nenhum signatário. Adicione quem assina pelo cliente.</li> : null}
           {contract.signers.map((s) => {
             const r = reminders[s.email.toLowerCase()];
@@ -250,7 +261,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
 
         {can.signersEdit && editable ? (
           adding ? (
-            <div className="grid gap-3 rounded-lg border border-border p-3">
+            <div id={NEW_SIGNER_SECTION_ID} className="grid scroll-mt-24 gap-3 rounded-lg border border-border p-3 transition-shadow">
               <FormField label="Quem assina" htmlFor={`${id}-q`} required hint={noContacts ? `${clientName} ainda não tem contatos cadastrados.` : choices.contacts.length === 0 ? `Todos os contatos de ${clientName} já assinam este contrato.` : undefined}>
                 <Select id={`${id}-q`} value={choice} onChange={(e) => pick(e.target.value)} className="h-11 md:h-9">
                   <option value="">Escolha…</option>
@@ -334,7 +345,20 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
           )
         ) : null}
 
-        {documentInfo && !closed ? <SignatureDocumentOptions contractId={contract.id} clientId={clientId} info={documentInfo} readiness={readiness} canEdit={can.signersEdit && editable && !allSigned} /> : null}
+        {documentInfo && !closed ? (
+          <SignatureDocumentOptions
+            contractId={contract.id}
+            clientId={clientId}
+            info={documentInfo}
+            readiness={readiness}
+            canEdit={can.signersEdit && editable && !allSigned}
+            fix={{
+              canFixCpf: Boolean(canCreateContact) && can.signersEdit && editable && !allSigned,
+              canEditTemplates,
+              onAddSigner: can.signersEdit && editable && !allSigned ? openNewSigner : undefined,
+            }}
+          />
+        ) : null}
 
         {can.signatureSend && editable ? (
           <Button

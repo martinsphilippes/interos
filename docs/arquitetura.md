@@ -632,9 +632,22 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   documento já calculado ao provedor (`createEnvelope(contract, cliente, document)`), que não relê o contrato. A
   prévia (PDF/Word) também inclui o signatário da Intercert e continua disponível com as lacunas, para conferência.
   O cartão do modelo em Assinaturas › Modelos lista o que ele exige do cadastro (`templateRequirements`).
+- **Corrigir dali mesmo** (painel de pendências do cartão Assinatura, `groupReadinessGaps` em
+  `src/domain/document-readiness.ts`): as pendências saem agrupadas por onde se corrigem, cada grupo com um botão.
+  Dados do cliente → cartão «Cliente e faturamento» do contrato (rola, destaca e foca o 1º campo: `goToSection` em
+  `src/lib/go-to-section.ts`, ids em `contract-sections.ts`); itens/valores e condições → os cartões do contrato; quem
+  assina pela Intercert → Assinaturas › Configuração; variável sem ligação ou só depois da liberação → Assinaturas ›
+  Modelos com `?ligar=<modelo>` (abre o «Ligar variáveis» direto, para quem tem `financeiro.assinaturas.modelos.editar`).
+  CPF de quem assina pelo cliente: informado ali mesmo (`setRepresentativeDocumentAction`, mesmas exigências de
+  cadastrar contato pelo contrato: `financeiro.contratos.assinatura.editar` + `operacao.clientes.contatos.editar` +
+  cliente no escopo) — grava no contato que é a pessoa (`resolveClientRepresentative`, a mesma regra do documento) ou,
+  se o signatário ainda não é contato, cadastra o contato com nome, e-mail e CPF; ambíguo não grava (botão para os
+  contatos do cliente). O histórico registra que o CPF foi informado/alterado, sem o número. Sem signatário do
+  cliente: «Adicionar signatário» abre o formulário no próprio cartão.
 - **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): o 1º signatário, na ordem do
   contrato, qualificado como contratante, representante legal ou procurador (`clientRepresentative`, pela mesma regra
-  de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa: o único
+  de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa
+  (`resolveClientRepresentative`, no domínio): o único
   contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
   nome (o mesmo contato cadastrado mais de uma vez, com mesmo nome e e-mail, vale como uma pessoa se houver um só CPF);
   nunca "o que tem CPF" entre pessoas diferentes (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é

@@ -241,7 +241,7 @@ export default async function ContractPage({ params }: { params: Params }) {
               closed={closed}
             />
             {sections.signatureView ? (
-              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} clientId={client.id} signerOptions={signerOptions} canCreateContact={canCreateContact} integrations={getIntegrationFlags()} documentInfo={documentInfo} readiness={readiness} />
+              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} clientId={client.id} signerOptions={signerOptions} canCreateContact={canCreateContact} integrations={getIntegrationFlags()} documentInfo={documentInfo} readiness={readiness} canEditTemplates={can(user, "financeiro.assinaturas.modelos.editar")} />
             ) : null}
             {sections.pendenciesView ? <PendencyCard contractId={contract.id} pendingReason={contract.pendingReason} isPending={contract.status === "pendencia"} closed={closed} /> : null}
             <BillingDataCard

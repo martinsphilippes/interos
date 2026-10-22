@@ -90,7 +90,7 @@ export default async function SignaturesPage({ searchParams }: { searchParams: S
             ) : null}
             {tab === "fila" ? <QueueTab user={user} /> : null}
             {tab === "entrada" ? <InboxTab canEdit={can(user, "financeiro.assinaturas.entrada.vincular")} providerConnected={providerConnected} focusId={first(sp.item)} /> : null}
-            {tab === "modelos" ? <TemplatesTab canEdit={can(user, "financeiro.assinaturas.modelos.editar")} /> : null}
+            {tab === "modelos" ? <TemplatesTab canEdit={can(user, "financeiro.assinaturas.modelos.editar")} openVariablesFor={first(sp.ligar)} /> : null}
             {tab === "configuracao" ? <SettingsTab canEdit={can(user, "financeiro.assinaturas.configuracao.editar")} canTest={can(user, "financeiro.assinaturas.configuracao.testar")} providerConnected={providerConnected} /> : null}
           </>
         )}
@@ -187,7 +187,8 @@ async function InboxTab({ canEdit, providerConnected, focusId }: { canEdit: bool
   );
 }
 
-async function TemplatesTab({ canEdit }: { canEdit: boolean }) {
+/** `openVariablesFor`: id do modelo cujo «Ligar variáveis» abre direto (vindo das pendências de um contrato). */
+async function TemplatesTab({ canEdit, openVariablesFor }: { canEdit: boolean; openVariablesFor?: string }) {
   const templates = await listContractTemplates();
   const rows: TemplateRow[] = templates.map((t) => ({
     id: t.id,
@@ -207,7 +208,7 @@ async function TemplatesTab({ canEdit }: { canEdit: boolean }) {
     updatedByName: t.updatedByName,
     providerTemplateKey: t.providerTemplateKey,
   }));
-  return <ContractTemplatesAdmin templates={rows} canEdit={canEdit} />;
+  return <ContractTemplatesAdmin templates={rows} canEdit={canEdit} openVariablesFor={openVariablesFor} />;
 }
 
 async function SettingsTab({ canEdit, canTest, providerConnected }: { canEdit: boolean; canTest: boolean; providerConnected: boolean }) {

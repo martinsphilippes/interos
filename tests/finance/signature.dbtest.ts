@@ -12,7 +12,7 @@ import { create, getById, list, update } from "@/server/db";
 import { COLLECTIONS, type Client, type Contact, type Contract, type User, type ContractTemplate, type ContractTemplateFile, type Document, type SignatureInboxItem } from "@/domain/types";
 import { getSignatureSettings, saveInterosTemplate, saveSignatureSettings, saveTemplateVariables, setTemplateState, signatureDocumentInfo, uploadWordTemplate } from "@/server/finance/contract-templates";
 import { contractDocumentData, contractDocx, contractPdf, documentReadiness } from "@/server/finance/contract-document";
-import { createManualContract, sendForSignature, updateContractItems } from "@/server/finance/service";
+import { createManualContract, sendForSignature, setRepresentativeDocument, updateContractItems } from "@/server/finance/service";
 import { contractDocumentHash } from "@/server/finance/signature";
 import { assignInboxItem, ignoreInboxItem, recordExternalEnvelope, reopenInboxItem } from "@/server/finance/signature-inbox";
 import { docxText, writeZip } from "@/server/finance/docx";
@@ -290,6 +290,55 @@ describe("assinatura eletrônica", () => {
     ]);
     expect(r?.representative).toMatchObject({ name: "Fulano Externo", contactFound: false });
     expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
+  });
+
+  it("CPF informado no contrato: grava no contato que é a pessoa ou cadastra o signatário como contato; ambíguo e inválido não gravam", async () => {
+    const t = await saveInterosTemplate({ name: `${RUN} CPF no contrato`, title: "Contrato", clauses: "CLÁUSULA ÚNICA\n\n{{contratante.representante}}, CPF {{contratante.representante_cpf}}." }, ACTOR);
+    templateIds.push(t.id);
+    const c = await createManualContract({ clientId: CLIENT_ID, recurrence: "mensal", termMonths: 12, billingDay: 10 }, ACTOR);
+    contractIds.push(c.id);
+    await updateContractItems(c.id, [{ productId: "p1", productName: "INTEROS", quantity: 1, setupValue: 0, monthlyValue: 150, hardwareValue: 0, discountPct: 0 }] as never, ACTOR);
+    const company = (await getById<Contract>(COLLECTIONS.contracts, c.id))!.signers.filter((x) => x.party === "contratada");
+    const setSigners = async (signers: Contract["signers"]) => {
+      await update<Contract>(COLLECTIONS.contracts, c.id, { templateId: t.id, signers: [...signers, ...company] });
+      return (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    };
+    const contactsOf = async (email: string) => (await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", CLIENT_ID]] })).filter((x) => x.email?.toLowerCase() === email.toLowerCase());
+
+    // Quem assina não é contato do cliente: o CPF cadastra a pessoa como contato (nome e e-mail do signatário).
+    const outsider = `externo.${RUN}@acme-teste.com.br`;
+    let current = await setSigners([{ name: "Carlos Externo", email: outsider, role: "Contratante", status: "pendente" }]);
+    expect((await documentReadiness(current))?.representative).toMatchObject({ contactFound: false });
+    await expect(setRepresentativeDocument({ contractId: c.id, document: "123.456.789-00" }, ACTOR)).rejects.toThrow(/CPF inválido/);
+    expect(await contactsOf(outsider)).toHaveLength(0);
+    const created = await setRepresentativeDocument({ contractId: c.id, document: "529.982.247-25" }, ACTOR);
+    expect(created).toMatchObject({ created: true, name: "Carlos Externo" });
+    expect((await contactsOf(outsider)).map((x) => [x.name, x.document])).toEqual([["Carlos Externo", "52998224725"]]);
+    expect((await documentReadiness(current))?.gaps).toEqual([]);
+    expect((await contractDocumentData(c.id))?.clauses?.text).toContain("Carlos Externo, CPF 529.982.247-25.");
+
+    // Contato já existe, sem CPF: grava nele (não cria outro).
+    const known = `conhecida.${RUN}@acme-teste.com.br`;
+    const contact = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Beatriz Lima", email: known, isPrimary: false });
+    current = await setSigners([{ name: "Beatriz Lima", email: known, role: "Representante legal", status: "pendente" }]);
+    const saved = await setRepresentativeDocument({ contractId: c.id, document: "11144477735" }, ACTOR);
+    expect(saved).toMatchObject({ created: false, contactId: contact.id });
+    expect((await getById<Contact>(COLLECTIONS.contacts, contact.id))?.document).toBe("11144477735");
+    expect(await contactsOf(known)).toHaveLength(1);
+    expect((await documentReadiness(current))?.gaps).toEqual([]);
+
+    // E-mail compartilhado sem contato com o nome do signatário: não dá para saber de quem é; nada é gravado.
+    const shared = `compartilhado.${RUN}@acme-teste.com.br`;
+    await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "João Um", email: shared, isPrimary: false });
+    await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Ana Dois", email: shared, isPrimary: false });
+    await setSigners([{ name: "Financeiro Geral", email: shared, role: "Contratante", status: "pendente" }]);
+    await expect(setRepresentativeDocument({ contractId: c.id, document: "52998224725" }, ACTOR)).rejects.toThrow(/mais de um contato/);
+    expect((await contactsOf(shared)).every((x) => !x.document)).toBe(true);
+    expect(await contactsOf(shared)).toHaveLength(2);
+
+    // Sem quem assina pelo cliente (só testemunha): pede o signatário primeiro.
+    await setSigners([{ name: "Pedro Equipe", email: `pedro2.${RUN}@intercert.com.br`, role: "Testemunha", status: "pendente" }]);
+    await expect(setRepresentativeDocument({ contractId: c.id, document: "52998224725" }, ACTOR)).rejects.toThrow(/adicione o signatário/);
   });
 });
 

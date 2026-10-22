@@ -24,7 +24,8 @@ import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
-import { clicksignSignerNameProblem, isSignerEmail, type TemplateDataGap } from "@/domain/contract-templates";
+import { clicksignSignerNameProblem, isSignerEmail, resolveClientRepresentative, type TemplateDataGap } from "@/domain/contract-templates";
+import { isValidCpf } from "@/domain/documents";
 import { createContact } from "@/server/clients/contacts";
 import type { DepartmentKey } from "@/domain/constants";
 import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
@@ -730,6 +731,41 @@ export async function addContactAsSigner(
   const contact = await createContact({ clientId: contract.clientId, name: input.name, email, role: input.position, phone: input.phone, document: input.document }, actor, department);
   await addSigner({ contractId: contract.id, name: contact.name, email, role: input.role }, actor);
   return { contactId: contact.id };
+}
+
+/**
+ * CPF de quem assina pelo cliente, informado no próprio contrato (painel de pendências do modelo). Grava no contato que
+ * É essa pessoa — a mesma regra do documento (`resolveClientRepresentative`) — ou, se ela ainda não é contato do
+ * cliente, cadastra o contato com nome, e-mail e CPF. Contatos ambíguos não são tocados: a correção é nos contatos.
+ */
+export async function setRepresentativeDocument(input: { contractId: string; document: string }, actor: UserRef, department?: DepartmentKey): Promise<{ contactId: string; created: boolean; name: string }> {
+  const contract = await loadContract(input.contractId);
+  assertEditable(contract);
+  const cpf = input.document.replace(/\D/g, "");
+  if (!isValidCpf(cpf)) throw new Error("CPF inválido");
+  const contacts = await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", contract.clientId]] });
+  const { signer, contact, ambiguous } = resolveClientRepresentative(contract.signers, contacts);
+  if (!signer) throw new Error("O contrato ainda não tem quem assina pelo cliente: adicione o signatário primeiro");
+  if (ambiguous === "nome") throw new Error(`${signer.email} é usado por mais de um contato do cliente e nenhum se chama ${signer.name}: corrija nos contatos do cliente`);
+  if (ambiguous === "cpf") throw new Error(`Há contatos ${signer.name} duplicados com CPFs diferentes: corrija nos contatos do cliente`);
+  if (contact) {
+    if (contact.document !== cpf) {
+      await update<Contact>(COLLECTIONS.contacts, contact.id, { document: cpf });
+      await emitEvent({
+        type: "client.updated",
+        actor,
+        clientId: contract.clientId,
+        entity: { type: "contact", id: contact.id },
+        title: `CPF de ${contact.name} ${contact.document ? "alterado" : "informado"} no contrato ${contract.number}`,
+        department,
+        // Sem o CPF no histórico (dado pessoal): só que mudou e onde.
+        payload: { contactId: contact.id, contractId: contract.id, hadDocument: Boolean(contact.document) },
+      });
+    }
+    return { contactId: contact.id, created: false, name: contact.name };
+  }
+  const created = await createContact({ clientId: contract.clientId, name: signer.name, email: signer.email, document: cpf }, actor, department);
+  return { contactId: created.id, created: true, name: created.name };
 }
 
 export async function removeSigner(input: { contractId: string; email: string }, actor: UserRef): Promise<void> {

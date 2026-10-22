@@ -71,6 +71,32 @@ export function clientRepresentative<T extends { party?: string; role?: string }
   return signers.find((s) => ["contractor", "legal_representative", "attorney"].includes(clicksignRole(s)));
 }
 
+const normPersonName = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * Representante do cliente: o 1º signatário qualificado como contratante, representante legal ou procurador
+ * (`clientRepresentative`, na ordem do contrato). O CPF vem do contato que É essa pessoa: o único contato com o e-mail
+ * do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo nome (duplicados da mesma
+ * pessoa: vale o CPF, se só houver um). Nunca "o que tem CPF" entre pessoas diferentes: CPF de outra pessoa no contrato
+ * é pior do que a pendência. `ambiguous`: `nome` — mais de um contato usa o e-mail e nenhum tem o nome do signatário;
+ * `cpf` — contatos duplicados (mesmo nome e e-mail) com CPFs diferentes.
+ */
+export function resolveClientRepresentative<S extends { party?: string; role?: string; name: string; email: string }, C extends { name: string; email?: string; document?: string }>(
+  signers: S[],
+  contacts: C[],
+): { signer?: S; contact?: C; ambiguous?: "nome" | "cpf" } {
+  const signer = clientRepresentative(signers);
+  if (!signer) return { signer };
+  const sameEmail = contacts.filter((c) => c.email?.trim().toLowerCase() === signer.email.trim().toLowerCase());
+  if (sameEmail.length <= 1) return { signer, contact: sameEmail[0] };
+  const byName = sameEmail.filter((c) => normPersonName(c.name) === normPersonName(signer.name));
+  if (byName.length === 0) return { signer, ambiguous: "nome" };
+  // Mesmo nome e mesmo e-mail é a mesma pessoa cadastrada mais de uma vez: vale o CPF, se só houver um.
+  const cpfs = new Set(byName.map((c) => c.document).filter(Boolean));
+  if (cpfs.size > 1) return { signer, ambiguous: "cpf" };
+  return { signer, contact: byName.find((c) => c.document) ?? byName[0] };
+}
+
 /** O signatário da Intercert está completo (nome e e-mail válidos)? */
 export function companySignerReady(signer: CompanySignerSetting): boolean {
   return signer.enabled && signer.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signer.email.trim());

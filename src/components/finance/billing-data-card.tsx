@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { useFinanceAction } from "./use-finance-action";
+import { CONTRACT_SECTION_IDS } from "./contract-sections";
 
 export interface BillingDataCardProps {
   contractId: string;
@@ -58,7 +59,7 @@ export function BillingDataCard({ contractId, clientId, clientName, data, canEdi
   const addressLine = [data.address.street && `${data.address.street}${data.address.number ? `, ${data.address.number}` : ""}`, data.address.district, data.address.city && `${data.address.city}${data.address.state ? `/${data.address.state}` : ""}`, data.address.zip].filter(Boolean).join(" · ");
 
   return (
-    <Card>
+    <Card id={CONTRACT_SECTION_IDS.cliente} className="scroll-mt-24 transition-shadow">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Building2 className="size-4 text-muted" /> Cliente e faturamento

@@ -212,7 +212,7 @@ export const FINANCEIRO = {
           // Hoje: finance/actions.ts:178-200 → finance/actions.ts:86-93 requireFinanceOperator =
           // canAccessModule(financeiro) && canOperateFinance (finance/schemas.ts:45-47)
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
-          guards: ["src/server/finance/actions.ts#addSignerAction", "src/server/finance/actions.ts#addContactAsSignerAction", "src/server/finance/actions.ts#removeSignerAction", "src/server/finance/signature-actions.ts#setContractSignatureOptionsAction"],
+          guards: ["src/server/finance/actions.ts#addSignerAction", "src/server/finance/actions.ts#addContactAsSignerAction", "src/server/finance/actions.ts#setRepresentativeDocumentAction", "src/server/finance/actions.ts#removeSignerAction", "src/server/finance/signature-actions.ts#setContractSignatureOptionsAction"],
         },
         {
           key: "financeiro.contratos.assinatura.enviar",

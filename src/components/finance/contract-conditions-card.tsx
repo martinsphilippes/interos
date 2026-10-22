@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useFinanceAction } from "./use-finance-action";
+import { CONTRACT_SECTION_IDS } from "./contract-sections";
 
 export type ConditionsContract = Pick<Contract, "id" | "billingDay" | "firstDueDate" | "recurrence" | "termMonths" | "paymentCondition" | "startDate" | "endDate" | "version" | "paymentMethod" | "setupInstallments" | "autoRenew" | "renewalTermMonths" | "readjustment" | "noticeDays">;
 
@@ -174,7 +175,7 @@ export function ContractConditionsCard({ contract, canEdit, sent, amendable }: C
   ];
 
   return (
-    <Card>
+    <Card id={CONTRACT_SECTION_IDS.condicoes} className="scroll-mt-24 transition-shadow">
       <CardHeader className="flex-row items-start justify-between gap-3">
         <div>
           <CardTitle>Condições</CardTitle>
