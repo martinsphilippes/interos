@@ -357,12 +357,12 @@ function docFormat(value: string | undefined): string {
   return value ?? "";
 }
 
-/** "2026-10-21..." → "21/10/2026" (sem fuso: a data do contrato é um dia, não um instante). */
 /** "A", "A e B", "A, B e C". */
 function joinPt(parts: string[]): string {
   return parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} e ${parts[parts.length - 1]}`;
 }
 
+/** "2026-10-21..." → "21/10/2026" (sem fuso: a data do contrato é um dia, não um instante). */
 function dayBr(iso: string | undefined): string {
   if (!iso) return "";
   const [y, m, d] = iso.slice(0, 10).split("-");

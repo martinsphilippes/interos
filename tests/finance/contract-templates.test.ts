@@ -367,6 +367,8 @@ describe("dados obrigatórios do modelo", () => {
     ];
     const f = contractFieldValues({ contract: { ...CONTRACT, items }, client: { legalName: "ACME", tradeName: "ACME" }, billingData: { address: {} }, companyName: "Intercert", companyAddress: "x", issuedAt: "2026-10-21T15:00:00.000Z", labels: { recurrence: "Mensal" } });
     expect(f["contrato.produto"]).toBe("ERP Gdoor Web e TEF Pay");
+    const three = contractFieldValues({ contract: { ...CONTRACT, items: [...items, { ...items[0], productId: "p3", productName: "Maquininha" }] }, client: { legalName: "ACME", tradeName: "ACME" }, billingData: { address: {} }, companyName: "Intercert", companyAddress: "x", issuedAt: "2026-10-21T15:00:00.000Z", labels: { recurrence: "Mensal" } });
+    expect(three["contrato.produto"]).toBe("ERP Gdoor Web, TEF Pay e Maquininha");
     expect(suggestField("Sistema Operacional")).toBe("contrato.produto");
     expect(suggestField("Produto")).toBe("contrato.produto");
     expect(suggestField("produtos")).toBe("contrato.itens");
