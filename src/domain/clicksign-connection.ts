@@ -73,14 +73,29 @@ export interface ClicksignWebhooksReport {
 const OPTIONAL_EVENTS = new Set(["upload"]);
 
 /**
- * Endereço como foi cadastrado (é por ele que a pessoa acha o webhook na Clicksign): só a senha de "usuário:senha@" é
- * mascarada e, quando pedido, os parâmetros (?…). Endereço muito longo mantém o começo e o fim.
+ * Endereço para a tela. Neste domínio: como foi cadastrado (é por ele que a pessoa acha o webhook na Clicksign), com o
+ * "usuário:senha@" inteiro trocado por "•••@" (a chave pode estar no usuário). Em outro domínio — talvez outro sistema
+ * com o mesmo caminho — só protocolo, domínio e caminho, e "?…" se houver parâmetros (podem carregar chave).
  */
-function displayEndpoint(raw: string, maskQuery: boolean): string {
-  let out = raw.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#@:]*):[^/?#@]*@/i, "$1:•••@");
-  if (maskQuery) {
-    const q = out.search(/[?#]/);
-    if (q >= 0) out = `${out.slice(0, q)}${out[q] === "?" ? "?…" : ""}`;
+function displayEndpoint(raw: string, otherDomain: boolean): string {
+  const text = raw.trim();
+  if (otherDomain) {
+    try {
+      const url = new URL(text);
+      return `${url.protocol}//${url.host}${url.pathname}${url.search.length > 1 ? "?…" : ""}`;
+    } catch {
+      return "endereço inválido";
+    }
+  }
+  const scheme = text.indexOf("://");
+  let out = text;
+  if (scheme >= 0) {
+    const start = scheme + 3;
+    const rest = text.slice(start);
+    const end = rest.search(/[/?#]/);
+    const authority = end >= 0 ? rest.slice(0, end) : rest;
+    const at = authority.lastIndexOf("@");
+    if (at >= 0) out = `${text.slice(0, start)}•••@${authority.slice(at + 1)}${end >= 0 ? rest.slice(end) : ""}`;
   }
   return out.length > 300 ? `${out.slice(0, 150)}…${out.slice(-140)}` : out;
 }
@@ -196,7 +211,8 @@ function rank(h: InterosWebhookCheck, report: ClicksignWebhooksReport): number {
   return (
     10 +
     (h.otherHost ? 16 : 0) +
-    (h.addressProblem ? 8 : 0) +
+    // Endereço errado pesa mais que inativo + segredo + eventos juntos: o de endereço exato sempre é o principal.
+    (h.addressProblem ? 9 : 0) +
     (h.active ? 0 : 4) +
     (report.secretConfigured && h.secretMatches === false ? 2 : 0) +
     (h.missingEssential ? 2 : h.missingEvents.length > 0 ? 1 : 0) +
@@ -233,7 +249,10 @@ export function connectionCheckLines(check: ClicksignConnectionCheck): CheckLine
   }
   // Um principal sempre (o melhor para manter); só ele recebe instruções de correção. Os demais são sobras: neste
   // domínio, "pode apagá-lo"; em outro domínio, pode ser outro sistema com o mesmo caminho — só se for este INTEROS.
-  const primary = hooks.interos.length > 0 ? hooks.interos.reduce((best, h) => (rank(h, hooks) < rank(best, hooks) ? h : best)) : undefined;
+  // Principal só entre os deste domínio ou que já recebem os avisos: um webhook de outro domínio que não funciona pode
+  // ser de OUTRO sistema (mesmo caminho) — instruir a editá-lo ou copiar o segredo dele quebraria esse sistema.
+  const eligible = hooks.interos.filter((h) => !h.otherHost || interosWebhookReceives(h));
+  const primary = eligible.length > 0 ? eligible.reduce((best, h) => (rank(h, hooks) < rank(best, hooks) ? h : best)) : undefined;
   const leftovers = primary ? hooks.interos.filter((h) => h !== primary) : [];
   if (!hooks.secretConfigured) {
     lines.push({
@@ -244,7 +263,10 @@ export function connectionCheckLines(check: ClicksignConnectionCheck): CheckLine
     });
   }
   if (!primary) {
-    lines.push({ tone: "error", text: "Nenhum webhook da Clicksign aponta para o INTEROS: assinaturas, recusas e o PDF assinado não voltam sozinhos. Cadastre o endereço abaixo na Clicksign (Configurações › API › Webhooks)." });
+    lines.push({ tone: "error", text: "Nenhum webhook da Clicksign aponta para este INTEROS: assinaturas, recusas e o PDF assinado não voltam sozinhos. Cadastre o endereço abaixo na Clicksign (Configurações › API › Webhooks)." });
+    for (const extra of hooks.interos) {
+      lines.push({ tone: "warn", text: `Webhook com o caminho do INTEROS em outro domínio (${extra.endpoint}): se for um endereço antigo deste INTEROS, pode apagá-lo na Clicksign; se for outro sistema, não mexa.` });
+    }
   } else {
     lines.push(webhookLine(primary, hooks));
     for (const extra of leftovers) {

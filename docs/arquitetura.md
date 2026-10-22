@@ -650,8 +650,11 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): o 1º signatário, na ordem do
   contrato, qualificado como contratante, representante legal ou procurador (`clientRepresentative`, pela mesma regra
   de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa
-  (`resolveClientRepresentative`, no domínio; e-mail E nome batem — o único contato com o e-mail, mas com outro nome,
-  é `outro_nome`; sem contato com o e-mail, vale o contato SEM e-mail com o mesmo nome): o único
+  (`resolveRepresentativeDocument`, no domínio — a mesma regra na leitura e na escrita. Antes dos contatos, o nome:
+  signatário com o nome do próprio cliente é o cliente pessoa física — o CPF é o documento do cliente — ou, se o
+  documento não é CPF, a empresa (`empresa`: nem um contato com o nome dela recebe CPF). Depois, os contatos, por
+  `resolveClientRepresentative`: e-mail E nome batem — o único contato com o e-mail, mas com outro nome, é
+  `outro_nome`; sem contato com o e-mail, vale o contato SEM e-mail com o mesmo nome): o único
   contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
   nome (o mesmo contato cadastrado mais de uma vez, com mesmo nome e e-mail, vale como uma pessoa se houver um só CPF);
   nunca "o que tem CPF" entre pessoas diferentes (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é
@@ -724,10 +727,13 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   recusaria. Há sempre UM principal (o melhor para manter: pronto; recebe neste domínio; recebe em outro domínio;
   depois o que dá menos trabalho de corrigir), não o primeiro da lista, e só ele recebe instruções de correção — nunca
   instruções concorrentes. Os demais com o caminho do INTEROS são sobras: neste domínio, "pode apagá-lo"; em outro
-  domínio, "se for um endereço antigo deste INTEROS, pode apagá-lo; se for outro sistema, não mexa" (com os parâmetros
-  ocultos). Cada um aparece pelo endereço como foi cadastrado (só a senha de usuário:senha@ mascarada; a Clicksign não
-  aceita dois iguais; se dois saírem iguais na tela, ganham a posição na lista), para a tela dizer sem ambiguidade qual
-  manter, de qual copiar o segredo e qual apagar. Os de outros serviços (ex.: Pluga) aparecem só pelo domínio.
+  domínio, "se for um endereço antigo deste INTEROS, pode apagá-lo; se for outro sistema, não mexa" (só protocolo,
+  domínio e caminho). O principal só sai deste domínio ou dos que já recebem os avisos: um de outro domínio que não
+  funciona pode ser outro sistema e nunca recebe instrução de correção ("cadastre o endereço abaixo"). Endereço errado
+  pesa mais que inativo + segredo + eventos juntos (o exato sempre é o principal; "edite o endereço" nunca colide com
+  outro já cadastrado). Neste domínio cada um aparece como foi cadastrado ("usuário:senha@" trocado por "•••@"; a
+  Clicksign não aceita dois iguais; se dois saírem iguais na tela, ganham a posição na lista), para a tela dizer sem
+  ambiguidade qual manter, de qual copiar o segredo e qual apagar. Os de outros serviços (ex.: Pluga): só o domínio.
 
 ## Central de Atendimento (módulo Comunicação, `src/server/conversations/*`, `/comunicacao`)
 

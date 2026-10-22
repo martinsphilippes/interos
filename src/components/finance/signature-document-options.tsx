@@ -39,7 +39,7 @@ export interface DocumentReadiness {
   variableCount: number;
   gaps: TemplateDataGap[];
   /** Quem assina pelo cliente e se é um contato do cliente (de onde vem o CPF). */
-  representative?: { name: string; email: string; contactFound: boolean; ambiguous?: "nome" | "outro_nome" | "cpf"; otherName?: string };
+  representative?: { name: string; email: string; contactFound: boolean; fromClient?: boolean; ambiguous?: "nome" | "outro_nome" | "cpf" | "empresa"; otherName?: string };
 }
 
 /** O que o usuário pode corrigir daqui (calculado no servidor e no cartão Assinatura). */
@@ -153,6 +153,20 @@ function RepresentativeFix({ group, readiness, contractId, clientId, fix }: { gr
         <div className="mt-1.5 flex flex-wrap gap-2">
           {seeSigners}
           <FixLink href={contacts}>Abrir contatos do cliente</FixLink>
+        </div>
+      </>
+    );
+  }
+  if (rep.ambiguous === "empresa") {
+    return (
+      <>
+        <p>
+          {joinNodes(labelsOf(group.gaps))}: quem assina pelo cliente está com o nome do próprio cliente ({rep.name}). Se for empresa, escolha como signatário a pessoa que assina; se o cliente é pessoa física, informe o CPF dele nos dados do cliente.
+        </p>
+        <div className="mt-1.5 flex flex-wrap gap-2">
+          {fix.onAddSigner ? <FixButton onClick={fix.onAddSigner}>Adicionar signatário</FixButton> : null}
+          {seeSigners}
+          {fix.canEditBilling ? <FixButton onClick={() => goToSection(CONTRACT_SECTION_IDS.cliente)}>Dados do cliente</FixButton> : <FixLink href={`/clientes/${clientId}`}>Cadastro do cliente</FixLink>}
         </div>
       </>
     );

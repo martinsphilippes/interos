@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { fixTargetOf, groupReadinessGaps } from "@/domain/document-readiness";
-import { resolveClientRepresentative, type TemplateDataGap } from "@/domain/contract-templates";
+import { resolveClientRepresentative, resolveRepresentativeDocument, type TemplateDataGap } from "@/domain/contract-templates";
 
 const gap = (variable: string, patch: Partial<TemplateDataGap>): TemplateDataGap => ({ variable, reason: "sem_dado", label: variable, ...patch });
 
@@ -64,5 +64,16 @@ describe("representante do cliente (de qual contato vem o CPF)", () => {
     const noEmail = resolveClientRepresentative([signer("João  Pereira", "geral@x.com")], [{ name: "joão pereira" }, { name: "Outro", email: "o@x.com" }]);
     expect(noEmail.contact?.name).toBe("joão pereira");
     expect(resolveClientRepresentative([signer("João", "geral@x.com")], [{ name: "João" }, { name: "João", document: "52998224725" }, { name: "João", document: "11144477735" }]).ambiguous).toBe("cpf");
+  });
+
+  it("signatário com o nome do próprio cliente: pessoa física usa o CPF do cliente; empresa não é pessoa (nem um contato com o nome dela)", () => {
+    const pf = resolveRepresentativeDocument([signer("Carlos Pereira", "carlos@x.com")], [], { legalName: "Carlos Pereira", tradeName: "Carlos Pereira", document: "529.982.247-25" });
+    expect(pf).toMatchObject({ fromClient: true, document: "52998224725" });
+    const pj = resolveRepresentativeDocument([signer("Padaria X", "contato@x.com")], [{ name: "Padaria X", document: "52998224725" }], { legalName: "Padaria X Ltda", tradeName: "Padaria X", document: "12345678000190" });
+    expect(pj).toMatchObject({ ambiguous: "empresa" });
+    expect(pj.document).toBeUndefined();
+    const person = resolveRepresentativeDocument([signer("Ana Lima", "ana@x.com")], [{ name: "Ana Lima", email: "ana@x.com", document: "11144477735" }], { legalName: "Padaria X Ltda", document: "12345678000190" });
+    expect(person).toMatchObject({ document: "11144477735" });
+    expect(person.contact?.name).toBe("Ana Lima");
   });
 });

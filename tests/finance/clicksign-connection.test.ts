@@ -78,7 +78,7 @@ describe("texto do teste de conexão", () => {
     const check: ClicksignConnectionCheck = { ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ endpoint: "https://hooks.pluga.co/x" })], "interos.app.br") };
     const lines = connectionCheckLines(check);
     expect(lines[1]).toMatchObject({ tone: "error" });
-    expect(lines[1].text).toMatch(/Nenhum webhook da Clicksign aponta para o INTEROS/);
+    expect(lines[1].text).toMatch(/Nenhum webhook da Clicksign aponta para este INTEROS/);
     expect(lines[2]).toMatchObject({ tone: "warn" });
     expect(lines[2].text).toMatch(/hooks\.pluga\.co \(ativo\)/);
   });
@@ -215,11 +215,36 @@ describe("texto do teste de conexão", () => {
       "interos.app.br",
     );
     const shown = r.interos.map((h) => h.endpoint);
-    expect(shown).toEqual([ADDR, `${ADDR}?`, "https://usuario:•••@Interos.App.br/api/webhooks/clicksign"]);
+    expect(shown).toEqual([ADDR, `${ADDR}?`, "https://•••@Interos.App.br/api/webhooks/clicksign"]);
+    expect(JSON.stringify(r)).not.toContain("usuario");
     expect(new Set(shown).size).toBe(shown.length);
     expect(JSON.stringify(r)).not.toContain("senha123");
     const same = classifyClicksignWebhooks([hook({ endpoint: "https://a:x@interos.app.br/api/webhooks/clicksign" }), hook({ endpoint: "https://a:y@interos.app.br/api/webhooks/clicksign", secretMatches: false })], "interos.app.br");
-    expect(same.interos.map((h) => h.endpoint)).toEqual(["https://a:•••@interos.app.br/api/webhooks/clicksign [1º da lista de webhooks]", "https://a:•••@interos.app.br/api/webhooks/clicksign [2º da lista de webhooks]"]);
+    expect(same.interos.map((h) => h.endpoint)).toEqual(["https://•••@interos.app.br/api/webhooks/clicksign [1º da lista de webhooks]", "https://•••@interos.app.br/api/webhooks/clicksign [2º da lista de webhooks]"]);
+  });
+
+  it("só webhook de outro domínio, que não funciona (talvez outro sistema): nenhuma instrução para ele; cadastre o do INTEROS", () => {
+    for (const secretConfigured of [true, false]) {
+      const lines = connectionCheckLines({
+        ...base,
+        token: { ok: true },
+        webhooks: classifyClicksignWebhooks([hook({ endpoint: "https://APIKEY_abc123:X@erp.empresa.com.br/api/webhooks/clicksign/", secretMatches: secretConfigured ? false : null })], "interos.app.br", { secretConfigured }),
+      });
+      const text = lead(lines);
+      expect(text).toMatch(/Nenhum webhook da Clicksign aponta para este INTEROS/);
+      expect(text).toContain("(https://erp.empresa.com.br/api/webhooks/clicksign/): se for um endereço antigo deste INTEROS, pode apagá-lo na Clicksign; se for outro sistema, não mexa");
+      expect(text).not.toMatch(/edite o endereço|copie o segredo do webhook https:\/\/erp|APIKEY_abc123/);
+    }
+  });
+
+  it("endereço errado nunca ganha do exato no mesmo domínio (sem depender da ordem da lista)", () => {
+    for (const order of [0, 1]) {
+      const list = [hook({ endpoint: `${ADDR}/` }), hook({ status: "inactive", secretMatches: false, events: ["upload"] })];
+      const lines = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks(order ? list.reverse() : list, "interos.app.br") });
+      expect(lines[1].text).toContain(`Webhook do INTEROS (${ADDR}): `);
+      expect(lead(lines)).toContain(`Outro webhook do INTEROS (${ADDR}/: `);
+      expect(lead(lines)).not.toMatch(/edite o endereço/);
+    }
   });
 
   it("lista de webhooks que não veio vira alerta, sem esconder que a chave foi aceita", () => {

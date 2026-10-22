@@ -114,6 +114,29 @@ export function resolveClientRepresentative<S extends { party?: string; role?: s
   return { signer, ...pickSamePerson(byName) };
 }
 
+/**
+ * Representante do cliente e de onde vem o CPF dele — a regra única da leitura (documento, prontidão) e da escrita
+ * (CPF informado no contrato). Antes dos contatos, o nome: signatário com o nome do próprio cliente (razão social ou
+ * nome fantasia) é o cliente pessoa física — o CPF é o documento do cliente (`fromClient`) — ou, se o documento do
+ * cliente não é CPF, a empresa, que não é pessoa (`empresa`: escolher quem assina; se for pessoa física, informar o
+ * CPF nos dados do cliente). Nem um contato com o nome da empresa recebe o CPF de alguém. Depois, os contatos
+ * (`resolveClientRepresentative`).
+ */
+export function resolveRepresentativeDocument<S extends { party?: string; role?: string; name: string; email: string }, C extends { name: string; email?: string; document?: string }>(
+  signers: S[],
+  contacts: C[],
+  client: { legalName?: string; tradeName?: string; document?: string },
+): { signer?: S; contact?: C; document?: string; fromClient?: boolean; ambiguous?: "nome" | "outro_nome" | "cpf" | "empresa"; otherName?: string } {
+  const signer = clientRepresentative(signers);
+  if (!signer) return { signer };
+  if ([client.legalName, client.tradeName].some((n) => n?.trim() && samePersonName(n, signer.name))) {
+    const doc = client.document?.replace(/\D/g, "") ?? "";
+    return doc.length === 11 ? { signer, document: doc, fromClient: true } : { signer, ambiguous: "empresa" };
+  }
+  const r = resolveClientRepresentative(signers, contacts);
+  return { ...r, document: r.contact?.document };
+}
+
 /** O signatário da Intercert está completo (nome e e-mail válidos)? */
 export function companySignerReady(signer: CompanySignerSetting): boolean {
   return signer.enabled && signer.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signer.email.trim());

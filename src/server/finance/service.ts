@@ -24,7 +24,7 @@ import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
-import { clicksignSignerNameProblem, isSignerEmail, resolveClientRepresentative, samePersonName, type TemplateDataGap } from "@/domain/contract-templates";
+import { clicksignSignerNameProblem, isSignerEmail, resolveRepresentativeDocument, samePersonName, type TemplateDataGap } from "@/domain/contract-templates";
 import { isValidCpf } from "@/domain/documents";
 import { createContact } from "@/server/clients/contacts";
 import type { DepartmentKey } from "@/domain/constants";
@@ -749,8 +749,18 @@ export async function setRepresentativeDocument(
   assertEditable(contract);
   const cpf = input.document.replace(/\D/g, "");
   if (!isValidCpf(cpf)) throw new Error("CPF inválido");
-  const contacts = await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", contract.clientId]] });
-  const { signer, contact, ambiguous, otherName } = resolveClientRepresentative(contract.signers, contacts);
+  const [contacts, client, opportunity] = await Promise.all([
+    list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", contract.clientId]] }),
+    getById<Client>(COLLECTIONS.clients, contract.clientId),
+    contract.opportunityId ? getById<Opportunity>(COLLECTIONS.opportunities, contract.opportunityId) : Promise.resolve(null),
+  ]);
+  // A mesma regra (e os mesmos dados do cliente) da prontidão e do documento.
+  const billing: { legalName?: string; document?: string } = client ? mergedBillingData(client, opportunity) : {};
+  const { signer, contact, fromClient, ambiguous, otherName } = resolveRepresentativeDocument(contract.signers, contacts, {
+    legalName: billing.legalName ?? client?.legalName,
+    tradeName: client?.tradeName,
+    document: billing.document,
+  });
   if (!signer) throw new Error("O contrato ainda não tem quem assina pelo cliente: adicione o signatário primeiro");
   if (signer.email.trim().toLowerCase() !== input.expected.email.trim().toLowerCase() || !samePersonName(signer.name, input.expected.name)) {
     throw new Error(`Quem assina pelo cliente mudou (agora é ${signer.name}): recarregue a página e confira antes de informar o CPF`);
@@ -758,6 +768,8 @@ export async function setRepresentativeDocument(
   if (ambiguous === "nome") throw new Error(`${signer.email} é usado por mais de um contato do cliente e nenhum se chama ${signer.name}: corrija nos contatos do cliente`);
   if (ambiguous === "outro_nome") throw new Error(`${signer.email} é o e-mail do contato ${otherName}, não de ${signer.name}: confira o signatário ou os contatos do cliente`);
   if (ambiguous === "cpf") throw new Error(`Há contatos ${signer.name} duplicados com CPFs diferentes: corrija nos contatos do cliente`);
+  if (ambiguous === "empresa") throw new Error(`Quem assina pelo cliente está com o nome do cliente (${signer.name}): se for empresa, escolha como signatário a pessoa que assina; se for pessoa física, informe o CPF nos dados do cliente`);
+  if (fromClient) throw new Error(`${signer.name} é o próprio cliente: o CPF já vem dos dados do cliente`);
   if (contact) {
     if (contact.document === cpf) return { contactId: contact.id, created: false, name: contact.name };
     if (contact.document) throw new Error(`${contact.name} já tem CPF no cadastro: para trocar, edite o contato do cliente`);
@@ -773,11 +785,6 @@ export async function setRepresentativeDocument(
       payload: { contactId: contact.id, contractId: contract.id },
     });
     return { contactId: contact.id, created: false, name: contact.name };
-  }
-  // Signatário com o nome da empresa (ex.: criado com a razão social) não é uma pessoa: não vira contato.
-  const client = await getById<Client>(COLLECTIONS.clients, contract.clientId);
-  if (client && [client.legalName, client.tradeName].some((n) => n && samePersonName(n, signer.name))) {
-    throw new Error(`Quem assina pelo cliente está com o nome da empresa (${signer.name}): escolha como signatário a pessoa que assina`);
   }
   const created = await createContact({ clientId: contract.clientId, name: signer.name, email: signer.email, document: cpf }, actor, department);
   return { contactId: created.id, created: true, name: created.name };

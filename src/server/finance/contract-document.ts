@@ -16,7 +16,7 @@ import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, get
 import { mergedBillingData } from "./service";
 import { fillDocx } from "./docx";
 import { pdfSafe } from "@/server/reports/export-pdf";
-import { BLANK, isCompanySigner, resolveClientRepresentative, contractFieldValues, contractFirstYear, extractVariables, fillTemplateText, templateDataGaps, variableValues, type TemplateDataGap } from "@/domain/contract-templates";
+import { BLANK, isCompanySigner, resolveRepresentativeDocument, contractFieldValues, contractFirstYear, extractVariables, fillTemplateText, templateDataGaps, variableValues, type TemplateDataGap } from "@/domain/contract-templates";
 import { COLLECTIONS, type Client, type Contact, type Contract, type ContractDocumentTemplate, type Opportunity, type Organization } from "@/domain/types";
 import type { DocumentReadiness } from "@/components/finance/signature-document-options";
 import { formatDocument } from "@/lib/format";
@@ -56,8 +56,10 @@ export interface ClientRepresentativeInfo {
    * `outro_nome` — o e-mail é de um contato com outro nome (`otherName`); `cpf` — contatos duplicados (mesmo nome e
    * e-mail) com CPFs diferentes.
    */
-  ambiguous?: "nome" | "outro_nome" | "cpf";
+  ambiguous?: "nome" | "outro_nome" | "cpf" | "empresa";
   otherName?: string;
+  /** O signatário é o próprio cliente pessoa física: o CPF é o documento do cliente. */
+  fromClient?: boolean;
 }
 
 interface FieldsContext {
@@ -71,7 +73,11 @@ const COMPANY_ADDRESS = HEADQUARTERS.label.replace("Sede Intercert — ", "");
 
 /** Valores dos campos do contrato (mesma regra para a prévia, o envio e a prontidão). */
 function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string): { fields: Record<string, string>; representative?: ClientRepresentativeInfo } {
-  const { signer, contact, ambiguous, otherName } = resolveClientRepresentative(contract.signers, ctx.contacts);
+  const { signer, contact, document, fromClient, ambiguous, otherName } = resolveRepresentativeDocument(contract.signers, ctx.contacts, {
+    legalName: ctx.billingData.legalName ?? ctx.client.legalName,
+    tradeName: ctx.client.tradeName,
+    document: ctx.billingData.document,
+  });
   const fields = contractFieldValues({
     contract,
     client: ctx.client,
@@ -80,9 +86,14 @@ function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string
     companyAddress: COMPANY_ADDRESS,
     issuedAt,
     labels: { recurrence: RECURRENCE_LABELS[contract.recurrence], paymentMethod: contract.paymentMethod ? paymentMethodLabel(contract.paymentMethod) : undefined },
-    representative: signer ? { name: signer.name, email: signer.email, document: contact?.document } : undefined,
+    representative: signer ? { name: signer.name, email: signer.email, document } : undefined,
   });
-  return { fields, representative: signer ? { name: signer.name, email: signer.email, contactFound: Boolean(contact), ...(ambiguous ? { ambiguous } : {}), ...(otherName ? { otherName } : {}) } : undefined };
+  return {
+    fields,
+    representative: signer
+      ? { name: signer.name, email: signer.email, contactFound: Boolean(contact) || Boolean(fromClient), ...(fromClient ? { fromClient } : {}), ...(ambiguous ? { ambiguous } : {}), ...(otherName ? { otherName } : {}) }
+      : undefined,
+  };
 }
 
 async function clientContacts(clientId: string): Promise<Contact[]> {

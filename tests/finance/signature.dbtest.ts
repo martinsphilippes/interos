@@ -204,10 +204,11 @@ describe("assinatura eletrônica", () => {
     expect(r?.representative).toMatchObject({ email: CLIENT_EMAIL, contactFound: false });
     await expect(sendForSignature(c.id, ACTOR)).rejects.toThrow(/preencha no cadastro: CPF do representante do cliente/);
 
-    // O e-mail vira de um contato com OUTRO nome (o signatário padrão tem a razão social): não é a mesma pessoa.
+    // O signatário padrão tem a razão social (cliente PJ): não é uma pessoa, nem com um contato no e-mail dele.
+    expect(r?.representative).toMatchObject({ ambiguous: "empresa" });
     const contact = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Maria Cliente", email: CLIENT_EMAIL, isPrimary: true });
     r = await documentReadiness(current);
-    expect(r?.representative).toMatchObject({ contactFound: false, ambiguous: "outro_nome", otherName: "Maria Cliente" });
+    expect(r?.representative).toMatchObject({ contactFound: false, ambiguous: "empresa" });
     // Quem assina passa a ser a Maria (contato), ainda sem CPF: a pendência continua, agora apontando o contato.
     await update<Contract>(COLLECTIONS.contracts, c.id, { signers: current.signers.map((x) => (x.party === "contratada" ? x : { ...x, name: "Maria Cliente" })) });
     current = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
@@ -364,11 +365,14 @@ describe("assinatura eletrônica", () => {
     await expect(save("52998224725", geral)).rejects.toThrow(/mais de um contato/);
     expect((await contactsOf(shared)).every((x) => !x.document)).toBe(true);
 
-    // "Signatário" com o nome da empresa não vira contato.
+    // "Signatário" com o nome da empresa (cliente PJ) não vira contato — nem um contato com esse nome recebe o CPF.
     const firma = { name: `ACME ${RUN} LTDA`, email: `firma.${RUN}@acme-teste.com.br` };
-    await setSigners([{ ...firma, role: "Contratante", status: "pendente" }]);
-    await expect(save("52998224725", firma)).rejects.toThrow(/nome da empresa/);
+    const firmaContact = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: firma.name, isPrimary: false });
+    current = await setSigners([{ ...firma, role: "Contratante", status: "pendente" }]);
+    expect((await documentReadiness(current))?.representative).toMatchObject({ ambiguous: "empresa", contactFound: false });
+    await expect(save("52998224725", firma)).rejects.toThrow(/nome do cliente/);
     expect(await contactsOf(firma.email)).toHaveLength(0);
+    expect((await getById<Contact>(COLLECTIONS.contacts, firmaContact.id))?.document).toBeUndefined();
 
     // Sem quem assina pelo cliente (só testemunha): pede o signatário primeiro.
     await setSigners([{ name: "Pedro Equipe", email: `pedro2.${RUN}@intercert.com.br`, role: "Testemunha", status: "pendente" }]);
