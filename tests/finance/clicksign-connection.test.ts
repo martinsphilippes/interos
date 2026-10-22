@@ -95,10 +95,18 @@ describe("texto do teste de conexão", () => {
     expect(otherHost[1].text).toMatch(/faltam os eventos Upload/);
   });
 
-  it("sem CLICKSIGN_WEBHOOK_SECRET na Vercel é problema (a rota recusa todo aviso), não «não deu para conferir»", () => {
-    const lines = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ secretMatches: null })], "interos.app.br", { secretConfigured: false }) });
-    expect(lines[1].tone).toBe("error");
-    expect(lines[1].text).toMatch(/falta o CLICKSIGN_WEBHOOK_SECRET na Vercel/);
+  it("sem CLICKSIGN_WEBHOOK_SECRET na Vercel: um problema só no topo, dizendo de qual webhook copiar o segredo", () => {
+    const lines = connectionCheckLines({
+      ...base,
+      token: { ok: true },
+      webhooks: classifyClicksignWebhooks([hook({ endpoint: "https://antigo.vercel.app/api/webhooks/clicksign", secretMatches: null }), hook({ secretMatches: null })], "interos.app.br", { secretConfigured: false }),
+    });
+    expect(lines[1]).toMatchObject({ tone: "error" });
+    expect(lines[1].text).toMatch(/Falta o CLICKSIGN_WEBHOOK_SECRET na Vercel/);
+    expect(lines[1].text).toMatch(/do webhook interos\.app\.br/);
+    expect(lines.filter((l) => /[Cc]opie o segredo/.test(l.text))).toHaveLength(1);
+    expect(lines[2]).toMatchObject({ tone: "ok" });
+    expect(lines[3].text).toMatch(/antigo\.vercel\.app: outro domínio\) não é o que recebe os avisos/);
     const unknown = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ secretMatches: null })], "interos.app.br", { secretConfigured: true }) });
     expect(unknown[1].tone).toBe("warn");
   });
@@ -111,8 +119,25 @@ describe("texto do teste de conexão", () => {
     });
     expect(lines.map((l) => l.tone)).toEqual(["ok", "ok", "warn", "ok"]);
     expect(lines[1].text).toMatch(/Webhook do INTEROS ativo \(interos\.app\.br\)/);
-    expect(lines[2].text).toMatch(/antigo\.vercel\.app, inativo\) não é o que recebe os avisos: pode apagá-lo/);
+    expect(lines[2].text).toMatch(/antigo\.vercel\.app: inativo, segredo diferente do da Vercel, outro domínio\) não é o que recebe os avisos: pode apagá-lo/);
     expect(lines[2].text).not.toMatch(/ative-o|copie o segredo/);
+  });
+
+  it("o que recebe os avisos sem ser «pronto» (falta só o upload) ainda protege: a sobra não vira instrução de corrigir", () => {
+    const lines = connectionCheckLines({
+      ...base,
+      token: { ok: true },
+      webhooks: classifyClicksignWebhooks([hook({ endpoint: "https://antigo.vercel.app/api/webhooks/clicksign", status: "inactive", secretMatches: false }), hook({ events: ALL.filter((e) => e !== "upload") })], "interos.app.br"),
+    });
+    expect(lines.map((l) => l.tone)).toEqual(["ok", "warn", "warn", "ok"]);
+    expect(lines[1].text).toMatch(/interos\.app\.br\): faltam os eventos Upload/);
+    expect(lines.map((l) => l.text).join(" ")).not.toMatch(/ative-o|copie o segredo/);
+  });
+
+  it("sobra no mesmo domínio diz o que a diferencia (barra no fim), para não apagar o que funciona", () => {
+    const lines = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ endpoint: "https://interos.app.br/api/webhooks/clicksign/" }), hook()], "interos.app.br") });
+    expect(lines[1].tone).toBe("ok");
+    expect(lines[2].text).toMatch(/interos\.app\.br: endereço termina com barra\)/);
   });
 
   it("dois webhooks prontos: alerta de aviso em dobro", () => {
