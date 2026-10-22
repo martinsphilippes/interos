@@ -7,14 +7,16 @@
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { can, failAction, requirePermission } from "@/server/auth/session";
+import { can, failAction, PermissionError, requirePermission } from "@/server/auth/session";
+import { canSeeClient } from "@/server/clients/access";
 import { getById } from "@/server/db";
-import { COLLECTIONS, type ActionResult, type CurrentUser, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type ActionResult, type Client, type CurrentUser, type UserRef } from "@/domain/types";
 import type { BillingContactInfo } from "./service";
 import { applyAmendment, cancelAmendment, createAmendment, registerAmendmentSignature, sendAmendmentForSignature } from "./amendments";
 import {
   addContractDocument,
-  addSigner,
+  addContactAsSigner,
+  addSignerFrom,
   cancelBilling,
   cancelContract,
   completeBillingData,
@@ -62,8 +64,9 @@ import {
   resolvePendencySchema,
   reversePaymentSchema,
   sendBillingMessageSchema,
+  newContactSignerSchema,
+  signerPickSchema,
   signerRefSchema,
-  signerSchema,
   updateConditionsSchema,
   updateItemsSchema,
   zodMessage,
@@ -163,16 +166,38 @@ export async function completeBillingDataAction(input: unknown): Promise<ActionR
   }
 }
 
+/** Signatário escolhido no cadastro (contato do cliente ou usuário ativo): o servidor resolve nome e e-mail. */
 export async function addSignerAction(input: unknown): Promise<ActionResult> {
   try {
     const user = await requirePermission("financeiro.contratos.assinatura.editar");
-    const data = signerSchema.parse(input);
+    const data = signerPickSchema.parse(input);
     await assertContractAccess(user, data.contractId);
-    await addSigner(data, actorOf(user));
+    await addSignerFrom(data, actorOf(user));
     revalidateFinance(undefined, data.contractId);
     return { ok: true, data: undefined };
   } catch (error) {
     return fail(error, "Não foi possível adicionar o signatário");
+  }
+}
+
+/**
+ * Contato novo do cliente que já entra como signatário. Além da chave de assinatura, exige poder cadastrar contatos
+ * e ver o cliente no escopo de Clientes 360º (as mesmas regras da action de contatos). Validação completa antes de
+ * gravar: contato só é criado se o signatário também puder entrar.
+ */
+export async function addContactAsSignerAction(input: unknown): Promise<ActionResult<{ contactId: string }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.assinatura.editar");
+    const data = newContactSignerSchema.parse(input);
+    const contract = await assertContractAccess(user, data.contractId);
+    if (!can(user, "operacao.clientes.contatos.editar")) throw new PermissionError();
+    const client = await getById<Client>(COLLECTIONS.clients, contract.clientId);
+    if (!client || !(await canSeeClient(user, client))) throw new PermissionError();
+    const result = await addContactAsSigner(data, actorOf(user), user.departmentId);
+    revalidateFinance(client.id, data.contractId);
+    return { ok: true, data: result };
+  } catch (error) {
+    return fail(error, "Não foi possível cadastrar o contato como signatário");
   }
 }
 

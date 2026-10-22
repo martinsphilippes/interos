@@ -125,6 +125,11 @@ export const EXEMPTIONS = [
     reason: "Resposta CSAT do cliente. Guarda por token.",
   },
   {
+    target: "src/app/api/versao/route.ts#GET",
+    kind: "api",
+    reason: "Pública: devolve só o id do deploy no ar (NEXT_PUBLIC_BUILD_ID) para a tela avisar de versão nova. Sem dados nem sessão.",
+  },
+  {
     target: "src/app/api/health/route.ts#GET",
     kind: "api",
     // Hoje: nenhuma (route.ts:10-26)

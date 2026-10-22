@@ -24,6 +24,9 @@ import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
+import { clicksignSignerNameProblem, isSignerEmail } from "@/domain/contract-templates";
+import { createContact } from "@/server/clients/contacts";
+import type { DepartmentKey } from "@/domain/constants";
 import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
 import { clicksignConfigured } from "@/server/integrations/clicksign";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
@@ -39,6 +42,7 @@ import {
   type Client,
   type ClientProduct,
   type Contact,
+  type User,
   type Contract,
   type ContractReadjustment,
   type ContractVersionEntry,
@@ -236,7 +240,8 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
   // Proposta aceita traz itens com desconto; sem ela, os produtos da oportunidade.
   const items: ProposalItem[] = proposal?.status === "aceita" && proposal.items.length > 0 ? proposal.items : opp.products.map((p) => ({ ...p, discountPct: 0 }));
   const totals = proposalTotals(items);
-  const signerEmail = primary?.email ?? opp.billingData?.email ?? client.email;
+  // Só vira signatário um e-mail que a assinatura aceita; sem nenhum, o contrato nasce sem signatário do cliente.
+  const signerEmail = [primary?.email, opp.billingData?.email, client.email].find((e): e is string => Boolean(e && isSignerEmail(e)));
   const companySigner = companySignerEntry(await getSignatureSettings());
   const contract = await create<Contract>(COLLECTIONS.contracts, {
     clientId: client.id,
@@ -396,7 +401,7 @@ export async function createManualContract(input: { clientId: string; recurrence
   const client = await loadClient(input.clientId);
   const [contacts, financeManager] = await Promise.all([list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", client.id]] }), getDepartmentManager("financeiro")]);
   const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
-  const signerEmail = primary?.email ?? client.email;
+  const signerEmail = [primary?.email, client.email].find((e): e is string => Boolean(e && isSignerEmail(e)));
   const companySigner = companySignerEntry(await getSignatureSettings());
   const contract = await create<Contract>(COLLECTIONS.contracts, {
     clientId: client.id,
@@ -659,6 +664,11 @@ export async function addSigner(input: { contractId: string; name: string; email
   assertEditable(contract);
   const email = input.email.trim().toLowerCase();
   if (contract.signers.some((s) => s.email.toLowerCase() === email)) throw new Error("Este e-mail já é signatário do contrato");
+  // Com a Clicksign ligada, o que ela recusaria no envio é barrado já aqui (nome e sobrenome, sem números).
+  if (clicksignConfigured()) {
+    const problem = clicksignSignerNameProblem(input.name);
+    if (problem) throw new Error(`Signatário «${input.name.trim()}»: ${problem}`);
+  }
   const signers = [...contract.signers, { name: input.name.trim(), email, role: input.role.trim(), status: "pendente" as const }];
   await update<Contract>(COLLECTIONS.contracts, contract.id, { signers });
   await emitEvent({
@@ -672,6 +682,54 @@ export async function addSigner(input: { contractId: string; name: string; email
     payload: { contractId: contract.id, kind: "signatarios", email, changes: { signers: { from: signerView(contract.signers), to: signerView(signers) } } },
     timeline: false,
   });
+}
+
+/**
+ * Signatário escolhido no cadastro: contato do cliente do contrato (com e-mail) ou usuário ativo. É o servidor que
+ * resolve nome e e-mail — a tela nunca manda dados soltos.
+ */
+export async function addSignerFrom(input: { contractId: string; source: "contact" | "user"; id: string; role: string }, actor: UserRef): Promise<void> {
+  const contract = await loadContract(input.contractId);
+  assertEditable(contract);
+  let person: { name: string; email: string };
+  if (input.source === "contact") {
+    const contact = await getById<Contact>(COLLECTIONS.contacts, input.id);
+    if (!contact || contact.clientId !== contract.clientId) throw new Error("Contato não encontrado neste cliente");
+    if (!contact.email) throw new Error(`${contact.name} não tem e-mail cadastrado: informe o e-mail na ficha do cliente`);
+    person = { name: contact.name, email: contact.email };
+  } else {
+    const user = await getById<User>(COLLECTIONS.users, input.id);
+    if (!user || user.active === false || !user.email) throw new Error("Usuário não encontrado ou inativo");
+    person = { name: user.name, email: user.email };
+  }
+  // O cadastro aceita e-mails que a assinatura recusa: barrar aqui, senão o signatário entra e depois não pode ser
+  // removido, lembrado nem assinado à mão (as actions conferem o e-mail de novo).
+  if (!isSignerEmail(person.email)) {
+    throw new Error(`${person.name} tem e-mail inválido para assinatura (${person.email.trim()}): corrija na ficha do ${input.source === "contact" ? "cliente" : "usuário"}`);
+  }
+  await addSigner({ contractId: contract.id, name: person.name, email: person.email, role: input.role }, actor);
+}
+
+/**
+ * Contato novo do cliente que já entra como signatário. Tudo é conferido ANTES de gravar (e-mail ainda não
+ * signatário, nome aceito pela Clicksign, contrato editável): nada de contato criado com signatário recusado.
+ */
+export async function addContactAsSigner(
+  input: { contractId: string; name: string; email: string; position?: string; phone?: string; role: string },
+  actor: UserRef,
+  department?: DepartmentKey,
+): Promise<{ contactId: string }> {
+  const contract = await loadContract(input.contractId);
+  assertEditable(contract);
+  const email = input.email.trim().toLowerCase();
+  if (contract.signers.some((s) => s.email.toLowerCase() === email)) throw new Error("Este e-mail já é signatário do contrato");
+  if (clicksignConfigured()) {
+    const problem = clicksignSignerNameProblem(input.name);
+    if (problem) throw new Error(`Signatário «${input.name.trim()}»: ${problem}`);
+  }
+  const contact = await createContact({ clientId: contract.clientId, name: input.name, email, role: input.position, phone: input.phone }, actor, department);
+  await addSigner({ contractId: contract.id, name: contact.name, email, role: input.role }, actor);
+  return { contactId: contact.id };
 }
 
 export async function removeSigner(input: { contractId: string; email: string }, actor: UserRef): Promise<void> {

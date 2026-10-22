@@ -38,6 +38,7 @@ import {
 } from "./schemas";
 import { createWorkflowInstanceForClient } from "@/server/workflow/service";
 import { canSeeClient, clientScope, scopeClients } from "./access";
+import { createContact } from "./contacts";
 
 /**
  * Server Actions do módulo Clientes 360º.
@@ -294,27 +295,7 @@ export async function addContact(input: unknown): Promise<ActionResult<{ id: str
     const data = contactSchema.parse(input);
     const client = await loadClient(user, data.clientId);
     if (data.isPrimary) await clearPrimaryContact(client.id);
-    const contact = await create<Contact>(COLLECTIONS.contacts, {
-      clientId: client.id,
-      name: data.name,
-      role: data.role,
-      phone: data.phone,
-      whatsapp: data.whatsapp,
-      email: data.email,
-      isPrimary: data.isPrimary,
-      isDecisionMaker: data.isDecisionMaker,
-      createdBy: user.id,
-    });
-    await emitEvent({
-      type: "contact.created",
-      actor: actor(user),
-      clientId: client.id,
-      entity: { type: "contact", id: contact.id },
-      title: `Contato adicionado: ${contact.name}${contact.role ? ` (${contact.role})` : ""}`,
-      description: [contact.phone ? formatPhone(contact.phone) : null, contact.email].filter(Boolean).join(" · ") || undefined,
-      department: user.departmentId,
-      payload: { isPrimary: contact.isPrimary, isDecisionMaker: contact.isDecisionMaker },
-    });
+    const contact = await createContact({ ...data, clientId: client.id }, actor(user), user.departmentId);
     revalidateClient(client.id);
     return { ok: true, data: { id: contact.id } };
   } catch (error) {

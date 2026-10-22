@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Building2, FileText, GitBranch, History } from "lucide-react";
-import { ACCESS_DENIED_REDIRECT, getCurrentUser, requireScreen } from "@/server/auth/session";
+import { ACCESS_DENIED_REDIRECT, can, getCurrentUser, requireScreen } from "@/server/auth/session";
+import { list } from "@/server/db";
+import { canSeeClient } from "@/server/clients/access";
+import { COLLECTIONS, type Contact, type User } from "@/domain/types";
 import { getContract, redactContractDetail } from "@/server/finance/queries";
 import { FINANCIAL_STATUS_LABELS, FINANCIAL_STATUS_VARIANT } from "@/server/finance/schemas";
 import { contractAccessById, financeCapabilities } from "@/server/finance/access";
@@ -83,6 +86,10 @@ export default async function ContractPage({ params }: { params: Params }) {
   const portal = sections.portalView ? await listPortalLinks(client.id) : null;
   // Modelo do documento, autenticação e download do PDF/Word (o arquivo vai ao cliente: exige ver os valores).
   const documentInfo = sections.signatureView ? await signatureDocumentInfo(raw.contract, sections.documentsView && !hidden) : undefined;
+  // Quem pode ser escolhido como signatário: contatos do cliente e equipe ativa (só para quem edita signatários).
+  const signerOptions = sections.signatureView && sections.signersEdit && !closed ? await loadSignerOptions(client.id) : undefined;
+  // A opção "cadastrar novo contato" só aparece quando a action vai aceitar: chave de contatos E cliente no escopo.
+  const canCreateContact = signerOptions ? can(user, "operacao.clientes.contatos.editar") && (await canSeeClient(user, client)) : false;
 
   return (
     <FinanceAccessProvider value={caps}>
@@ -230,7 +237,7 @@ export default async function ContractPage({ params }: { params: Params }) {
               closed={closed}
             />
             {sections.signatureView ? (
-              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} integrations={getIntegrationFlags()} documentInfo={documentInfo} />
+              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} clientId={client.id} signerOptions={signerOptions} canCreateContact={canCreateContact} integrations={getIntegrationFlags()} documentInfo={documentInfo} />
             ) : null}
             {sections.pendenciesView ? <PendencyCard contractId={contract.id} pendingReason={contract.pendingReason} isPending={contract.status === "pendencia"} closed={closed} /> : null}
             <BillingDataCard
@@ -253,4 +260,12 @@ export default async function ContractPage({ params }: { params: Params }) {
       </PageContainer>
     </FinanceAccessProvider>
   );
+}
+
+async function loadSignerOptions(clientId: string) {
+  const [contacts, users] = await Promise.all([list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", clientId]] }), list<User>(COLLECTIONS.users, { where: [["active", "==", true]] })]);
+  return {
+    contacts: contacts.map((c) => ({ id: c.id, name: c.name, email: c.email, role: c.role, isPrimary: c.isPrimary })),
+    users: users.filter((u) => u.email).map((u) => ({ id: u.id, name: u.name, email: u.email })),
+  };
 }

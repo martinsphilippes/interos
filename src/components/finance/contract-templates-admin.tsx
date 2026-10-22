@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Download, FilePlus2, FileText, FileUp, Link2, Pencil, Star } from "lucide-react";
 import type { ContractTemplate, ContractTemplateVariable } from "@/domain/types";
-import { CONTRACT_FIELDS, extractVariables, fieldLabel, mergeVariables, unmappedVariables } from "@/domain/contract-templates";
+import { CONTRACT_FIELDS, extractVariables, fieldLabel, mergeVariables, suggestUnbound, unmappedVariables } from "@/domain/contract-templates";
 import { saveInterosTemplateAction, saveTemplateVariablesAction, setTemplateStateAction } from "@/server/finance/signature-actions";
 import { formatRelative } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -300,8 +300,16 @@ function WordUploadDialog({ template, onClose }: { template: TemplateRow | null;
 function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose: () => void }) {
   const { pending, run } = useFinanceAction();
   const [vars, setVars] = React.useState<ContractTemplateVariable[]>(template.variables);
+  // Sugestão pelo nome para o que está sem ligação (bairro → Bairro do cliente): mostrada, nunca aplicada sozinha —
+  // deixar sem campo pode ser escolha, e salvar por outro motivo não pode gravar ligações que ninguém pediu.
+  const suggestions = React.useMemo(
+    () => new Map(suggestUnbound(template.variables).flatMap((v, i) => (!template.variables[i].field && !template.variables[i].fixed?.trim() && v.field ? [[v.name, v.field] as const] : []))),
+    [template.variables],
+  );
+  const pendingSuggestions = vars.filter((v) => !v.field && !v.fixed?.trim() && suggestions.has(v.name));
   const options = React.useMemo(() => fieldOptions(), []);
   const set = (name: string, patch: Partial<ContractTemplateVariable>) => setVars((list) => list.map((v) => (v.name === name ? { ...v, ...patch } : v)));
+  const applySuggestion = (names: string[]) => setVars((list) => list.map((v) => (names.includes(v.name) && suggestions.has(v.name) ? { ...v, field: suggestions.get(v.name), fixed: undefined } : v)));
   const save = async () => {
     const ok = await run(() => saveTemplateVariablesAction({ templateId: template.id, variables: vars.map((v) => ({ name: v.name, field: v.field || undefined, fixed: v.field ? undefined : v.fixed || undefined })) }), "Variáveis salvas");
     if (ok) onClose();
@@ -311,7 +319,9 @@ function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose
       <DialogContent size="xl">
         <DialogHeader>
           <DialogTitle>Variáveis de «{template.name}»</DialogTitle>
-          <DialogDescription>Cada variável do modelo puxa um dado do contrato ou um texto fixo. Sem nada, sai uma lacuna (________) para preencher à mão.</DialogDescription>
+          <DialogDescription>
+            Cada variável do modelo puxa um dado do contrato ou um texto fixo. Sem nada, sai uma lacuna (________) para preencher à mão. Variáveis sem ligação mostram uma sugestão pelo nome: use-a ou escolha outro campo.
+          </DialogDescription>
         </DialogHeader>
         <DialogBody className="max-h-[60vh] overflow-y-auto">
           <ul className="flex flex-col divide-y divide-border">
@@ -319,7 +329,20 @@ function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose
               <li key={v.name} className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:items-center">
                 <div className="min-w-0">
                   <p className="truncate font-mono text-xs">{`{{${v.name}}}`}</p>
-                  {v.field ? <p className="text-xs text-muted">{fieldLabel(v.field)}</p> : <p className="text-xs text-warning-fg">{v.fixed ? "Texto fixo" : "Sem campo"}</p>}
+                  {v.field ? (
+                    <p className="text-xs text-muted">{fieldLabel(v.field)}</p>
+                  ) : v.fixed ? (
+                    <p className="text-xs text-warning-fg">Texto fixo</p>
+                  ) : suggestions.has(v.name) ? (
+                    <p className="text-xs text-warning-fg">
+                      Sem campo · sugestão: {fieldLabel(suggestions.get(v.name)!)}{" "}
+                      <button type="button" className="font-medium underline" onClick={() => applySuggestion([v.name])}>
+                        usar
+                      </button>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-warning-fg">Sem campo</p>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Select aria-label={`Campo de ${v.name}`} value={v.field ?? ""} onChange={(e) => set(v.name, { field: e.target.value || undefined })} options={options} size="sm" />
@@ -333,6 +356,11 @@ function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose
           <Button variant="outline" onClick={onClose} disabled={pending}>
             Cancelar
           </Button>
+          {pendingSuggestions.length > 0 ? (
+            <Button variant="outline" onClick={() => applySuggestion(pendingSuggestions.map((v) => v.name))} disabled={pending}>
+              Usar {pendingSuggestions.length === 1 ? "a sugestão" : `as ${pendingSuggestions.length} sugestões`}
+            </Button>
+          ) : null}
           <Button onClick={save} loading={pending}>
             Salvar ligações
           </Button>

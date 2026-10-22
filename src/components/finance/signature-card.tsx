@@ -5,7 +5,9 @@ import Link from "next/link";
 import { BellRing, CheckCircle2, FileText, Mail, PenLine, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
 import type { Contract } from "@/domain/types";
 import type { IntegrationFlags } from "@/server/integrations/types";
-import { addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
+import { addContactAsSignerAction, addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
+import { clicksignSignerNameProblem, isSignerEmail } from "@/domain/contract-templates";
+import { DEFAULT_CLIENT_SIGNER_ROLE, NEW_CONTACT_VALUE, signerChoices, type SignerChoice, type SignerOptions } from "./signer-options";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { contractDocumentPath, contractEmailHref, reminderEmailHref } from "./contract-links";
 import { ManualSignatureButton } from "./manual-signature-dialog";
 import { useFinanceAction } from "./use-finance-action";
@@ -29,6 +32,11 @@ export interface SignatureCardProps {
   /** Itens/condições/signatários ainda podem mudar. */
   editable: boolean;
   clientName: string;
+  clientId: string;
+  /** Quem pode ser escolhido como signatário: contatos do cliente e equipe da Intercert. */
+  signerOptions?: SignerOptions;
+  /** Pode cadastrar contato no cliente (operacao.clientes.contatos.editar): mostra "cadastrar novo contato". */
+  canCreateContact?: boolean;
   /** Estado real das integrações (e-mail e assinatura decidem envio automático x manual). */
   integrations: IntegrationFlags;
   /** Modelo do documento, autenticação e download do PDF/Word. */
@@ -41,13 +49,16 @@ const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "da
  * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
  * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
  */
-export function SignatureCard({ contract, sentAt, reminders, editable, clientName, integrations, documentInfo }: SignatureCardProps) {
+export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo }: SignatureCardProps) {
   const id = React.useId();
   // Capacidades do servidor (assinatura: editar signatários, enviar/lembrar, registrar assinatura; documento: ver).
   const { contracts: can } = useFinanceAccess();
   const { pending, run } = useFinanceAction();
   const [adding, setAdding] = React.useState(false);
-  const [signer, setSigner] = React.useState({ name: "", email: "", role: "Contratante" });
+  // Quem assina: escolhido entre contatos do cliente / equipe, ou um contato novo cadastrado na hora.
+  const [choice, setChoice] = React.useState("");
+  const [role, setRole] = React.useState(DEFAULT_CLIENT_SIGNER_ROLE);
+  const [newContact, setNewContact] = React.useState({ name: "", email: "", position: "", phone: "" });
   const [removing, setRemoving] = React.useState<{ email: string; name: string } | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
   const sent = Boolean(contract.signatureEnvelopeId);
@@ -77,12 +88,42 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
     setBusy(null);
   };
 
+  const choices = React.useMemo(() => signerChoices(signerOptions ?? { contacts: [], users: [] }, contract.signers, providerConnected), [signerOptions, contract.signers, providerConnected]);
+  const selected: SignerChoice | undefined = [...choices.contacts, ...choices.users].find((c) => c.value === choice);
+  const creating = choice === NEW_CONTACT_VALUE;
+  // Mesmas regras do servidor, para o erro aparecer antes de clicar (o servidor confere tudo de novo antes de gravar).
+  const newContactProblem = providerConnected && newContact.name.trim() ? clicksignSignerNameProblem(newContact.name) : null;
+  const newEmail = newContact.email.trim().toLowerCase();
+  const newEmailProblem = !newEmail ? null : contract.signers.some((s) => s.email.trim().toLowerCase() === newEmail) ? "Este e-mail já é signatário do contrato" : !isSignerEmail(newEmail) ? "E-mail inválido" : null;
+  const roleProblem = !role.trim() ? null : role.trim().length < 2 ? "Informe o papel" : role.trim().length > 60 ? "Papel muito longo" : null;
+  const canSubmit = creating
+    ? Boolean(newContact.name.trim() && newEmail && role.trim() && !newContactProblem && !newEmailProblem && !roleProblem)
+    : Boolean(selected && !selected.disabledReason && !selected.nameProblem && role.trim() && !roleProblem);
+  const noContacts = (signerOptions?.contacts.length ?? 0) === 0;
+
+  const resetAdd = () => {
+    setChoice("");
+    setRole(DEFAULT_CLIENT_SIGNER_ROLE);
+    setNewContact({ name: "", email: "", position: "", phone: "" });
+    setAdding(false);
+  };
+
   const add = async () => {
-    const ok = await run(() => addSignerAction({ contractId: contract.id, ...signer }), "Signatário adicionado");
-    if (ok) {
-      setSigner({ name: "", email: "", role: "Contratante" });
-      setAdding(false);
+    if (creating) {
+      // Uma ação só no servidor: valida tudo e, se puder, cadastra o contato no cliente e o põe como signatário.
+      const ok = await run(() => addContactAsSignerAction({ contractId: contract.id, name: newContact.name.trim(), email: newEmail, position: newContact.position.trim(), phone: newContact.phone, role: role.trim() }), "Contato cadastrado e adicionado como signatário");
+      if (ok) resetAdd();
+      return;
     }
+    if (!selected) return;
+    const ok = await run(() => addSignerAction({ contractId: contract.id, source: selected.kind, id: selected.id, role: role.trim() }), "Signatário adicionado");
+    if (ok) resetAdd();
+  };
+
+  const pick = (value: string) => {
+    setChoice(value);
+    const next = [...choices.contacts, ...choices.users].find((c) => c.value === value);
+    setRole(next ? next.suggestedRole : DEFAULT_CLIENT_SIGNER_ROLE);
   };
 
   return (
@@ -208,21 +249,76 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
         {can.signersEdit && editable ? (
           adding ? (
             <div className="grid gap-3 rounded-lg border border-border p-3">
-              <FormField label="Nome" htmlFor={`${id}-n`} required>
-                <Input id={`${id}-n`} value={signer.name} onChange={(e) => setSigner({ ...signer, name: e.target.value })} className="h-11 md:h-9" />
+              <FormField label="Quem assina" htmlFor={`${id}-q`} required hint={noContacts ? `${clientName} ainda não tem contatos cadastrados.` : choices.contacts.length === 0 ? `Todos os contatos de ${clientName} já assinam este contrato.` : undefined}>
+                <Select id={`${id}-q`} value={choice} onChange={(e) => pick(e.target.value)} className="h-11 md:h-9">
+                  <option value="">Escolha…</option>
+                  {choices.contacts.length > 0 ? (
+                    <optgroup label={`Contatos de ${clientName}`}>
+                      {choices.contacts.map((c) => (
+                        <option key={c.value} value={c.value} disabled={Boolean(c.disabledReason)}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {choices.users.length > 0 ? (
+                    <optgroup label="Equipe Intercert (testemunha, representante)">
+                      {choices.users.map((u) => (
+                        <option key={u.value} value={u.value} disabled={Boolean(u.disabledReason)}>
+                          {u.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {canCreateContact ? <option value={NEW_CONTACT_VALUE}>＋ Cadastrar novo contato de {clientName}</option> : null}
+                </Select>
               </FormField>
-              <FormField label="E-mail" htmlFor={`${id}-e`} required>
-                <Input id={`${id}-e`} type="email" value={signer.email} onChange={(e) => setSigner({ ...signer, email: e.target.value })} className="h-11 md:h-9" />
-              </FormField>
-              <FormField label="Papel" htmlFor={`${id}-r`} required hint="Ex.: Contratante, Testemunha, Contratada">
-                <Input id={`${id}-r`} value={signer.role} onChange={(e) => setSigner({ ...signer, role: e.target.value })} className="h-11 md:h-9" />
-              </FormField>
+
+              {selected?.nameProblem ? (
+                <p className="text-xs text-danger-fg" role="alert">
+                  {selected.name}: {selected.nameProblem}.{" "}
+                  {selected.kind === "contact" ? (
+                    <Link href={`/clientes/${clientId}`} className="font-medium underline">
+                      Corrija o nome no cadastro do contato
+                    </Link>
+                  ) : (
+                    "Corrija o nome no cadastro do usuário"
+                  )}
+                  .
+                </p>
+              ) : null}
+
+              {creating ? (
+                <>
+                  <FormField label="Nome completo" htmlFor={`${id}-n`} required error={newContactProblem ?? undefined} hint={providerConnected ? "A Clicksign exige nome e sobrenome, sem números." : undefined}>
+                    <Input id={`${id}-n`} value={newContact.name} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} className="h-11 md:h-9" autoFocus />
+                  </FormField>
+                  <FormField label="E-mail" htmlFor={`${id}-e`} required error={newEmailProblem ?? undefined} hint="O pedido de assinatura vai para este e-mail.">
+                    <Input id={`${id}-e`} type="email" value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} className="h-11 md:h-9" />
+                  </FormField>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <FormField label="Cargo no cliente" htmlFor={`${id}-c`} hint="Ex.: Sócio-administrador">
+                      <Input id={`${id}-c`} value={newContact.position} onChange={(e) => setNewContact({ ...newContact, position: e.target.value })} className="h-11 md:h-9" />
+                    </FormField>
+                    <FormField label="Celular" htmlFor={`${id}-t`} hint="Para código por SMS/WhatsApp">
+                      <Input id={`${id}-t`} inputMode="tel" value={newContact.phone} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} className="h-11 md:h-9" />
+                    </FormField>
+                  </div>
+                </>
+              ) : null}
+
+              {selected || creating ? (
+                <FormField label="Papel no contrato" htmlFor={`${id}-r`} required error={roleProblem ?? undefined} hint="Ex.: Contratante, Testemunha, Representante legal">
+                  <Input id={`${id}-r`} value={role} onChange={(e) => setRole(e.target.value)} className="h-11 md:h-9" />
+                </FormField>
+              ) : null}
+
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setAdding(false)} disabled={pending} className="h-11 md:h-9">
+                <Button variant="outline" onClick={resetAdd} disabled={pending} className="h-11 md:h-9">
                   Cancelar
                 </Button>
-                <Button onClick={add} loading={pending} disabled={!signer.name.trim() || !signer.email.trim()} className="h-11 md:h-9">
-                  Adicionar
+                <Button onClick={add} loading={pending} disabled={!canSubmit} className="h-11 md:h-9">
+                  {creating ? "Cadastrar e adicionar" : "Adicionar"}
                 </Button>
               </div>
             </div>
