@@ -317,6 +317,7 @@ export async function updateContact(input: unknown): Promise<ActionResult<{ id: 
       phone: data.phone,
       whatsapp: data.whatsapp,
       email: data.email,
+      document: data.document,
       isPrimary: data.isPrimary,
       isDecisionMaker: data.isDecisionMaker,
     });

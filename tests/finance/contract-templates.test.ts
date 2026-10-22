@@ -18,6 +18,8 @@ import {
   isSignerEmail,
   suggestField,
   suggestUnbound,
+  templateDataGaps,
+  templateRequirements,
   unmappedVariables,
   variableValues,
 } from "@/domain/contract-templates";
@@ -278,6 +280,8 @@ describe("PDF do contrato", () => {
       preview: false,
       values: {},
       clauses: { title: "Contrato de licenciamento", text: "CLÁUSULA PRIMEIRA – DO OBJETO\n\nTexto da cláusula com acentuação: ção, ã, é.\n\n".repeat(20) },
+      gaps: [],
+      variableCount: 0,
       hash: "sha256:abc",
     };
     const { buffer, fileName } = await contractPdf(data);
@@ -292,5 +296,70 @@ describe("isSignerEmail", () => {
     expect(isSignerEmail("Maria@Acme.com.br")).toBe(true);
     expect(isSignerEmail(" ana.lima+fin@intercert.com.br ")).toBe(true);
     for (const bad of ["a..b@acme.com", "joão@acme.com.br", ".ab@acme.com", "x@y_z.com", "sem-arroba", ""]) expect(isSignerEmail(bad), bad).toBe(false);
+  });
+});
+
+describe("dados obrigatórios do modelo", () => {
+  const base = contractFieldValues({
+    contract: CONTRACT,
+    client: { legalName: "ACME Comércio LTDA", tradeName: "ACME" },
+    billingData: { document: "12345678000190", email: "fin@acme.com.br", address: { street: "Rua A", number: "10", city: "Crato", state: "CE", zip: "63100-000" } },
+    companyName: "Intercert",
+    companyAddress: "Juazeiro do Norte/CE",
+    issuedAt: "2026-10-21T15:00:00.000Z",
+    labels: { recurrence: "Mensal" },
+    representativeDocument: "52998224725",
+  });
+
+  it("CPF do representante vem do contato do 1º signatário, formatado", () => {
+    expect(base["contratante.representante_cpf"]).toBe("529.982.247-25");
+    expect(suggestField("CPF do Representante Legal")).toBe("contratante.representante_cpf");
+  });
+
+  it("lista o que falta: campo sem dado (com a origem) e variável sem ligação; texto fixo e opcionais não contam", () => {
+    const gaps = templateDataGaps(
+      [
+        { name: "Razão Social", field: "contratante.razao_social" },
+        { name: "Bairro", field: "contratante.bairro" },
+        { name: "Complemento", field: "contratante.complemento" },
+        { name: "Forma de pagamento", field: "contrato.forma_pagamento" },
+        { name: "Início", field: "contrato.inicio_vigencia" },
+        { name: "Sistema Operacional" },
+        { name: "Foro", fixed: "Crato/CE" },
+      ],
+      base,
+    );
+    expect(gaps).toEqual([
+      { variable: "Bairro", reason: "sem_dado", field: "contratante.bairro", label: "Bairro do cliente", source: "cliente" },
+      { variable: "Forma de pagamento", reason: "sem_dado", field: "contrato.forma_pagamento", label: "Forma de pagamento", source: "contrato" },
+      { variable: "Sistema Operacional", reason: "sem_ligacao", label: "Sem campo ligado nem texto fixo no modelo" },
+    ]);
+  });
+
+  it("variáveis do texto do modelo INTEROS: nome exato de campo vale; apelido fora da lista gravada é pendência", () => {
+    const gaps = templateDataGaps([], base, ["contratante.razao_social", "contratante.representante_cpf", "bairro"]);
+    expect(gaps.map((g) => [g.variable, g.reason])).toEqual([["bairro", "sem_ligacao"]]);
+  });
+
+  it("sem pendências quando tudo tem dado ou texto fixo", () => {
+    expect(templateDataGaps([{ name: "cnpj", field: "contratante.cnpj_cpf" }, { name: "x", fixed: "ok" }], base)).toEqual([]);
+  });
+
+  it("exigências do modelo agrupadas pela origem, sem repetir campo nem contar opcionais e texto fixo", () => {
+    const req = templateRequirements([
+      { name: "Razão Social", field: "contratante.razao_social" },
+      { name: "Cliente", field: "contratante.razao_social" },
+      { name: "CPF", field: "contratante.representante_cpf" },
+      { name: "Complemento", field: "contratante.complemento" },
+      { name: "Mensalidade", field: "valores.mensalidade" },
+      { name: "Foro", fixed: "Crato/CE" },
+      { name: "Sistema Operacional" },
+    ]);
+    expect(req.bySource).toEqual([
+      { source: "cliente", labels: ["Razão social do cliente"] },
+      { source: "contato", labels: ["CPF do representante do cliente"] },
+      { source: "contrato", labels: ["Mensalidade"] },
+    ]);
+    expect(req.unbound).toEqual(["Sistema Operacional"]);
   });
 });

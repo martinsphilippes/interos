@@ -7,7 +7,7 @@ import "server-only";
  * documento usa o modelo fixado no contrato (documentTemplate); antes disso, o modelo atual (prévia).
  */
 import PDFDocument from "pdfkit";
-import { getById, ORG_ID } from "@/server/db";
+import { getById, list, ORG_ID } from "@/server/db";
 import { HEADQUARTERS, formatAddressLine } from "@/server/sales/maps";
 import { RECURRENCE_LABELS, paymentMethodLabel } from "./schemas";
 import { getContract } from "./queries";
@@ -15,8 +15,8 @@ import { contractDocumentHash } from "./signature";
 import { documentTemplateSnapshot, getTemplateFile, templateForContract } from "./contract-templates";
 import { fillDocx } from "./docx";
 import { pdfSafe } from "@/server/reports/export-pdf";
-import { BLANK, isCompanySigner, contractFieldValues, contractFirstYear, extractVariables, fillTemplateText, variableValues } from "@/domain/contract-templates";
-import { COLLECTIONS, type Client, type Contract, type ContractDocumentTemplate, type Organization } from "@/domain/types";
+import { BLANK, isCompanySigner, contractFieldValues, contractFirstYear, extractVariables, fillTemplateText, templateDataGaps, variableValues, type TemplateDataGap } from "@/domain/contract-templates";
+import { COLLECTIONS, type Client, type Contact, type Contract, type ContractDocumentTemplate, type Organization } from "@/domain/types";
 import { formatDocument } from "@/lib/format";
 import { netItem } from "@/components/sales/model";
 
@@ -36,6 +36,10 @@ export interface ContractDocumentData {
   values: Record<string, string>;
   /** Cláusulas do modelo INTEROS já preenchidas. */
   clauses?: { title?: string; text: string };
+  /** Variáveis do modelo que não sairiam preenchidas: o envio só acontece com esta lista vazia. */
+  gaps: TemplateDataGap[];
+  /** Quantas variáveis o modelo tem (para "N de M preenchidas"). */
+  variableCount: number;
   hash: string;
 }
 
@@ -59,6 +63,10 @@ export async function contractDocumentData(contractId: string, sending?: Contrac
   const companyName = organization?.name ?? "Intercert";
   const companyAddress = HEADQUARTERS.label.replace("Sede Intercert — ", "");
   const issuedAt = sending ? new Date().toISOString() : (detail.sentAt ?? new Date().toISOString());
+  // CPF do representante: o contato do cliente cujo e-mail é o do 1º signatário pelo cliente.
+  const representative = contract.signers.find((s) => !isCompanySigner(s));
+  const contacts = representative ? await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", client.id]] }) : [];
+  const representativeDocument = contacts.find((c) => c.email?.trim().toLowerCase() === representative?.email.trim().toLowerCase())?.document;
   const fields = contractFieldValues({
     contract,
     client,
@@ -67,9 +75,12 @@ export async function contractDocumentData(contractId: string, sending?: Contrac
     companyAddress,
     issuedAt,
     labels: { recurrence: RECURRENCE_LABELS[contract.recurrence], paymentMethod: contract.paymentMethod ? paymentMethodLabel(contract.paymentMethod) : undefined },
+    representativeDocument,
   });
   const names = template?.kind === "interos" ? extractVariables(`${template.title ?? ""}\n${template.clauses ?? ""}`) : [];
   const values = variableValues(template?.variables ?? [], fields, names);
+  const gaps = template ? templateDataGaps(template.variables ?? [], fields, names) : [];
+  const variableCount = new Set([...(template?.variables ?? []).map((v) => v.name), ...names]).size;
   const clauses = template?.kind === "interos" && template.clauses?.trim() ? { title: template.title ? fillTemplateText(template.title, values) : undefined, text: fillTemplateText(template.clauses, values) } : undefined;
   return {
     contract,
@@ -82,6 +93,8 @@ export async function contractDocumentData(contractId: string, sending?: Contrac
     preview: !generated,
     values,
     clauses,
+    gaps,
+    variableCount,
     hash: sending ? contractDocumentHash(sending) : (contract.documentHash ?? contractDocumentHash(contract)),
   };
 }

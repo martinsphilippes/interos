@@ -98,10 +98,17 @@ describe("assinatura eletrônica", () => {
     expect(preview?.preview).toBe(true);
     expect(preview?.clauses?.text).toContain(`A ACME ${RUN} LTDA paga R$ 200,00 (duzentos reais)`);
     expect(preview?.clauses?.text).toContain("Cor: ________________.");
+    expect(preview?.gaps).toEqual([{ variable: "cor", reason: "sem_ligacao", label: "Sem campo ligado nem texto fixo no modelo" }]);
+
+    // Variável sem ligação nem texto fixo: o documento sairia com lacuna, então o envio é barrado com o que falta.
+    await expect(sendForSignature(c.id, ACTOR)).rejects.toThrow(/ligue no modelo: \{\{cor\}\}/);
+    await saveTemplateVariables(t.id, [{ name: "contrato.numero", field: "contrato.numero" }, { name: "contratante.razao_social", field: "contratante.razao_social" }, { name: "valores.mensalidade_extenso", field: "valores.mensalidade_extenso" }, { name: "cor", fixed: "Azul" }], ACTOR);
+    expect((await contractDocumentData(c.id))?.gaps).toEqual([]);
 
     const sent = await sendForSignature(c.id, ACTOR);
     const stored = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
-    expect(stored.documentTemplate).toMatchObject({ id: t.id, version: 1, kind: "interos" });
+    expect(stored.documentTemplate).toMatchObject({ id: t.id, version: 2, kind: "interos" });
+    expect((await contractDocumentData(c.id))?.clauses?.text).toContain("Cor: Azul.");
     expect(stored.documentHash).toBe(contractDocumentHash(stored));
     expect(sent.documentHash).toBe(stored.documentHash);
 
@@ -111,7 +118,7 @@ describe("assinatura eletrônica", () => {
     expect(after?.preview).toBe(false);
     expect(after?.clauses?.text).toContain("CLÁUSULA PRIMEIRA");
     const info = await signatureDocumentInfo(stored, true);
-    expect(info.effective).toMatchObject({ fixed: true, version: 1, stale: true });
+    expect(info.effective).toMatchObject({ fixed: true, version: 2, stale: true });
     const pdf = await contractPdf(after!);
     expect(pdf.buffer.subarray(0, 5).toString()).toBe("%PDF-");
   });

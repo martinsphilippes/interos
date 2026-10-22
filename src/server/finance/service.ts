@@ -24,7 +24,7 @@ import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
-import { clicksignSignerNameProblem, isSignerEmail } from "@/domain/contract-templates";
+import { clicksignSignerNameProblem, isSignerEmail, type TemplateDataGap } from "@/domain/contract-templates";
 import { createContact } from "@/server/clients/contacts";
 import type { DepartmentKey } from "@/domain/constants";
 import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
@@ -715,7 +715,7 @@ export async function addSignerFrom(input: { contractId: string; source: "contac
  * signatário, nome aceito pela Clicksign, contrato editável): nada de contato criado com signatário recusado.
  */
 export async function addContactAsSigner(
-  input: { contractId: string; name: string; email: string; position?: string; phone?: string; role: string },
+  input: { contractId: string; name: string; email: string; position?: string; phone?: string; document?: string; role: string },
   actor: UserRef,
   department?: DepartmentKey,
 ): Promise<{ contactId: string }> {
@@ -727,7 +727,7 @@ export async function addContactAsSigner(
     const problem = clicksignSignerNameProblem(input.name);
     if (problem) throw new Error(`Signatário «${input.name.trim()}»: ${problem}`);
   }
-  const contact = await createContact({ clientId: contract.clientId, name: input.name, email, role: input.position, phone: input.phone }, actor, department);
+  const contact = await createContact({ clientId: contract.clientId, name: input.name, email, role: input.position, phone: input.phone, document: input.document }, actor, department);
   await addSigner({ contractId: contract.id, name: contact.name, email, role: input.role }, actor);
   return { contactId: contact.id };
 }
@@ -762,6 +762,14 @@ export async function removeSigner(input: { contractId: string; email: string },
  * status "aguardando assinatura". Sem provedor de assinatura conectado (situação atual) o envio ao cliente é
  * MANUAL (e-mail/WhatsApp do usuário, com o PDF salvo de /financeiro/contratos/[id]/documento).
  */
+/** Mensagem única com as pendências do modelo: o que preencher no cadastro e o que ligar no modelo. */
+function documentGapsMessage(templateName: string, gaps: TemplateDataGap[]): string {
+  const data = gaps.filter((g) => g.reason === "sem_dado").map((g) => g.label);
+  const unbound = gaps.filter((g) => g.reason === "sem_ligacao").map((g) => `{{${g.variable}}}`);
+  const parts = [data.length ? `preencha no cadastro: ${data.join(", ")}` : "", unbound.length ? `ligue no modelo: ${unbound.join(", ")}` : ""].filter(Boolean);
+  return `O modelo «${templateName}» ainda tem dados em aberto — ${parts.join("; ")}. O contrato só é gerado completo.`;
+}
+
 export async function sendForSignature(contractId: string, actor: UserRef): Promise<Contract> {
   const contract = await loadContract(contractId);
   assertEditable(contract);
@@ -776,6 +784,11 @@ export async function sendForSignature(contractId: string, actor: UserRef): Prom
   const { documentTemplate: _previousTemplate, ...withoutTemplate } = contract;
   void _previousTemplate;
   const toSend: Contract = { ...withoutTemplate, signers, ...(documentTemplate ? { documentTemplate } : {}) };
+  // Modelo com variável sem dado (cadastro) ou sem ligação (modelo): o documento sairia com lacuna; não vai assim.
+  // Import tardio: contract-document → queries → service formariam ciclo na carga do módulo.
+  const { contractDocumentData } = await import("./contract-document");
+  const document = await contractDocumentData(contract.id, toSend);
+  if (document?.gaps.length) throw new Error(documentGapsMessage(documentTemplate?.name ?? "do contrato", document.gaps));
   const provider = activeSignatureProvider();
   const envelope = await provider.createEnvelope(toSend, client.tradeName);
   const manual = envelope.provider === "manual";

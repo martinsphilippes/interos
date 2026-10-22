@@ -322,6 +322,8 @@ export interface Contact extends BaseEntity {
   phone?: string;
   whatsapp?: string;
   email?: string;
+  /** CPF (só dígitos): entra no contrato como "CPF do representante" quando o contato assina pelo cliente. */
+  document?: string;
   isPrimary: boolean;
   isDecisionMaker?: boolean;
 }

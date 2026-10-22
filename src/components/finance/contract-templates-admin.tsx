@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Download, FilePlus2, FileText, FileUp, Link2, Pencil, Star } from "lucide-react";
 import type { ContractTemplate, ContractTemplateVariable } from "@/domain/types";
-import { CONTRACT_FIELDS, extractVariables, fieldLabel, mergeVariables, suggestUnbound, unmappedVariables } from "@/domain/contract-templates";
+import { CONTRACT_FIELDS, FIELD_SOURCE_LABELS, extractVariables, fieldLabel, mergeVariables, suggestUnbound, templateRequirements, unmappedVariables } from "@/domain/contract-templates";
 import { saveInterosTemplateAction, saveTemplateVariablesAction, setTemplateStateAction } from "@/server/finance/signature-actions";
 import { formatRelative } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -84,6 +84,7 @@ export function ContractTemplatesAdmin({ templates, canEdit }: { templates: Temp
         <ul className="grid gap-3 md:grid-cols-2">
           {templates.map((t) => {
             const missing = unmappedVariables(t.variables);
+            const requirements = templateRequirements(t.variables);
             return (
               <li key={t.id}>
                 <Card className="flex h-full flex-col gap-3 p-4">
@@ -113,10 +114,21 @@ export function ContractTemplatesAdmin({ templates, canEdit }: { templates: Temp
                     {t.variables.length} variável(is)
                     {missing.length > 0 ? (
                       <span className="ml-2 inline-flex items-center gap-1 text-warning-fg">
-                        <AlertTriangle className="size-3.5" /> {missing.length} sem campo (sai em branco)
+                        <AlertTriangle className="size-3.5" /> {missing.length} sem campo (bloqueia a geração até ligar)
                       </span>
                     ) : null}
                   </p>
+                  {requirements.bySource.length > 0 ? (
+                    <p className="text-xs text-muted">
+                      Exige do cadastro:{" "}
+                      {requirements.bySource.map((r, i) => (
+                        <span key={r.source}>
+                          {i > 0 ? " · " : ""}
+                          <span className="font-medium text-foreground">{FIELD_SOURCE_LABELS[r.source].split(" (")[0]}</span>: {r.labels.join(", ")}
+                        </span>
+                      ))}
+                    </p>
+                  ) : null}
                   {t.kind === "word" ? <p className="text-xs text-muted">{t.providerTemplateKey ? "Registrado na Clicksign." : "Será registrado na Clicksign quando a integração estiver conectada."}</p> : null}
                   <div className="mt-auto flex flex-wrap gap-2">
                     {canEdit ? (
@@ -320,7 +332,7 @@ function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose
         <DialogHeader>
           <DialogTitle>Variáveis de «{template.name}»</DialogTitle>
           <DialogDescription>
-            Cada variável do modelo puxa um dado do contrato ou um texto fixo. Sem nada, sai uma lacuna (________) para preencher à mão. Variáveis sem ligação mostram uma sugestão pelo nome: use-a ou escolha outro campo.
+            Cada variável do modelo puxa um dado do contrato ou um texto fixo. Sem nada, o documento sairia com lacuna (________): por isso o contrato só é gerado quando toda variável tem campo com dado ou texto fixo. Variáveis sem ligação mostram uma sugestão pelo nome: use-a ou escolha outro campo.
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="max-h-[60vh] overflow-y-auto">

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Crown, Mail, MessageCircle, Pencil, Phone, Plus, Star, Trash2, UserRound } from "lucide-react";
 import type { Contact } from "@/domain/types";
 import { addContact, removeContact, updateContact } from "@/server/clients/actions";
-import { formatPhone } from "@/lib/format";
+import { formatDocument, formatPhone } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -25,14 +25,15 @@ interface ContactFormState {
   phone: string;
   whatsapp: string;
   email: string;
+  document: string;
   isPrimary: boolean;
   isDecisionMaker: boolean;
 }
 
-const EMPTY: ContactFormState = { name: "", role: "", phone: "", whatsapp: "", email: "", isPrimary: false, isDecisionMaker: false };
+const EMPTY: ContactFormState = { name: "", role: "", phone: "", whatsapp: "", email: "", document: "", isPrimary: false, isDecisionMaker: false };
 
 function fromContact(c: Contact): ContactFormState {
-  return { name: c.name, role: c.role ?? "", phone: c.phone ? formatPhone(c.phone) : "", whatsapp: c.whatsapp ? formatPhone(c.whatsapp) : "", email: c.email ?? "", isPrimary: c.isPrimary, isDecisionMaker: Boolean(c.isDecisionMaker) };
+  return { name: c.name, role: c.role ?? "", phone: c.phone ? formatPhone(c.phone) : "", whatsapp: c.whatsapp ? formatPhone(c.whatsapp) : "", email: c.email ?? "", document: c.document ? formatDocument(c.document) : "", isPrimary: c.isPrimary, isDecisionMaker: Boolean(c.isDecisionMaker) };
 }
 
 function ContactDialog({ clientId, contact, open, onOpenChange, firstContact }: { clientId: string; contact: Contact | null; open: boolean; onOpenChange: (o: boolean) => void; firstContact: boolean }) {
@@ -82,6 +83,9 @@ function ContactDialog({ clientId, contact, open, onOpenChange, firstContact }: 
             </FormField>
             <FormField label="Telefone" htmlFor={`${id}-phone`}>
               <Input id={`${id}-phone`} type="tel" value={values.phone} onChange={set("phone")} onBlur={() => setValues((v) => ({ ...v, phone: v.phone ? formatPhone(v.phone) : "" }))} />
+            </FormField>
+            <FormField label="CPF" htmlFor={`${id}-document`} hint="Entra no contrato como CPF do representante quando este contato assina.">
+              <Input id={`${id}-document`} value={values.document} onChange={set("document")} inputMode="numeric" placeholder="000.000.000-00" />
             </FormField>
             <FormField label="WhatsApp" htmlFor={`${id}-whatsapp`}>
               <Input id={`${id}-whatsapp`} type="tel" value={values.whatsapp} onChange={set("whatsapp")} onBlur={() => setValues((v) => ({ ...v, whatsapp: v.whatsapp ? formatPhone(v.whatsapp) : "" }))} />
@@ -167,7 +171,7 @@ export function ContactsCard({ clientId, contacts, className, canEdit = true, ca
                           </Badge>
                         ) : null}
                       </p>
-                      {c.role ? <p className="text-xs text-muted">{c.role}</p> : null}
+                      {c.role || c.document ? <p className="text-xs text-muted">{[c.role, c.document ? `CPF ${formatDocument(c.document)}` : null].filter(Boolean).join(" · ")}</p> : null}
                       <div className="mt-1.5 flex flex-col gap-0.5 text-xs text-muted">
                         {c.phone ? (
                           <a href={tel ?? undefined} className="inline-flex items-center gap-1.5 hover:text-foreground">

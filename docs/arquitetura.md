@@ -603,12 +603,23 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   lista gravada (modelo antigo, texto editado) com o nome exato de um campo, `{{contratante.cidade}}`, é preenchida;
   apelidos não são adivinhados ao gerar. O endereço do cliente existe inteiro
   (`contratante.endereco`) e em partes (logradouro, número, complemento, bairro, cidade, cidade/UF, UF, CEP); número,
-  complemento e bairro são `optional` (vazio sai vazio, não lacuna). `{{numero}}` é o número do contrato, salvo quando o
-  modelo tem um logradouro separado e nenhuma outra variável já é o número do endereço (`suggestField(nome, irmãs)`):
-  aí é o número do endereço. O diálogo de variáveis mostra, no que está sem ligação, a sugestão pelo nome
-  (`suggestUnbound`) com "usar" por linha e "Usar as N sugestões" no rodapé; nada é aplicado sozinho (sem campo pode ser
-  escolha, e salvar por outro motivo não grava o que ninguém pediu). Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
-  `POST /api/financeiro/modelos` (multipart; acima do limite das Server Actions), até 4 MB.
+  complemento e bairro saem vazios quando faltam (`empty: "vazio"`, não lacuna); só complemento é `optional`.
+  `{{numero}}` é o número do contrato, salvo quando o modelo tem um logradouro separado e nenhuma outra variável já é
+  o número do endereço (`suggestField(nome, irmãs)`): aí é o número do endereço. O diálogo de variáveis mostra, no que
+  está sem ligação, a sugestão pelo nome (`suggestUnbound`) com "usar" por linha e "Usar as N sugestões" no rodapé;
+  nada é aplicado sozinho (sem campo pode ser escolha, e salvar por outro motivo não grava o que ninguém pediu). Mudar
+  texto, arquivo ou ligações sobe a versão. Envio do Word por `POST /api/financeiro/modelos` (multipart; acima do
+  limite das Server Actions), até 4 MB.
+- **Dados obrigatórios do modelo** (`templateDataGaps` em `src/domain/contract-templates.ts`; `contractDocumentData`
+  devolve `gaps` e `variableCount`): toda variável do modelo efetivo precisa de texto fixo ou de um campo com dado;
+  campos `optional` (complemento, vigência e 1º vencimento, que só existem depois) não contam. Cada campo do catálogo
+  tem `source` (cliente, contato, signatário, contrato, Intercert): o cartão de assinatura mostra "N de M variáveis
+  preenchidas" e cada pendência com onde corrigir (link para o cliente, contatos, configuração), o botão de gerar/enviar
+  fica desabilitado e `sendForSignature` recusa com a lista ("preencha no cadastro: …; ligue no modelo: {{x}}"). O
+  documento só é gerado completo e único para o cliente, sem lacunas; a prévia (PDF/Word) continua disponível com as
+  lacunas para conferência. O cartão do modelo em Assinaturas › Modelos lista o que ele exige do cadastro
+  (`templateRequirements`). `contratante.representante_cpf` vem do CPF (`Contact.document`, validado por
+  `isValidCpf` em `src/domain/documents.ts`) do contato cujo e-mail é o do 1º signatário pelo cliente.
 - **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
   modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o
   hash antigo). `GET /api/financeiro/contratos/[id]/documento?formato=pdf|docx` gera o PDF (pdfkit) ou o Word preenchido

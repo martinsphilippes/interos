@@ -1,3 +1,4 @@
+import { isValidCpf } from "@/domain/documents";
 import { z } from "zod";
 import type { Billing, Contract } from "@/domain/types";
 
@@ -238,6 +239,11 @@ export const newContactSignerSchema = z.object({
     .optional()
     .transform((v) => (v ? v.replace(/\D/g, "") : undefined))
     .refine((v) => !v || v.length === 10 || v.length === 11, "Celular inválido (DDD + número)"),
+  document: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.replace(/\D/g, "") : undefined))
+    .refine((v) => !v || isValidCpf(v), "CPF inválido"),
   role: signerRole,
 });
 export type NewContactSignerInput = z.input<typeof newContactSignerSchema>;
