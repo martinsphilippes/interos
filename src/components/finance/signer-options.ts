@@ -31,6 +31,8 @@ export interface SignerChoice {
   /** Valor do select: "contact:<id>" ou "user:<id>". */
   value: string;
   kind: SignerChoiceKind;
+  /** Id do contato ou do usuário (o servidor resolve nome/e-mail por ele). */
+  id: string;
   name: string;
   email: string;
   /** Rótulo da opção no select. */
@@ -59,6 +61,7 @@ export function signerChoices(options: SignerOptions, existing: { email: string 
       return {
         value: `contact:${c.id}`,
         kind: "contact",
+        id: c.id,
         name: c.name.trim(),
         email,
         label: `${c.name.trim()}${c.role ? ` · ${c.role}` : ""}${email ? ` · ${email}` : " · sem e-mail"}`,
@@ -73,6 +76,7 @@ export function signerChoices(options: SignerOptions, existing: { email: string 
     .map<SignerChoice>((u) => ({
       value: `user:${u.id}`,
       kind: "user",
+      id: u.id,
       name: u.name.trim(),
       email: u.email.trim().toLowerCase(),
       label: `${u.name.trim()} · ${u.email.trim().toLowerCase()}`,

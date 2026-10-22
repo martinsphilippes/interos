@@ -96,8 +96,8 @@ describe("repositório real", () => {
   // Fase 4: + 4 actions da supervisão de ligações, 4 do envio agendado de relatórios e a rota monitor-end (isenta por assinatura).
   // Fase 5: + 6 actions de conexão dos canais (Meta e Telegram), 1 do chat do site; rotas: retorno do login da Meta
   // (com permissão), webhooks da Meta (GET/POST) e do Telegram e as 3 do chat do site (isentas: assinatura/token).
-  it("inventário: 101 páginas (10 isentas), 311 funções 'use server' (3 isentas), 31 handlers de API (22 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 311, serverFunctionsExempt: 3, apiHandlers: 31, apiExempt: 22 });
+  it("inventário: 101 páginas (10 isentas), 312 funções 'use server' (3 isentas), 31 handlers de API (22 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 312, serverFunctionsExempt: 3, apiHandlers: 31, apiExempt: 22 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

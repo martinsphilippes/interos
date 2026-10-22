@@ -10,10 +10,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { docdb } from "@/server/docdb";
 import { create, getById, list, update } from "@/server/db";
-import { COLLECTIONS, type Client, type Contract, type DomainEvent, type Document, type Notification, type SignatureInboxItem, type User } from "@/domain/types";
+import { COLLECTIONS, type Client, type Contact, type Contract, type DomainEvent, type Document, type Notification, type SignatureInboxItem, type User } from "@/domain/types";
 import { SIGNATURE_SETTING } from "@/domain/contract-templates";
 import { saveSignatureSettings } from "@/server/finance/contract-templates";
-import { addSigner, createManualContract, sendForSignature, sendSignatureReminder, updateContractItems } from "@/server/finance/service";
+import { addContactAsSigner, addSigner, addSignerFrom, createManualContract, sendForSignature, sendSignatureReminder, updateContractItems } from "@/server/finance/service";
 import { contractSignedFileId, getSignedFile, inboxSignedFileId, processClicksignWebhook } from "@/server/finance/signature-webhook";
 import { parseClicksignWebhook } from "@/server/integrations/clicksign";
 
@@ -104,6 +104,7 @@ afterAll(async () => {
   }
   await sql`delete from interos.documents where data->>'clientId' = ${CLIENT_ID}`;
   await sql`delete from interos.notifications where data->>'userId' = ${OWNER_ID} or data->>'entityId' = any(${contractIds})`;
+  await sql`delete from interos.contacts where data->>'clientId' = ${CLIENT_ID}`;
   await sql`delete from interos.clients where id = ${CLIENT_ID}`;
   await sql`delete from interos.users where id = ${OWNER_ID}`;
 });
@@ -412,6 +413,35 @@ describe("Clicksign: envio e avisos", () => {
     await expect(addSigner({ contractId: c.id, name: "Fulano 2 Silva", email: `fulano.${RUN}@acme-teste.com.br`, role: "Testemunha" }, ACTOR)).rejects.toThrow(/números/);
     await addSigner({ contractId: c.id, name: "Fulano Silva", email: `fulano.${RUN}@acme-teste.com.br`, role: "Testemunha" }, ACTOR);
     expect((await getById<Contract>(COLLECTIONS.contracts, c.id))?.signers.some((s) => s.name === "Fulano Silva")).toBe(true);
+  });
+
+  it("signatário vem do cadastro: contato do cliente (com e-mail) ou usuário ativo; contato de outro cliente é recusado", async () => {
+    const c = await newContract();
+    const mine = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Carla Souza", email: `carla.${RUN}@acme-teste.com.br`, isPrimary: false });
+    const noEmail = await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Sem Email", isPrimary: false });
+    const other = await create<Contact>(COLLECTIONS.contacts, { clientId: `${RUN}_outro_cliente`, name: "Outra Pessoa", email: `outra.${RUN}@x.com.br`, isPrimary: false });
+    await addSignerFrom({ contractId: c.id, source: "contact", id: mine.id, role: "Contratante" }, ACTOR);
+    await addSignerFrom({ contractId: c.id, source: "user", id: OWNER_ID, role: "Testemunha" }, ACTOR);
+    await expect(addSignerFrom({ contractId: c.id, source: "contact", id: noEmail.id, role: "Contratante" }, ACTOR)).rejects.toThrow(/e-mail/);
+    await expect(addSignerFrom({ contractId: c.id, source: "contact", id: other.id, role: "Contratante" }, ACTOR)).rejects.toThrow(/não encontrado neste cliente/);
+    await expect(addSignerFrom({ contractId: c.id, source: "user", id: `${RUN}_ninguem`, role: "Testemunha" }, ACTOR)).rejects.toThrow(/inativo/);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.signers.map((s) => [s.email, s.role])).toEqual(expect.arrayContaining([[mine.email, "Contratante"], [`${RUN}.dono@intercert.com.br`, "Testemunha"]]));
+    await docdb.sql()`delete from interos.contacts where id = ${other.id}`;
+  });
+
+  it("cadastrar contato como signatário é tudo-ou-nada: recusado antes de gravar não deixa contato; aceito cria os dois", async () => {
+    const c = await newContract();
+    const taken = c.signers[0].email;
+    const countBefore = (await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", CLIENT_ID]] })).length;
+    await expect(addContactAsSigner({ contractId: c.id, name: "Pessoa Repetida", email: taken, role: "Contratante" }, ACTOR)).rejects.toThrow(/já é signatário/);
+    await expect(addContactAsSigner({ contractId: c.id, name: "Semsobrenome", email: `novo.${RUN}@acme-teste.com.br`, role: "Contratante" }, ACTOR)).rejects.toThrow(/sobrenome/);
+    expect((await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", CLIENT_ID]] })).length).toBe(countBefore);
+    const r = await addContactAsSigner({ contractId: c.id, name: "Nova Pessoa", email: `Nova.${RUN}@acme-teste.com.br`, position: "Financeiro", phone: "88999990000", role: "Contratante" }, ACTOR);
+    const contact = await getById<Contact>(COLLECTIONS.contacts, r.contactId);
+    expect(contact).toMatchObject({ clientId: CLIENT_ID, name: "Nova Pessoa", email: `nova.${RUN}@acme-teste.com.br`, role: "Financeiro", phone: "88999990000" });
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.signers.some((s) => s.email === `nova.${RUN}@acme-teste.com.br` && s.role === "Contratante")).toBe(true);
   });
 
   it("contrato de outro INTEROS (id que não existe aqui) é ignorado e não vai para a caixa de entrada", async () => {

@@ -195,13 +195,45 @@ export const amendmentSignatureSchema = z
   });
 export type AmendmentSignatureInput = z.input<typeof amendmentSignatureSchema>;
 
+const signerRole = z.string().trim().min(2, "Informe o papel do signatário").max(60, "Papel muito longo");
+
+/** Signatário por nome/e-mail livres: uso interno (serviço e testes). A action usa signerPickSchema. */
 export const signerSchema = z.object({
   contractId: id("Contrato"),
   name: z.string().trim().min(2, "Informe o nome do signatário").max(120, "Nome muito longo"),
   email: z.email("E-mail do signatário inválido"),
-  role: z.string().trim().min(2, "Informe o papel do signatário").max(60, "Papel muito longo"),
+  role: signerRole,
 });
 export type SignerInput = z.input<typeof signerSchema>;
+
+/** Signatário escolhido no cadastro: contato do cliente do contrato ou usuário ativo. O servidor resolve nome/e-mail. */
+export const signerPickSchema = z.object({
+  contractId: id("Contrato"),
+  source: z.enum(["contact", "user"], { message: "Origem do signatário inválida" }),
+  id: id("Pessoa"),
+  role: signerRole,
+});
+export type SignerPickInput = z.input<typeof signerPickSchema>;
+
+/** Contato novo do cliente que já entra como signatário (validado inteiro ANTES de gravar). */
+export const newContactSignerSchema = z.object({
+  contractId: id("Contrato"),
+  name: z.string().trim().min(2, "Informe o nome do contato").max(120, "Nome muito longo"),
+  email: z.email("E-mail inválido"),
+  position: z
+    .string()
+    .trim()
+    .max(80, "Cargo muito longo")
+    .optional()
+    .transform((v) => v || undefined),
+  phone: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.replace(/\D/g, "") : undefined))
+    .refine((v) => !v || v.length === 10 || v.length === 11, "Celular inválido (DDD + número)"),
+  role: signerRole,
+});
+export type NewContactSignerInput = z.input<typeof newContactSignerSchema>;
 
 export const signerRefSchema = z.object({ contractId: id("Contrato"), email: z.email("E-mail do signatário inválido") });
 

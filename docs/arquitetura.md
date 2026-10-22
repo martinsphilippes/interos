@@ -570,11 +570,15 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   `financeiro.assinaturas.{entrada,modelos,configuracao}.ver`, `.entrada.vincular`, `.modelos.editar` e
   `.configuracao.editar` (só gestão); escolher modelo/autenticação no contrato usa `financeiro.contratos.assinatura.editar`.
 - **Signatários do contrato** (`SignatureCard` + `src/components/finance/signer-options.ts`): quem assina é escolhido
-  entre os contatos do cliente e a equipe ativa da Intercert (testemunha/representante), nunca digitado solto. Quem já
-  assina sai da lista; contato sem e-mail aparece desabilitado; com a Clicksign ligada, nome sem sobrenome é apontado
-  com link para corrigir no cadastro. "Cadastrar novo contato" (exige `operacao.clientes.contatos.editar`) cria o
-  contato no cliente pela action `addContact` e já o adiciona como signatário. `addSigner` no servidor também barra
-  nome sem sobrenome/com números quando a Clicksign está configurada.
+  entre os contatos do cliente e a equipe ativa da Intercert (testemunha/representante), nunca digitado solto — e a
+  regra vale no servidor: `addSignerAction` recebe `{ source: contact | user, id, role }` e `addSignerFrom` resolve
+  nome/e-mail do cadastro (contato precisa ser do cliente do contrato e ter e-mail; usuário precisa estar ativo). Quem
+  já assina sai da lista; contato sem e-mail aparece desabilitado; com a Clicksign ligada, nome sem sobrenome é
+  apontado com link para corrigir no cadastro. "Cadastrar novo contato" (`addContactAsSignerAction`: chave de
+  assinatura + `operacao.clientes.contatos.editar` + cliente no escopo de Clientes, a opção só aparece quando a action
+  vai aceitar) valida tudo ANTES de gravar (e-mail ainda não signatário, papel, nome para a Clicksign) e só então cria
+  o contato (`src/server/clients/contacts.ts#createContact`, o mesmo caminho da action de Clientes) e o adiciona.
+  `addSigner` também barra nome sem sobrenome/com números quando a Clicksign está configurada.
 - **Configuração** (settings `assinatura_eletronica`): quem assina pela Intercert (padrão: usuário ativo chamado
   Hércules, trocável; com usuário escolhido, nome/e-mail seguem o cadastro) e a autenticação padrão (`email` = código por
   e-mail; também `whatsapp`, `sms`, `icp_brasil`). O signatário entra com `party: "contratada"` na criação do contrato e

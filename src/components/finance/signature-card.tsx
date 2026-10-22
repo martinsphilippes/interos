@@ -5,8 +5,7 @@ import Link from "next/link";
 import { BellRing, CheckCircle2, FileText, Mail, PenLine, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
 import type { Contract } from "@/domain/types";
 import type { IntegrationFlags } from "@/server/integrations/types";
-import { addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
-import { addContact } from "@/server/clients/actions";
+import { addContactAsSignerAction, addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
 import { clicksignSignerNameProblem } from "@/domain/contract-templates";
 import { DEFAULT_CLIENT_SIGNER_ROLE, NEW_CONTACT_VALUE, signerChoices, type SignerChoice, type SignerOptions } from "./signer-options";
 import { SIGNER_STATUS_LABELS } from "@/server/finance/schemas";
@@ -92,8 +91,15 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
   const choices = React.useMemo(() => signerChoices(signerOptions ?? { contacts: [], users: [] }, contract.signers, providerConnected), [signerOptions, contract.signers, providerConnected]);
   const selected: SignerChoice | undefined = [...choices.contacts, ...choices.users].find((c) => c.value === choice);
   const creating = choice === NEW_CONTACT_VALUE;
+  // Mesmas regras do servidor, para o erro aparecer antes de clicar (o servidor confere tudo de novo antes de gravar).
   const newContactProblem = providerConnected && newContact.name.trim() ? clicksignSignerNameProblem(newContact.name) : null;
-  const canSubmit = creating ? Boolean(newContact.name.trim() && newContact.email.trim() && role.trim() && !newContactProblem) : Boolean(selected && !selected.disabledReason && !selected.nameProblem && role.trim());
+  const newEmail = newContact.email.trim().toLowerCase();
+  const newEmailProblem = !newEmail ? null : contract.signers.some((s) => s.email.trim().toLowerCase() === newEmail) ? "Este e-mail já é signatário do contrato" : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail) ? "E-mail inválido" : null;
+  const roleProblem = !role.trim() ? null : role.trim().length < 2 ? "Informe o papel" : role.trim().length > 60 ? "Papel muito longo" : null;
+  const canSubmit = creating
+    ? Boolean(newContact.name.trim() && newEmail && role.trim() && !newContactProblem && !newEmailProblem && !roleProblem)
+    : Boolean(selected && !selected.disabledReason && !selected.nameProblem && role.trim() && !roleProblem);
+  const noContacts = (signerOptions?.contacts.length ?? 0) === 0;
 
   const resetAdd = () => {
     setChoice("");
@@ -104,20 +110,13 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
 
   const add = async () => {
     if (creating) {
-      // Cadastra o contato no cliente (fica para os próximos contratos) e já o põe como signatário.
-      const ok = await run(
-        async () => {
-          const created = await addContact({ clientId, name: newContact.name.trim(), email: newContact.email.trim(), role: newContact.position.trim() || undefined, phone: newContact.phone.replace(/\D/g, "") || undefined, isPrimary: false, isDecisionMaker: false });
-          if (!created.ok) return created;
-          return addSignerAction({ contractId: contract.id, name: newContact.name.trim(), email: newContact.email.trim(), role: role.trim() });
-        },
-        "Contato cadastrado e adicionado como signatário",
-      );
+      // Uma ação só no servidor: valida tudo e, se puder, cadastra o contato no cliente e o põe como signatário.
+      const ok = await run(() => addContactAsSignerAction({ contractId: contract.id, name: newContact.name.trim(), email: newEmail, position: newContact.position.trim(), phone: newContact.phone, role: role.trim() }), "Contato cadastrado e adicionado como signatário");
       if (ok) resetAdd();
       return;
     }
     if (!selected) return;
-    const ok = await run(() => addSignerAction({ contractId: contract.id, name: selected.name, email: selected.email, role: role.trim() }), "Signatário adicionado");
+    const ok = await run(() => addSignerAction({ contractId: contract.id, source: selected.kind, id: selected.id, role: role.trim() }), "Signatário adicionado");
     if (ok) resetAdd();
   };
 
@@ -250,7 +249,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
         {can.signersEdit && editable ? (
           adding ? (
             <div className="grid gap-3 rounded-lg border border-border p-3">
-              <FormField label="Quem assina" htmlFor={`${id}-q`} required hint={choices.contacts.length === 0 ? `${clientName} ainda não tem contatos cadastrados.` : undefined}>
+              <FormField label="Quem assina" htmlFor={`${id}-q`} required hint={noContacts ? `${clientName} ainda não tem contatos cadastrados.` : choices.contacts.length === 0 ? `Todos os contatos de ${clientName} já assinam este contrato.` : undefined}>
                 <Select id={`${id}-q`} value={choice} onChange={(e) => pick(e.target.value)} className="h-11 md:h-9">
                   <option value="">Escolha…</option>
                   {choices.contacts.length > 0 ? (
@@ -279,7 +278,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                 <p className="text-xs text-danger-fg" role="alert">
                   {selected.name}: {selected.nameProblem}.{" "}
                   {selected.kind === "contact" ? (
-                    <Link href={`/clientes/${clientId}?aba=contatos`} className="font-medium underline">
+                    <Link href={`/clientes/${clientId}`} className="font-medium underline">
                       Corrija o nome no cadastro do contato
                     </Link>
                   ) : (
@@ -294,7 +293,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                   <FormField label="Nome completo" htmlFor={`${id}-n`} required error={newContactProblem ?? undefined} hint={providerConnected ? "A Clicksign exige nome e sobrenome, sem números." : undefined}>
                     <Input id={`${id}-n`} value={newContact.name} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} className="h-11 md:h-9" autoFocus />
                   </FormField>
-                  <FormField label="E-mail" htmlFor={`${id}-e`} required hint="O pedido de assinatura vai para este e-mail.">
+                  <FormField label="E-mail" htmlFor={`${id}-e`} required error={newEmailProblem ?? undefined} hint="O pedido de assinatura vai para este e-mail.">
                     <Input id={`${id}-e`} type="email" value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} className="h-11 md:h-9" />
                   </FormField>
                   <div className="grid gap-3 sm:grid-cols-2">
@@ -309,7 +308,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
               ) : null}
 
               {selected || creating ? (
-                <FormField label="Papel no contrato" htmlFor={`${id}-r`} required hint="Ex.: Contratante, Testemunha, Representante legal">
+                <FormField label="Papel no contrato" htmlFor={`${id}-r`} required error={roleProblem ?? undefined} hint="Ex.: Contratante, Testemunha, Representante legal">
                   <Input id={`${id}-r`} value={role} onChange={(e) => setRole(e.target.value)} className="h-11 md:h-9" />
                 </FormField>
               ) : null}

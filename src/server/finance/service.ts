@@ -25,6 +25,8 @@ import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
 import { clicksignSignerNameProblem } from "@/domain/contract-templates";
+import { createContact } from "@/server/clients/contacts";
+import type { DepartmentKey } from "@/domain/constants";
 import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
 import { clicksignConfigured } from "@/server/integrations/clicksign";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
@@ -40,6 +42,7 @@ import {
   type Client,
   type ClientProduct,
   type Contact,
+  type User,
   type Contract,
   type ContractReadjustment,
   type ContractVersionEntry,
@@ -678,6 +681,49 @@ export async function addSigner(input: { contractId: string; name: string; email
     payload: { contractId: contract.id, kind: "signatarios", email, changes: { signers: { from: signerView(contract.signers), to: signerView(signers) } } },
     timeline: false,
   });
+}
+
+/**
+ * Signatário escolhido no cadastro: contato do cliente do contrato (com e-mail) ou usuário ativo. É o servidor que
+ * resolve nome e e-mail — a tela nunca manda dados soltos.
+ */
+export async function addSignerFrom(input: { contractId: string; source: "contact" | "user"; id: string; role: string }, actor: UserRef): Promise<void> {
+  const contract = await loadContract(input.contractId);
+  assertEditable(contract);
+  let person: { name: string; email: string };
+  if (input.source === "contact") {
+    const contact = await getById<Contact>(COLLECTIONS.contacts, input.id);
+    if (!contact || contact.clientId !== contract.clientId) throw new Error("Contato não encontrado neste cliente");
+    if (!contact.email) throw new Error(`${contact.name} não tem e-mail cadastrado: informe o e-mail na ficha do cliente`);
+    person = { name: contact.name, email: contact.email };
+  } else {
+    const user = await getById<User>(COLLECTIONS.users, input.id);
+    if (!user || user.active === false || !user.email) throw new Error("Usuário não encontrado ou inativo");
+    person = { name: user.name, email: user.email };
+  }
+  await addSigner({ contractId: contract.id, name: person.name, email: person.email, role: input.role }, actor);
+}
+
+/**
+ * Contato novo do cliente que já entra como signatário. Tudo é conferido ANTES de gravar (e-mail ainda não
+ * signatário, nome aceito pela Clicksign, contrato editável): nada de contato criado com signatário recusado.
+ */
+export async function addContactAsSigner(
+  input: { contractId: string; name: string; email: string; position?: string; phone?: string; role: string },
+  actor: UserRef,
+  department?: DepartmentKey,
+): Promise<{ contactId: string }> {
+  const contract = await loadContract(input.contractId);
+  assertEditable(contract);
+  const email = input.email.trim().toLowerCase();
+  if (contract.signers.some((s) => s.email.toLowerCase() === email)) throw new Error("Este e-mail já é signatário do contrato");
+  if (clicksignConfigured()) {
+    const problem = clicksignSignerNameProblem(input.name);
+    if (problem) throw new Error(`Signatário «${input.name.trim()}»: ${problem}`);
+  }
+  const contact = await createContact({ clientId: contract.clientId, name: input.name, email, role: input.position, phone: input.phone }, actor, department);
+  await addSigner({ contractId: contract.id, name: contact.name, email, role: input.role }, actor);
+  return { contactId: contact.id };
 }
 
 export async function removeSigner(input: { contractId: string; email: string }, actor: UserRef): Promise<void> {

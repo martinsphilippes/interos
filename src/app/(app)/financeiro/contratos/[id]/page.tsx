@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { Building2, FileText, GitBranch, History } from "lucide-react";
 import { ACCESS_DENIED_REDIRECT, can, getCurrentUser, requireScreen } from "@/server/auth/session";
 import { list } from "@/server/db";
+import { canSeeClient } from "@/server/clients/access";
 import { COLLECTIONS, type Contact, type User } from "@/domain/types";
 import { getContract, redactContractDetail } from "@/server/finance/queries";
 import { FINANCIAL_STATUS_LABELS, FINANCIAL_STATUS_VARIANT } from "@/server/finance/schemas";
@@ -87,7 +88,8 @@ export default async function ContractPage({ params }: { params: Params }) {
   const documentInfo = sections.signatureView ? await signatureDocumentInfo(raw.contract, sections.documentsView && !hidden) : undefined;
   // Quem pode ser escolhido como signatário: contatos do cliente e equipe ativa (só para quem edita signatários).
   const signerOptions = sections.signatureView && sections.signersEdit && !closed ? await loadSignerOptions(client.id) : undefined;
-  const canCreateContact = can(user, "operacao.clientes.contatos.editar");
+  // A opção "cadastrar novo contato" só aparece quando a action vai aceitar: chave de contatos E cliente no escopo.
+  const canCreateContact = signerOptions ? can(user, "operacao.clientes.contatos.editar") && (await canSeeClient(user, client)) : false;
 
   return (
     <FinanceAccessProvider value={caps}>
