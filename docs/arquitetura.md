@@ -619,17 +619,22 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   (escolhido ou padrão, não a fotografia do envio anterior) e o signatário da Intercert incluído como o envio o
   incluirá; é leve (cliente, oportunidade, contatos, organização, modelo; não lê o Word nem o detalhe do contrato). O
   cartão de assinatura mostra "N de M variáveis preenchidas" e cada pendência com onde corrigir; o botão de gerar/
-  reenviar fica desabilitado; a fila "Prontos para gerar" faz o mesmo (até 40 contratos; acima disso o envio confere);
+  reenviar fica desabilitado; a fila "Prontos para gerar" faz o mesmo para quem pode enviar (`documentReadinessMany`:
+  configuração, organização e modelos uma vez, clientes/oportunidades/contatos em lote; até 40 contratos, acima disso
+  e se o cálculo falhar — registrado no log — o envio confere);
   `sendForSignature` recusa com a lista ("preencha no cadastro: …; ligue no modelo: {{x}}; use texto fixo…") e passa o
   documento já calculado ao provedor (`createEnvelope(contract, cliente, document)`), que não relê o contrato. A
   prévia (PDF/Word) também inclui o signatário da Intercert e continua disponível com as lacunas, para conferência.
   O cartão do modelo em Assinaturas › Modelos lista o que ele exige do cadastro (`templateRequirements`).
-- **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): entre os signatários que não são da
-  Intercert nem testemunhas (`isWitnessSigner`), o 1º que é contato do cliente pelo e-mail (dois contatos com o mesmo
-  e-mail: vale o que tem CPF); sem nenhum, o 1º deles. O CPF vem do contato (`Contact.document`, validado por
-  `isValidCpf` em `src/domain/documents.ts`, editável em Clientes e no "cadastrar novo contato" do contrato); a
-  pendência diz quem é e o que falta (cadastrar o CPF do contato, ou escolher como signatário um contato do cliente).
-  Na sugestão de variáveis, `{{cpf}}` ao lado de um `{{cnpj}}` é o CPF do representante.
+- **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): o 1º signatário, na ordem do
+  contrato, qualificado como contratante, representante legal ou procurador (`clientRepresentative`, pela mesma regra
+  de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa: o único
+  contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
+  nome; nunca "o que tem CPF" (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é
+  validado por `isValidCpf` (`src/domain/documents.ts`) e editável em Clientes e no "cadastrar novo contato" do
+  contrato. A pendência diz quem é e o que fazer (cadastrar o CPF do contato; escolher como signatário um contato do
+  cliente; e-mail compartilhado sem contato com o nome). Na sugestão de variáveis, `{{cpf}}` ao lado de um `{{cnpj}}`
+  é o CPF do representante.
 - **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
   modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o
   hash antigo). `GET /api/financeiro/contratos/[id]/documento?formato=pdf|docx` gera o PDF (pdfkit) ou o Word preenchido

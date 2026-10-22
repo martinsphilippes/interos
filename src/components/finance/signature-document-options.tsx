@@ -32,7 +32,7 @@ export interface DocumentReadiness {
   variableCount: number;
   gaps: TemplateDataGap[];
   /** Quem assina pelo cliente e se é um contato do cliente (de onde vem o CPF). */
-  representative?: { name: string; email: string; contactFound: boolean };
+  representative?: { name: string; email: string; contactFound: boolean; sharedEmail?: boolean };
 }
 
 /** Para onde ir para completar cada origem de dado. */
@@ -92,6 +92,7 @@ function DocumentReadinessPanel({ readiness, clientId }: { readiness: DocumentRe
           // Dados de quem assina pelo cliente: dizer QUEM e o que fazer (o CPF vem do contato com o e-mail do signatário).
           let action: React.ReactNode = <>preencha em {link}</>;
           if ((g.source === "signatario" || g.source === "contato") && !rep) action = "adicione quem assina pelo cliente (signatários acima)";
+          else if (g.source === "contato" && rep?.sharedEmail) action = `${rep.email} é usado por mais de um contato do cliente e nenhum se chama ${rep.name}: escolha como signatário o contato certo`;
           else if (g.source === "contato" && rep && !rep.contactFound) action = `${rep.name} (${rep.email}) não é contato do cliente: escolha como signatário um contato do cliente com CPF`;
           else if (g.source === "contato" && rep) action = <>cadastre o CPF de {rep.name} em {link}</>;
           return (

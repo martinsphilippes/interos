@@ -30,8 +30,8 @@ function waitingTone(days: number): string {
 /**
  * Contratos aguardando assinatura (ou geração do documento): signatários pendentes, espera, lembretes e
  * ações. Sem provedor de assinatura: lembrete pelo e-mail do usuário e assinatura registrada com evidência.
+ * `blocked`: contrato → motivo (dados do modelo em aberto); o botão de gerar fica desabilitado com o motivo.
  */
-/** `blocked`: contrato → motivo (dados do modelo em aberto); o botão de gerar fica desabilitado com o motivo. */
 export function SignaturesList({ rows, mode, integrations, blocked = {} }: { rows: SignatureRow[]; mode: "waiting" | "toSend"; integrations: IntegrationFlags; blocked?: Record<string, string> }) {
   // Capacidades do servidor: lembrete/gerar documento (enviar), registrar assinatura, ver documento, valores.
   const { contracts: can, contractValues } = useFinanceAccess();

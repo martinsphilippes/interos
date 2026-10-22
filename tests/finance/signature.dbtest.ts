@@ -231,4 +231,54 @@ describe("assinatura eletrônica", () => {
     // O documento já gerado continua com o modelo fixado (sem pendências).
     expect((await contractDocumentData(c.id))?.gaps).toEqual([]);
   });
+
+  it("CPF do representante só do contato que É a pessoa: e-mail compartilhado decide pelo nome; ordem dos signatários vale; testemunha e avalista não contam", async () => {
+    const t = await saveInterosTemplate({ name: `${RUN} Representante`, title: "Contrato", clauses: "CLÁUSULA ÚNICA\n\n{{contratante.representante}}, CPF {{contratante.representante_cpf}}." }, ACTOR);
+    templateIds.push(t.id);
+    const c = await createManualContract({ clientId: CLIENT_ID, recurrence: "mensal", termMonths: 12, billingDay: 10 }, ACTOR);
+    contractIds.push(c.id);
+    await updateContractItems(c.id, [{ productId: "p1", productName: "INTEROS", quantity: 1, setupValue: 0, monthlyValue: 150, hardwareValue: 0, discountPct: 0 }] as never, ACTOR);
+    const shared = `financeiro.${RUN}@acme-teste.com.br`;
+    await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "João Silva", email: shared, isPrimary: false });
+    await create<Contact>(COLLECTIONS.contacts, { clientId: CLIENT_ID, name: "Maria Souza", email: shared, document: "52998224725", isPrimary: false });
+    const company = (await getById<Contract>(COLLECTIONS.contracts, c.id))!.signers.filter((x) => x.party === "contratada");
+    const setSigners = async (signers: Contract["signers"]) => {
+      await update<Contract>(COLLECTIONS.contracts, c.id, { templateId: t.id, signers: [...signers, ...company] });
+      return documentReadiness((await getById<Contract>(COLLECTIONS.contracts, c.id))!);
+    };
+
+    // João assina com o e-mail que Maria também usa: o nome identifica o João (sem CPF); o CPF da Maria NÃO entra.
+    let r = await setSigners([{ name: "João Silva", email: shared, role: "Contratante", status: "pendente" }]);
+    expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
+    expect(r?.representative).toMatchObject({ name: "João Silva", contactFound: true });
+    expect(r?.representative?.sharedEmail).toBeUndefined();
+
+    // Nome que não é de nenhum dos contatos do e-mail compartilhado: não dá para saber de quem é o CPF.
+    r = await setSigners([{ name: "Financeiro Acme", email: shared, role: "Contratante", status: "pendente" }]);
+    expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
+    expect(r?.representative).toMatchObject({ contactFound: false, sharedEmail: true });
+
+    // Maria assina com o mesmo e-mail: o nome decide, o CPF é o dela.
+    r = await setSigners([{ name: "Maria Souza", email: shared, role: "Contratante", status: "pendente" }]);
+    expect(r?.gaps).toEqual([]);
+    expect((await contractDocumentData(c.id))?.clauses?.text).toContain("Maria Souza, CPF 529.982.247-25.");
+
+    // Testemunha e avalista antes dela não viram representante; a ordem dos demais vale.
+    r = await setSigners([
+      { name: "Pedro Equipe", email: `pedro.${RUN}@intercert.com.br`, role: "Testemunha", status: "pendente" },
+      { name: "Ana Avalista", email: `ana.${RUN}@acme-teste.com.br`, role: "Avalista", status: "pendente" },
+      { name: "Maria Souza", email: shared, role: "Contratante", status: "pendente" },
+    ]);
+    expect(r?.representative).toMatchObject({ name: "Maria Souza", contactFound: true });
+    expect(r?.gaps).toEqual([]);
+
+    // Quem vem primeiro e não é contato é o representante: pendência (não pula para o próximo que tem CPF).
+    r = await setSigners([
+      { name: "Fulano Externo", email: `fulano.${RUN}@x.com.br`, role: "Contratante", status: "pendente" },
+      { name: "Maria Souza", email: shared, role: "Contratante", status: "pendente" },
+    ]);
+    expect(r?.representative).toMatchObject({ name: "Fulano Externo", contactFound: false });
+    expect(r?.gaps.map((g) => g.field)).toEqual(["contratante.representante_cpf"]);
+  });
 });
+

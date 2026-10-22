@@ -63,9 +63,12 @@ export function isWitnessSigner(s: { role?: string }): boolean {
   return /testemunha/.test((s.role ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
 }
 
-/** Quem assina pelo cliente: o 1º signatário que não é da Intercert nem testemunha. */
+/**
+ * Quem assina pelo cliente: o 1º signatário (na ordem do contrato) qualificado como contratante, representante legal
+ * ou procurador — não a Intercert, testemunha, avalista ou fiador.
+ */
 export function clientRepresentative<T extends { party?: string; role?: string }>(signers: T[]): T | undefined {
-  return signers.find((s) => !isCompanySigner(s) && !isWitnessSigner(s));
+  return signers.find((s) => ["contractor", "legal_representative", "attorney"].includes(clicksignRole(s)));
 }
 
 /** O signatário da Intercert está completo (nome e e-mail válidos)? */

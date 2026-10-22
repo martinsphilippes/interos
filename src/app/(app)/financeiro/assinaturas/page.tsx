@@ -5,7 +5,7 @@ import { can, requireScreen } from "@/server/auth/session";
 import { resolveDataScope } from "@/server/auth/scope";
 import { getManyByIds, list } from "@/server/db";
 import { listSignatureQueue } from "@/server/finance/queries";
-import { documentReadiness } from "@/server/finance/contract-document";
+import { documentReadinessMany } from "@/server/finance/contract-document";
 import { financeCapabilities } from "@/server/finance/access";
 import { getSignatureSettings, listContractTemplates } from "@/server/finance/contract-templates";
 import { listSignatureInbox } from "@/server/finance/signature-inbox";
@@ -98,24 +98,28 @@ export default async function SignaturesPage({ searchParams }: { searchParams: S
   );
 }
 
-/** Até quantos contratos da fila "prontos" têm as pendências do modelo calculadas (cada um lê cliente, contatos e modelo). */
+/** Até quantos contratos da fila "prontos" têm as pendências do modelo calculadas (leitura em lote). */
 const READINESS_LIMIT = 40;
 
 /** Contrato → motivo do bloqueio (dados do modelo em aberto). Contratos além do limite ficam sem aviso: o envio confere. */
 async function readinessBlocks(contractIds: string[]): Promise<Record<string, string>> {
   const ids = contractIds.slice(0, READINESS_LIMIT);
   if (ids.length === 0) return {};
-  const contracts = await getManyByIds<Contract>(COLLECTIONS.contracts, ids);
-  const entries = await Promise.all(
-    ids.map(async (id): Promise<[string, string] | null> => {
-      const contract = contracts.get(id);
-      const r = contract ? await documentReadiness(contract).catch(() => null) : null;
-      if (!r || r.gaps.length === 0) return null;
+  try {
+    const contracts = await getManyByIds<Contract>(COLLECTIONS.contracts, ids);
+    const readiness = await documentReadinessMany(ids.map((id) => contracts.get(id)).filter((c): c is Contract => Boolean(c)));
+    const out: Record<string, string> = {};
+    for (const [id, r] of readiness) {
+      if (!r || r.gaps.length === 0) continue;
       const labels = r.gaps.map((g) => (g.reason === "sem_ligacao" ? `{{${g.variable}}} sem ligação` : g.label));
-      return [id, `Modelo «${r.templateName}»: ${r.gaps.length} dado(s) em aberto — ${labels.slice(0, 3).join(", ")}${labels.length > 3 ? "…" : ""}. Revise o contrato.`];
-    }),
-  );
-  return Object.fromEntries(entries.filter((e): e is [string, string] => e !== null));
+      out[id] = `Modelo «${r.templateName}»: ${r.gaps.length} dado(s) em aberto — ${labels.slice(0, 3).join(", ")}${labels.length > 3 ? "…" : ""}. Revise o contrato.`;
+    }
+    return out;
+  } catch (error) {
+    // Sem o cálculo a fila continua utilizável: o envio confere as pendências e recusa com a lista.
+    console.error("[assinaturas] pendências do modelo na fila", error);
+    return {};
+  }
 }
 
 async function QueueTab({ user }: { user: Awaited<ReturnType<typeof requireScreen>> }) {
@@ -126,7 +130,7 @@ async function QueueTab({ user }: { user: Awaited<ReturnType<typeof requireScree
   const queue = { waiting: show.waiting ? fetched.waiting : [], toSend: show.toSend ? fetched.toSend : [] };
   const integrations = getIntegrationFlags();
   // Prontos para gerar: o que o modelo ainda exige do cadastro (o botão fica bloqueado com o motivo, como no contrato).
-  const blocked = await readinessBlocks(queue.toSend.map((r) => r.contractId));
+  const blocked = caps.contracts.signatureSend ? await readinessBlocks(queue.toSend.map((r) => r.contractId)) : {};
   const pendingSigners = queue.waiting.reduce((s, r) => s + r.pendingCount, 0);
   const oldest = queue.waiting.reduce((m, r) => Math.max(m, r.daysWaiting), 0);
   const reminders = queue.waiting.reduce((s, r) => s + r.remindersSent, 0);

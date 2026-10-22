@@ -323,7 +323,7 @@ describe("dados obrigatórios do modelo", () => {
     expect(mergeVariables(["CNPJ", "Representante", "CPF"]).map((v) => v.field)).toEqual(["contratante.cnpj_cpf", "contratante.representante", "contratante.representante_cpf"]);
   });
 
-  it("representante do cliente: 1º signatário que não é da Intercert nem testemunha", () => {
+  it("representante do cliente: 1º signatário contratante/representante/procurador (não Intercert, testemunha, avalista)", () => {
     const signers = [
       { name: "Pedro Equipe", email: "pedro@intercert.com.br", role: "Testemunha" },
       { name: "Diretor Intercert", email: "dir@intercert.com.br", role: "Diretor", party: "contratada" as const },
@@ -331,6 +331,8 @@ describe("dados obrigatórios do modelo", () => {
     ];
     expect(clientRepresentative(signers)?.name).toBe("Maria Cliente");
     expect(clientRepresentative(signers.slice(0, 2))).toBeUndefined();
+    expect(clientRepresentative([{ name: "Ana Avalista", email: "ana@x.com", role: "Avalista" }, ...signers])?.name).toBe("Maria Cliente");
+    expect(clientRepresentative([{ name: "Rui Procurador", email: "rui@x.com", role: "Procurador" }, ...signers])?.name).toBe("Rui Procurador");
     expect(isWitnessSigner({ role: "TESTEMUNHA 1" })).toBe(true);
   });
 
