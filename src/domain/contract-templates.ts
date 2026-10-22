@@ -71,6 +71,99 @@ export function clientRepresentative<T extends { party?: string; role?: string }
   return signers.find((s) => ["contractor", "legal_representative", "attorney"].includes(clicksignRole(s)));
 }
 
+const normPersonName = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/** Nome comparável: sem acento, caixa e espaços repetidos. */
+export function samePersonName(a: string, b: string): boolean {
+  return normPersonName(a) === normPersonName(b);
+}
+
+/** A mesma pessoa cadastrada mais de uma vez: vale o CPF, se só houver um; CPFs diferentes = ambíguo. */
+function pickSamePerson<C extends { document?: string }>(list: C[]): { contact?: C; ambiguous?: "cpf" } {
+  const cpfs = new Set(list.map((c) => c.document).filter(Boolean));
+  if (cpfs.size > 1) return { ambiguous: "cpf" };
+  return { contact: list.find((c) => c.document) ?? list[0] };
+}
+
+/**
+ * Representante do cliente: o 1º signatário qualificado como contratante, representante legal ou procurador
+ * (`clientRepresentative`, na ordem do contrato). O CPF vem do contato que É essa pessoa — e-mail E nome batem:
+ * - contatos com o e-mail do signatário: o que tem o mesmo nome (duplicados da mesma pessoa valem como um, se houver
+ *   um só CPF). O único contato com o e-mail, mas com OUTRO nome, não é a pessoa (`outro_nome`: ex.: signatário criado
+ *   com o e-mail geral do cliente, que é de outro contato); vários sem o nome = `nome`;
+ * - nenhum contato com o e-mail: o contato SEM e-mail com o mesmo nome (contato principal sem e-mail, assinando com o
+ *   e-mail do cliente).
+ * Nunca "o que tem CPF" entre pessoas diferentes: CPF de outra pessoa no contrato é pior do que a pendência.
+ * `ambiguous`: `nome` — o e-mail é de mais de um contato e nenhum tem o nome; `outro_nome` — o e-mail é de um contato
+ * com outro nome (`otherName`); `cpf` — a mesma pessoa cadastrada mais de uma vez com CPFs diferentes.
+ */
+export function resolveClientRepresentative<S extends { party?: string; role?: string; name: string; email: string }, C extends { name: string; email?: string; document?: string }>(
+  signers: S[],
+  contacts: C[],
+  /** Nomes do cliente (razão social, nome fantasia): o atalho do contato sem e-mail só vale para eles com CPF na ficha. */
+  notPersonNames: (string | undefined)[] = [],
+): { signer?: S; contact?: C; ambiguous?: "nome" | "outro_nome" | "cpf"; otherName?: string } {
+  const signer = clientRepresentative(signers);
+  if (!signer) return { signer };
+  const email = signer.email.trim().toLowerCase();
+  const sameEmail = contacts.filter((c) => c.email?.trim().toLowerCase() === email);
+  if (sameEmail.length === 0) {
+    // Com o nome da empresa, o contato sem e-mail só vale se o CPF JÁ foi informado na ficha dele (empresário
+    // individual, lead com o nome da pessoa): quem informou ali sabia que é uma pessoa.
+    const companyNamed = notPersonNames.some((n) => n?.trim() && samePersonName(n, signer.name));
+    const noEmailSameName = contacts.filter((c) => !c.email?.trim() && samePersonName(c.name, signer.name) && (!companyNamed || Boolean(c.document)));
+    return noEmailSameName.length === 0 ? { signer } : { signer, ...pickSamePerson(noEmailSameName) };
+  }
+  const byName = sameEmail.filter((c) => samePersonName(c.name, signer.name));
+  if (byName.length === 0) return sameEmail.length === 1 ? { signer, ambiguous: "outro_nome", otherName: sameEmail[0].name } : { signer, ambiguous: "nome" };
+  return { signer, ...pickSamePerson(byName) };
+}
+
+/**
+ * Representante do cliente e de onde vem o CPF dele — a regra única da leitura (documento, prontidão) e da escrita
+ * (CPF informado no contrato), nesta ordem:
+ * 1. o contato que é a pessoa (`resolveClientRepresentative`: e-mail e nome) — vale mesmo com o nome igual ao do
+ *    cliente quando o contato JÁ tem CPF (empresário individual, lead com o nome da pessoa); com o nome da empresa e
+ *    sem CPF é `empresa` (um contato "Padaria X" não recebe o CPF de alguém pelo contrato); o atalho do contato SEM
+ *    e-mail com o nome da empresa só vale com o CPF já na ficha;
+ * 2. sem contato, o signatário com o nome de quem está no documento de faturamento, que é um CPF: o próprio cliente
+ *    pessoa física — o CPF é esse (`fromClient`);
+ * 3. sem contato, o signatário com o nome do cliente (razão social de faturamento, razão social ou nome fantasia do
+ *    cadastro): a empresa, que não é pessoa (`empresa`: escolher quem assina; se for pessoa física, informar o CPF nos
+ *    dados do cliente).
+ * `billing` = dados de faturamento mesclados (razão social e documento da venda, senão do cadastro).
+ */
+export function resolveRepresentativeDocument<S extends { party?: string; role?: string; name: string; email: string }, C extends { name: string; email?: string; document?: string }>(
+  signers: S[],
+  contacts: C[],
+  client: { legalName?: string; tradeName?: string },
+  billing: { legalName?: string; document?: string },
+): { signer?: S; contact?: C; document?: string; fromClient?: boolean; ambiguous?: "nome" | "outro_nome" | "cpf" | "empresa"; otherName?: string } {
+  const signer = clientRepresentative(signers);
+  if (!signer) return { signer };
+  const companyNames = [billing.legalName, client.legalName, client.tradeName];
+  const r = resolveClientRepresentative(signers, contacts, companyNames);
+  const companyNamed = companyNames.some((n) => n?.trim() && samePersonName(n, signer.name));
+  const doc = billing.document?.replace(/\D/g, "") ?? "";
+  // O faturamento é um CPF em nome de quem assina: é a mesma pessoa (o cliente pessoa física).
+  const billedToSigner = doc.length === 11 && Boolean(billing.legalName?.trim()) && samePersonName(billing.legalName!, signer.name);
+  if (r.contact) {
+    if (r.contact.document) return { ...r, document: r.contact.document };
+    // O contato (e-mail e nome) é o próprio cliente pessoa física: o CPF do faturamento, no nome dele.
+    if (billedToSigner) return { ...r, document: doc, fromClient: true };
+    // Contato com o nome da empresa e sem CPF (ex.: lista importada só com o nome da empresa): pode ser a empresa — o
+    // CPF de uma pessoa não entra por aqui; se for pessoa (empresário individual), o CPF vai na ficha do contato.
+    if (companyNamed) return { signer, ambiguous: "empresa" };
+    return { ...r, document: undefined };
+  }
+  // Conflito nos contatos (o e-mail é de outra pessoa, de várias, ou duplicados com CPFs diferentes): vale sempre,
+  // mesmo com o nome do cliente — o link de assinatura vai para esse e-mail, então o CPF de ninguém entra.
+  if (r.ambiguous) return r;
+  if (billedToSigner) return { signer, document: doc, fromClient: true };
+  if (companyNamed) return { signer, ambiguous: "empresa" };
+  return r;
+}
+
 /** O signatário da Intercert está completo (nome e e-mail válidos)? */
 export function companySignerReady(signer: CompanySignerSetting): boolean {
   return signer.enabled && signer.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signer.email.trim());
@@ -172,7 +265,6 @@ export function normalizeVariableName(name: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
-/** Campo sugerido para uma variável do modelo (ou undefined quando não há um claro). */
 /** Nomes de variável que mostram o endereço em partes: ao lado deles, "numero" é o número do endereço, não o do contrato. */
 const STREET_VARIABLE_NAMES = new Set(["logradouro", "rua", "avenida", "endereco_logradouro"]);
 
@@ -202,6 +294,41 @@ export function suggestField(variable: string, siblings: string[] = []): string 
     if (hasStreet && !addressNumberTaken) return "contratante.numero";
   }
   return CONTRACT_FIELDS.find((f) => f.aliases?.includes(n))?.key;
+}
+
+/** Partes do endereço do cliente, cada uma com seu campo. "numero" sozinho só conta como parte ao lado do endereço completo. */
+const ADDRESS_PART_FIELDS = ["contratante.logradouro", "contratante.numero", "contratante.complemento", "contratante.bairro", "contratante.cidade", "contratante.cidade_uf", "contratante.uf", "contratante.cep"];
+
+/** Campo de parte do endereço que o nome da variável indica (logradouro, número, bairro, cidade, UF, CEP...). */
+function addressPartOf(variable: string): string | undefined {
+  const n = normalizeVariableName(variable);
+  if (!n) return undefined;
+  if (n === "numero" || n === "n" || n === "no") return "contratante.numero";
+  const exact = exactField(variable);
+  if (exact) return ADDRESS_PART_FIELDS.includes(exact) ? exact : undefined;
+  return CONTRACT_FIELDS.find((f) => ADDRESS_PART_FIELDS.includes(f.key) && f.aliases?.includes(n))?.key;
+}
+
+export interface SuspiciousBinding {
+  name: string;
+  field: string;
+  suggested: string;
+}
+
+/**
+ * Parte do endereço ligada ao endereço completo num modelo que também imprime outras partes (ex.: «Logradouro» →
+ * endereço completo ao lado de «Número», «Bairro» e «Cidade»): o contrato repetiria número, bairro e cidade. Só esse
+ * caso é apontado — ligações de outra família (valor × por extenso, cidade × cidade/UF, produto × itens) costumam ser
+ * de propósito, e um aviso que não some vira ruído. Só aviso: nada é trocado sozinho.
+ */
+export function suspiciousBindings(variables: ContractTemplateVariable[]): SuspiciousBinding[] {
+  const partsPrinted = variables.filter((v) => v.field && ADDRESS_PART_FIELDS.includes(v.field));
+  if (partsPrinted.length === 0) return [];
+  return variables.flatMap((v) => {
+    if (v.field !== "contratante.endereco") return [];
+    const suggested = addressPartOf(v.name);
+    return suggested && partsPrinted.some((p) => p.name !== v.name) ? [{ name: v.name, field: v.field, suggested }] : [];
+  });
 }
 
 function aliasOf(key: string): string[] {

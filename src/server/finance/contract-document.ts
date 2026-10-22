@@ -16,8 +16,8 @@ import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, get
 import { mergedBillingData } from "./service";
 import { fillDocx } from "./docx";
 import { pdfSafe } from "@/server/reports/export-pdf";
-import { BLANK, clientRepresentative, isCompanySigner, contractFieldValues, contractFirstYear, extractVariables, fillTemplateText, templateDataGaps, variableValues, type TemplateDataGap } from "@/domain/contract-templates";
-import { COLLECTIONS, type Client, type Contact, type Contract, type ContractDocumentTemplate, type ContractSignerEntry, type Opportunity, type Organization } from "@/domain/types";
+import { BLANK, isCompanySigner, resolveRepresentativeDocument, contractFieldValues, contractFirstYear, extractVariables, fillTemplateText, templateDataGaps, variableValues, type TemplateDataGap } from "@/domain/contract-templates";
+import { COLLECTIONS, type Client, type Contact, type Contract, type ContractDocumentTemplate, type Opportunity, type Organization } from "@/domain/types";
 import type { DocumentReadiness } from "@/components/finance/signature-document-options";
 import { formatDocument } from "@/lib/format";
 import { netItem } from "@/components/sales/model";
@@ -53,31 +53,13 @@ export interface ClientRepresentativeInfo {
   contactFound: boolean;
   /**
    * Não dá para saber de quem é o CPF: `nome` — mais de um contato usa o e-mail e nenhum tem o nome do signatário;
-   * `cpf` — contatos duplicados (mesmo nome e e-mail) com CPFs diferentes.
+   * `outro_nome` — o e-mail é de um contato com outro nome (`otherName`); `cpf` — contatos duplicados (mesmo nome e
+   * e-mail) com CPFs diferentes.
    */
-  ambiguous?: "nome" | "cpf";
-}
-
-const normName = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
-
-/**
- * Representante do cliente: o 1º signatário qualificado como contratante, representante legal ou procurador
- * (`clientRepresentative`, na ordem do contrato). O CPF vem do contato que É essa pessoa: o único contato com o e-mail
- * do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo nome (duplicados da mesma
- * pessoa: vale o CPF, se só houver um). Nunca "o que tem CPF" entre pessoas diferentes: CPF de outra pessoa no contrato
- * é pior do que a pendência.
- */
-function resolveRepresentative(signers: ContractSignerEntry[], contacts: Contact[]): { signer?: ContractSignerEntry; contact?: Contact; ambiguous?: "nome" | "cpf" } {
-  const signer = clientRepresentative(signers);
-  if (!signer) return { signer };
-  const sameEmail = contacts.filter((c) => c.email?.trim().toLowerCase() === signer.email.trim().toLowerCase());
-  if (sameEmail.length <= 1) return { signer, contact: sameEmail[0] };
-  const byName = sameEmail.filter((c) => normName(c.name) === normName(signer.name));
-  if (byName.length === 0) return { signer, ambiguous: "nome" };
-  // Mesmo nome e mesmo e-mail é a mesma pessoa cadastrada mais de uma vez: vale o CPF, se só houver um.
-  const cpfs = new Set(byName.map((c) => c.document).filter(Boolean));
-  if (cpfs.size > 1) return { signer, ambiguous: "cpf" };
-  return { signer, contact: byName.find((c) => c.document) ?? byName[0] };
+  ambiguous?: "nome" | "outro_nome" | "cpf" | "empresa";
+  otherName?: string;
+  /** O signatário é o próprio cliente pessoa física: o CPF é o documento do cliente. */
+  fromClient?: boolean;
 }
 
 interface FieldsContext {
@@ -91,7 +73,12 @@ const COMPANY_ADDRESS = HEADQUARTERS.label.replace("Sede Intercert — ", "");
 
 /** Valores dos campos do contrato (mesma regra para a prévia, o envio e a prontidão). */
 function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string): { fields: Record<string, string>; representative?: ClientRepresentativeInfo } {
-  const { signer, contact, ambiguous } = resolveRepresentative(contract.signers, ctx.contacts);
+  const { signer, contact, document, fromClient, ambiguous, otherName } = resolveRepresentativeDocument(
+    contract.signers,
+    ctx.contacts,
+    { legalName: ctx.client.legalName, tradeName: ctx.client.tradeName },
+    { legalName: ctx.billingData.legalName, document: ctx.billingData.document },
+  );
   const fields = contractFieldValues({
     contract,
     client: ctx.client,
@@ -100,9 +87,14 @@ function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string
     companyAddress: COMPANY_ADDRESS,
     issuedAt,
     labels: { recurrence: RECURRENCE_LABELS[contract.recurrence], paymentMethod: contract.paymentMethod ? paymentMethodLabel(contract.paymentMethod) : undefined },
-    representative: signer ? { name: signer.name, email: signer.email, document: contact?.document } : undefined,
+    representative: signer ? { name: signer.name, email: signer.email, document } : undefined,
   });
-  return { fields, representative: signer ? { name: signer.name, email: signer.email, contactFound: Boolean(contact), ...(ambiguous ? { ambiguous } : {}) } : undefined };
+  return {
+    fields,
+    representative: signer
+      ? { name: signer.name, email: signer.email, contactFound: Boolean(contact) || Boolean(fromClient), ...(fromClient ? { fromClient } : {}), ...(ambiguous ? { ambiguous } : {}), ...(otherName ? { otherName } : {}) }
+      : undefined,
+  };
 }
 
 async function clientContacts(clientId: string): Promise<Contact[]> {
@@ -190,6 +182,7 @@ export async function documentReadinessMany(contracts: Contract[]): Promise<Map<
     const { fields, representative } = documentFields(toSend, ctx, issuedAt);
     const names = template.kind === "interos" ? extractVariables(`${template.title ?? ""}\n${template.clauses ?? ""}`) : [];
     out.set(contract.id, {
+      templateId: template.id,
       templateName: template.name,
       variableCount: new Set([...template.variables.map((v) => v.name), ...names]).size,
       gaps: templateDataGaps(template.variables, fields, names),

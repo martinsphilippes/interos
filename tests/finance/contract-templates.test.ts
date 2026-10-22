@@ -24,6 +24,7 @@ import {
   isWitnessSigner,
   unmappedVariables,
   variableValues,
+  suspiciousBindings,
 } from "@/domain/contract-templates";
 import { docxText, fillDocx, fillXml, inspectDocx, readZip, writeZip } from "@/server/finance/docx";
 import { suggestClient } from "@/server/finance/signature-inbox";
@@ -412,5 +413,41 @@ describe("dados obrigatórios do modelo", () => {
     ]);
     expect(req.unbound).toEqual(["Sistema Operacional"]);
     expect(req.afterRelease).toEqual(["Fim da vigência"]);
+  });
+});
+
+describe("parte do endereço ligada ao endereço completo", () => {
+  const v = (name: string, field?: string) => ({ name, field });
+
+  it("«Logradouro» no endereço completo ao lado de número, bairro e cidade é apontada (repetiria tudo)", () => {
+    expect(suspiciousBindings([v("Logradouro", "contratante.endereco"), v("Número", "contratante.numero"), v("Bairro", "contratante.bairro"), v("Estado", "contratante.uf")])).toEqual([
+      { name: "Logradouro", field: "contratante.endereco", suggested: "contratante.logradouro" },
+    ]);
+    // «Número» ligado ao endereço completo ao lado do bairro também repete.
+    expect(suspiciousBindings([v("Número", "contratante.endereco"), v("Bairro", "contratante.bairro")])).toEqual([{ name: "Número", field: "contratante.endereco", suggested: "contratante.numero" }]);
+  });
+
+  it("endereço completo sozinho, ou com nome de endereço, não é apontado", () => {
+    expect(suspiciousBindings([v("Logradouro", "contratante.endereco"), v("Razão Social", "contratante.razao_social")])).toEqual([]);
+    expect(suspiciousBindings([v("Endereço", "contratante.endereco"), v("Bairro", "contratante.bairro")])).toEqual([]);
+  });
+
+  it("endereço em partes com nomes comuns («Endereço» = logradouro, «Número» = número do endereço) não gera aviso", () => {
+    expect(suspiciousBindings([v("Endereço", "contratante.logradouro"), v("Número", "contratante.numero"), v("Bairro", "contratante.bairro"), v("Cidade", "contratante.cidade")])).toEqual([]);
+    expect(suspiciousBindings([v("Logradouro", "contratante.logradouro"), v("Número", "contrato.numero")])).toEqual([]);
+  });
+
+  it("ligações de outra família, feitas de propósito, não geram aviso", () => {
+    expect(
+      suspiciousBindings([
+        v("Mensalidade", "valores.mensalidade_extenso"),
+        v("Cidade", "contratante.cidade_uf"),
+        v("Produto", "contrato.itens"),
+        v("E-mail", "contratante.representante_email"),
+        v("CPF", "contratante.representante_cpf"),
+        v("Bairro"),
+        { name: "Estado", fixed: "CE" },
+      ]),
+    ).toEqual([]);
   });
 });

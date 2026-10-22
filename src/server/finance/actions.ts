@@ -38,6 +38,7 @@ import {
   sendForSignature,
   registerManualSignature,
   sendSignatureReminder,
+  setRepresentativeDocument,
   updateContractConditions,
   updateContractItems,
   type BillingChannelResult,
@@ -65,6 +66,7 @@ import {
   reversePaymentSchema,
   sendBillingMessageSchema,
   newContactSignerSchema,
+  representativeDocumentSchema,
   signerPickSchema,
   signerRefSchema,
   updateConditionsSchema,
@@ -198,6 +200,26 @@ export async function addContactAsSignerAction(input: unknown): Promise<ActionRe
     return { ok: true, data: result };
   } catch (error) {
     return fail(error, "Não foi possível cadastrar o contato como signatário");
+  }
+}
+
+/**
+ * CPF de quem assina pelo cliente, informado no painel de pendências do contrato: grava no contato que é essa pessoa
+ * ou cadastra o signatário como contato do cliente. Mesmas exigências de cadastrar contato pelo contrato.
+ */
+export async function setRepresentativeDocumentAction(input: unknown): Promise<ActionResult<{ contactId: string; created: boolean; name: string }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.assinatura.editar");
+    const data = representativeDocumentSchema.parse(input);
+    const contract = await assertContractAccess(user, data.contractId);
+    if (!can(user, "operacao.clientes.contatos.editar")) throw new PermissionError();
+    const client = await getById<Client>(COLLECTIONS.clients, contract.clientId);
+    if (!client || !(await canSeeClient(user, client))) throw new PermissionError();
+    const result = await setRepresentativeDocument(data, actorOf(user), user.departmentId);
+    revalidateFinance(client.id, data.contractId);
+    return { ok: true, data: result };
+  } catch (error) {
+    return fail(error, "Não foi possível salvar o CPF");
   }
 }
 

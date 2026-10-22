@@ -609,7 +609,11 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   produtos dos itens, sem repetir ("ERP X e TEF Y"): é o que modelos chamam de "Sistema", "Sistema Operacional" ou
   "Produto" (`contrato.itens` é a lista com quantidades). O diálogo de variáveis mostra, no que
   está sem ligação, a sugestão pelo nome (`suggestUnbound`) com "usar" por linha e "Usar as N sugestões" no rodapé;
-  nada é aplicado sozinho (sem campo pode ser escolha, e salvar por outro motivo não grava o que ninguém pediu). Mudar
+  nada é aplicado sozinho (sem campo pode ser escolha, e salvar por outro motivo não grava o que ninguém pediu). Parte do
+  endereço ligada ao endereço completo num modelo que também imprime outras partes (`suspiciousBindings`: «Logradouro»
+  → endereço completo ao lado de «Número»/«Bairro» repetiria tudo) vira aviso no cartão do modelo e "trocar" no
+  diálogo. Só esse caso: ligações de outra família (valor × por extenso, cidade × cidade/UF, produto × itens) costumam
+  ser de propósito, e aviso que não some vira ruído. Mudar
   texto, arquivo ou ligações sobe a versão. Envio do Word por `POST /api/financeiro/modelos` (multipart; acima do
   limite das Server Actions), até 4 MB.
 - **Dados obrigatórios do modelo** (`templateDataGaps` em `src/domain/contract-templates.ts`): toda variável do modelo
@@ -628,9 +632,34 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   documento já calculado ao provedor (`createEnvelope(contract, cliente, document)`), que não relê o contrato. A
   prévia (PDF/Word) também inclui o signatário da Intercert e continua disponível com as lacunas, para conferência.
   O cartão do modelo em Assinaturas › Modelos lista o que ele exige do cadastro (`templateRequirements`).
+- **Corrigir dali mesmo** (painel de pendências do cartão Assinatura, `groupReadinessGaps` em
+  `src/domain/document-readiness.ts`): as pendências saem agrupadas por onde se corrigem, cada grupo com um botão.
+  Dados do cliente → cartão «Cliente e faturamento» do contrato (rola, destaca e foca o 1º campo: `goToSection` em
+  `src/lib/go-to-section.ts`, ids em `contract-sections.ts`); itens/valores e condições → os cartões do contrato; quem
+  assina pela Intercert → Assinaturas › Configuração; variável sem ligação ou só depois da liberação → Assinaturas ›
+  Modelos com `?ligar=<modelo>` (abre o «Ligar variáveis» direto, para quem tem `financeiro.assinaturas.modelos.editar`).
+  CPF de quem assina pelo cliente: informado ali mesmo (`setRepresentativeDocumentAction`, mesmas exigências de
+  cadastrar contato pelo contrato: `financeiro.contratos.assinatura.editar` + `operacao.clientes.contatos.editar` +
+  cliente no escopo) — grava no contato que é a pessoa (`resolveClientRepresentative`, a mesma regra do documento) ou,
+  se o signatário ainda não é contato, cadastra o contato com nome, e-mail e CPF. Nunca em outra pessoa: a tela manda
+  quem ela mostrava (`expected`) e o servidor recusa se o signatário mudou; ambíguo, contato que já tem CPF (trocar é
+  na ficha do contato) e "signatário" com o nome da empresa também são recusados. O histórico registra que o CPF foi
+  informado, sem o número. Dados do cliente levam ao cartão do contrato só para quem o edita (senão, ao cadastro do
+  cliente); a configuração da assinatura, só para quem pode alterá-la. Sem signatário do cliente: «Adicionar
+  signatário» abre o formulário no próprio cartão.
 - **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): o 1º signatário, na ordem do
   contrato, qualificado como contratante, representante legal ou procurador (`clientRepresentative`, pela mesma regra
-  de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa: o único
+  de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa
+  (`resolveRepresentativeDocument`, no domínio — a mesma regra na leitura e na escrita, nesta ordem: 1) o contato que
+  é a pessoa, por `resolveClientRepresentative` — e-mail E nome batem (o único contato com o e-mail, mas com outro
+  nome, é `outro_nome`; sem contato com o e-mail, vale o contato SEM e-mail com o mesmo nome — com o nome da empresa,
+  só se o CPF já estiver na ficha), mesmo que o nome seja igual ao do cliente quando o contato JÁ tem CPF (empresário individual, lead com o
+  nome da pessoa) — com o nome do cliente e sem CPF é `empresa` (o CPF de uma pessoa vai na ficha do contato, nunca
+  pelo contrato num contato "Padaria X"). Conflito nos contatos (`outro_nome`, `nome`, `cpf`) vale sempre, mesmo com o
+  nome do cliente: o link de assinatura vai para aquele e-mail, então nenhum CPF entra. Contato sem CPF que é o próprio
+  cliente pessoa física (faturamento com CPF no nome dele) usa o CPF do faturamento; 2) sem
+  contato, o signatário com o nome de quem está no documento de faturamento, que é um CPF: o próprio cliente pessoa
+  física; 3) sem contato, o signatário com o nome do cliente: a empresa (`empresa`, sem CPF de ninguém): o único
   contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
   nome (o mesmo contato cadastrado mais de uma vez, com mesmo nome e e-mail, vale como uma pessoa se houver um só CPF);
   nunca "o que tem CPF" entre pessoas diferentes (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é
@@ -691,6 +720,25 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Tela**: a aba Configuração mostra a conexão (token, ambiente de testes x produção, segredo dos avisos), o endereço do
   webhook e os eventos a marcar na Clicksign. Sem o token, tudo segue manual com evidência. O ambiente de testes da
   Clicksign não tem validade jurídica. Não há autenticação gov.br na Clicksign (alternativas: ICP-Brasil, biometria).
+- **Testar conexão** (`checkClicksignConnectionAction` → `checkClicksignConnection`, chave
+  `financeiro.assinaturas.configuracao.testar`, mesma regra de quem vê a aba): os selos só dizem o que está na Vercel; o
+  botão consulta a Clicksign na hora, só leitura (`GET /envelopes?page[size]=1` e `GET /webhooks`, 1 nova tentativa e
+  10 s por chamada). Diz se a chave foi aceita (401/403 → apagada, errada ou do outro ambiente) e confere os webhooks
+  (`src/domain/clicksign-connection.ts`): o do INTEROS (caminho `/api/webhooks/clicksign`) ativo, com os eventos de
+  `CLICKSIGN_WEBHOOK_EVENTS` (só `upload` é dispensável), endereço exato em https (barra no fim ou http:// recebem 308,
+  e a Clicksign não segue redirecionamento), segredo igual ao `CLICKSIGN_WEBHOOK_SECRET` (comparado no servidor; o
+  segredo nunca vai para a tela) e no domínio deste INTEROS. Rota, selo e teste leem o segredo pelo mesmo
+  `clicksignWebhookSecret()` (sem espaço/quebra de linha nas pontas), para o teste não dizer "confere" quando a rota
+  recusaria. Há sempre UM principal (o melhor para manter: pronto; recebe neste domínio; recebe em outro domínio;
+  depois o que dá menos trabalho de corrigir), não o primeiro da lista, e só ele recebe instruções de correção — nunca
+  instruções concorrentes. Os demais com o caminho do INTEROS são sobras: neste domínio, "pode apagá-lo"; em outro
+  domínio, "se for um endereço antigo deste INTEROS, pode apagá-lo; se for outro sistema, não mexa" (só protocolo,
+  domínio e caminho). O principal só sai deste domínio ou dos que já recebem os avisos: um de outro domínio que não
+  funciona pode ser outro sistema e nunca recebe instrução de correção ("cadastre o endereço abaixo"). Endereço errado
+  pesa mais que inativo + segredo + eventos juntos (o exato sempre é o principal; "edite o endereço" nunca colide com
+  outro já cadastrado). Neste domínio cada um aparece como foi cadastrado ("usuário:senha@" trocado por "•••@"; a
+  Clicksign não aceita dois iguais; se dois saírem iguais na tela, ganham a posição na lista), para a tela dizer sem
+  ambiguidade qual manter, de qual copiar o segredo e qual apagar. Os de outros serviços (ex.: Pluga): só o domínio.
 
 ## Central de Atendimento (módulo Comunicação, `src/server/conversations/*`, `/comunicacao`)
 

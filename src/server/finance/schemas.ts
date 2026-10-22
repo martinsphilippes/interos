@@ -250,6 +250,17 @@ export type NewContactSignerInput = z.input<typeof newContactSignerSchema>;
 
 export const signerRefSchema = z.object({ contractId: id("Contrato"), email: signerEmailRef });
 
+/** CPF de quem assina pelo cliente, informado no painel de pendências do contrato. */
+export const representativeDocumentSchema = z.object({
+  contractId: id("Contrato"),
+  /** Quem a tela mostrava: se o signatário mudou enquanto ela estava aberta, nada é gravado (CPF iria para outra pessoa). */
+  expected: z.object({ name: z.string().trim().min(1).max(160), email: z.string().trim().min(3).max(200) }),
+  document: z
+    .string()
+    .transform((v) => v.replace(/\D/g, ""))
+    .refine((v) => isValidCpf(v), "CPF inválido"),
+});
+
 /** Assinatura registrada manualmente: exige evidência (link do documento assinado ou descrição) e a data. */
 export const manualSignatureSchema = z
   .object({

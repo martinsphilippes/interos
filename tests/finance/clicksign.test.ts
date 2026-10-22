@@ -4,7 +4,7 @@
  */
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addDocument, addSigner, clicksignApi, clicksignConfigured, clicksignEnv, clicksignHost, clicksignSignatureValid, createEnvelope, parseClicksignWebhook } from "@/server/integrations/clicksign";
+import { addDocument, addSigner, checkClicksignConnection, clicksignApi, clicksignWebhookSecret, clicksignConfigured, clicksignEnv, clicksignHost, clicksignSignatureValid, createEnvelope, parseClicksignWebhook } from "@/server/integrations/clicksign";
 import { clicksignRole, clicksignSignerNameProblem } from "@/domain/contract-templates";
 
 const SECRET = "segredo-de-teste";
@@ -179,6 +179,106 @@ describe("cliente da API v3", () => {
   it("sem token não chama a API", async () => {
     delete process.env.CLICKSIGN_API_TOKEN;
     await expect(clicksignApi("/envelopes")).rejects.toThrow(/não configurada/);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("testar conexão (chave da API e webhooks)", () => {
+  const saved = { ...process.env };
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+  const webhook = (id: string, endpoint: string, secret: string, events = ["upload", "sign", "refusal", "auto_close", "close", "document_closed", "cancel", "deadline"]) => ({
+    id,
+    type: "webhooks",
+    attributes: { endpoint, secret, status: "active", events },
+  });
+  let calls: string[] = [];
+  let route: (url: string) => Response;
+
+  beforeEach(() => {
+    calls = [];
+    process.env.CLICKSIGN_API_TOKEN = "tok-teste";
+    process.env.CLICKSIGN_ENV = "producao";
+    process.env.CLICKSIGN_WEBHOOK_SECRET = "segredo-interos";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        return route(url);
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...saved };
+  });
+
+  it("chave aceita: confere o webhook do INTEROS (segredo igual) e mostra a Pluga só pelo domínio, sem devolver segredos", async () => {
+    route = (url) =>
+      url.includes("/webhooks")
+        ? json({ data: [webhook("w1", "https://interos.app.br/api/webhooks/clicksign", "segredo-interos"), webhook("w2", "https://hooks.pluga.co/abc/chave-da-pluga", "segredo-pluga", ["sign"])], meta: { record_count: 2 } })
+        : json({ data: [], meta: { record_count: 0 } });
+    const check = await checkClicksignConnection("interos.app.br");
+    expect(calls.every((u) => u.startsWith("https://app.clicksign.com/api/v3/"))).toBe(true);
+    expect(calls.some((u) => u.includes("/envelopes?page%5Bsize%5D=1"))).toBe(true);
+    expect(check.token).toEqual({ ok: true });
+    expect(check.webhooks).toMatchObject({ interos: [{ host: "interos.app.br", active: true, missingEvents: [], secretMatches: true, otherHost: false }], others: [{ host: "hooks.pluga.co", active: true }] });
+    expect(JSON.stringify(check)).not.toMatch(/segredo-interos|segredo-pluga|chave-da-pluga|tok-teste/);
+  });
+
+  it("segredo com quebra de linha na Vercel: o teste e a rota leem o mesmo valor (os dois aceitam)", async () => {
+    process.env.CLICKSIGN_WEBHOOK_SECRET = "segredo-interos\n";
+    route = (url) => (url.includes("/webhooks") ? json({ data: [webhook("w1", "https://interos.app.br/api/webhooks/clicksign", "segredo-interos")], meta: { record_count: 1 } }) : json({ data: [] }));
+    const check = await checkClicksignConnection("interos.app.br");
+    expect(check.webhooks).toMatchObject({ secretConfigured: true, interos: [{ secretMatches: true }] });
+    const body = JSON.stringify({ event: { name: "sign" } });
+    expect(clicksignSignatureValid(body, sign(body, "segredo-interos"), clicksignWebhookSecret())).toBe(true);
+  });
+
+  it("sem segredo na Vercel o relatório diz que falta (a rota responde 503)", async () => {
+    delete process.env.CLICKSIGN_WEBHOOK_SECRET;
+    route = (url) => (url.includes("/webhooks") ? json({ data: [webhook("w1", "https://interos.app.br/api/webhooks/clicksign", "x")], meta: { record_count: 1 } }) : json({ data: [] }));
+    const check = await checkClicksignConnection("interos.app.br");
+    expect(check.webhooks).toMatchObject({ secretConfigured: false, interos: [{ secretMatches: null }] });
+  });
+
+  it("segredo diferente do da Vercel é apontado", async () => {
+    route = (url) => (url.includes("/webhooks") ? json({ data: [webhook("w1", "https://interos.app.br/api/webhooks/clicksign", "outro")], meta: { record_count: 1 } }) : json({ data: [] }));
+    const check = await checkClicksignConnection("interos.app.br");
+    expect(check.webhooks).toMatchObject({ interos: [{ secretMatches: false }] });
+  });
+
+  it("chave recusada (401) explica o que fazer e não lista webhooks", async () => {
+    route = () => json({ errors: [{ title: "Unauthorized" }] }, 401);
+    const check = await checkClicksignConnection("interos.app.br");
+    expect(check.token).toMatchObject({ ok: false, problem: "recusado" });
+    expect(!check.token.ok && check.token.message).toMatch(/CLICKSIGN_API_TOKEN/);
+    expect(!check.token.ok && check.token.message).toMatch(/ambiente de testes/);
+    expect(check.webhooks).toBeNull();
+  });
+
+  it("lista de webhooks recusada não esconde que a chave vale", async () => {
+    route = (url) => (url.includes("/webhooks") ? json({ errors: [{ title: "Sem permissão" }] }, 403) : json({ data: [] }));
+    const check = await checkClicksignConnection(null);
+    expect(check.token).toEqual({ ok: true });
+    expect(check.webhooks).toEqual({ error: "Clicksign: Sem permissão" });
+  });
+
+  it("muitos webhooks: lê as páginas até o total", async () => {
+    const page = (n: number, size: number) => Array.from({ length: size }, (_, i) => webhook(`w${n}-${i}`, `https://outro${n}-${i}.com/h`, "s"));
+    route = (url) => {
+      if (!url.includes("/webhooks")) return json({ data: [] });
+      return url.includes("page%5Bnumber%5D=1") ? json({ data: page(1, 20), meta: { record_count: 23 } }) : json({ data: page(2, 3), meta: { record_count: 23 } });
+    };
+    const check = await checkClicksignConnection(null);
+    expect(check.webhooks && "others" in check.webhooks ? check.webhooks.others : []).toHaveLength(23);
+    expect(calls.filter((u) => u.includes("/webhooks"))).toHaveLength(2);
+  });
+
+  it("sem token não chama a Clicksign", async () => {
+    delete process.env.CLICKSIGN_API_TOKEN;
+    route = () => json({});
+    const check = await checkClicksignConnection(null);
+    expect(check.token).toMatchObject({ ok: false, problem: "sem_token" });
     expect(calls).toHaveLength(0);
   });
 });
