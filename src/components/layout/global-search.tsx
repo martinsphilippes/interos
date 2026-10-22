@@ -16,6 +16,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { searchGlobal } from "@/server/search/actions";
 import type { SearchKind, SearchResponse } from "@/server/search/queries";
 import { cn } from "@/lib/utils";
+import { isNewVersionError } from "@/lib/version";
 import { NavIcon } from "./nav-icon";
 
 const DEBOUNCE_MS = 250;
@@ -94,15 +95,23 @@ export function GlobalSearch({ shortcuts = [], createLinks = [], className }: Gl
     }
     setSearching(true);
     timer.current = setTimeout(async () => {
-      const result = await searchGlobal(term);
-      if (id !== requestId.current) return; // resposta antiga
-      setSearching(false);
-      if (result.ok) {
-        setResults(result.data);
-        setError(null);
-      } else {
+      try {
+        const result = await searchGlobal(term);
+        if (id !== requestId.current) return; // resposta antiga
+        setSearching(false);
+        if (result.ok) {
+          setResults(result.data);
+          setError(null);
+        } else {
+          setResults(null);
+          setError(result.error);
+        }
+      } catch (err) {
+        // Fora de transição, a rejeição da action não chega ao error boundary: trata aqui (troca de versão ou rede).
+        if (id !== requestId.current) return;
+        setSearching(false);
         setResults(null);
-        setError(result.error);
+        setError(isNewVersionError(err) ? "Saiu uma nova versão do INTEROS: recarregue a página para buscar" : "Não foi possível buscar agora; tente de novo");
       }
     }, DEBOUNCE_MS);
   };

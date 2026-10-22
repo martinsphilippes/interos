@@ -240,7 +240,8 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
   // Proposta aceita traz itens com desconto; sem ela, os produtos da oportunidade.
   const items: ProposalItem[] = proposal?.status === "aceita" && proposal.items.length > 0 ? proposal.items : opp.products.map((p) => ({ ...p, discountPct: 0 }));
   const totals = proposalTotals(items);
-  const signerEmail = primary?.email ?? opp.billingData?.email ?? client.email;
+  // Só vira signatário um e-mail que a assinatura aceita; sem nenhum, o contrato nasce sem signatário do cliente.
+  const signerEmail = [primary?.email, opp.billingData?.email, client.email].find((e): e is string => Boolean(e && isSignerEmail(e)));
   const companySigner = companySignerEntry(await getSignatureSettings());
   const contract = await create<Contract>(COLLECTIONS.contracts, {
     clientId: client.id,
@@ -400,7 +401,7 @@ export async function createManualContract(input: { clientId: string; recurrence
   const client = await loadClient(input.clientId);
   const [contacts, financeManager] = await Promise.all([list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", client.id]] }), getDepartmentManager("financeiro")]);
   const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
-  const signerEmail = primary?.email ?? client.email;
+  const signerEmail = [primary?.email, client.email].find((e): e is string => Boolean(e && isSignerEmail(e)));
   const companySigner = companySignerEntry(await getSignatureSettings());
   const contract = await create<Contract>(COLLECTIONS.contracts, {
     clientId: client.id,

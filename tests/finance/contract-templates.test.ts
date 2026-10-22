@@ -80,6 +80,8 @@ describe("variáveis do modelo", () => {
     expect(suggestField("numero", ["rua", "numero"])).toBe("contratante.numero");
     expect(suggestField("Número", ["Contrato", "Número"])).toBe("contrato.numero");
     expect(suggestField("Número", ["endereco", "Número", "bairro", "cep"])).toBe("contrato.numero");
+    expect(suggestField("Número", ["Logradouro", "numero_endereco", "Número"])).toBe("contrato.numero");
+    expect(suggestField("Número", ["Logradouro", "contratante.numero", "Número"])).toBe("contrato.numero");
     expect(mergeVariables(["Logradouro", "Número", "Bairro"]).map((v) => v.field)).toEqual(["contratante.logradouro", "contratante.numero", "contratante.bairro"]);
     expect(mergeVariables(["numero"]).map((v) => v.field)).toEqual(["contrato.numero"]);
   });
@@ -105,12 +107,14 @@ describe("variáveis do modelo", () => {
     expect(fillTemplateText("{{nome}} · {{foro}} · {{x}} · {{y}}", values)).toBe(`ACME LTDA · Juazeiro do Norte/CE · ${BLANK} · ${BLANK}`);
   });
 
-  it("sem ligação gravada: nome exato de campo vale, apelido não (o documento bate com a tela, 'Sem campo' = lacuna)", () => {
-    const fields = { "contratante.cidade": "Crato", "contratante.bairro": "Centro" };
-    const values = variableValues([{ name: "contratante.cidade" }, { name: "bairro" }], fields, ["contratante_cidade"]);
-    expect(values["contratante.cidade"]).toBe("Crato");
-    expect(values["contratante_cidade"]).toBe("Crato");
+  it("variável fora da lista gravada: nome exato de campo vale, apelido não; gravada sem campo é lacuna mesmo com nome exato", () => {
+    const fields = { "contratante.cidade": "Crato", "contratante.bairro": "Centro", "contratante.uf": "CE" };
+    const values = variableValues([{ name: "contratante.cidade" }, { name: "bairro" }], fields, ["contratante_uf", "contratante.bairro", "cidade"]);
+    expect(values["contratante.cidade"]).toBe(BLANK);
     expect(values["bairro"]).toBe(BLANK);
+    expect(values["contratante_uf"]).toBe("CE");
+    expect(values["contratante.bairro"]).toBe("Centro");
+    expect(values["cidade"]).toBe(BLANK);
   });
 
   it("partes opcionais do endereço vazias saem vazias, não como lacuna; dado faltante continua lacuna", () => {

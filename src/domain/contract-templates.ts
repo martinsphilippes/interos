@@ -160,8 +160,18 @@ export function suggestField(variable: string, siblings: string[] = []): string 
   if (direct) return direct;
   const n = normalizeVariableName(variable);
   if (!n) return undefined;
-  if (n === "numero" && siblings.some((s) => STREET_VARIABLE_NAMES.has(normalizeVariableName(s)))) return "contratante.numero";
+  if (n === "numero") {
+    const others = siblings.map(normalizeVariableName).filter((s) => s !== n);
+    const hasStreet = others.some((s) => STREET_VARIABLE_NAMES.has(s));
+    // Se outra variável já é o número do endereço (numero_endereco…), "numero" volta a ser o do contrato.
+    const addressNumberTaken = others.some((s) => aliasOf("contratante.numero").includes(s) || s === "contratante_numero");
+    if (hasStreet && !addressNumberTaken) return "contratante.numero";
+  }
   return CONTRACT_FIELDS.find((f) => f.aliases?.includes(n))?.key;
+}
+
+function aliasOf(key: string): string[] {
+  return CONTRACT_FIELDS.find((f) => f.key === key)?.aliases ?? [];
 }
 
 function fieldOptional(key: string): boolean {
@@ -213,9 +223,10 @@ export function variableValues(variables: ContractTemplateVariable[], fields: Re
   const all = new Set([...variables.map((v) => v.name), ...names]);
   for (const name of all) {
     const v = variables.find((x) => x.name === name);
-    // Sem ligação gravada só vale o nome exato de um campo ({{contratante.razao_social}} no modelo INTEROS). Apelidos
-    // não são adivinhados na hora de gerar: o documento tem de bater com a tela ("Sem campo" = lacuna).
-    const field = v?.field ?? exactField(name);
+    // Variável que não está na lista gravada (modelo antigo, texto editado): só vale o nome exato de um campo
+    // ({{contratante.razao_social}}). Gravada sem ligação é escolha ("sem campo" = lacuna); apelidos não são
+    // adivinhados ao gerar, para o documento bater com a tela.
+    const field = v ? v.field : exactField(name);
     const value = v?.fixed?.trim() ? v.fixed.trim() : field && fields[field] !== undefined ? fields[field] : "";
     out[name] = value || (field && fieldOptional(field) ? "" : BLANK);
   }

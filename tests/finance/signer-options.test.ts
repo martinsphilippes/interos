@@ -40,6 +40,8 @@ describe("signerChoices", () => {
   it("e-mail que a assinatura não aceita (cadastro mais frouxo) desabilita contato e usuário, apontando onde corrigir", () => {
     const { contacts, users } = signerChoices(options, [], false);
     expect(contacts.find((c) => c.name === "Beto Email Ruim")?.disabledReason).toMatch(/inválido.*ficha do cliente/);
+    expect(contacts.find((c) => c.name === "Beto Email Ruim")?.label).toBe("Beto Email Ruim · a..b@acme.com.br · e-mail inválido");
+    expect(users.find((u) => u.name === "Zé Email Ruim")?.label).toContain("· e-mail inválido");
     expect(users.find((u) => u.name === "Zé Email Ruim")?.disabledReason).toMatch(/inválido.*cadastro do usuário/);
     expect(users.at(-1)?.name).toBe("Zé Email Ruim");
     expect(users.find((u) => u.name === "Pedro Testemunha")?.disabledReason).toBeUndefined();

@@ -2,16 +2,25 @@
 
 import * as React from "react";
 import { toast } from "@/components/ui/toast";
-import { BUILD_ID } from "@/lib/version";
+import { BUILD_ID, NEW_VERSION_NOTICE_KEY } from "@/lib/version";
 
 const INTERVAL_MS = 10 * 60 * 1000;
 
 /**
  * Avisa uma vez quando o deploy no ar é outro: ao voltar para a aba e a cada 10 min enquanto ela está visível. Fora da
  * Vercel (BUILD_ID "local") não faz nada. Não recarrega sozinho: o usuário pode estar no meio de um formulário.
+ * Depois de uma recarga por troca de versão (AppErrorView), explica o que aconteceu, já que a tela anterior sumiu.
  */
 export function VersionWatcher() {
   React.useEffect(() => {
+    try {
+      if (sessionStorage.getItem(NEW_VERSION_NOTICE_KEY)) {
+        sessionStorage.removeItem(NEW_VERSION_NOTICE_KEY);
+        toast.info("Página recarregada: saiu uma nova versão do INTEROS", { id: "versao-recarregada", duration: 15_000, description: "O último envio não foi salvo. Repita a ação." });
+      }
+    } catch {
+      // Sem sessionStorage: sem aviso.
+    }
     if (BUILD_ID === "local") return;
     let warned = false;
     const check = async () => {

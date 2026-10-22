@@ -127,7 +127,9 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   recebe 404 e o Next lança `UnrecognizedActionError`; `AppErrorView` (`src/components/layout/app-error-view.tsx`,
   usada por `src/app/(app)/error.tsx` para as páginas e por `src/app/error.tsx` para o próprio shell: presença,
   softphone, notificações) reconhece (`isNewVersionError`, `src/lib/version.ts`), explica que o envio não foi salvo e
-  recarrega uma vez (trava de 30 s no `sessionStorage` contra laço). Antes disso, `VersionWatcher` (shell) compara `NEXT_PUBLIC_BUILD_ID` (id do deploy embutido em
+  recarrega depois de 2,5 s (trava de 30 s no `sessionStorage` contra laço; dentro dela o texto pede para recarregar à
+  mão); após a recarga o `VersionWatcher` mostra um toast "repita a ação" (marca `NEW_VERSION_NOTICE_KEY`). A busca
+  global, que chama a action fora de transição, trata a rejeição com mensagem própria. Antes disso, `VersionWatcher` (shell) compara `NEXT_PUBLIC_BUILD_ID` (id do deploy embutido em
   `next.config.ts`) com `GET /api/versao` ao voltar para a aba e a cada 10 min, e avisa com um toast fixo "Recarregar"
   (não recarrega sozinho: pode haver formulário aberto).
 
@@ -580,7 +582,8 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   entre os contatos do cliente e a equipe ativa da Intercert (testemunha/representante), nunca digitado solto — e a
   regra vale no servidor: `addSignerAction` recebe `{ source: contact | user, id, role }` e `addSignerFrom` resolve
   nome/e-mail do cadastro (contato precisa ser do cliente do contrato e ter e-mail que a assinatura aceite,
-  `isSignerEmail` = `z.email()`, pois o cadastro de contatos/usuários é mais frouxo; usuário precisa estar ativo). Quem
+  `isSignerEmail` = `z.email()`, pois o cadastro de contatos/usuários é mais frouxo; usuário precisa estar ativo; na
+  criação do contrato o signatário do cliente só é semeado com um e-mail que passe nessa regra). Quem
   já assina sai da lista; contato sem e-mail ou com e-mail inválido aparece desabilitado com o motivo. Remover, lembrar
   e assinar à mão (contrato e aditivo) identificam o signatário pelo e-mail gravado sem revalidá-lo (`signerEmailRef`),
   para contratos antigos que copiaram o e-mail do contato principal sem conferir. Com a Clicksign ligada, nome sem sobrenome é
@@ -596,12 +599,15 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Modelos** (`contract_templates`): `interos` (título + cláusulas com `{{variáveis}}`, impressas depois dos dados do
   contrato) ou `word` (.docx da Clicksign; arquivo por versão em `contract_template_files`, id `<modelo>_v<N>`, imutável).
   Variáveis ligadas a `CONTRACT_FIELDS` (sugestão pelo nome: `{{razao_social}}` → `contratante.razao_social`) ou a texto
-  fixo; sem ligação sai lacuna (só o nome exato de um campo, `{{contratante.cidade}}`, vale sem ligação; apelidos não
-  são adivinhados ao gerar, para o documento bater com o "Sem campo" da tela). O endereço do cliente existe inteiro
+  fixo; gravada sem ligação sai lacuna (é escolha, e bate com o "Sem campo" da tela); só uma variável que não está na
+  lista gravada (modelo antigo, texto editado) com o nome exato de um campo, `{{contratante.cidade}}`, é preenchida;
+  apelidos não são adivinhados ao gerar. O endereço do cliente existe inteiro
   (`contratante.endereco`) e em partes (logradouro, número, complemento, bairro, cidade, cidade/UF, UF, CEP); número,
   complemento e bairro são `optional` (vazio sai vazio, não lacuna). `{{numero}}` é o número do contrato, salvo quando o
-  modelo tem um logradouro separado (`suggestField(nome, irmãs)`): aí é o número do endereço. O diálogo de variáveis abre
-  o que está sem ligação já com a sugestão pelo nome (`suggestUnbound`), marcada como sugestão, e só grava ao salvar. Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
+  modelo tem um logradouro separado e nenhuma outra variável já é o número do endereço (`suggestField(nome, irmãs)`):
+  aí é o número do endereço. O diálogo de variáveis mostra, no que está sem ligação, a sugestão pelo nome
+  (`suggestUnbound`) com "usar" por linha e "Usar as N sugestões" no rodapé; nada é aplicado sozinho (sem campo pode ser
+  escolha, e salvar por outro motivo não grava o que ninguém pediu). Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
   `POST /api/financeiro/modelos` (multipart; acima do limite das Server Actions), até 4 MB.
 - **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
   modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o

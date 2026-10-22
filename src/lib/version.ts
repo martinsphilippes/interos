@@ -6,6 +6,9 @@
  */
 export const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "local";
 
+/** Marca no sessionStorage de que a página foi recarregada por troca de versão: o VersionWatcher avisa e apaga. */
+export const NEW_VERSION_NOTICE_KEY = "interos:aviso-versao-nova";
+
 /** Erro de Server Action de outro deploy (nome da classe do Next ou a mensagem, para o caso de ela chegar serializada). */
 export function isNewVersionError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;

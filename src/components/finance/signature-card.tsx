@@ -264,7 +264,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                   {choices.users.length > 0 ? (
                     <optgroup label="Equipe Intercert (testemunha, representante)">
                       {choices.users.map((u) => (
-                        <option key={u.value} value={u.value}>
+                        <option key={u.value} value={u.value} disabled={Boolean(u.disabledReason)}>
                           {u.label}
                         </option>
                       ))}
