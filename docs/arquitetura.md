@@ -605,7 +605,9 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   (`contratante.endereco`) e em partes (logradouro, número, complemento, bairro, cidade, cidade/UF, UF, CEP); número,
   complemento e bairro saem vazios quando faltam (`empty: "vazio"`, não lacuna); só complemento é `optional`.
   `{{numero}}` é o número do contrato, salvo quando o modelo tem um logradouro separado e nenhuma outra variável já é
-  o número do endereço (`suggestField(nome, irmãs)`): aí é o número do endereço. O diálogo de variáveis mostra, no que
+  o número do endereço (`suggestField(nome, irmãs)`): aí é o número do endereço. `contrato.produto` é o nome dos
+  produtos dos itens, sem repetir ("ERP X e TEF Y"): é o que modelos chamam de "Sistema", "Sistema Operacional" ou
+  "Produto" (`contrato.itens` é a lista com quantidades). O diálogo de variáveis mostra, no que
   está sem ligação, a sugestão pelo nome (`suggestUnbound`) com "usar" por linha e "Usar as N sugestões" no rodapé;
   nada é aplicado sozinho (sem campo pode ser escolha, e salvar por outro motivo não grava o que ninguém pediu). Mudar
   texto, arquivo ou ligações sobe a versão. Envio do Word por `POST /api/financeiro/modelos` (multipart; acima do
