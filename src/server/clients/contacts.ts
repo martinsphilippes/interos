@@ -17,6 +17,8 @@ export interface NewContactInput {
   phone?: string;
   whatsapp?: string;
   email?: string;
+  /** CPF só dígitos (já validado pelo schema de quem chama). */
+  document?: string;
   isPrimary?: boolean;
   isDecisionMaker?: boolean;
 }
@@ -29,6 +31,7 @@ export async function createContact(input: NewContactInput, actor: UserRef, depa
     phone: input.phone || undefined,
     whatsapp: input.whatsapp || undefined,
     email: input.email?.trim().toLowerCase() || undefined,
+    document: input.document || undefined,
     isPrimary: Boolean(input.isPrimary),
     isDecisionMaker: Boolean(input.isDecisionMaker),
     createdBy: actor.id,

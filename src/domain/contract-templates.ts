@@ -58,6 +58,19 @@ export function isCompanySigner(s: { party?: string; role?: string }): boolean {
   return s.party === "contratada" || /\bcontratada\b/i.test(s.role ?? "");
 }
 
+/** Testemunha (pelo papel no contrato, sem acento e sem caixa). */
+export function isWitnessSigner(s: { role?: string }): boolean {
+  return /testemunha/.test((s.role ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
+}
+
+/**
+ * Quem assina pelo cliente: o 1º signatário (na ordem do contrato) qualificado como contratante, representante legal
+ * ou procurador — não a Intercert, testemunha, avalista ou fiador.
+ */
+export function clientRepresentative<T extends { party?: string; role?: string }>(signers: T[]): T | undefined {
+  return signers.find((s) => ["contractor", "legal_representative", "attorney"].includes(clicksignRole(s)));
+}
+
 /** O signatário da Intercert está completo (nome e e-mail válidos)? */
 export function companySignerReady(signer: CompanySignerSetting): boolean {
   return signer.enabled && signer.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signer.email.trim());
@@ -73,51 +86,69 @@ export interface ContractField {
   group: "Contratante" | "Contratada" | "Contrato" | "Valores";
   /** Nomes que costumam aparecer nos modelos Word (já normalizados). */
   aliases?: string[];
-  /** Vazio é normal (complemento, número "s/n", bairro): no documento sai vazio, não a lacuna de preencher à mão. */
+  /** De onde vem o dado (e onde corrigir quando falta). */
+  source: FieldSource;
+  /** Como sai quando falta: lacuna (________) para preencher à mão, ou vazio (partes do endereço). Padrão: lacuna. */
+  empty?: "lacuna" | "vazio";
+  /** Vazio é aceitável (complemento): não entra nas pendências do documento. */
   optional?: boolean;
+  /** O dado só existe depois da liberação (vigência): no modelo, a variável precisa de texto fixo. */
+  afterRelease?: boolean;
 }
 
+/** Origem de cada dado do contrato: diz à tela onde o usuário completa o que falta. */
+export type FieldSource = "cliente" | "contato" | "signatario" | "contrato" | "intercert";
+
+export const FIELD_SOURCE_LABELS: Record<FieldSource, string> = {
+  cliente: "Cadastro do cliente",
+  contato: "Contatos do cliente",
+  signatario: "Signatários do contrato",
+  contrato: "Dados do contrato",
+  intercert: "Configuração da assinatura",
+};
+
 export const CONTRACT_FIELDS: readonly ContractField[] = [
-  { key: "contratante.razao_social", label: "Razão social do cliente", group: "Contratante", aliases: ["razao_social", "nome_cliente", "cliente", "nome_empresa", "empresa", "contratante", "nome_contratante", "razao_social_cliente", "nome"] },
-  { key: "contratante.nome_fantasia", label: "Nome fantasia do cliente", group: "Contratante", aliases: ["nome_fantasia", "fantasia"] },
-  { key: "contratante.cnpj_cpf", label: "CNPJ/CPF do cliente", group: "Contratante", aliases: ["cnpj", "cpf", "cnpj_cpf", "cpf_cnpj", "documento", "cnpj_cliente", "cnpj_contratante", "inscricao"] },
-  { key: "contratante.endereco", label: "Endereço completo do cliente", group: "Contratante", aliases: ["endereco", "endereco_completo", "endereco_cliente", "endereco_contratante"] },
-  { key: "contratante.logradouro", label: "Logradouro do cliente (rua/avenida)", group: "Contratante", aliases: ["logradouro", "rua", "avenida", "endereco_logradouro"] },
-  { key: "contratante.numero", label: "Número do endereço do cliente", group: "Contratante", optional: true, aliases: ["numero_endereco", "numero_do_endereco", "endereco_numero", "n_endereco", "n_do_endereco", "numero_imovel"] },
-  { key: "contratante.complemento", label: "Complemento do endereço do cliente", group: "Contratante", optional: true, aliases: ["complemento", "endereco_complemento"] },
-  { key: "contratante.bairro", label: "Bairro do cliente", group: "Contratante", optional: true, aliases: ["bairro", "endereco_bairro"] },
-  { key: "contratante.cidade", label: "Cidade do cliente", group: "Contratante", aliases: ["cidade", "municipio"] },
-  { key: "contratante.cidade_uf", label: "Cidade/UF do cliente", group: "Contratante", aliases: ["cidade_uf", "cidade_estado", "municipio_uf"] },
-  { key: "contratante.uf", label: "UF do cliente", group: "Contratante", aliases: ["uf", "estado"] },
-  { key: "contratante.cep", label: "CEP do cliente", group: "Contratante", aliases: ["cep"] },
-  { key: "contratante.email", label: "E-mail de cobrança do cliente", group: "Contratante", aliases: ["email", "email_cliente", "email_contratante", "e_mail"] },
-  { key: "contratante.representante", label: "Representante do cliente (1º signatário)", group: "Contratante", aliases: ["representante", "representante_legal", "nome_representante", "responsavel", "signatario", "nome_signatario"] },
-  { key: "contratante.representante_email", label: "E-mail do representante do cliente", group: "Contratante", aliases: ["email_representante", "email_signatario"] },
-  { key: "contratada.razao_social", label: "Razão social da Intercert", group: "Contratada", aliases: ["contratada", "razao_social_contratada", "nome_contratada"] },
-  { key: "contratada.endereco", label: "Endereço da Intercert", group: "Contratada", aliases: ["endereco_contratada"] },
-  { key: "contratada.representante", label: "Quem assina pela Intercert", group: "Contratada", aliases: ["representante_contratada", "diretor", "assinante_contratada"] },
-  { key: "contratada.representante_email", label: "E-mail de quem assina pela Intercert", group: "Contratada", aliases: ["email_contratada"] },
-  { key: "contrato.numero", label: "Número do contrato", group: "Contrato", aliases: ["numero_contrato", "numero", "contrato", "n_contrato"] },
-  { key: "contrato.versao", label: "Versão do contrato", group: "Contrato", aliases: ["versao"] },
-  { key: "contrato.data_emissao", label: "Data de emissão (por extenso)", group: "Contrato", aliases: ["data", "data_contrato", "data_emissao", "data_assinatura", "data_extenso"] },
-  { key: "contrato.prazo_meses", label: "Prazo em meses", group: "Contrato", aliases: ["prazo", "prazo_meses", "vigencia_meses", "prazo_contrato", "meses"] },
-  { key: "contrato.recorrencia", label: "Recorrência", group: "Contrato", aliases: ["recorrencia", "periodicidade"] },
-  { key: "contrato.dia_vencimento", label: "Dia do vencimento", group: "Contrato", aliases: ["dia_vencimento", "vencimento"] },
-  { key: "contrato.primeiro_vencimento", label: "Primeiro vencimento", group: "Contrato", aliases: ["primeiro_vencimento", "data_primeiro_vencimento"] },
-  { key: "contrato.inicio_vigencia", label: "Início da vigência", group: "Contrato", aliases: ["inicio_vigencia", "data_inicio", "inicio"] },
-  { key: "contrato.fim_vigencia", label: "Fim da vigência", group: "Contrato", aliases: ["fim_vigencia", "data_fim", "termino", "fim"] },
-  { key: "contrato.forma_pagamento", label: "Forma de pagamento", group: "Contrato", aliases: ["forma_pagamento", "meio_pagamento"] },
-  { key: "contrato.parcelas_adesao", label: "Parcelas da adesão", group: "Contrato", aliases: ["parcelas", "parcelas_adesao", "parcelas_setup"] },
-  { key: "contrato.condicao_pagamento", label: "Condição de pagamento (texto)", group: "Contrato", aliases: ["condicao_pagamento", "condicoes_pagamento", "pagamento"] },
-  { key: "contrato.itens", label: "Produtos e serviços (lista)", group: "Contrato", aliases: ["itens", "produtos", "servicos", "objeto", "lista_produtos"] },
-  { key: "valores.adesao", label: "Valor da adesão/setup", group: "Valores", aliases: ["adesao", "setup", "valor_adesao", "taxa_adesao", "implantacao", "valor_implantacao", "valor_setup"] },
-  { key: "valores.adesao_extenso", label: "Adesão por extenso", group: "Valores", aliases: ["adesao_extenso", "valor_adesao_extenso", "setup_extenso"] },
-  { key: "valores.mensalidade", label: "Mensalidade", group: "Valores", aliases: ["mensalidade", "valor_mensal", "valor_mensalidade", "valor_de_mensalidade", "valor_da_mensalidade", "mensal"] },
-  { key: "valores.mensalidade_extenso", label: "Mensalidade por extenso", group: "Valores", aliases: ["mensalidade_extenso", "valor_mensal_extenso", "valor_mensalidade_extenso", "valor_de_mensalidade_extenso", "valor_da_mensalidade_extenso"] },
-  { key: "valores.hardware", label: "Valor do hardware", group: "Valores", aliases: ["hardware", "valor_hardware", "equipamentos"] },
-  { key: "valores.primeiro_ano", label: "Valor no 1º ano", group: "Valores", aliases: ["valor_primeiro_ano", "primeiro_ano", "valor_anual"] },
-  { key: "valores.total", label: "Valor total do contrato (prazo inteiro)", group: "Valores", aliases: ["valor_total", "total", "valor_contrato", "valor_global"] },
-  { key: "valores.total_extenso", label: "Valor total por extenso", group: "Valores", aliases: ["valor_total_extenso", "total_extenso"] },
+  { key: "contratante.razao_social", label: "Razão social do cliente", group: "Contratante", source: "cliente", aliases: ["razao_social", "nome_cliente", "cliente", "nome_empresa", "empresa", "contratante", "nome_contratante", "razao_social_cliente", "nome"] },
+  { key: "contratante.nome_fantasia", label: "Nome fantasia do cliente", group: "Contratante", source: "cliente", aliases: ["nome_fantasia", "fantasia"] },
+  { key: "contratante.cnpj_cpf", label: "CNPJ/CPF do cliente", group: "Contratante", source: "cliente", aliases: ["cnpj", "cpf", "cnpj_cpf", "cpf_cnpj", "documento", "cnpj_cliente", "cnpj_contratante", "inscricao"] },
+  { key: "contratante.endereco", label: "Endereço completo do cliente", group: "Contratante", source: "cliente", aliases: ["endereco", "endereco_completo", "endereco_cliente", "endereco_contratante"] },
+  { key: "contratante.logradouro", label: "Logradouro do cliente (rua/avenida)", group: "Contratante", source: "cliente", aliases: ["logradouro", "rua", "avenida", "endereco_logradouro"] },
+  { key: "contratante.numero", label: "Número do endereço do cliente", group: "Contratante", source: "cliente", empty: "vazio", aliases: ["numero_endereco", "numero_do_endereco", "endereco_numero", "n_endereco", "n_do_endereco", "numero_imovel"] },
+  { key: "contratante.complemento", label: "Complemento do endereço do cliente", group: "Contratante", source: "cliente", empty: "vazio", optional: true, aliases: ["complemento", "endereco_complemento"] },
+  { key: "contratante.bairro", label: "Bairro do cliente", group: "Contratante", source: "cliente", empty: "vazio", aliases: ["bairro", "endereco_bairro"] },
+  { key: "contratante.cidade", label: "Cidade do cliente", group: "Contratante", source: "cliente", aliases: ["cidade", "municipio"] },
+  { key: "contratante.cidade_uf", label: "Cidade/UF do cliente", group: "Contratante", source: "cliente", aliases: ["cidade_uf", "cidade_estado", "municipio_uf"] },
+  { key: "contratante.uf", label: "UF do cliente", group: "Contratante", source: "cliente", aliases: ["uf", "estado"] },
+  { key: "contratante.cep", label: "CEP do cliente", group: "Contratante", source: "cliente", aliases: ["cep"] },
+  { key: "contratante.email", label: "E-mail de cobrança do cliente", group: "Contratante", source: "cliente", aliases: ["email", "email_cliente", "email_contratante", "e_mail"] },
+  { key: "contratante.representante", label: "Representante do cliente (1º signatário)", group: "Contratante", source: "signatario", aliases: ["representante", "representante_legal", "nome_representante", "responsavel", "signatario", "nome_signatario"] },
+  { key: "contratante.representante_email", label: "E-mail do representante do cliente", group: "Contratante", source: "signatario", aliases: ["email_representante", "email_signatario"] },
+  { key: "contratante.representante_cpf", label: "CPF do representante do cliente", group: "Contratante", source: "contato", aliases: ["cpf_representante", "cpf_do_representante", "cpf_representante_legal", "cpf_do_representante_legal", "documento_representante", "cpf_signatario", "cpf_do_signatario"] },
+  { key: "contratada.razao_social", label: "Razão social da Intercert", group: "Contratada", source: "intercert", aliases: ["contratada", "razao_social_contratada", "nome_contratada"] },
+  { key: "contratada.endereco", label: "Endereço da Intercert", group: "Contratada", source: "intercert", aliases: ["endereco_contratada"] },
+  { key: "contratada.representante", label: "Quem assina pela Intercert", group: "Contratada", source: "intercert", aliases: ["representante_contratada", "diretor", "assinante_contratada"] },
+  { key: "contratada.representante_email", label: "E-mail de quem assina pela Intercert", group: "Contratada", source: "intercert", aliases: ["email_contratada"] },
+  { key: "contrato.numero", label: "Número do contrato", group: "Contrato", source: "contrato", aliases: ["numero_contrato", "numero", "contrato", "n_contrato"] },
+  { key: "contrato.versao", label: "Versão do contrato", group: "Contrato", source: "contrato", aliases: ["versao"] },
+  { key: "contrato.data_emissao", label: "Data de emissão (por extenso)", group: "Contrato", source: "contrato", aliases: ["data", "data_contrato", "data_emissao", "data_assinatura", "data_extenso"] },
+  { key: "contrato.prazo_meses", label: "Prazo em meses", group: "Contrato", source: "contrato", aliases: ["prazo", "prazo_meses", "vigencia_meses", "prazo_contrato", "meses"] },
+  { key: "contrato.recorrencia", label: "Recorrência", group: "Contrato", source: "contrato", aliases: ["recorrencia", "periodicidade"] },
+  { key: "contrato.dia_vencimento", label: "Dia do vencimento", group: "Contrato", source: "contrato", aliases: ["dia_vencimento", "vencimento"] },
+  { key: "contrato.primeiro_vencimento", label: "Primeiro vencimento", group: "Contrato", source: "contrato", aliases: ["primeiro_vencimento", "data_primeiro_vencimento"] },
+  { key: "contrato.inicio_vigencia", label: "Início da vigência", group: "Contrato", source: "contrato", afterRelease: true, aliases: ["inicio_vigencia", "data_inicio", "inicio"] },
+  { key: "contrato.fim_vigencia", label: "Fim da vigência", group: "Contrato", source: "contrato", afterRelease: true, aliases: ["fim_vigencia", "data_fim", "termino", "fim"] },
+  { key: "contrato.forma_pagamento", label: "Forma de pagamento", group: "Contrato", source: "contrato", aliases: ["forma_pagamento", "meio_pagamento"] },
+  { key: "contrato.parcelas_adesao", label: "Parcelas da adesão", group: "Contrato", source: "contrato", aliases: ["parcelas", "parcelas_adesao", "parcelas_setup"] },
+  { key: "contrato.condicao_pagamento", label: "Condição de pagamento (texto)", group: "Contrato", source: "contrato", aliases: ["condicao_pagamento", "condicoes_pagamento", "pagamento"] },
+  { key: "contrato.itens", label: "Produtos e serviços (lista)", group: "Contrato", source: "contrato", aliases: ["itens", "produtos", "servicos", "objeto", "lista_produtos"] },
+  { key: "valores.adesao", label: "Valor da adesão/setup", group: "Valores", source: "contrato", aliases: ["adesao", "setup", "valor_adesao", "taxa_adesao", "implantacao", "valor_implantacao", "valor_setup"] },
+  { key: "valores.adesao_extenso", label: "Adesão por extenso", group: "Valores", source: "contrato", aliases: ["adesao_extenso", "valor_adesao_extenso", "setup_extenso"] },
+  { key: "valores.mensalidade", label: "Mensalidade", group: "Valores", source: "contrato", aliases: ["mensalidade", "valor_mensal", "valor_mensalidade", "valor_de_mensalidade", "valor_da_mensalidade", "mensal"] },
+  { key: "valores.mensalidade_extenso", label: "Mensalidade por extenso", group: "Valores", source: "contrato", aliases: ["mensalidade_extenso", "valor_mensal_extenso", "valor_mensalidade_extenso", "valor_de_mensalidade_extenso", "valor_da_mensalidade_extenso"] },
+  { key: "valores.hardware", label: "Valor do hardware", group: "Valores", source: "contrato", aliases: ["hardware", "valor_hardware", "equipamentos"] },
+  { key: "valores.primeiro_ano", label: "Valor no 1º ano", group: "Valores", source: "contrato", aliases: ["valor_primeiro_ano", "primeiro_ano", "valor_anual"] },
+  { key: "valores.total", label: "Valor total do contrato (prazo inteiro)", group: "Valores", source: "contrato", aliases: ["valor_total", "total", "valor_contrato", "valor_global"] },
+  { key: "valores.total_extenso", label: "Valor total por extenso", group: "Valores", source: "contrato", aliases: ["valor_total_extenso", "total_extenso"] },
 ];
 
 const FIELD_KEYS = new Set(CONTRACT_FIELDS.map((f) => f.key));
@@ -160,6 +191,8 @@ export function suggestField(variable: string, siblings: string[] = []): string 
   if (direct) return direct;
   const n = normalizeVariableName(variable);
   if (!n) return undefined;
+  // "cpf" ao lado de um CNPJ ("CNPJ nº X, representada por Fulano, CPF nº Y"): é o CPF do representante.
+  if (n === "cpf" && siblings.map(normalizeVariableName).some((s) => s !== n && /^(cnpj|cnpj_|cpf_cnpj)/.test(s))) return "contratante.representante_cpf";
   if (n === "numero") {
     const others = siblings.map(normalizeVariableName).filter((s) => s !== n);
     const hasStreet = others.some((s) => STREET_VARIABLE_NAMES.has(s));
@@ -174,8 +207,9 @@ function aliasOf(key: string): string[] {
   return CONTRACT_FIELDS.find((f) => f.key === key)?.aliases ?? [];
 }
 
-function fieldOptional(key: string): boolean {
-  return CONTRACT_FIELDS.find((f) => f.key === key)?.optional === true;
+/** O que sai quando o dado do campo falta: vazio (partes do endereço) ou a lacuna de preencher à mão. */
+function emptyValueOf(key: string): string {
+  return CONTRACT_FIELDS.find((f) => f.key === key)?.empty === "vazio" ? "" : BLANK;
 }
 
 const VARIABLE_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -215,6 +249,59 @@ export function unmappedVariables(variables: ContractTemplateVariable[]): string
   return variables.filter((v) => !isContractField(v.field) && !v.fixed?.trim()).map((v) => v.name);
 }
 
+/** Uma variável do modelo que não sairia preenchida: sem campo ligado (ajuste no modelo) ou sem o dado (cadastro). */
+export interface TemplateDataGap {
+  variable: string;
+  /** sem_ligacao: ligar no modelo · sem_dado: preencher no cadastro · apos_liberacao: dado só existe depois (texto fixo). */
+  reason: "sem_ligacao" | "sem_dado" | "apos_liberacao";
+  field?: string;
+  /** Rótulo do campo (ou aviso de variável sem ligação). */
+  label: string;
+  source?: FieldSource;
+}
+
+/**
+ * Pendências para gerar o documento com o modelo: toda variável precisa de texto fixo ou de um campo com dado
+ * (campos opcionais, como complemento, podem estar vazios). O contrato só é gerado/enviado sem pendências: o documento
+ * sai completo e único para o cliente, sem lacunas. `names` são as variáveis do texto do modelo INTEROS.
+ */
+export function templateDataGaps(variables: ContractTemplateVariable[], fields: Record<string, string>, names: string[] = []): TemplateDataGap[] {
+  const gaps: TemplateDataGap[] = [];
+  const all = new Set([...variables.map((v) => v.name), ...names]);
+  for (const name of all) {
+    const v = variables.find((x) => x.name === name);
+    if (v?.fixed?.trim()) continue;
+    const field = v ? v.field : exactField(name);
+    const def = field ? CONTRACT_FIELDS.find((f) => f.key === field) : undefined;
+    if (!def) {
+      gaps.push({ variable: name, reason: "sem_ligacao", label: "Sem campo ligado nem texto fixo no modelo" });
+      continue;
+    }
+    if (def.optional || (fields[def.key] ?? "").trim()) continue;
+    gaps.push(def.afterRelease ? { variable: name, reason: "apos_liberacao", field: def.key, label: def.label } : { variable: name, reason: "sem_dado", field: def.key, label: def.label, source: def.source });
+  }
+  return gaps;
+}
+
+/**
+ * O que o modelo exige do cadastro (campos ligados, não opcionais), agrupado pela origem; as variáveis sem ligação; e
+ * as ligadas a dados que só existem depois da liberação (vigência), que precisam de texto fixo.
+ */
+export function templateRequirements(variables: ContractTemplateVariable[]): { bySource: { source: FieldSource; labels: string[] }[]; unbound: string[]; afterRelease: string[] } {
+  const seen = new Set<string>();
+  const bySource = new Map<FieldSource, string[]>();
+  const afterRelease: string[] = [];
+  for (const v of variables) {
+    const def = v.field && !v.fixed?.trim() ? CONTRACT_FIELDS.find((f) => f.key === v.field) : undefined;
+    if (!def || def.optional || seen.has(def.key)) continue;
+    seen.add(def.key);
+    if (def.afterRelease) afterRelease.push(def.label);
+    else bySource.set(def.source, [...(bySource.get(def.source) ?? []), def.label]);
+  }
+  const order: FieldSource[] = ["cliente", "contato", "signatario", "contrato", "intercert"];
+  return { bySource: order.filter((o) => bySource.has(o)).map((source) => ({ source, labels: bySource.get(source)! })), unbound: unmappedVariables(variables), afterRelease };
+}
+
 export const BLANK = "________________";
 
 /** Valor de cada variável para um contrato: campo ligado, texto fixo ou o próprio nome (campo conhecido) ou lacuna. */
@@ -228,7 +315,7 @@ export function variableValues(variables: ContractTemplateVariable[], fields: Re
     // adivinhados ao gerar, para o documento bater com a tela.
     const field = v ? v.field : exactField(name);
     const value = v?.fixed?.trim() ? v.fixed.trim() : field && fields[field] !== undefined ? fields[field] : "";
-    out[name] = value || (field && fieldOptional(field) ? "" : BLANK);
+    out[name] = value || (field ? emptyValueOf(field) : BLANK);
   }
   return out;
 }
@@ -252,6 +339,11 @@ export interface FieldValuesInput {
   issuedAt: string;
   /** Rótulos já resolvidos (as listas ficam no servidor/financeiro). */
   labels: { recurrence: string; paymentMethod?: string };
+  /**
+   * Quem assina pelo cliente, já resolvido no servidor (signatário casado com um contato do cliente, com o CPF do
+   * contato). Sem ele, vale o 1º signatário que não é da Intercert nem testemunha, sem CPF.
+   */
+  representative?: { name: string; email: string; document?: string };
 }
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -306,7 +398,7 @@ function moneyWithWords(v: number): string {
 
 export function contractFieldValues(input: FieldValuesInput): Record<string, string> {
   const { contract: c, client, billingData: b } = input;
-  const customer = c.signers.find((s) => !isCompanySigner(s));
+  const customer = input.representative ?? clientRepresentative(c.signers);
   const company = c.signers.find((s) => isCompanySigner(s));
   const items = c.items.map((i) => `${i.quantity}x ${i.productName}`).join("; ");
   return {
@@ -325,6 +417,7 @@ export function contractFieldValues(input: FieldValuesInput): Record<string, str
     "contratante.email": b.email ?? "",
     "contratante.representante": customer?.name ?? "",
     "contratante.representante_email": customer?.email ?? "",
+    "contratante.representante_cpf": docFormat(input.representative?.document),
     "contratada.razao_social": input.companyName,
     "contratada.endereco": input.companyAddress,
     "contratada.representante": company?.name ?? "",

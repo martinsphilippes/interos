@@ -1,3 +1,4 @@
+import { isValidCpf } from "@/domain/documents";
 import { z } from "zod";
 import { CLIENT_STATUS } from "@/domain/constants";
 
@@ -129,6 +130,7 @@ export const contactSchema = z.object({
   phone: optionalDigits("Telefone", [10, 11]),
   whatsapp: optionalDigits("WhatsApp", [10, 11]),
   email: optionalEmail,
+  document: optionalDigits("CPF", [11]).refine((v) => !v || isValidCpf(v), "CPF inválido"),
   isPrimary: z.boolean().default(false),
   isDecisionMaker: z.boolean().default(false),
 });

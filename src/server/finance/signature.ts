@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import type { Contract } from "@/domain/types";
+import type { ContractDocumentData } from "./contract-document";
 import { isConnected } from "@/server/integrations/status";
 
 /**
@@ -44,7 +45,8 @@ export interface EnvelopeStatus {
 
 export interface SignatureProvider {
   readonly name: string;
-  createEnvelope(contract: Contract, clientName: string): Promise<EnvelopeResult>;
+  /** `document`: o documento já calculado pelo envio (evita reler o contrato); sem ele, o provedor calcula. */
+  createEnvelope(contract: Contract, clientName: string, document?: ContractDocumentData): Promise<EnvelopeResult>;
   sendReminder(contract: Contract, signerEmail: string): Promise<ReminderResult>;
   getStatus(contract: Contract): Promise<EnvelopeStatus>;
 }

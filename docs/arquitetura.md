@@ -603,12 +603,39 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   lista gravada (modelo antigo, texto editado) com o nome exato de um campo, `{{contratante.cidade}}`, é preenchida;
   apelidos não são adivinhados ao gerar. O endereço do cliente existe inteiro
   (`contratante.endereco`) e em partes (logradouro, número, complemento, bairro, cidade, cidade/UF, UF, CEP); número,
-  complemento e bairro são `optional` (vazio sai vazio, não lacuna). `{{numero}}` é o número do contrato, salvo quando o
-  modelo tem um logradouro separado e nenhuma outra variável já é o número do endereço (`suggestField(nome, irmãs)`):
-  aí é o número do endereço. O diálogo de variáveis mostra, no que está sem ligação, a sugestão pelo nome
-  (`suggestUnbound`) com "usar" por linha e "Usar as N sugestões" no rodapé; nada é aplicado sozinho (sem campo pode ser
-  escolha, e salvar por outro motivo não grava o que ninguém pediu). Mudar texto, arquivo ou ligações sobe a versão. Envio do Word por
-  `POST /api/financeiro/modelos` (multipart; acima do limite das Server Actions), até 4 MB.
+  complemento e bairro saem vazios quando faltam (`empty: "vazio"`, não lacuna); só complemento é `optional`.
+  `{{numero}}` é o número do contrato, salvo quando o modelo tem um logradouro separado e nenhuma outra variável já é
+  o número do endereço (`suggestField(nome, irmãs)`): aí é o número do endereço. O diálogo de variáveis mostra, no que
+  está sem ligação, a sugestão pelo nome (`suggestUnbound`) com "usar" por linha e "Usar as N sugestões" no rodapé;
+  nada é aplicado sozinho (sem campo pode ser escolha, e salvar por outro motivo não grava o que ninguém pediu). Mudar
+  texto, arquivo ou ligações sobe a versão. Envio do Word por `POST /api/financeiro/modelos` (multipart; acima do
+  limite das Server Actions), até 4 MB.
+- **Dados obrigatórios do modelo** (`templateDataGaps` em `src/domain/contract-templates.ts`): toda variável do modelo
+  precisa de texto fixo ou de um campo com dado. Só o complemento é `optional`; 1º vencimento e condição de pagamento
+  são obrigatórios quando o modelo os usa (editáveis nas condições); início/fim da vigência são `afterRelease` (só
+  existem depois da liberação), então a variável precisa de texto fixo no modelo (pendência `apos_liberacao`; o cartão
+  do modelo e o seletor de campos avisam). Cada campo tem `source` (cliente, contato, signatário, contrato, Intercert).
+  A prontidão é sempre a do PRÓXIMO envio — `documentReadiness(contract)` em `contract-document.ts`: modelo atual
+  (escolhido ou padrão, não a fotografia do envio anterior) e o signatário da Intercert incluído como o envio o
+  incluirá; é leve (cliente, oportunidade, contatos, organização, modelo; não lê o Word nem o detalhe do contrato). O
+  cartão de assinatura mostra "N de M variáveis preenchidas" e cada pendência com onde corrigir; o botão de gerar/
+  reenviar fica desabilitado; a fila "Prontos para gerar" faz o mesmo para quem pode enviar (`documentReadinessMany`:
+  configuração, organização e modelos uma vez, clientes/oportunidades/contatos em lote; até 40 contratos, acima disso
+  e se o cálculo falhar — registrado no log — o envio confere);
+  `sendForSignature` recusa com a lista ("preencha no cadastro: …; ligue no modelo: {{x}}; use texto fixo…") e passa o
+  documento já calculado ao provedor (`createEnvelope(contract, cliente, document)`), que não relê o contrato. A
+  prévia (PDF/Word) também inclui o signatário da Intercert e continua disponível com as lacunas, para conferência.
+  O cartão do modelo em Assinaturas › Modelos lista o que ele exige do cadastro (`templateRequirements`).
+- **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): o 1º signatário, na ordem do
+  contrato, qualificado como contratante, representante legal ou procurador (`clientRepresentative`, pela mesma regra
+  de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa: o único
+  contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
+  nome (o mesmo contato cadastrado mais de uma vez, com mesmo nome e e-mail, vale como uma pessoa se houver um só CPF);
+  nunca "o que tem CPF" entre pessoas diferentes (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é
+  validado por `isValidCpf` (`src/domain/documents.ts`) e editável em Clientes e no "cadastrar novo contato" do
+  contrato. A pendência diz quem é e o que fazer (cadastrar o CPF do contato; escolher como signatário um contato do
+  cliente; e-mail compartilhado sem contato com o nome; duplicados com CPFs diferentes). Na sugestão de variáveis, `{{cpf}}` ao lado de um `{{cnpj}}`
+  é o CPF do representante.
 - **Documento**: `sendForSignature` fixa o modelo no contrato (`documentTemplate`: id, versão, `contentHash` e, no
   modelo INTEROS, o texto) e ele entra no código de integridade (`contractDocumentHash`; contrato sem modelo mantém o
   hash antigo). `GET /api/financeiro/contratos/[id]/documento?formato=pdf|docx` gera o PDF (pdfkit) ou o Word preenchido

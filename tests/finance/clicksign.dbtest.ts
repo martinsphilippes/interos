@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { docdb } from "@/server/docdb";
 import { create, getById, list, update } from "@/server/db";
-import { COLLECTIONS, type Client, type Contact, type Contract, type DomainEvent, type Document, type Notification, type SignatureInboxItem, type User } from "@/domain/types";
+import { COLLECTIONS, type Client, type Contact, type Contract, type ContractTemplate, type DomainEvent, type Document, type Notification, type SignatureInboxItem, type User } from "@/domain/types";
 import { SIGNATURE_SETTING } from "@/domain/contract-templates";
 import { saveSignatureSettings } from "@/server/finance/contract-templates";
 import { addContactAsSigner, addSigner, addSignerFrom, createManualContract, sendForSignature, sendSignatureReminder, updateContractItems } from "@/server/finance/service";
@@ -28,6 +28,8 @@ const savedEnv = { ...process.env };
 let settingsBackup: unknown = undefined;
 const contractIds: string[] = [];
 const inboxKeys: string[] = [];
+/** Modelo padrão que existir no banco: sai de cena durante a suíte (as pendências dele bloqueariam o envio). */
+let previousDefault: string | undefined;
 
 /** API v3 falsa: guarda as chamadas e devolve ids previsíveis. */
 const calls: { method: string; path: string; body?: Record<string, unknown> }[] = [];
@@ -75,6 +77,8 @@ async function eventsOf(contractId: string, type: string): Promise<DomainEvent[]
 
 beforeAll(async () => {
   if (!process.env.DATABASE_URL) throw new Error("Defina DATABASE_URL (veja scripts/db-local.sh)");
+  previousDefault = (await list<ContractTemplate>(COLLECTIONS.contractTemplates, { where: [["isDefault", "==", true]] }))[0]?.id;
+  if (previousDefault) await docdb.sql()`update interos.contract_templates set data = jsonb_set(data, '{isDefault}', 'false') where id = ${previousDefault}`;
   process.env.CLICKSIGN_API_TOKEN = "tok-teste";
   process.env.CLICKSIGN_ENV = "sandbox";
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
@@ -87,6 +91,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (previousDefault) await docdb.sql()`update interos.contract_templates set data = jsonb_set(data, '{isDefault}', 'true') where id = ${previousDefault}`;
   vi.unstubAllGlobals();
   process.env = { ...savedEnv };
   const sql = docdb.sql();

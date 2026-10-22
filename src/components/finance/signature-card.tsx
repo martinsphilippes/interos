@@ -23,7 +23,7 @@ import { useFinanceAction } from "./use-finance-action";
 import { useOrigin } from "@/components/ui/use-origin";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { useFinanceAccess } from "./finance-access";
-import { SignatureDocumentOptions, type SignatureDocumentInfo } from "./signature-document-options";
+import { SignatureDocumentOptions, type DocumentReadiness, type SignatureDocumentInfo } from "./signature-document-options";
 
 export interface SignatureCardProps {
   contract: Pick<Contract, "id" | "number" | "version" | "status" | "signers" | "signatureEnvelopeId" | "signatureProvider" | "documentHash" | "signedAt">;
@@ -41,6 +41,8 @@ export interface SignatureCardProps {
   integrations: IntegrationFlags;
   /** Modelo do documento, autenticação e download do PDF/Word. */
   documentInfo?: SignatureDocumentInfo;
+  /** Variáveis do modelo e o que falta para o documento sair completo. */
+  readiness?: DocumentReadiness;
 }
 
 const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "danger" } as const;
@@ -49,7 +51,7 @@ const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "da
  * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
  * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
  */
-export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo }: SignatureCardProps) {
+export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo, readiness }: SignatureCardProps) {
   const id = React.useId();
   // Capacidades do servidor (assinatura: editar signatários, enviar/lembrar, registrar assinatura; documento: ver).
   const { contracts: can } = useFinanceAccess();
@@ -58,7 +60,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
   // Quem assina: escolhido entre contatos do cliente / equipe, ou um contato novo cadastrado na hora.
   const [choice, setChoice] = React.useState("");
   const [role, setRole] = React.useState(DEFAULT_CLIENT_SIGNER_ROLE);
-  const [newContact, setNewContact] = React.useState({ name: "", email: "", position: "", phone: "" });
+  const [newContact, setNewContact] = React.useState({ name: "", email: "", position: "", phone: "", document: "" });
   const [removing, setRemoving] = React.useState<{ email: string; name: string } | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
   const sent = Boolean(contract.signatureEnvelopeId);
@@ -104,14 +106,14 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
   const resetAdd = () => {
     setChoice("");
     setRole(DEFAULT_CLIENT_SIGNER_ROLE);
-    setNewContact({ name: "", email: "", position: "", phone: "" });
+    setNewContact({ name: "", email: "", position: "", phone: "", document: "" });
     setAdding(false);
   };
 
   const add = async () => {
     if (creating) {
       // Uma ação só no servidor: valida tudo e, se puder, cadastra o contato no cliente e o põe como signatário.
-      const ok = await run(() => addContactAsSignerAction({ contractId: contract.id, name: newContact.name.trim(), email: newEmail, position: newContact.position.trim(), phone: newContact.phone, role: role.trim() }), "Contato cadastrado e adicionado como signatário");
+      const ok = await run(() => addContactAsSignerAction({ contractId: contract.id, name: newContact.name.trim(), email: newEmail, position: newContact.position.trim(), phone: newContact.phone, document: newContact.document, role: role.trim() }), "Contato cadastrado e adicionado como signatário");
       if (ok) resetAdd();
       return;
     }
@@ -303,6 +305,9 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                     <FormField label="Celular" htmlFor={`${id}-t`} hint="Para código por SMS/WhatsApp">
                       <Input id={`${id}-t`} inputMode="tel" value={newContact.phone} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} className="h-11 md:h-9" />
                     </FormField>
+                    <FormField label="CPF" htmlFor={`${id}-d`} hint="Entra no contrato como CPF do representante (se o modelo usa)">
+                      <Input id={`${id}-d`} inputMode="numeric" value={newContact.document} onChange={(e) => setNewContact({ ...newContact, document: e.target.value })} placeholder="000.000.000-00" className="h-11 md:h-9" />
+                    </FormField>
                   </div>
                 </>
               ) : null}
@@ -329,7 +334,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
           )
         ) : null}
 
-        {documentInfo && !closed ? <SignatureDocumentOptions contractId={contract.id} info={documentInfo} canEdit={can.signersEdit && editable && !allSigned} /> : null}
+        {documentInfo && !closed ? <SignatureDocumentOptions contractId={contract.id} clientId={clientId} info={documentInfo} readiness={readiness} canEdit={can.signersEdit && editable && !allSigned} /> : null}
 
         {can.signatureSend && editable ? (
           <Button
@@ -342,7 +347,8 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
               )
             }
             loading={busy === "send"}
-            disabled={pending || contract.signers.length === 0}
+            disabled={pending || contract.signers.length === 0 || (readiness?.gaps.length ?? 0) > 0}
+            title={readiness?.gaps.length ? "Complete os dados do modelo antes de gerar o documento" : undefined}
             className="h-11 md:h-10"
           >
             {nextManual ? <FileText /> : <Send />}

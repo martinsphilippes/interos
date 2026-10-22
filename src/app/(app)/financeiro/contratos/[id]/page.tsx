@@ -11,6 +11,7 @@ import { FINANCIAL_STATUS_LABELS, FINANCIAL_STATUS_VARIANT } from "@/server/fina
 import { contractAccessById, financeCapabilities } from "@/server/finance/access";
 import { stripBoleto } from "@/server/finance/redact";
 import { signatureDocumentInfo } from "@/server/finance/contract-templates";
+import { documentReadiness } from "@/server/finance/contract-document";
 import { getIntegrationFlags } from "@/server/integrations/status";
 import { formatDate, formatRelative } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -86,6 +87,9 @@ export default async function ContractPage({ params }: { params: Params }) {
   const portal = sections.portalView ? await listPortalLinks(client.id) : null;
   // Modelo do documento, autenticação e download do PDF/Word (o arquivo vai ao cliente: exige ver os valores).
   const documentInfo = sections.signatureView ? await signatureDocumentInfo(raw.contract, sections.documentsView && !hidden) : undefined;
+  // Variáveis do modelo que ainda não têm dado, como o PRÓXIMO envio vai gerar (modelo atual + signatário da
+  // Intercert): a tela lista o que falta e o botão de gerar/reenviar fica bloqueado até completar.
+  const readiness = sections.signatureView && !closed && detail.editable ? ((await documentReadiness(raw.contract)) ?? undefined) : undefined;
   // Quem pode ser escolhido como signatário: contatos do cliente e equipe ativa (só para quem edita signatários).
   const signerOptions = sections.signatureView && sections.signersEdit && !closed ? await loadSignerOptions(client.id) : undefined;
   // A opção "cadastrar novo contato" só aparece quando a action vai aceitar: chave de contatos E cliente no escopo.
@@ -237,7 +241,7 @@ export default async function ContractPage({ params }: { params: Params }) {
               closed={closed}
             />
             {sections.signatureView ? (
-              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} clientId={client.id} signerOptions={signerOptions} canCreateContact={canCreateContact} integrations={getIntegrationFlags()} documentInfo={documentInfo} />
+              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} clientId={client.id} signerOptions={signerOptions} canCreateContact={canCreateContact} integrations={getIntegrationFlags()} documentInfo={documentInfo} readiness={readiness} />
             ) : null}
             {sections.pendenciesView ? <PendencyCard contractId={contract.id} pendingReason={contract.pendingReason} isPending={contract.status === "pendencia"} closed={closed} /> : null}
             <BillingDataCard
