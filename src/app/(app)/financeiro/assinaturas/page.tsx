@@ -26,6 +26,7 @@ import { SignatureInbox } from "@/components/finance/signature-inbox";
 import { ContractTemplatesAdmin, type TemplateRow } from "@/components/finance/contract-templates-admin";
 import { SignatureSettingsForm } from "@/components/finance/signature-settings-form";
 import { ClicksignConnection } from "@/components/finance/clicksign-connection";
+import { CLICKSIGN_WEBHOOK_PATH } from "@/domain/clicksign-connection";
 import { clicksignConfigured, clicksignEnv } from "@/server/integrations/clicksign";
 import { resolvePortalBaseUrl } from "@/server/portal/service";
 
@@ -90,7 +91,7 @@ export default async function SignaturesPage({ searchParams }: { searchParams: S
             {tab === "fila" ? <QueueTab user={user} /> : null}
             {tab === "entrada" ? <InboxTab canEdit={can(user, "financeiro.assinaturas.entrada.vincular")} providerConnected={providerConnected} focusId={first(sp.item)} /> : null}
             {tab === "modelos" ? <TemplatesTab canEdit={can(user, "financeiro.assinaturas.modelos.editar")} /> : null}
-            {tab === "configuracao" ? <SettingsTab canEdit={can(user, "financeiro.assinaturas.configuracao.editar")} providerConnected={providerConnected} /> : null}
+            {tab === "configuracao" ? <SettingsTab canEdit={can(user, "financeiro.assinaturas.configuracao.editar")} canTest={can(user, "financeiro.assinaturas.configuracao.testar")} providerConnected={providerConnected} /> : null}
           </>
         )}
       </PageContainer>
@@ -209,11 +210,11 @@ async function TemplatesTab({ canEdit }: { canEdit: boolean }) {
   return <ContractTemplatesAdmin templates={rows} canEdit={canEdit} />;
 }
 
-async function SettingsTab({ canEdit, providerConnected }: { canEdit: boolean; providerConnected: boolean }) {
+async function SettingsTab({ canEdit, canTest, providerConnected }: { canEdit: boolean; canTest: boolean; providerConnected: boolean }) {
   const [settings, users, base] = await Promise.all([getSignatureSettings(), list<User>(COLLECTIONS.users, { where: [["active", "==", true]] }), resolvePortalBaseUrl()]);
   return (
     <>
-    <ClicksignConnection info={{ connected: clicksignConfigured(), env: clicksignEnv(), webhookReady: Boolean(process.env.CLICKSIGN_WEBHOOK_SECRET), webhookUrl: `${base ?? "https://<dominio>"}/api/webhooks/clicksign` }} />
+    <ClicksignConnection info={{ connected: clicksignConfigured(), env: clicksignEnv(), webhookReady: Boolean(process.env.CLICKSIGN_WEBHOOK_SECRET), webhookUrl: `${base ?? "https://<dominio>"}${CLICKSIGN_WEBHOOK_PATH}` }} canTest={canTest} />
     <SignatureSettingsForm
       settings={settings}
       users={users.map((u) => ({ id: u.id, name: u.name, email: u.email })).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))}

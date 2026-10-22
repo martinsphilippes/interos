@@ -24,6 +24,7 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "financeiro.assinaturas.entrada.vincular",
   "financeiro.assinaturas.modelos.editar",
   "financeiro.assinaturas.configuracao.editar",
+  "financeiro.assinaturas.configuracao.testar",
 ];
 
 /** A chave (ou tela) pertence a um módulo criado depois do T0 (ou é uma chave nova)? */

@@ -11,13 +11,14 @@ import "server-only";
  *
  * Variáveis (nunca no repositório): CLICKSIGN_API_TOKEN, CLICKSIGN_WEBHOOK_SECRET e CLICKSIGN_ENV (sandbox | producao).
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { classifyClicksignWebhooks, type ClicksignConnectionCheck, type ClicksignEnv, type ClicksignTokenCheck, type ClicksignWebhookInfo } from "@/domain/clicksign-connection";
 
 function env(name: string): string | undefined {
   return process.env[name]?.trim() || undefined;
 }
 
-export type ClicksignEnv = "sandbox" | "producao";
+export type { ClicksignEnv };
 
 export function clicksignEnv(): ClicksignEnv {
   return env("CLICKSIGN_ENV")?.toLowerCase().startsWith("prod") ? "producao" : "sandbox";
@@ -66,24 +67,28 @@ interface JsonApiResource {
  * tempo-limite/falha de rede repete tudo menos POST (criação/e-mail não são repetidos às cegas). Erro do provedor vira
  * ClicksignError legível.
  */
-export async function clicksignApi<T = { data: JsonApiResource }>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function clicksignApi<T = { data: JsonApiResource }>(
+  path: string,
+  init: { method?: string; body?: unknown; /** Novas tentativas (padrão 3). */ retries?: number; /** Tempo-limite de cada chamada (padrão 20 s). */ timeoutMs?: number } = {},
+): Promise<T> {
   const token = env("CLICKSIGN_API_TOKEN");
   if (!token) throw new ClicksignError("Clicksign não configurada (CLICKSIGN_API_TOKEN)", 0);
   const url = `${clicksignHost()}/api/v3${path}`;
   const method = init.method ?? "GET";
+  const retries = init.retries ?? RETRIES;
   let lastError: unknown;
-  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, {
         method,
         headers: { Authorization: token, Accept: "application/vnd.api+json", "Content-Type": "application/vnd.api+json" },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
         cache: "no-store",
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(init.timeoutMs ?? 20_000),
       });
       if (res.status === 429 || res.status >= 500) {
         lastError = new ClicksignError(`Clicksign respondeu ${res.status}`, res.status);
-        if (attempt < RETRIES) {
+        if (attempt < retries) {
           const reset = Number(res.headers.get("x-rate-limit-reset"));
           const wait = res.status === 429 && reset ? Math.min(10_000, Math.max(500, reset * 1000 - Date.now())) : 500 * 2 ** attempt;
           await sleep(wait + Math.floor(Math.random() * 200));
@@ -102,7 +107,7 @@ export async function clicksignApi<T = { data: JsonApiResource }>(path: string, 
       // estado: PATCH/DELETE/PUT). POST (criar envelope, documento, signatário, requisito, e-mail) pode ter dado certo
       // do lado da Clicksign mesmo sem resposta; repetir criaria duplicado.
       if (method === "POST") throw new ClicksignError(`Clicksign não respondeu a tempo (${error instanceof Error ? error.message : "falha de rede"}). Confira na Clicksign antes de tentar de novo.`, 0);
-      if (attempt < RETRIES) {
+      if (attempt < retries) {
         await sleep(500 * 2 ** attempt);
         continue;
       }
@@ -244,6 +249,77 @@ export async function cancelDocument(envelopeId: string, documentId: string): Pr
 }
 
 // ---------------------------------------------------------------------------
+// Conferência da conexão (botão «Testar conexão»)
+// ---------------------------------------------------------------------------
+
+/** Conferência rápida: o usuário espera a resposta na tela, então tenta de novo uma vez só e com prazo menor. */
+const CHECK_CALL = { retries: 1, timeoutMs: 10_000 } as const;
+const WEBHOOK_PAGES = 5;
+const WEBHOOK_PAGE_SIZE = 20;
+
+/** Compara segredos sem vazar o tamanho nem o conteúdo pelo tempo de resposta. */
+function sameSecret(a: string, b: string): boolean {
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(ha, hb);
+}
+
+/** Webhooks cadastrados na conta. O segredo de cada um nunca sai daqui: vira só "confere / não confere". */
+async function listClicksignWebhooks(): Promise<ClicksignWebhookInfo[]> {
+  const ours = env("CLICKSIGN_WEBHOOK_SECRET");
+  const hooks: ClicksignWebhookInfo[] = [];
+  for (let page = 1; page <= WEBHOOK_PAGES; page++) {
+    const r = await clicksignApi<{ data?: JsonApiResource[]; meta?: { record_count?: number } }>(`/webhooks?page%5Bnumber%5D=${page}&page%5Bsize%5D=${WEBHOOK_PAGE_SIZE}`, CHECK_CALL);
+    const data = Array.isArray(r?.data) ? r.data : [];
+    for (const item of data) {
+      const a = item.attributes ?? {};
+      const theirs = typeof a.secret === "string" && a.secret ? a.secret : undefined;
+      hooks.push({
+        endpoint: typeof a.endpoint === "string" ? a.endpoint : "",
+        status: typeof a.status === "string" ? a.status : "",
+        events: Array.isArray(a.events) ? a.events.filter((e): e is string => typeof e === "string") : [],
+        secretMatches: ours && theirs ? sameSecret(ours, theirs) : null,
+      });
+    }
+    const total = r?.meta?.record_count;
+    if (data.length < WEBHOOK_PAGE_SIZE || (typeof total === "number" && hooks.length >= total)) break;
+  }
+  return hooks;
+}
+
+function tokenProblem(error: unknown, e: ClicksignEnv): ClicksignTokenCheck {
+  const status = error instanceof ClicksignError ? error.status : 0;
+  if (status === 401 || status === 403) {
+    const other = e === "producao" ? "testes" : "produção";
+    return {
+      ok: false,
+      problem: "recusado",
+      message: `A Clicksign recusou a chave da API (${status}). Ela pode ter sido apagada, estar incompleta ou ser do ambiente de ${other}. Crie um token novo na Clicksign (Configurações › API), troque CLICKSIGN_API_TOKEN na Vercel e publique de novo.`,
+    };
+  }
+  return { ok: false, problem: "indisponivel", message: error instanceof Error ? error.message : "Clicksign indisponível" };
+}
+
+/**
+ * Testa a chave da API (lista 1 envelope, só leitura) e confere os webhooks da conta: o do INTEROS (ativo, eventos,
+ * segredo igual ao da Vercel, domínio) e os de outros serviços (ex.: Pluga). `expectedHost` = domínio deste INTEROS.
+ */
+export async function checkClicksignConnection(expectedHost?: string | null): Promise<ClicksignConnectionCheck> {
+  const e = clicksignEnv();
+  const checkedAt = new Date().toISOString();
+  if (!clicksignConfigured()) {
+    return { env: e, checkedAt, token: { ok: false, problem: "sem_token", message: "Sem token da API (CLICKSIGN_API_TOKEN) na Vercel." }, webhooks: null };
+  }
+  const [envelopes, hooks] = await Promise.allSettled([clicksignApi(`/envelopes?page%5Bsize%5D=1`, CHECK_CALL), listClicksignWebhooks()]);
+  if (envelopes.status === "rejected") return { env: e, checkedAt, token: tokenProblem(envelopes.reason, e), webhooks: null };
+  const webhooks =
+    hooks.status === "fulfilled"
+      ? classifyClicksignWebhooks(hooks.value, expectedHost)
+      : { error: hooks.reason instanceof Error ? hooks.reason.message : "Não foi possível ler os webhooks da Clicksign" };
+  return { env: e, checkedAt, token: { ok: true }, webhooks };
+}
+
+// ---------------------------------------------------------------------------
 // Webhook
 // ---------------------------------------------------------------------------
 
@@ -256,9 +332,6 @@ export function clicksignSignatureValid(rawBody: string, header: string | null, 
   const b = Buffer.from(expected, "utf8");
   return a.length === b.length && timingSafeEqual(a, b);
 }
-
-/** Eventos que o webhook do INTEROS precisa receber (marcar no cadastro do webhook na Clicksign). */
-export const CLICKSIGN_WEBHOOK_EVENTS = ["upload", "sign", "refusal", "auto_close", "close", "document_closed", "cancel", "deadline"] as const;
 
 export interface ClicksignWebhookSigner {
   key?: string;

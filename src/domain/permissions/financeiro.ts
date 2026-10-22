@@ -483,6 +483,14 @@ export const FINANCEIRO = {
           guards: ["src/server/finance/signature-actions.ts#saveSignatureSettingsAction"],
           sensitive: true,
         },
+        {
+          key: "financeiro.assinaturas.configuracao.testar",
+          label: "Testar a conexão com a Clicksign (chave da API e webhooks)",
+          verb: "testar",
+          // Só leitura na Clicksign; mesma regra de quem vê a aba Configuração.
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/finance/signature-actions.ts#checkClicksignConnectionAction"],
+        },
       ],
       scope: {
         entity: "contract",

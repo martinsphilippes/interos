@@ -15,6 +15,9 @@ import { emitEvent } from "@/server/events";
 import { assertContractAccess } from "./access";
 import { saveInterosTemplate, saveSignatureSettings, saveTemplateVariables, setTemplateState } from "./contract-templates";
 import { assignInboxItem, ignoreInboxItem, reopenInboxItem } from "./signature-inbox";
+import type { ClicksignConnectionCheck } from "@/domain/clicksign-connection";
+import { checkClicksignConnection } from "@/server/integrations/clicksign";
+import { resolvePortalBaseUrl } from "@/server/portal/service";
 
 const actorOf = (user: CurrentUser): UserRef => ({ id: user.id, name: user.name });
 const FIELD_KEYS = CONTRACT_FIELDS.map((f) => f.key) as [string, ...string[]];
@@ -34,6 +37,23 @@ const settingsSchema = z.object({
   }),
   defaultAuth: z.enum(SIGNATURE_AUTH_METHODS),
 });
+
+/** Testa a chave da API da Clicksign e confere os webhooks da conta (só leitura na Clicksign). */
+export async function checkClicksignConnectionAction(): Promise<ActionResult<ClicksignConnectionCheck>> {
+  try {
+    await requirePermission("financeiro.assinaturas.configuracao.testar");
+    const base = await resolvePortalBaseUrl();
+    let host: string | null = null;
+    try {
+      host = base ? new URL(base).host : null;
+    } catch {
+      host = null;
+    }
+    return { ok: true, data: await checkClicksignConnection(host) };
+  } catch (error) {
+    return failAction(error, "Não foi possível testar a conexão com a Clicksign", "assinatura");
+  }
+}
 
 export async function saveSignatureSettingsAction(input: unknown): Promise<ActionResult> {
   try {

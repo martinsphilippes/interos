@@ -691,6 +691,14 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Tela**: a aba Configuração mostra a conexão (token, ambiente de testes x produção, segredo dos avisos), o endereço do
   webhook e os eventos a marcar na Clicksign. Sem o token, tudo segue manual com evidência. O ambiente de testes da
   Clicksign não tem validade jurídica. Não há autenticação gov.br na Clicksign (alternativas: ICP-Brasil, biometria).
+- **Testar conexão** (`checkClicksignConnectionAction` → `checkClicksignConnection`, chave
+  `financeiro.assinaturas.configuracao.testar`, mesma regra de quem vê a aba): os selos só dizem o que está na Vercel; o
+  botão consulta a Clicksign na hora, só leitura (`GET /envelopes?page[size]=1` e `GET /webhooks`, 1 nova tentativa e
+  10 s por chamada). Diz se a chave foi aceita (401/403 → apagada, errada ou do outro ambiente) e confere os webhooks
+  (`src/domain/clicksign-connection.ts`): o do INTEROS (caminho `/api/webhooks/clicksign`) ativo, com os eventos de
+  `CLICKSIGN_WEBHOOK_EVENTS`, segredo igual ao `CLICKSIGN_WEBHOOK_SECRET` (comparado no servidor; o segredo nunca vai
+  para a tela) e no domínio deste INTEROS; os de outros serviços (ex.: Pluga) aparecem só pelo domínio, porque o
+  endereço completo pode carregar chave de acesso.
 
 ## Central de Atendimento (módulo Comunicação, `src/server/conversations/*`, `/comunicacao`)
 

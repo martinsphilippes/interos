@@ -1,6 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CopyLine } from "@/components/conversations/channel-connect";
+import { CLICKSIGN_WEBHOOK_EVENTS } from "@/domain/clicksign-connection";
+import { ClicksignConnectionTest } from "./clicksign-connection-test";
 
 export interface ClicksignConnectionInfo {
   /** Token da API configurado. */
@@ -11,19 +13,12 @@ export interface ClicksignConnectionInfo {
   webhookUrl: string;
 }
 
-const EVENTS: { key: string; label: string }[] = [
-  { key: "upload", label: "Upload (documento criado)" },
-  { key: "sign", label: "Assinatura" },
-  { key: "refusal", label: "Recusa" },
-  { key: "auto_close", label: "Finalização automática" },
-  { key: "close", label: "Finalização" },
-  { key: "document_closed", label: "Documento finalizado (PDF pronto)" },
-  { key: "cancel", label: "Cancelamento" },
-  { key: "deadline", label: "Prazo vencido" },
-];
-
-/** Situação da integração com a Clicksign e o que configurar do lado dela (aba Configuração das Assinaturas). */
-export function ClicksignConnection({ info }: { info: ClicksignConnectionInfo }) {
+/**
+ * Situação da integração com a Clicksign e o que configurar do lado dela (aba Configuração das Assinaturas). Os selos
+ * dizem só o que está configurado na Vercel; «Testar conexão» (`canTest`) confere na Clicksign se a chave ainda vale e
+ * como estão os webhooks.
+ */
+export function ClicksignConnection({ info, canTest = false }: { info: ClicksignConnectionInfo; canTest?: boolean }) {
   return (
     <Card className="mb-6">
       <CardHeader>
@@ -40,6 +35,7 @@ export function ClicksignConnection({ info }: { info: ClicksignConnectionInfo })
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 text-sm">
+        {info.connected && canTest ? <ClicksignConnectionTest /> : null}
         {info.connected && info.env === "sandbox" ? (
           <p className="rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-warning-fg">
             Ambiente de testes da Clicksign: os documentos assinados aqui não têm validade jurídica. Para valer, troque para o token de produção e CLICKSIGN_ENV=producao.
@@ -56,7 +52,7 @@ export function ClicksignConnection({ info }: { info: ClicksignConnectionInfo })
         <div className="flex flex-col gap-1.5">
           <span className="text-muted">Eventos para marcar no webhook</span>
           <div className="flex flex-wrap gap-1.5">
-            {EVENTS.map((e) => (
+            {CLICKSIGN_WEBHOOK_EVENTS.map((e) => (
               <Badge key={e.key} variant="outline" title={e.key}>
                 {e.label}
               </Badge>
