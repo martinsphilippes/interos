@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
-import { clicksignSignatureValid, parseClicksignWebhook } from "@/server/integrations/clicksign";
+import { clicksignSignatureValid, clicksignWebhookSecret, parseClicksignWebhook } from "@/server/integrations/clicksign";
 import { processClicksignWebhook } from "@/server/finance/signature-webhook";
 
 /**
@@ -13,7 +13,8 @@ import { processClicksignWebhook } from "@/server/finance/signature-webhook";
  *            só reenvia quando não recebe 200). Erro inesperado responde 500 e a Clicksign tenta de novo.
  */
 export async function POST(request: NextRequest) {
-  const secret = process.env.CLICKSIGN_WEBHOOK_SECRET;
+  // Mesma leitura do «Testar conexão» (sem espaço/quebra de linha nas pontas, comum ao colar na Vercel).
+  const secret = clicksignWebhookSecret();
   if (!secret) return NextResponse.json({ error: "Webhook da Clicksign não configurado (CLICKSIGN_WEBHOOK_SECRET)." }, { status: 503 });
 
   const raw = await request.text();

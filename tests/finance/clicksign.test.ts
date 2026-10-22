@@ -4,7 +4,7 @@
  */
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addDocument, addSigner, checkClicksignConnection, clicksignApi, clicksignConfigured, clicksignEnv, clicksignHost, clicksignSignatureValid, createEnvelope, parseClicksignWebhook } from "@/server/integrations/clicksign";
+import { addDocument, addSigner, checkClicksignConnection, clicksignApi, clicksignWebhookSecret, clicksignConfigured, clicksignEnv, clicksignHost, clicksignSignatureValid, createEnvelope, parseClicksignWebhook } from "@/server/integrations/clicksign";
 import { clicksignRole, clicksignSignerNameProblem } from "@/domain/contract-templates";
 
 const SECRET = "segredo-de-teste";
@@ -223,6 +223,22 @@ describe("testar conexão (chave da API e webhooks)", () => {
     expect(check.token).toEqual({ ok: true });
     expect(check.webhooks).toMatchObject({ interos: [{ host: "interos.app.br", active: true, missingEvents: [], secretMatches: true, otherHost: false }], others: [{ host: "hooks.pluga.co", active: true }] });
     expect(JSON.stringify(check)).not.toMatch(/segredo-interos|segredo-pluga|chave-da-pluga|tok-teste/);
+  });
+
+  it("segredo com quebra de linha na Vercel: o teste e a rota leem o mesmo valor (os dois aceitam)", async () => {
+    process.env.CLICKSIGN_WEBHOOK_SECRET = "segredo-interos\n";
+    route = (url) => (url.includes("/webhooks") ? json({ data: [webhook("w1", "https://interos.app.br/api/webhooks/clicksign", "segredo-interos")], meta: { record_count: 1 } }) : json({ data: [] }));
+    const check = await checkClicksignConnection("interos.app.br");
+    expect(check.webhooks).toMatchObject({ secretConfigured: true, interos: [{ secretMatches: true }] });
+    const body = JSON.stringify({ event: { name: "sign" } });
+    expect(clicksignSignatureValid(body, sign(body, "segredo-interos"), clicksignWebhookSecret())).toBe(true);
+  });
+
+  it("sem segredo na Vercel o relatório diz que falta (a rota responde 503)", async () => {
+    delete process.env.CLICKSIGN_WEBHOOK_SECRET;
+    route = (url) => (url.includes("/webhooks") ? json({ data: [webhook("w1", "https://interos.app.br/api/webhooks/clicksign", "x")], meta: { record_count: 1 } }) : json({ data: [] }));
+    const check = await checkClicksignConnection("interos.app.br");
+    expect(check.webhooks).toMatchObject({ secretConfigured: false, interos: [{ secretMatches: null }] });
   });
 
   it("segredo diferente do da Vercel é apontado", async () => {

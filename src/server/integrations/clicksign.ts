@@ -32,6 +32,14 @@ export function clicksignConfigured(): boolean {
   return Boolean(env("CLICKSIGN_API_TOKEN"));
 }
 
+/**
+ * Segredo dos avisos (CLICKSIGN_WEBHOOK_SECRET), sem espaço ou quebra de linha nas pontas — a mesma leitura na rota do
+ * webhook, no selo do cartão e no «Testar conexão», para o teste nunca dizer "confere" quando a rota recusaria.
+ */
+export function clicksignWebhookSecret(): string | undefined {
+  return env("CLICKSIGN_WEBHOOK_SECRET");
+}
+
 export class ClicksignError extends Error {
   constructor(
     message: string,
@@ -266,7 +274,7 @@ function sameSecret(a: string, b: string): boolean {
 
 /** Webhooks cadastrados na conta. O segredo de cada um nunca sai daqui: vira só "confere / não confere". */
 async function listClicksignWebhooks(): Promise<ClicksignWebhookInfo[]> {
-  const ours = env("CLICKSIGN_WEBHOOK_SECRET");
+  const ours = clicksignWebhookSecret();
   const hooks: ClicksignWebhookInfo[] = [];
   for (let page = 1; page <= WEBHOOK_PAGES; page++) {
     const r = await clicksignApi<{ data?: JsonApiResource[]; meta?: { record_count?: number } }>(`/webhooks?page%5Bnumber%5D=${page}&page%5Bsize%5D=${WEBHOOK_PAGE_SIZE}`, CHECK_CALL);
@@ -314,7 +322,7 @@ export async function checkClicksignConnection(expectedHost?: string | null): Pr
   if (envelopes.status === "rejected") return { env: e, checkedAt, token: tokenProblem(envelopes.reason, e), webhooks: null };
   const webhooks =
     hooks.status === "fulfilled"
-      ? classifyClicksignWebhooks(hooks.value, expectedHost)
+      ? classifyClicksignWebhooks(hooks.value, expectedHost, { secretConfigured: Boolean(clicksignWebhookSecret()) })
       : { error: hooks.reason instanceof Error ? hooks.reason.message : "Não foi possível ler os webhooks da Clicksign" };
   return { env: e, checkedAt, token: { ok: true }, webhooks };
 }

@@ -699,9 +699,12 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   botão consulta a Clicksign na hora, só leitura (`GET /envelopes?page[size]=1` e `GET /webhooks`, 1 nova tentativa e
   10 s por chamada). Diz se a chave foi aceita (401/403 → apagada, errada ou do outro ambiente) e confere os webhooks
   (`src/domain/clicksign-connection.ts`): o do INTEROS (caminho `/api/webhooks/clicksign`) ativo, com os eventos de
-  `CLICKSIGN_WEBHOOK_EVENTS`, segredo igual ao `CLICKSIGN_WEBHOOK_SECRET` (comparado no servidor; o segredo nunca vai
-  para a tela) e no domínio deste INTEROS; os de outros serviços (ex.: Pluga) aparecem só pelo domínio, porque o
-  endereço completo pode carregar chave de acesso.
+  `CLICKSIGN_WEBHOOK_EVENTS` (só `upload` é dispensável), endereço exato em https (barra no fim ou http:// recebem 308,
+  e a Clicksign não segue redirecionamento), segredo igual ao `CLICKSIGN_WEBHOOK_SECRET` (comparado no servidor; o
+  segredo nunca vai para a tela) e no domínio deste INTEROS. Rota, selo e teste leem o segredo pelo mesmo
+  `clicksignWebhookSecret()` (sem espaço/quebra de linha nas pontas), para o teste não dizer "confere" quando a rota
+  recusaria. Com um webhook do INTEROS pronto, os demais com o mesmo caminho são sobras (só alerta, "pode apagar"). Os
+  de outros serviços (ex.: Pluga) aparecem só pelo domínio, porque o endereço completo pode carregar chave de acesso.
 
 ## Central de Atendimento (módulo Comunicação, `src/server/conversations/*`, `/comunicacao`)
 

@@ -15,11 +15,24 @@ const hook = (patch: Partial<ClicksignWebhookInfo> = {}): ClicksignWebhookInfo =
 });
 
 describe("webhooks da Clicksign: do INTEROS e de outros serviços", () => {
-  it("webhook do INTEROS completo fica pronto; barra no fim e domínio em maiúsculas não atrapalham", () => {
-    const r = classifyClicksignWebhooks([hook({ endpoint: "https://Interos.App.br/api/webhooks/clicksign/" })], "interos.app.br");
+  it("webhook do INTEROS completo fica pronto; domínio em maiúsculas não atrapalha", () => {
+    const r = classifyClicksignWebhooks([hook({ endpoint: "https://Interos.App.br/api/webhooks/clicksign" })], "interos.app.br");
     expect(r.interos).toHaveLength(1);
     expect(r.others).toEqual([]);
     expect(interosWebhookReady(r.interos[0])).toBe(true);
+  });
+
+  it("barra no fim ou http:// é do INTEROS, mas não fica pronto: recebe redirecionamento, que a Clicksign não segue", () => {
+    const r = classifyClicksignWebhooks(
+      [hook({ endpoint: "https://interos.app.br/api/webhooks/clicksign/" }), hook({ endpoint: "http://interos.app.br/api/webhooks/clicksign" })],
+      "interos.app.br",
+    );
+    expect(r.interos.map((h) => h.addressProblem)).toEqual(["barra_final", "http"]);
+    expect(r.interos.some(interosWebhookReady)).toBe(false);
+    const lines = connectionCheckLines({ env: "producao", checkedAt: "x", token: { ok: true }, webhooks: r });
+    expect(lines.slice(1, 3).map((l) => l.tone)).toEqual(["error", "error"]);
+    expect(lines[1].text).toMatch(/termina com barra/);
+    expect(lines[2].text).toMatch(/http:\/\//);
   });
 
   it("inativo, eventos faltando, segredo diferente e outro domínio aparecem", () => {
@@ -69,14 +82,43 @@ describe("texto do teste de conexão", () => {
     expect(lines[2].text).toMatch(/hooks\.pluga\.co \(ativo\)/);
   });
 
-  it("segredo diferente bloqueia; outro domínio e eventos faltando só alertam", () => {
+  it("segredo diferente e evento essencial faltando bloqueiam; outro domínio e só o upload faltando alertam", () => {
     const wrongSecret = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ secretMatches: false })], "interos.app.br") });
     expect(wrongSecret[1].tone).toBe("error");
     expect(wrongSecret[1].text).toMatch(/segredo/);
-    const otherHost = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ endpoint: "https://interos.vercel.app/api/webhooks/clicksign", events: ["sign"] })], "interos.app.br") });
+    const noSign = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ events: ALL.filter((e) => e !== "sign") })], "interos.app.br") });
+    expect(noSign[1].tone).toBe("error");
+    expect(noSign[1].text).toMatch(/faltam os eventos Assinatura/);
+    const otherHost = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ endpoint: "https://interos.vercel.app/api/webhooks/clicksign", events: ALL.filter((e) => e !== "upload") })], "interos.app.br") });
     expect(otherHost[1].tone).toBe("warn");
     expect(otherHost[1].text).toMatch(/interos\.app\.br/);
-    expect(otherHost[1].text).toMatch(/faltam os eventos/);
+    expect(otherHost[1].text).toMatch(/faltam os eventos Upload/);
+  });
+
+  it("sem CLICKSIGN_WEBHOOK_SECRET na Vercel é problema (a rota recusa todo aviso), não «não deu para conferir»", () => {
+    const lines = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ secretMatches: null })], "interos.app.br", { secretConfigured: false }) });
+    expect(lines[1].tone).toBe("error");
+    expect(lines[1].text).toMatch(/falta o CLICKSIGN_WEBHOOK_SECRET na Vercel/);
+    const unknown = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook({ secretMatches: null })], "interos.app.br", { secretConfigured: true }) });
+    expect(unknown[1].tone).toBe("warn");
+  });
+
+  it("com um webhook do INTEROS pronto, sobras (domínio antigo, desativado) são só alerta, sem instrução de corrigir", () => {
+    const lines = connectionCheckLines({
+      ...base,
+      token: { ok: true },
+      webhooks: classifyClicksignWebhooks([hook({ endpoint: "https://antigo.vercel.app/api/webhooks/clicksign", status: "inactive", secretMatches: false }), hook()], "interos.app.br"),
+    });
+    expect(lines.map((l) => l.tone)).toEqual(["ok", "ok", "warn", "ok"]);
+    expect(lines[1].text).toMatch(/Webhook do INTEROS ativo \(interos\.app\.br\)/);
+    expect(lines[2].text).toMatch(/antigo\.vercel\.app, inativo\) não é o que recebe os avisos: pode apagá-lo/);
+    expect(lines[2].text).not.toMatch(/ative-o|copie o segredo/);
+  });
+
+  it("dois webhooks prontos: alerta de aviso em dobro", () => {
+    const lines = connectionCheckLines({ ...base, token: { ok: true }, webhooks: classifyClicksignWebhooks([hook(), hook({ endpoint: "https://interos.app.br/api/webhooks/clicksign?x=1" })], "interos.app.br") });
+    expect(lines.map((l) => l.tone)).toEqual(["ok", "ok", "warn", "ok"]);
+    expect(lines[2].text).toMatch(/mais de uma vez/);
   });
 
   it("lista de webhooks que não veio vira alerta, sem esconder que a chave foi aceita", () => {

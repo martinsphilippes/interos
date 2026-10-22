@@ -27,7 +27,7 @@ import { ContractTemplatesAdmin, type TemplateRow } from "@/components/finance/c
 import { SignatureSettingsForm } from "@/components/finance/signature-settings-form";
 import { ClicksignConnection } from "@/components/finance/clicksign-connection";
 import { CLICKSIGN_WEBHOOK_PATH } from "@/domain/clicksign-connection";
-import { clicksignConfigured, clicksignEnv } from "@/server/integrations/clicksign";
+import { clicksignConfigured, clicksignEnv, clicksignWebhookSecret } from "@/server/integrations/clicksign";
 import { resolvePortalBaseUrl } from "@/server/portal/service";
 
 export const metadata: Metadata = { title: "Assinaturas" };
@@ -214,7 +214,7 @@ async function SettingsTab({ canEdit, canTest, providerConnected }: { canEdit: b
   const [settings, users, base] = await Promise.all([getSignatureSettings(), list<User>(COLLECTIONS.users, { where: [["active", "==", true]] }), resolvePortalBaseUrl()]);
   return (
     <>
-    <ClicksignConnection info={{ connected: clicksignConfigured(), env: clicksignEnv(), webhookReady: Boolean(process.env.CLICKSIGN_WEBHOOK_SECRET), webhookUrl: `${base ?? "https://<dominio>"}${CLICKSIGN_WEBHOOK_PATH}` }} canTest={canTest} />
+    <ClicksignConnection info={{ connected: clicksignConfigured(), env: clicksignEnv(), webhookReady: Boolean(clicksignWebhookSecret()), webhookUrl: `${base ?? "https://<dominio>"}${CLICKSIGN_WEBHOOK_PATH}` }} canTest={canTest} />
     <SignatureSettingsForm
       settings={settings}
       users={users.map((u) => ({ id: u.id, name: u.name, email: u.email })).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))}
