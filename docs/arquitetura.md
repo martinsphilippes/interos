@@ -569,6 +569,12 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   criados direto na Clicksign, à espera do cliente certo), `modelos` e `configuracao`. Chaves novas:
   `financeiro.assinaturas.{entrada,modelos,configuracao}.ver`, `.entrada.vincular`, `.modelos.editar` e
   `.configuracao.editar` (só gestão); escolher modelo/autenticação no contrato usa `financeiro.contratos.assinatura.editar`.
+- **Signatários do contrato** (`SignatureCard` + `src/components/finance/signer-options.ts`): quem assina é escolhido
+  entre os contatos do cliente e a equipe ativa da Intercert (testemunha/representante), nunca digitado solto. Quem já
+  assina sai da lista; contato sem e-mail aparece desabilitado; com a Clicksign ligada, nome sem sobrenome é apontado
+  com link para corrigir no cadastro. "Cadastrar novo contato" (exige `operacao.clientes.contatos.editar`) cria o
+  contato no cliente pela action `addContact` e já o adiciona como signatário. `addSigner` no servidor também barra
+  nome sem sobrenome/com números quando a Clicksign está configurada.
 - **Configuração** (settings `assinatura_eletronica`): quem assina pela Intercert (padrão: usuário ativo chamado
   Hércules, trocável; com usuário escolhido, nome/e-mail seguem o cadastro) e a autenticação padrão (`email` = código por
   e-mail; também `whatsapp`, `sms`, `icp_brasil`). O signatário entra com `party: "contratada"` na criação do contrato e

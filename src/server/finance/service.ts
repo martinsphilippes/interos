@@ -24,6 +24,7 @@ import { completeGate, getDepartmentManager } from "@/server/workflow/service";
 import { createProjectFromContract } from "@/server/implementation/service";
 import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
+import { clicksignSignerNameProblem } from "@/domain/contract-templates";
 import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
 import { clicksignConfigured } from "@/server/integrations/clicksign";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
@@ -659,6 +660,11 @@ export async function addSigner(input: { contractId: string; name: string; email
   assertEditable(contract);
   const email = input.email.trim().toLowerCase();
   if (contract.signers.some((s) => s.email.toLowerCase() === email)) throw new Error("Este e-mail já é signatário do contrato");
+  // Com a Clicksign ligada, o que ela recusaria no envio é barrado já aqui (nome e sobrenome, sem números).
+  if (clicksignConfigured()) {
+    const problem = clicksignSignerNameProblem(input.name);
+    if (problem) throw new Error(`Signatário «${input.name.trim()}»: ${problem}`);
+  }
   const signers = [...contract.signers, { name: input.name.trim(), email, role: input.role.trim(), status: "pendente" as const }];
   await update<Contract>(COLLECTIONS.contracts, contract.id, { signers });
   await emitEvent({

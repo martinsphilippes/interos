@@ -406,6 +406,14 @@ describe("Clicksign: envio e avisos", () => {
     expect((await getById<Contract>(COLLECTIONS.contracts, c.id))?.signedAt).toBeUndefined();
   });
 
+  it("com a Clicksign ligada, adicionar signatário sem sobrenome é barrado na hora (não só no envio)", async () => {
+    const c = await newContract();
+    await expect(addSigner({ contractId: c.id, name: "Fulano", email: `fulano.${RUN}@acme-teste.com.br`, role: "Testemunha" }, ACTOR)).rejects.toThrow(/sobrenome/);
+    await expect(addSigner({ contractId: c.id, name: "Fulano 2 Silva", email: `fulano.${RUN}@acme-teste.com.br`, role: "Testemunha" }, ACTOR)).rejects.toThrow(/números/);
+    await addSigner({ contractId: c.id, name: "Fulano Silva", email: `fulano.${RUN}@acme-teste.com.br`, role: "Testemunha" }, ACTOR);
+    expect((await getById<Contract>(COLLECTIONS.contracts, c.id))?.signers.some((s) => s.name === "Fulano Silva")).toBe(true);
+  });
+
   it("contrato de outro INTEROS (id que não existe aqui) é ignorado e não vai para a caixa de entrada", async () => {
     const key = `${RUN}-foreign`;
     const r = await processClicksignWebhook(hook({ event: { name: "sign" }, document: { key, metadata: { interos_contract_id: `${RUN}_nao_existe` } } }));
