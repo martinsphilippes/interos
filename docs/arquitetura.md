@@ -650,11 +650,12 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
 - **Representante do cliente** (`contratante.representante`, `_email`, `_cpf`): o 1º signatário, na ordem do
   contrato, qualificado como contratante, representante legal ou procurador (`clientRepresentative`, pela mesma regra
   de `clicksignRole`: fora Intercert, testemunha, avalista e fiador). O CPF vem do contato que É essa pessoa
-  (`resolveRepresentativeDocument`, no domínio — a mesma regra na leitura e na escrita. Antes dos contatos, o nome:
-  signatário com o nome do próprio cliente é o cliente pessoa física — o CPF é o documento do cliente — ou, se o
-  documento não é CPF, a empresa (`empresa`: nem um contato com o nome dela recebe CPF). Depois, os contatos, por
-  `resolveClientRepresentative`: e-mail E nome batem — o único contato com o e-mail, mas com outro nome, é
-  `outro_nome`; sem contato com o e-mail, vale o contato SEM e-mail com o mesmo nome): o único
+  (`resolveRepresentativeDocument`, no domínio — a mesma regra na leitura e na escrita, nesta ordem: 1) o contato que
+  é a pessoa, por `resolveClientRepresentative` — e-mail E nome batem (o único contato com o e-mail, mas com outro
+  nome, é `outro_nome`; sem contato com o e-mail, vale o contato SEM e-mail com o mesmo nome, menos para o nome da
+  empresa), mesmo que o nome seja igual ao do cliente (empresário individual, lead com o nome da pessoa); 2) sem
+  contato, o signatário com o nome de quem está no documento de faturamento, que é um CPF: o próprio cliente pessoa
+  física; 3) sem contato, o signatário com o nome do cliente: a empresa (`empresa`, sem CPF de ninguém): o único
   contato do cliente com o e-mail do signatário ou, se o e-mail for compartilhado (ex.: financeiro@), o que tem o mesmo
   nome (o mesmo contato cadastrado mais de uma vez, com mesmo nome e e-mail, vale como uma pessoa se houver um só CPF);
   nunca "o que tem CPF" entre pessoas diferentes (CPF de outra pessoa no contrato é pior do que a pendência). `Contact.document` é

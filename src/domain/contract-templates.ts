@@ -100,12 +100,15 @@ function pickSamePerson<C extends { document?: string }>(list: C[]): { contact?:
 export function resolveClientRepresentative<S extends { party?: string; role?: string; name: string; email: string }, C extends { name: string; email?: string; document?: string }>(
   signers: S[],
   contacts: C[],
+  /** Nomes que não são de pessoa (razão social, nome fantasia): o atalho do contato sem e-mail não vale para eles. */
+  notPersonNames: (string | undefined)[] = [],
 ): { signer?: S; contact?: C; ambiguous?: "nome" | "outro_nome" | "cpf"; otherName?: string } {
   const signer = clientRepresentative(signers);
   if (!signer) return { signer };
   const email = signer.email.trim().toLowerCase();
   const sameEmail = contacts.filter((c) => c.email?.trim().toLowerCase() === email);
   if (sameEmail.length === 0) {
+    if (notPersonNames.some((n) => n?.trim() && samePersonName(n, signer.name))) return { signer };
     const noEmailSameName = contacts.filter((c) => !c.email?.trim() && samePersonName(c.name, signer.name));
     return noEmailSameName.length === 0 ? { signer } : { signer, ...pickSamePerson(noEmailSameName) };
   }
@@ -116,25 +119,35 @@ export function resolveClientRepresentative<S extends { party?: string; role?: s
 
 /**
  * Representante do cliente e de onde vem o CPF dele — a regra única da leitura (documento, prontidão) e da escrita
- * (CPF informado no contrato). Antes dos contatos, o nome: signatário com o nome do próprio cliente (razão social ou
- * nome fantasia) é o cliente pessoa física — o CPF é o documento do cliente (`fromClient`) — ou, se o documento do
- * cliente não é CPF, a empresa, que não é pessoa (`empresa`: escolher quem assina; se for pessoa física, informar o
- * CPF nos dados do cliente). Nem um contato com o nome da empresa recebe o CPF de alguém. Depois, os contatos
- * (`resolveClientRepresentative`).
+ * (CPF informado no contrato), nesta ordem:
+ * 1. o contato que é a pessoa (`resolveClientRepresentative`: e-mail e nome) — vale mesmo com o nome igual ao do
+ *    cliente (empresário individual, cliente criado de um lead com o nome da pessoa); o atalho do contato SEM e-mail
+ *    não vale para o nome da empresa (um contato "Padaria X" não recebe o CPF de alguém);
+ * 2. sem contato, o signatário com o nome de quem está no documento de faturamento, que é um CPF: o próprio cliente
+ *    pessoa física — o CPF é esse (`fromClient`);
+ * 3. sem contato, o signatário com o nome do cliente (razão social de faturamento, razão social ou nome fantasia do
+ *    cadastro): a empresa, que não é pessoa (`empresa`: escolher quem assina; se for pessoa física, informar o CPF nos
+ *    dados do cliente).
+ * `billing` = dados de faturamento mesclados (razão social e documento da venda, senão do cadastro).
  */
 export function resolveRepresentativeDocument<S extends { party?: string; role?: string; name: string; email: string }, C extends { name: string; email?: string; document?: string }>(
   signers: S[],
   contacts: C[],
-  client: { legalName?: string; tradeName?: string; document?: string },
+  client: { legalName?: string; tradeName?: string },
+  billing: { legalName?: string; document?: string },
 ): { signer?: S; contact?: C; document?: string; fromClient?: boolean; ambiguous?: "nome" | "outro_nome" | "cpf" | "empresa"; otherName?: string } {
   const signer = clientRepresentative(signers);
   if (!signer) return { signer };
-  if ([client.legalName, client.tradeName].some((n) => n?.trim() && samePersonName(n, signer.name))) {
-    const doc = client.document?.replace(/\D/g, "") ?? "";
-    return doc.length === 11 ? { signer, document: doc, fromClient: true } : { signer, ambiguous: "empresa" };
-  }
-  const r = resolveClientRepresentative(signers, contacts);
-  return { ...r, document: r.contact?.document };
+  const companyNames = [billing.legalName, client.legalName, client.tradeName];
+  const r = resolveClientRepresentative(signers, contacts, companyNames);
+  if (r.contact) return { ...r, document: r.contact.document };
+  const companyNamed = companyNames.some((n) => n?.trim() && samePersonName(n, signer.name));
+  // Duplicados com CPFs diferentes da mesma pessoa: corrigir os contatos, qualquer que seja o nome.
+  if (r.ambiguous === "cpf" || (r.ambiguous && !companyNamed)) return r;
+  const doc = billing.document?.replace(/\D/g, "") ?? "";
+  if (doc.length === 11 && billing.legalName?.trim() && samePersonName(billing.legalName, signer.name)) return { signer, document: doc, fromClient: true };
+  if (companyNamed) return { signer, ambiguous: "empresa" };
+  return r;
 }
 
 /** O signatário da Intercert está completo (nome e e-mail válidos)? */

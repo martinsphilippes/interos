@@ -73,11 +73,12 @@ const COMPANY_ADDRESS = HEADQUARTERS.label.replace("Sede Intercert — ", "");
 
 /** Valores dos campos do contrato (mesma regra para a prévia, o envio e a prontidão). */
 function documentFields(contract: Contract, ctx: FieldsContext, issuedAt: string): { fields: Record<string, string>; representative?: ClientRepresentativeInfo } {
-  const { signer, contact, document, fromClient, ambiguous, otherName } = resolveRepresentativeDocument(contract.signers, ctx.contacts, {
-    legalName: ctx.billingData.legalName ?? ctx.client.legalName,
-    tradeName: ctx.client.tradeName,
-    document: ctx.billingData.document,
-  });
+  const { signer, contact, document, fromClient, ambiguous, otherName } = resolveRepresentativeDocument(
+    contract.signers,
+    ctx.contacts,
+    { legalName: ctx.client.legalName, tradeName: ctx.client.tradeName },
+    { legalName: ctx.billingData.legalName, document: ctx.billingData.document },
+  );
   const fields = contractFieldValues({
     contract,
     client: ctx.client,

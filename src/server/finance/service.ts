@@ -756,11 +756,12 @@ export async function setRepresentativeDocument(
   ]);
   // A mesma regra (e os mesmos dados do cliente) da prontidão e do documento.
   const billing: { legalName?: string; document?: string } = client ? mergedBillingData(client, opportunity) : {};
-  const { signer, contact, fromClient, ambiguous, otherName } = resolveRepresentativeDocument(contract.signers, contacts, {
-    legalName: billing.legalName ?? client?.legalName,
-    tradeName: client?.tradeName,
-    document: billing.document,
-  });
+  const { signer, contact, fromClient, ambiguous, otherName } = resolveRepresentativeDocument(
+    contract.signers,
+    contacts,
+    { legalName: client?.legalName, tradeName: client?.tradeName },
+    { legalName: billing.legalName, document: billing.document },
+  );
   if (!signer) throw new Error("O contrato ainda não tem quem assina pelo cliente: adicione o signatário primeiro");
   if (signer.email.trim().toLowerCase() !== input.expected.email.trim().toLowerCase() || !samePersonName(signer.name, input.expected.name)) {
     throw new Error(`Quem assina pelo cliente mudou (agora é ${signer.name}): recarregue a página e confira antes de informar o CPF`);
