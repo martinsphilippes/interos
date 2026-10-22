@@ -416,24 +416,38 @@ describe("dados obrigatórios do modelo", () => {
   });
 });
 
-describe("ligação que contradiz o nome da variável", () => {
+describe("parte do endereço ligada ao endereço completo", () => {
   const v = (name: string, field?: string) => ({ name, field });
 
-  it("«Logradouro» no endereço completo é apontada (repetiria número, bairro e cidade)", () => {
-    expect(suspiciousBindings([v("Logradouro", "contratante.endereco"), v("Número", "contratante.numero"), v("Bairro", "contratante.bairro")])).toEqual([
+  it("«Logradouro» no endereço completo ao lado de número, bairro e cidade é apontada (repetiria tudo)", () => {
+    expect(suspiciousBindings([v("Logradouro", "contratante.endereco"), v("Número", "contratante.numero"), v("Bairro", "contratante.bairro"), v("Estado", "contratante.uf")])).toEqual([
       { name: "Logradouro", field: "contratante.endereco", suggested: "contratante.logradouro" },
     ]);
+    // «Número» ligado ao endereço completo ao lado do bairro também repete.
+    expect(suspiciousBindings([v("Número", "contratante.endereco"), v("Bairro", "contratante.bairro")])).toEqual([{ name: "Número", field: "contratante.endereco", suggested: "contratante.numero" }]);
   });
 
-  it("ligação igual ao nome, variável sem campo e texto fixo não geram aviso", () => {
-    expect(suspiciousBindings([v("Logradouro", "contratante.logradouro"), v("Bairro"), { name: "Estado", fixed: "CE" }, v("Valor de Mensalidade", "valores.mensalidade")])).toEqual([]);
+  it("endereço completo sozinho, ou com nome de endereço, não é apontado", () => {
+    expect(suspiciousBindings([v("Logradouro", "contratante.endereco"), v("Razão Social", "contratante.razao_social")])).toEqual([]);
+    expect(suspiciousBindings([v("Endereço", "contratante.endereco"), v("Bairro", "contratante.bairro")])).toEqual([]);
   });
 
-  it("sugestão por contexto não gera aviso (é palpite, não o nome)", () => {
-    // "numero" sozinho: o nome indica o número do contrato; ao lado de logradouro, o do endereço. Os dois são aceitos.
-    expect(suspiciousBindings([v("Logradouro", "contratante.logradouro"), v("Número", "contratante.numero")])).toEqual([]);
+  it("endereço em partes com nomes comuns («Endereço» = logradouro, «Número» = número do endereço) não gera aviso", () => {
+    expect(suspiciousBindings([v("Endereço", "contratante.logradouro"), v("Número", "contratante.numero"), v("Bairro", "contratante.bairro"), v("Cidade", "contratante.cidade")])).toEqual([]);
     expect(suspiciousBindings([v("Logradouro", "contratante.logradouro"), v("Número", "contrato.numero")])).toEqual([]);
-    // "cpf" ao lado de CNPJ sugere o CPF do representante; ligado ao documento do cliente não é apontado.
-    expect(suspiciousBindings([v("CNPJ", "contratante.cnpj_cpf"), v("CPF", "contratante.cnpj_cpf")])).toEqual([]);
+  });
+
+  it("ligações de outra família, feitas de propósito, não geram aviso", () => {
+    expect(
+      suspiciousBindings([
+        v("Mensalidade", "valores.mensalidade_extenso"),
+        v("Cidade", "contratante.cidade_uf"),
+        v("Produto", "contrato.itens"),
+        v("E-mail", "contratante.representante_email"),
+        v("CPF", "contratante.representante_cpf"),
+        v("Bairro"),
+        { name: "Estado", fixed: "CE" },
+      ]),
+    ).toEqual([]);
   });
 });

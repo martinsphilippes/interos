@@ -609,10 +609,11 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   produtos dos itens, sem repetir ("ERP X e TEF Y"): é o que modelos chamam de "Sistema", "Sistema Operacional" ou
   "Produto" (`contrato.itens` é a lista com quantidades). O diálogo de variáveis mostra, no que
   está sem ligação, a sugestão pelo nome (`suggestUnbound`) com "usar" por linha e "Usar as N sugestões" no rodapé;
-  nada é aplicado sozinho (sem campo pode ser escolha, e salvar por outro motivo não grava o que ninguém pediu). Ligação
-  que contradiz o nome (`suspiciousBindings`: «Logradouro» no endereço completo repetiria número, bairro e cidade) vira
-  aviso no cartão do modelo e "trocar" no diálogo; só quando o próprio nome (campo ou apelido) indica outro campo, não
-  por regra de contexto (cpf ao lado de CNPJ, numero ao lado de logradouro). Mudar
+  nada é aplicado sozinho (sem campo pode ser escolha, e salvar por outro motivo não grava o que ninguém pediu). Parte do
+  endereço ligada ao endereço completo num modelo que também imprime outras partes (`suspiciousBindings`: «Logradouro»
+  → endereço completo ao lado de «Número»/«Bairro» repetiria tudo) vira aviso no cartão do modelo e "trocar" no
+  diálogo. Só esse caso: ligações de outra família (valor × por extenso, cidade × cidade/UF, produto × itens) costumam
+  ser de propósito, e aviso que não some vira ruído. Mudar
   texto, arquivo ou ligações sobe a versão. Envio do Word por `POST /api/financeiro/modelos` (multipart; acima do
   limite das Server Actions), até 4 MB.
 - **Dados obrigatórios do modelo** (`templateDataGaps` em `src/domain/contract-templates.ts`): toda variável do modelo

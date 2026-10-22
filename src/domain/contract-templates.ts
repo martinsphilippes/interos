@@ -203,10 +203,17 @@ export function suggestField(variable: string, siblings: string[] = []): string 
   return CONTRACT_FIELDS.find((f) => f.aliases?.includes(n))?.key;
 }
 
-/** Campo que o próprio nome da variável indica (nome do campo ou apelido), sem as regras de contexto. */
-function namedField(variable: string): string | undefined {
+/** Partes do endereço do cliente, cada uma com seu campo. "numero" sozinho só conta como parte ao lado do endereço completo. */
+const ADDRESS_PART_FIELDS = ["contratante.logradouro", "contratante.numero", "contratante.complemento", "contratante.bairro", "contratante.cidade", "contratante.cidade_uf", "contratante.uf", "contratante.cep"];
+
+/** Campo de parte do endereço que o nome da variável indica (logradouro, número, bairro, cidade, UF, CEP...). */
+function addressPartOf(variable: string): string | undefined {
   const n = normalizeVariableName(variable);
-  return exactField(variable) ?? (n ? CONTRACT_FIELDS.find((f) => f.aliases?.includes(n))?.key : undefined);
+  if (!n) return undefined;
+  if (n === "numero" || n === "n" || n === "no") return "contratante.numero";
+  const exact = exactField(variable);
+  if (exact) return ADDRESS_PART_FIELDS.includes(exact) ? exact : undefined;
+  return CONTRACT_FIELDS.find((f) => ADDRESS_PART_FIELDS.includes(f.key) && f.aliases?.includes(n))?.key;
 }
 
 export interface SuspiciousBinding {
@@ -216,16 +223,18 @@ export interface SuspiciousBinding {
 }
 
 /**
- * Variáveis ligadas a um campo diferente do que o nome indica com clareza (ex.: «Logradouro» ligada ao endereço
- * completo, que repetiria número, bairro e cidade no contrato). Só aviso: a ligação pode ser de propósito. Sugestão que
- * depende do contexto (cpf ao lado de CNPJ, numero ao lado de logradouro) não gera aviso: é palpite, não o nome.
+ * Parte do endereço ligada ao endereço completo num modelo que também imprime outras partes (ex.: «Logradouro» →
+ * endereço completo ao lado de «Número», «Bairro» e «Cidade»): o contrato repetiria número, bairro e cidade. Só esse
+ * caso é apontado — ligações de outra família (valor × por extenso, cidade × cidade/UF, produto × itens) costumam ser
+ * de propósito, e um aviso que não some vira ruído. Só aviso: nada é trocado sozinho.
  */
 export function suspiciousBindings(variables: ContractTemplateVariable[]): SuspiciousBinding[] {
-  const names = variables.map((v) => v.name);
+  const partsPrinted = variables.filter((v) => v.field && ADDRESS_PART_FIELDS.includes(v.field));
+  if (partsPrinted.length === 0) return [];
   return variables.flatMap((v) => {
-    if (!v.field || !isContractField(v.field)) return [];
-    const suggested = suggestField(v.name, names);
-    return suggested && suggested !== v.field && suggested === namedField(v.name) ? [{ name: v.name, field: v.field, suggested }] : [];
+    if (v.field !== "contratante.endereco") return [];
+    const suggested = addressPartOf(v.name);
+    return suggested && partsPrinted.some((p) => p.name !== v.name) ? [{ name: v.name, field: v.field, suggested }] : [];
   });
 }
 
