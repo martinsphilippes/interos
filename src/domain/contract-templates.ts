@@ -172,7 +172,6 @@ export function normalizeVariableName(name: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
-/** Campo sugerido para uma variável do modelo (ou undefined quando não há um claro). */
 /** Nomes de variável que mostram o endereço em partes: ao lado deles, "numero" é o número do endereço, não o do contrato. */
 const STREET_VARIABLE_NAMES = new Set(["logradouro", "rua", "avenida", "endereco_logradouro"]);
 
@@ -202,6 +201,32 @@ export function suggestField(variable: string, siblings: string[] = []): string 
     if (hasStreet && !addressNumberTaken) return "contratante.numero";
   }
   return CONTRACT_FIELDS.find((f) => f.aliases?.includes(n))?.key;
+}
+
+/** Campo que o próprio nome da variável indica (nome do campo ou apelido), sem as regras de contexto. */
+function namedField(variable: string): string | undefined {
+  const n = normalizeVariableName(variable);
+  return exactField(variable) ?? (n ? CONTRACT_FIELDS.find((f) => f.aliases?.includes(n))?.key : undefined);
+}
+
+export interface SuspiciousBinding {
+  name: string;
+  field: string;
+  suggested: string;
+}
+
+/**
+ * Variáveis ligadas a um campo diferente do que o nome indica com clareza (ex.: «Logradouro» ligada ao endereço
+ * completo, que repetiria número, bairro e cidade no contrato). Só aviso: a ligação pode ser de propósito. Sugestão que
+ * depende do contexto (cpf ao lado de CNPJ, numero ao lado de logradouro) não gera aviso: é palpite, não o nome.
+ */
+export function suspiciousBindings(variables: ContractTemplateVariable[]): SuspiciousBinding[] {
+  const names = variables.map((v) => v.name);
+  return variables.flatMap((v) => {
+    if (!v.field || !isContractField(v.field)) return [];
+    const suggested = suggestField(v.name, names);
+    return suggested && suggested !== v.field && suggested === namedField(v.name) ? [{ name: v.name, field: v.field, suggested }] : [];
+  });
 }
 
 function aliasOf(key: string): string[] {

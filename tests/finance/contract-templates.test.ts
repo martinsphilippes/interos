@@ -24,6 +24,7 @@ import {
   isWitnessSigner,
   unmappedVariables,
   variableValues,
+  suspiciousBindings,
 } from "@/domain/contract-templates";
 import { docxText, fillDocx, fillXml, inspectDocx, readZip, writeZip } from "@/server/finance/docx";
 import { suggestClient } from "@/server/finance/signature-inbox";
@@ -412,5 +413,27 @@ describe("dados obrigatórios do modelo", () => {
     ]);
     expect(req.unbound).toEqual(["Sistema Operacional"]);
     expect(req.afterRelease).toEqual(["Fim da vigência"]);
+  });
+});
+
+describe("ligação que contradiz o nome da variável", () => {
+  const v = (name: string, field?: string) => ({ name, field });
+
+  it("«Logradouro» no endereço completo é apontada (repetiria número, bairro e cidade)", () => {
+    expect(suspiciousBindings([v("Logradouro", "contratante.endereco"), v("Número", "contratante.numero"), v("Bairro", "contratante.bairro")])).toEqual([
+      { name: "Logradouro", field: "contratante.endereco", suggested: "contratante.logradouro" },
+    ]);
+  });
+
+  it("ligação igual ao nome, variável sem campo e texto fixo não geram aviso", () => {
+    expect(suspiciousBindings([v("Logradouro", "contratante.logradouro"), v("Bairro"), { name: "Estado", fixed: "CE" }, v("Valor de Mensalidade", "valores.mensalidade")])).toEqual([]);
+  });
+
+  it("sugestão por contexto não gera aviso (é palpite, não o nome)", () => {
+    // "numero" sozinho: o nome indica o número do contrato; ao lado de logradouro, o do endereço. Os dois são aceitos.
+    expect(suspiciousBindings([v("Logradouro", "contratante.logradouro"), v("Número", "contratante.numero")])).toEqual([]);
+    expect(suspiciousBindings([v("Logradouro", "contratante.logradouro"), v("Número", "contrato.numero")])).toEqual([]);
+    // "cpf" ao lado de CNPJ sugere o CPF do representante; ligado ao documento do cliente não é apontado.
+    expect(suspiciousBindings([v("CNPJ", "contratante.cnpj_cpf"), v("CPF", "contratante.cnpj_cpf")])).toEqual([]);
   });
 });

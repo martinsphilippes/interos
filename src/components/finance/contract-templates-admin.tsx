@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Download, FilePlus2, FileText, FileUp, Link2, Pencil, Star } from "lucide-react";
 import type { ContractTemplate, ContractTemplateVariable } from "@/domain/types";
-import { CONTRACT_FIELDS, FIELD_SOURCE_LABELS, extractVariables, fieldLabel, mergeVariables, suggestUnbound, templateRequirements, unmappedVariables } from "@/domain/contract-templates";
+import { CONTRACT_FIELDS, FIELD_SOURCE_LABELS, extractVariables, fieldLabel, mergeVariables, suggestUnbound, suspiciousBindings, templateRequirements, unmappedVariables } from "@/domain/contract-templates";
 import { saveInterosTemplateAction, saveTemplateVariablesAction, setTemplateStateAction } from "@/server/finance/signature-actions";
 import { formatRelative } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -85,6 +85,7 @@ export function ContractTemplatesAdmin({ templates, canEdit }: { templates: Temp
           {templates.map((t) => {
             const missing = unmappedVariables(t.variables);
             const requirements = templateRequirements(t.variables);
+            const suspicious = suspiciousBindings(t.variables);
             return (
               <li key={t.id}>
                 <Card className="flex h-full flex-col gap-3 p-4">
@@ -132,6 +133,17 @@ export function ContractTemplatesAdmin({ templates, canEdit }: { templates: Temp
                   {requirements.afterRelease.length > 0 ? (
                     <p className="text-xs text-warning-fg">
                       {requirements.afterRelease.join(", ")}: só existe(m) depois da liberação. Use texto fixo nessas variáveis (ex.: «a data da assinatura»), senão o contrato não é gerado.
+                    </p>
+                  ) : null}
+                  {suspicious.length > 0 ? (
+                    <p className="text-xs text-warning-fg">
+                      Confira a ligação:{" "}
+                      {suspicious.map((b, i) => (
+                        <span key={b.name}>
+                          {i > 0 ? " · " : ""}«{b.name}» está em {fieldLabel(b.field)}, mas o nome indica {fieldLabel(b.suggested)}
+                        </span>
+                      ))}
+                      . Abra «Ligar variáveis» para trocar.
                     </p>
                   ) : null}
                   {t.kind === "word" ? <p className="text-xs text-muted">{t.providerTemplateKey ? "Registrado na Clicksign." : "Será registrado na Clicksign quando a integração estiver conectada."}</p> : null}
@@ -324,6 +336,8 @@ function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose
     [template.variables],
   );
   const pendingSuggestions = vars.filter((v) => !v.field && !v.fixed?.trim() && suggestions.has(v.name));
+  // Ligação que contradiz o nome (ex.: «Logradouro» no endereço completo): aviso com «trocar», calculado do que está na tela.
+  const suspicious = React.useMemo(() => new Map(suspiciousBindings(vars).map((b) => [b.name, b.suggested] as const)), [vars]);
   const options = React.useMemo(() => fieldOptions(), []);
   const set = (name: string, patch: Partial<ContractTemplateVariable>) => setVars((list) => list.map((v) => (v.name === name ? { ...v, ...patch } : v)));
   const applySuggestion = (names: string[]) => setVars((list) => list.map((v) => (names.includes(v.name) && suggestions.has(v.name) ? { ...v, field: suggestions.get(v.name), fixed: undefined } : v)));
@@ -346,7 +360,14 @@ function VariablesDialog({ template, onClose }: { template: TemplateRow; onClose
               <li key={v.name} className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:items-center">
                 <div className="min-w-0">
                   <p className="truncate font-mono text-xs">{`{{${v.name}}}`}</p>
-                  {v.field ? (
+                  {v.field && suspicious.has(v.name) ? (
+                    <p className="text-xs text-warning-fg">
+                      {fieldLabel(v.field)} · o nome indica {fieldLabel(suspicious.get(v.name)!)}{" "}
+                      <button type="button" className="font-medium underline" onClick={() => set(v.name, { field: suspicious.get(v.name), fixed: undefined })}>
+                        trocar
+                      </button>
+                    </p>
+                  ) : v.field ? (
                     <p className="text-xs text-muted">{fieldLabel(v.field)}</p>
                   ) : v.fixed ? (
                     <p className="text-xs text-warning-fg">Texto fixo</p>
