@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { History, Landmark, Tags, Target, TriangleAlert } from "lucide-react";
+import { History, Landmark, Tags, Target, TrendingUp, TriangleAlert } from "lucide-react";
 import { requireScreen } from "@/server/auth/session";
 import { getRegistryWorkspace } from "@/server/finance-registry/queries";
 import { PageContainer } from "@/components/layout/page-container";
@@ -12,6 +12,7 @@ import { Timeline } from "@/components/timeline/timeline";
 import { AccountsPanel } from "@/components/finance-registry/accounts-panel";
 import { CentersPanel } from "@/components/finance-registry/centers-panel";
 import { CategoriesPanel } from "@/components/finance-registry/categories-panel";
+import { IndicesPanel } from "@/components/finance-registry/indices-panel";
 import { ImportButton } from "@/components/finance-registry/import-button";
 import { RegistryTabs } from "@/components/finance-registry/registry-tabs";
 
@@ -38,16 +39,17 @@ export default async function FinanceRegistryPage({ searchParams }: { searchPara
     <PageContainer size="full" className="max-w-[1680px]">
       <PageHeader
         title="Cadastros financeiros"
-        description="Contas financeiras, centros de custo e categorias (com subcategorias) que classificam títulos e lançamentos"
+        description="Contas financeiras, centros de custo, categorias (com subcategorias) e os índices de reajuste dos contratos"
         breadcrumbs={[{ label: "Financeiro", href: "/financeiro" }, { label: "Cadastros financeiros" }]}
-        actions={ws.tab !== "contas" && importButton ? importButton : undefined}
+        actions={(ws.tab === "centros" || ws.tab === "categorias") && importButton ? importButton : undefined}
       />
 
-      <KpiStrip columns={4} mobileColumns={2}>
+      <KpiStrip columns={5} mobileColumns={2}>
         {ws.visibleTabs.includes("contas") ? <StatCard label="Contas ativas" value={ws.counts.accounts} icon={<Landmark />} tone="info" href="/financeiro/cadastros?aba=contas" compact /> : null}
         {ws.visibleTabs.includes("centros") ? <StatCard label="Centros ativos" value={ws.counts.centers} icon={<Target />} tone="secondary" href="/financeiro/cadastros?aba=centros" compact /> : null}
         {ws.visibleTabs.includes("categorias") ? <StatCard label="Categorias ativas" value={ws.counts.categories} hint={`${ws.counts.subcategories} subcategoria(s)`} icon={<Tags />} tone="brand" href="/financeiro/cadastros?aba=categorias" compact /> : null}
         {ws.visibleTabs.includes("categorias") ? <StatCard label="Sem centro de custo" value={ws.counts.withoutCenter} icon={<TriangleAlert />} tone={ws.counts.withoutCenter ? "warning" : "success"} valueTone={ws.counts.withoutCenter > 0} href="/financeiro/cadastros?aba=categorias" compact /> : null}
+        {ws.visibleTabs.includes("indices") ? <StatCard label="Índices de reajuste" value={ws.counts.indices} icon={<TrendingUp />} tone="info" href="/financeiro/cadastros?aba=indices" compact /> : null}
       </KpiStrip>
 
       <RegistryTabs current={ws.tab} visible={ws.visibleTabs} />
@@ -57,6 +59,7 @@ export default async function FinanceRegistryPage({ searchParams }: { searchPara
           {ws.tab === "contas" ? <AccountsPanel rows={ws.accounts} can={{ values: ws.can.values, ...ws.can.accounts }} /> : null}
           {ws.tab === "centros" ? <CentersPanel rows={ws.centers} can={ws.can.centers} canImport={Boolean(importButton)} /> : null}
           {ws.tab === "categorias" ? <CategoriesPanel rows={ws.categories} centers={ws.centers} withoutCenter={ws.counts.withoutCenter} can={ws.can.categories} canImport={Boolean(importButton)} /> : null}
+          {ws.tab === "indices" ? <IndicesPanel rows={ws.indices} can={ws.can.indices} selected={item} /> : null}
         </div>
         <Card className="min-w-0 self-start" data-testid="registry-history">
           <CardHeader className="flex-row items-center justify-between gap-3">

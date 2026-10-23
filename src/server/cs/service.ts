@@ -987,9 +987,9 @@ export interface CompleteRenewalOptions {
 
 /**
  * Renovação pelo CS (D26): cria e aplica um aditivo "renovacao" no MESMO contrato — endDate = fim atual + meses,
- * `termMonths` PRESERVADO (o hash do contrato assinado não é reescrito), reajuste percentual aplicado à mensalidade
- * (índice: fica pendente para o CS informar; nunca é buscado automaticamente) e mensalidades do novo prazo geradas
- * pelo caminho único (`generateNextBillings`). Com `requiresSignature`, o aditivo fica aguardando assinatura no
+ * `termMonths` PRESERVADO (o hash do contrato assinado não é reescrito), reajuste anual aplicado à mensalidade quando a
+ * renovação cai numa data-base (percentual ou acumulado do índice do cadastro; índice ainda não publicado fica
+ * pendente e entra sozinho depois) e mensalidades do novo prazo geradas pelo caminho único (`generateNextBillings`). Com `requiresSignature`, o aditivo fica aguardando assinatura no
  * Financeiro e a renovação só se conclui na aplicação. `renewal.completed` continua sendo emitido (compatibilidade).
  */
 export async function completeRenewal(renewalId: string, termMonths: number, notes: string | undefined, actor: UserRef, options: CompleteRenewalOptions = {}): Promise<{ newEndDate: string; amendmentId: string; amendmentNumber: string; applied: boolean }> {
@@ -1001,7 +1001,7 @@ export async function completeRenewal(renewalId: string, termMonths: number, not
   const { applyAmendment, createAmendment } = await import("@/server/finance/amendments");
   const reason = notes?.trim() ? `Renovação negociada pelo CS: ${notes.trim()}` : "Renovação negociada pelo CS";
   const amendment = await createAmendment(
-    { contractId: contract.id, effectiveFrom: (contract.endDate ?? nowIso()).slice(0, 10), reason, requiresSignature: options.requiresSignature ?? false, renewal: { months: termMonths, readjustment: options.readjustment ?? contract.readjustment } },
+    { contractId: contract.id, effectiveFrom: (contract.endDate ?? nowIso()).slice(0, 10), reason, requiresSignature: options.requiresSignature ?? false, renewal: { months: termMonths, readjustment: options.readjustment } },
     actor,
     { source: "renovacao_cs", renewalId: renewal.id },
   );
@@ -1012,7 +1012,8 @@ export async function completeRenewal(renewalId: string, termMonths: number, not
     return { newEndDate, amendmentId: amendment.id, amendmentNumber: amendment.number, applied: false };
   }
   const applied = await applyAmendment(amendment.id, actor);
-  const result = `Renovado por ${termMonths} meses até ${formatDate(newEndDate)} (aditivo ${amendment.number}${amendment.readjustment && amendment.readjustment.type !== "nenhum" ? `, reajuste ${amendment.readjustment.type === "percentual" ? `${amendment.readjustment.percent}%` : `por índice a informar`}` : ""}).${notes ? ` ${notes}` : ""}`;
+  const { renewalReadjustmentText } = await import("@/server/finance/renewals");
+  const result = `Renovado por ${termMonths} meses até ${formatDate(newEndDate)} (aditivo ${amendment.number}${amendment.readjust || amendment.readjustment?.pending || amendment.readjustNote ? `, reajuste: ${renewalReadjustmentText(amendment)}` : ""}).${notes ? ` ${notes}` : ""}`;
   await update<Renewal>(COLLECTIONS.renewals, renewal.id, { status: "renovado", result });
   const account = await getCsAccount(renewal.clientId);
   if (account) await update<CsAccount>(COLLECTIONS.csAccounts, account.id, { renewalDate: newEndDate });

@@ -752,6 +752,8 @@ function auditHref(e: DomainEvent): string | undefined {
       return `/financeiro/cadastros?aba=categorias&item=${id}`;
     case "finance_registry":
       return "/financeiro/cadastros?aba=categorias";
+    case "readjustment_index":
+      return `/financeiro/cadastros?aba=indices&item=${id}`;
     default:
       return e.clientId ? `/clientes/${e.clientId}?aba=timeline` : undefined;
   }

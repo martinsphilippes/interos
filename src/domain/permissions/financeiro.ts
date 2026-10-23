@@ -163,6 +163,14 @@ export const FINANCEIRO = {
           rule: "all",
         },
         {
+          key: "financeiro.contratos.reajuste.ver",
+          label: "Reajuste anual",
+          // Onde: [id]/page.tsx (ContractReadjustmentCard): regra, data-base, prévia com o último índice, situação e as
+          // datas-base decididas (aditivo, quem decidiu, motivo). Mensalidades sob "Visualizar valores". Nova (reajuste
+          // anual), mesmo público da seção de Aditivos.
+          rule: "all",
+        },
+        {
           key: "financeiro.contratos.pendencias.ver",
           label: "Pendências do contrato",
           // Onde: [id]/page.tsx:211 (PendencyCard) · Hoje: só módulo; botões com canOperate
@@ -284,6 +292,24 @@ export const FINANCEIRO = {
           // canAccessModule(financeiro) && canOperateFinance (finance/schemas.ts:45-47)
           rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
           guards: ["src/server/finance/actions.ts#cancelAmendmentAction"],
+        },
+        {
+          key: "financeiro.contratos.reajuste.aplicar",
+          label: "Aplicar o reajuste anual agora (índice ou percentual informado)",
+          verb: "aplicar",
+          // Nova (reajuste anual): mesmo público de "Gerar aditivo" (cria e aplica um aditivo de reajuste, refaz as
+          // cobranças em aberto). A varredura reajustes_contratos aplica sozinha na data-base.
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/finance/actions.ts#applyContractReadjustmentAction"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.contratos.reajuste.dispensar",
+          label: "Dispensar o reajuste anual de uma data-base",
+          verb: "dispensar",
+          rule: { any: [{ manager: true }, { role: "financeiro" }, { department: "financeiro" }] },
+          guards: ["src/server/finance/actions.ts#skipContractReadjustmentAction"],
+          sensitive: true,
         },
         {
           key: "financeiro.contratos.pendencias.criar",
@@ -1208,6 +1234,14 @@ export const FINANCEIRO = {
           // Onde: /financeiro/cadastros?aba=categorias (uso por categoria, categorias sem centro)
           rule: "all",
         },
+        {
+          key: "financeiro.cadastros.indices.ver",
+          tab: "indices",
+          label: "Índices de reajuste",
+          // Onde: /financeiro/cadastros?aba=indices (meses de cada índice, acumulado de 12 meses, contratos indexados,
+          // situação da busca no Banco Central/IPEA). Só nomes e percentuais públicos: nenhum valor de contrato.
+          rule: "all",
+        },
       ],
       actions: [
         // Padrão das ações = quem opera Contas a Pagar e Fornecedores hoje (canOperatePayables: administrador,
@@ -1290,6 +1324,37 @@ export const FINANCEIRO = {
           rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
           guards: ["src/server/finance-registry/actions.ts#mergeFinanceCategoriesAction"],
           sensitive: true,
+        },
+        // Índices de reajuste: mesma regra dos demais cadastros (equipe financeira, diretoria e administrador). Mexer
+        // num índice muda o reajuste de todos os contratos que o usam.
+        {
+          key: "financeiro.cadastros.indices.criar",
+          label: "Cadastrar índice de reajuste",
+          verb: "criar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#saveReadjustmentIndexAction?sem id"],
+        },
+        {
+          key: "financeiro.cadastros.indices.editar",
+          label: "Editar índice de reajuste e lançar mês à mão",
+          verb: "editar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#saveReadjustmentIndexAction?com id", "src/server/finance-registry/actions.ts#setReadjustmentIndexValueAction"],
+          sensitive: true,
+        },
+        {
+          key: "financeiro.cadastros.indices.arquivar",
+          label: "Desativar/reativar índice de reajuste",
+          verb: "arquivar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#setReadjustmentIndexArchivedAction"],
+        },
+        {
+          key: "financeiro.cadastros.indices.atualizar",
+          label: "Buscar os índices agora (Banco Central/IPEA)",
+          verb: "atualizar",
+          rule: { any: [{ role: ["admin", "diretoria", "financeiro"] }, { department: "financeiro" }] },
+          guards: ["src/server/finance-registry/actions.ts#refreshReadjustmentIndicesAction"],
         },
         {
           key: "financeiro.cadastros.importar",

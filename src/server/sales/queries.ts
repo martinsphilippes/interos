@@ -11,6 +11,7 @@ import "server-only";
  */
 import { getById, getManyByIds, list, stripUndefined } from "@/server/db";
 import { ORG_ID } from "@/server/db";
+import type { ReadjustmentIndexOption } from "@/domain/readjustment";
 import { computeSlaState } from "@/server/sla";
 import { dateKey, formatCompetence } from "@/lib/format";
 import {
@@ -855,15 +856,18 @@ export interface WonContext {
     conditions?: string;
     items: { productId: string; productName: string; quantity: number; setupValue: number; monthlyValue: number; hardwareValue: number; discountPct: number }[];
   } | null;
+  /** Índices de reajuste ativos do cadastro (lista do campo «Índice»). */
+  indices: ReadjustmentIndexOption[];
 }
 
 /** Contatos do cliente (principal primeiro) e a proposta aceita, para pré-preencher o fechamento. */
 export async function getWonContext(opportunityId: string): Promise<WonContext | null> {
   const opp = await getById<Opportunity>(COLLECTIONS.opportunities, opportunityId);
   if (!opp) return null;
-  const [contacts, proposal] = await Promise.all([
+  const [contacts, proposal, indices] = await Promise.all([
     list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", opp.clientId]] }),
     opp.proposalId ? getById<Proposal>(COLLECTIONS.proposals, opp.proposalId) : Promise.resolve(null),
+    import("@/server/finance-registry/indices").then((m) => m.listReadjustmentIndexOptions()),
   ]);
   const accepted = proposal?.status === "aceita" && proposal.items.length > 0 ? proposal : null;
   return {
@@ -878,5 +882,6 @@ export async function getWonContext(opportunityId: string): Promise<WonContext |
           items: accepted.items.map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: i.setupValue, monthlyValue: i.monthlyValue, hardwareValue: i.hardwareValue, discountPct: i.discountPct })),
         }
       : null,
+    indices: indices.filter((i) => !i.archived),
   };
 }

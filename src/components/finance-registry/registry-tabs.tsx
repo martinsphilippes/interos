@@ -1,13 +1,14 @@
 import Link from "next/link";
-import { Landmark, Tags, Target } from "lucide-react";
+import { Landmark, Tags, Target, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type RegistryTabKey = "contas" | "centros" | "categorias";
+export type RegistryTabKey = "contas" | "centros" | "categorias" | "indices";
 
 const ITEMS: { value: RegistryTabKey; label: string; short: string; icon: React.ReactNode }[] = [
   { value: "contas", label: "Contas financeiras", short: "Contas", icon: <Landmark /> },
   { value: "centros", label: "Centros de custo", short: "Centros", icon: <Target /> },
   { value: "categorias", label: "Categorias", short: "Categorias", icon: <Tags /> },
+  { value: "indices", label: "Índices de reajuste", short: "Índices", icon: <TrendingUp /> },
 ];
 
 /** Abas da página (cada uma é uma seção do catálogo: financeiro.cadastros.<aba>.ver). */

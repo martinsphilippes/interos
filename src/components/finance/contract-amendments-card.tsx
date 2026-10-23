@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ReasonDialog } from "@/components/commissions/commission-ui";
 import { ContractItemsEditor, fromEdit, toEdit, type EditRow } from "./contract-items-card";
 import { ConditionsFields, conditionsFormFromContract, conditionsPayload, type ConditionsContract, type ConditionsForm } from "./contract-conditions-card";
+import type { ReadjustmentIndexOption } from "@/domain/readjustment";
 import { ManualSignatureButton } from "./manual-signature-dialog";
 import { NO_FINANCE_CAPABILITIES } from "./access-model";
 import { useFinanceAccess } from "./finance-access";
@@ -34,6 +35,8 @@ export interface ContractAmendmentsCardProps {
   products: ProductOption[];
   /** Contrato cancelado: só leitura. */
   closed?: boolean;
+  /** Índices de reajuste do cadastro (campo «Índice» das condições). */
+  indices?: ReadjustmentIndexOption[];
 }
 
 /** Linhas "campo: de → para" de um aditivo. */
@@ -55,7 +58,7 @@ export function AmendmentChanges({ changes, compact }: { changes: ContractAmendm
  * Aditivos do contrato (D25): lista com situação e ações (enviar para assinatura, registrar assinatura, aplicar,
  * cancelar, ver termo) e o diálogo "Criar aditivo", que reutiliza o editor de itens e os campos de condições.
  */
-export function ContractAmendmentsCard({ contract, amendments, products, closed }: ContractAmendmentsCardProps) {
+export function ContractAmendmentsCard({ contract, amendments, products, closed, indices = [] }: ContractAmendmentsCardProps) {
   // Capacidades do servidor (uma chave por ação do aditivo); contrato cancelado não recebe operações.
   const access = useFinanceAccess();
   const can = closed ? NO_FINANCE_CAPABILITIES.contracts : access.contracts;
@@ -161,7 +164,7 @@ export function ContractAmendmentsCard({ contract, amendments, products, closed 
           </ul>
         )}
       </CardContent>
-      {creating ? <CreateAmendmentDialog contract={contract} products={products} onClose={() => setCreating(false)} /> : null}
+      {creating ? <CreateAmendmentDialog contract={contract} products={products} indices={indices} onClose={() => setCreating(false)} /> : null}
       <ReasonDialog
         open={Boolean(cancelling)}
         onOpenChange={(o) => !o && setCancelling(null)}
@@ -180,7 +183,7 @@ export function ContractAmendmentsCard({ contract, amendments, products, closed 
   );
 }
 
-function CreateAmendmentDialog({ contract, products, onClose }: { contract: ContractAmendmentsCardProps["contract"]; products: ProductOption[]; onClose: () => void }) {
+function CreateAmendmentDialog({ contract, products, indices, onClose }: { contract: ContractAmendmentsCardProps["contract"]; products: ProductOption[]; indices: ReadjustmentIndexOption[]; onClose: () => void }) {
   const id = React.useId();
   const { pending, run } = useFinanceAction();
   const [scope, setScope] = React.useState<Scope>("itens");
@@ -237,7 +240,7 @@ function CreateAmendmentDialog({ contract, products, onClose }: { contract: Cont
           {withConditions ? (
             <section>
               <h4 className="mb-2 text-sm font-semibold">Condições depois do aditivo</h4>
-              <ConditionsFields id={`${id}-c`} form={form} onChange={setForm} hasPaymentMethod={Boolean(contract.paymentMethod)} />
+              <ConditionsFields id={`${id}-c`} form={form} onChange={setForm} hasPaymentMethod={Boolean(contract.paymentMethod)} indices={indices} currentIndex={contract.readjustment?.index} />
             </section>
           ) : null}
           <div className="grid gap-4 sm:grid-cols-2">

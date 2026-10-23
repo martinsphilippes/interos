@@ -151,6 +151,7 @@ const PREFIX_CATEGORY: Record<string, EventCategory> = {
   cost_center: "financeiro",
   finance_category: "financeiro",
   finance_registry: "financeiro",
+  readjustment_index: "financeiro",
 };
 
 export function eventCategory(type: EventType | string): EventCategory {
@@ -254,6 +255,14 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "finance_category.merged": Merge,
   "finance_category.bulk_updated": Tags,
   "finance_registry.imported": Download,
+  "readjustment_index.created": TrendingUp,
+  "readjustment_index.updated": TrendingUp,
+  "readjustment_index.archived": Archive,
+  "readjustment_index.reactivated": ArchiveRestore,
+  "readjustment_index.value_set": TrendingUp,
+  "readjustment_index.values_updated": TrendingUp,
+  "contract.readjusted": TrendingUp,
+  "contract.readjustment_skipped": FileDiff,
 };
 
 export type EventTone = "success" | "warning" | "danger" | "info" | "brand" | "muted";
@@ -281,6 +290,7 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "renewal.completed": "success",
   "contract.renewed": "success",
   "contract.amendment_applied": "success",
+  "contract.readjusted": "success",
   "contract.amendment_signed": "success",
   "contract.amendment_sent": "brand",
   "contract.amendment_cancelled": "muted",

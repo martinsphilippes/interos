@@ -178,6 +178,14 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "finance_category.merged": "Categorias financeiras mescladas",
   "finance_category.bulk_updated": "Categorias financeiras reorganizadas (em massa)",
   "finance_registry.imported": "Cadastros financeiros importados da configuração",
+  "readjustment_index.created": "Índice de reajuste cadastrado",
+  "readjustment_index.updated": "Índice de reajuste alterado",
+  "readjustment_index.archived": "Índice de reajuste desativado",
+  "readjustment_index.reactivated": "Índice de reajuste reativado",
+  "readjustment_index.value_set": "Mês do índice lançado à mão",
+  "readjustment_index.values_updated": "Índice de reajuste atualizado (mês novo publicado)",
+  "contract.readjusted": "Contrato reajustado (reajuste anual)",
+  "contract.readjustment_skipped": "Reajuste anual sem aumento ou dispensado",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -232,6 +240,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   cost_center: "Financeiro",
   finance_category: "Financeiro",
   finance_registry: "Financeiro",
+  readjustment_index: "Financeiro",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",

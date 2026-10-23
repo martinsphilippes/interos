@@ -69,6 +69,12 @@ function inflate(entry: ZipEntry): Buffer {
   throw new Error("Compactação do Word não suportada");
 }
 
+/** Texto (UTF-8) de uma parte do zip pelo nome, ou null (usado também para ler planilhas .xlsx). */
+export function zipPartText(entries: ZipEntry[], name: string): string | null {
+  const entry = entries.find((e) => e.name === name);
+  return entry ? inflate(entry).toString("utf8") : null;
+}
+
 let CRC_TABLE: Uint32Array | null = null;
 function crc32(data: Buffer): number {
   if (!CRC_TABLE) {

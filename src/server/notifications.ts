@@ -1,4 +1,4 @@
-import { create, list, update, nowIso } from "./db";
+import { create, createIfAbsent, list, update, nowIso } from "./db";
 import { COLLECTIONS, type Notification } from "@/domain/types";
 import type { NotificationKind } from "@/domain/constants";
 
@@ -10,6 +10,11 @@ export interface NotifyInput {
   href?: string;
   entity?: { type: string; id: string };
   eventId?: string;
+  /**
+   * Aviso único por chave: com `key`, cada usuário recebe no máximo uma notificação com essa chave (id fixo
+   * `ntf_<key>_<usuário>`), mesmo em execuções repetidas ou simultâneas das rotinas.
+   */
+  key?: string;
 }
 
 /** Cria uma notificação interna para cada usuário informado (ignora duplicados e vazios). */
@@ -17,18 +22,22 @@ export async function notify(input: NotifyInput): Promise<Notification[]> {
   const ids = Array.from(new Set(input.userIds.filter(Boolean)));
   const created: Notification[] = [];
   for (const userId of ids) {
-    created.push(
-      await create<Notification>(COLLECTIONS.notifications, {
-        userId,
-        kind: input.kind,
-        title: input.title,
-        body: input.body,
-        href: input.href,
-        entityType: input.entity?.type,
-        entityId: input.entity?.id,
-        eventId: input.eventId,
-      }),
-    );
+    const data = {
+      userId,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      href: input.href,
+      entityType: input.entity?.type,
+      entityId: input.entity?.id,
+      eventId: input.eventId,
+    };
+    if (input.key) {
+      const r = await createIfAbsent<Notification>(COLLECTIONS.notifications, `ntf_${input.key.replace(/[^A-Za-z0-9_-]/g, "_")}_${userId}`, data);
+      if (r.created) created.push(r.doc);
+      continue;
+    }
+    created.push(await create<Notification>(COLLECTIONS.notifications, data));
   }
   return created;
 }

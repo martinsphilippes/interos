@@ -64,7 +64,7 @@ export async function seedAmendments(): Promise<{ applied: string[]; version: nu
     karem,
     { emit: false },
   );
-  const r = await applyAmendment(amendment.id, karem, { emit: false, notifyIndexPending: false });
+  const r = await applyAmendment(amendment.id, karem, { emit: false });
   return { applied: [amendment.number], version: r.contract.version };
 }
 

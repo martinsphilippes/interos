@@ -6,7 +6,8 @@
  * Os dados originais continuam no servidor para as regras (gate, hash do documento, cobranças): redija só o que vai
  * para a tela, DEPOIS de calcular o que depende dos valores.
  */
-import type { Billing, Contract, ContractAmendment, ContractSnapshot, ProposalItem } from "@/domain/types";
+import type { Billing, Contract, ContractAmendment, ContractReadjustmentLogEntry, ContractSnapshot, ProposalItem, TimelineEvent } from "@/domain/types";
+import { redactChanges } from "@/domain/audit-format";
 import { RESTRICTED_CODE } from "@/components/finance/values";
 
 export { RESTRICTED_CODE };
@@ -21,6 +22,18 @@ export function maskMoneyText<T extends string | undefined>(text: T): T {
   return (text ? text.replace(MONEY_PATTERN, MASKED_AMOUNT) : text) as T;
 }
 
+/**
+ * Item da linha do tempo do cliente (D29/A13) para telas que a mostram (ficha do cliente, histórico do projeto):
+ * `changes` passa sempre por redactChanges (sensíveis mascarados; quantias só com `hideValues`); com `hideValues`,
+ * título, descrição e motivo têm "R$ …" mascarado (aditivo, reajuste e cobrança citam quantias), como no histórico do
+ * contrato (redactContractDetail).
+ */
+export function redactTimelineEvent<T extends Pick<TimelineEvent, "title" | "description" | "reason" | "changes">>(e: T, hideValues: boolean): T {
+  const changes = e.changes ? { changes: redactChanges(e.changes, { hideValues }) } : {};
+  if (!hideValues) return e.changes ? { ...e, ...changes } : e;
+  return { ...e, ...changes, title: maskMoneyText(e.title), description: maskMoneyText(e.description), reason: maskMoneyText(e.reason) };
+}
+
 export function redactItems<T extends Pick<ProposalItem, "setupValue" | "monthlyValue" | "hardwareValue">>(items: readonly T[]): T[] {
   return items.map((i) => ({ ...i, setupValue: 0, monthlyValue: 0, hardwareValue: 0 }));
 }
@@ -29,7 +42,17 @@ export function redactSnapshot(s: ContractSnapshot): ContractSnapshot {
   return { ...s, items: redactItems(s.items), setupTotal: 0, monthlyTotal: 0, hardwareTotal: 0, paymentCondition: maskMoneyText(s.paymentCondition) };
 }
 
-/** Contrato sem valores: itens, totais, versões anteriores e condição de pagamento (texto livre). */
+/** Registro do reajuste anual sem as mensalidades antes/depois (e o motivo livre com quantias mascaradas). */
+export function redactReadjustmentLog(log: readonly ContractReadjustmentLogEntry[]): ContractReadjustmentLogEntry[] {
+  return log.map((e) => {
+    const { monthlyBefore: _before, monthlyAfter: _after, ...rest } = e;
+    void _before;
+    void _after;
+    return { ...rest, ...(e.reason ? { reason: maskMoneyText(e.reason) } : {}) };
+  });
+}
+
+/** Contrato sem valores: itens, totais, versões anteriores, condição de pagamento (texto livre) e registro do reajuste. */
 export function redactContract(c: Contract): Contract {
   return {
     ...c,
@@ -39,6 +62,7 @@ export function redactContract(c: Contract): Contract {
     hardwareTotal: 0,
     paymentCondition: maskMoneyText(c.paymentCondition),
     previousVersions: c.previousVersions?.map((v) => ({ ...v, snapshot: redactSnapshot(v.snapshot) })),
+    ...(c.readjustmentLog ? { readjustmentLog: redactReadjustmentLog(c.readjustmentLog) } : {}),
   };
 }
 

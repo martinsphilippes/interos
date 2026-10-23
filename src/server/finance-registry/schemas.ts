@@ -79,3 +79,28 @@ export const mergeCategoriesSchema = z
   .object({ sourceId: id, targetId: id, reason: z.string().trim().min(5, "Informe o motivo da mesclagem (mín. 5 caracteres)").max(500) })
   .refine((v) => v.sourceId !== v.targetId, { message: "Escolha duas categorias diferentes", path: ["targetId"] });
 export const importSchema = z.object({ defaultCenterName: optionalText(80, "Centro padrão") });
+
+// ---------------------------------------------------------------------------
+// Índices de reajuste
+// ---------------------------------------------------------------------------
+
+export const readjustmentIndexSchema = z
+  .object({
+    id: optionalId,
+    name: z.string().trim().min(2, "Informe o nome do índice (mín. 2 letras)").max(40, "Nome muito longo (máx. 40)"),
+    description: optionalText(200, "Descrição"),
+    sourceKind: z.enum(["bcb_sgs", "ipea_icti", "manual"], { message: "Escolha de onde vêm os valores" }),
+    seriesCode: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.number({ message: "Código da série inválido" }).int("Código da série inválido").min(1, "Código da série inválido").max(99_999_999, "Código da série inválido").optional()),
+    negativePolicy: z.enum(["manter", "reduzir"], { message: "Escolha o que fazer com acumulado negativo" }),
+  })
+  .refine((v) => v.sourceKind !== "bcb_sgs" || Boolean(v.seriesCode), { message: "Informe o código da série no Banco Central (SGS)", path: ["seriesCode"] });
+export type ReadjustmentIndexFormInput = z.infer<typeof readjustmentIndexSchema>;
+
+export const readjustmentIndexValueSchema = z.object({
+  indexId: id,
+  competence: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Mês inválido (AAAA-MM)"),
+  pct: z.number("Variação inválida").min(-50, "Variação fora do esperado").max(50, "Variação fora do esperado").nullable(),
+  reason: optionalText(300, "Motivo"),
+});
+
+export const refreshIndicesSchema = z.object({ ids: z.array(id).max(50).optional() });

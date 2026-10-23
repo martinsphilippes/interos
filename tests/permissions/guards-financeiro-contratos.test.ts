@@ -75,8 +75,8 @@ describe("actions do Financeiro: a primeira chave exigida é a dona no catálogo
   const owners = new Map<string, string>();
   for (const s of SCREENS) for (const a of s.actions) for (const g of a.guards) if (g.startsWith(`${ACTIONS_FILE}#`)) owners.set(g.split("#")[1].split("?")[0], a.key);
 
-  it("todas as 32 funções exportadas têm dono e o exigem antes de qualquer leitura", () => {
-    expect(functions.length).toBe(32);
+  it("todas as 34 funções exportadas têm dono e o exigem antes de qualquer leitura", () => {
+    expect(functions.length).toBe(34);
     for (const fn of functions) {
       const first = fn.body.match(/requirePermission\("([^"]+)"\)/);
       expect(first?.[1], fn.name).toBe(owners.get(fn.name));
@@ -113,13 +113,13 @@ describe("capacidades padrão ≡ comportamento anterior", () => {
   it("ações de contrato e cobrança ≡ módulo ∧ canOperateFinance (requireFinanceOperator)", () => {
     for (const u of ALL_USERS) {
       const caps = access.financeCapabilities(asCurrentUser(u));
-      const { view, signatureView, amendmentsView, pendenciesView, documentsView, historyView, releaseWithPendency, ...contractOps } = caps.contracts;
+      const { view, signatureView, amendmentsView, readjustView, pendenciesView, documentsView, historyView, releaseWithPendency, ...contractOps } = caps.contracts;
       const { view: billingView, boletoView, ...billingOps } = caps.billings;
       for (const [k, v] of Object.entries({ ...contractOps, ...billingOps })) expect(v, `${label(u)} ${k}`).toBe(operates(u));
       // Liberar com pendência: antes, isManager (com o botão só para quem opera).
       expect(releaseWithPendency, label(u)).toBe(operates(u) && isManager(u));
       // Visualização e seções: todos com o módulo (antes: só o módulo).
-      for (const [k, v] of Object.entries({ view, signatureView, amendmentsView, pendenciesView, documentsView, historyView, billingView, boletoView })) expect(v, `${label(u)} ${k}`).toBe(inModule(u));
+      for (const [k, v] of Object.entries({ view, signatureView, amendmentsView, readjustView, pendenciesView, documentsView, historyView, billingView, boletoView })) expect(v, `${label(u)} ${k}`).toBe(inModule(u));
     }
   });
 

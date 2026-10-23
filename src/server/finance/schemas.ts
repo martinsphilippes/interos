@@ -118,12 +118,21 @@ export const updateItemsSchema = z.object({
   items: z.array(contractItemSchema).min(1, "O contrato precisa de pelo menos um item").max(50, "No máximo 50 itens"),
 });
 
-/** Reajuste da renovação (D26): nenhum, percentual informado ou índice (informado pelo CS a cada renovação). */
+/**
+ * Reajuste anual (na data-base): nenhum, percentual fixo ou índice do cadastro «Índices de reajuste» (o serviço confere
+ * se o índice existe e está ativo).
+ */
 export const readjustmentSchema = z
   .object({
     type: z.enum(["nenhum", "percentual", "indice"], { message: "Tipo de reajuste inválido" }),
     percent: z.number("Percentual de reajuste inválido").min(0, "Percentual não pode ser negativo").max(100, "Percentual máximo é 100%").optional(),
-    index: z.enum(["ipca", "igpm", "inpc"], { message: "Índice inválido" }).optional(),
+    index: z
+      .string("Índice inválido")
+      .trim()
+      .max(60, "Índice inválido")
+      .regex(/^[a-z0-9-]*$/, "Índice inválido")
+      .optional()
+      .transform((v) => v || undefined),
   })
   .refine((v) => v.type !== "percentual" || (v.percent !== undefined && v.percent > 0), { message: "Informe o percentual do reajuste", path: ["percent"] })
   .refine((v) => v.type !== "indice" || Boolean(v.index), { message: "Escolha o índice do reajuste", path: ["index"] });
@@ -180,6 +189,18 @@ export const amendmentInputSchema = z
 export type AmendmentInput = z.input<typeof amendmentInputSchema>;
 
 export const amendmentIdSchema = z.object({ amendmentId: id("Aditivo") });
+
+/** Reajuste anual: aplicar agora (sem `percent` usa o índice/percentual do contrato) ou dispensar a data-base. */
+export const applyReadjustmentSchema = z.object({
+  contractId: id("Contrato"),
+  anniversary: dateKey("Data-base"),
+  percent: z.number("Percentual inválido").min(-100, "Percentual inválido").max(100, "Percentual máximo é 100%").optional(),
+});
+export const skipReadjustmentSchema = z.object({
+  contractId: id("Contrato"),
+  anniversary: dateKey("Data-base"),
+  reason: z.string().trim().min(5, "Descreva o motivo (mín. 5 caracteres)").max(500, "Motivo muito longo"),
+});
 export const cancelAmendmentSchema = z.object({ amendmentId: id("Aditivo"), reason: z.string().trim().min(5, "Descreva o motivo (mín. 5 caracteres)").max(500, "Motivo muito longo") });
 /**
  * Referência a um signatário já gravado (contrato ou aditivo): o e-mail só identifica, sem revalidar o formato.

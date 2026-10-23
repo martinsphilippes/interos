@@ -47,6 +47,7 @@ import {
   amendmentIdSchema,
   amendmentInputSchema,
   amendmentSignatureSchema,
+  applyReadjustmentSchema,
   billingContactSchema,
   cancelAmendmentSchema,
   billingDataSchema,
@@ -69,11 +70,12 @@ import {
   representativeDocumentSchema,
   signerPickSchema,
   signerRefSchema,
+  skipReadjustmentSchema,
   updateConditionsSchema,
   updateItemsSchema,
   zodMessage,
 } from "./schemas";
-import { assertAmendmentAccess, assertBillingAccess, assertContractAccess, assertOpportunityContractAccess } from "./access";
+import { assertAmendmentAccess, assertBillingAccess, assertContractAccess, assertOpportunityContractAccess, canSeeContractValues } from "./access";
 
 type Failure = { ok: false; error: string };
 
@@ -330,6 +332,37 @@ export async function applyAmendmentAction(input: unknown): Promise<ActionResult
     return { ok: true, data: { version: r.contract.version, billingsRebuilt: r.billings.cancelled.length, billingsCreated: r.billings.created.length } };
   } catch (error) {
     return fail(error, "Não foi possível aplicar o aditivo");
+  }
+}
+
+export async function applyContractReadjustmentAction(input: unknown): Promise<ActionResult<{ amendmentNumber?: string; monthlyBefore: number; monthlyAfter: number }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.reajuste.aplicar");
+    // O reajuste muda a mensalidade e devolve os valores: exige ver os valores do contrato (A13), como a tela supõe.
+    if (!canSeeContractValues(user)) throw new PermissionError("Aplicar o reajuste exige visualizar os valores do contrato");
+    const data = applyReadjustmentSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
+    const { applyReadjustmentNow } = await import("./readjustments");
+    const r = await applyReadjustmentNow(data, actorOf(user));
+    revalidateFinance(undefined, data.contractId);
+    revalidatePath("/clientes", "layout");
+    return { ok: true, data: r };
+  } catch (error) {
+    return fail(error, "Não foi possível aplicar o reajuste");
+  }
+}
+
+export async function skipContractReadjustmentAction(input: unknown): Promise<ActionResult> {
+  try {
+    const user = await requirePermission("financeiro.contratos.reajuste.dispensar");
+    const data = skipReadjustmentSchema.parse(input);
+    await assertContractAccess(user, data.contractId);
+    const { skipReadjustment } = await import("./readjustments");
+    await skipReadjustment(data, actorOf(user));
+    revalidateFinance(undefined, data.contractId);
+    return { ok: true, data: undefined };
+  } catch (error) {
+    return fail(error, "Não foi possível dispensar o reajuste");
   }
 }
 

@@ -4,7 +4,8 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Trophy } from "lucide-react";
 import { SALE_PAYMENT_METHODS, type ContractReadjustment, type Opportunity, type SalePaymentMethod } from "@/domain/types";
-import { READJUSTMENT_INDEX_LABELS, READJUSTMENT_TYPE_LABELS } from "@/domain/contract-snapshot";
+import { READJUSTMENT_TYPE_LABELS } from "@/domain/contract-snapshot";
+import { indexSelectOptions } from "@/domain/readjustment";
 import { DEFAULT_CLOSING, MAX_SETUP_INSTALLMENTS, SALE_PAYMENT_METHOD_LABELS, SALE_RECURRENCE_LABELS, closingPaymentConditionText, splitInstallments } from "@/domain/sale-closing";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -77,7 +78,7 @@ export function WonDialog({ open, onOpenChange, opportunity, clientDefaults, pro
   const [renewalTermMonths, setRenewalTermMonths] = React.useState("");
   const [readjustmentType, setReadjustmentType] = React.useState<ContractReadjustment["type"]>("nenhum");
   const [readjustmentPercent, setReadjustmentPercent] = React.useState("");
-  const [readjustmentIndex, setReadjustmentIndex] = React.useState<NonNullable<ContractReadjustment["index"]> | "">("");
+  const [readjustmentIndex, setReadjustmentIndex] = React.useState("");
   const [noticeDays, setNoticeDays] = React.useState("30");
 
   React.useEffect(() => {
@@ -255,7 +256,7 @@ export function WonDialog({ open, onOpenChange, opportunity, clientDefaults, pro
                   <FormField label="Prazo da renovação (meses)" htmlFor={`${id}-rt`} hint="Vazio = mesmo prazo do contrato">
                     <Input id={`${id}-rt`} type="number" inputMode="numeric" min={1} max={120} value={renewalTermMonths} onChange={(e) => setRenewalTermMonths(e.target.value)} placeholder={String(termNum || "")} />
                   </FormField>
-                  <FormField label="Reajuste" htmlFor={`${id}-rj`} hint={readjustmentType === "nenhum" ? "Sem reajuste até definir" : readjustmentType === "indice" ? "O índice é informado pelo CS a cada renovação" : undefined}>
+                  <FormField label="Reajuste anual" htmlFor={`${id}-rj`} hint={readjustmentType === "nenhum" ? "Sem reajuste até definir" : readjustmentType === "indice" ? "Acumulado de 12 meses, buscado sozinho; aplicado no aniversário do contrato" : "Aplicado no aniversário do contrato"}>
                     <Select id={`${id}-rj`} value={readjustmentType} onChange={(e) => setReadjustmentType(e.target.value as ContractReadjustment["type"])} options={(Object.keys(READJUSTMENT_TYPE_LABELS) as ContractReadjustment["type"][]).map((t) => ({ value: t, label: READJUSTMENT_TYPE_LABELS[t] }))} />
                   </FormField>
                   {readjustmentType === "percentual" ? (
@@ -263,14 +264,13 @@ export function WonDialog({ open, onOpenChange, opportunity, clientDefaults, pro
                       <Input id={`${id}-rp`} inputMode="decimal" value={readjustmentPercent} onChange={(e) => setReadjustmentPercent(e.target.value)} placeholder="Ex.: 5" />
                     </FormField>
                   ) : readjustmentType === "indice" ? (
-                    <FormField label="Índice" htmlFor={`${id}-ri`} required>
-                      <Select id={`${id}-ri`} value={readjustmentIndex} onChange={(e) => setReadjustmentIndex(e.target.value as NonNullable<ContractReadjustment["index"]> | "")} placeholder="Escolha" options={(Object.keys(READJUSTMENT_INDEX_LABELS) as NonNullable<ContractReadjustment["index"]>[]).map((i) => ({ value: i, label: READJUSTMENT_INDEX_LABELS[i] }))} />
+                    <FormField label="Índice" htmlFor={`${id}-ri`} required hint={context && context.indices.length === 0 ? "Nenhum índice ativo no cadastro" : undefined}>
+                      <Select id={`${id}-ri`} value={readjustmentIndex} onChange={(e) => setReadjustmentIndex(e.target.value)} placeholder="Escolha" options={indexSelectOptions(context?.indices ?? [], readjustmentIndex || undefined)} />
                     </FormField>
-                  ) : (
-                    <FormField label="Antecedência (dias)" htmlFor={`${id}-nd`} hint="Dias antes do fim para renovar">
-                      <Input id={`${id}-nd`} type="number" inputMode="numeric" min={1} max={180} value={noticeDays} onChange={(e) => setNoticeDays(e.target.value)} />
-                    </FormField>
-                  )}
+                  ) : null}
+                  <FormField label="Antecedência (dias)" htmlFor={`${id}-nd`} hint="Dias antes do fim para renovar">
+                    <Input id={`${id}-nd`} type="number" inputMode="numeric" min={1} max={180} value={noticeDays} onChange={(e) => setNoticeDays(e.target.value)} />
+                  </FormField>
                 </fieldset>
                 <FormField label="Observações para implantação" htmlFor={`${id}-impl`} className="sm:col-span-2">
                   <Textarea id={`${id}-impl`} value={implementationNotes} onChange={(e) => setImplementationNotes(e.target.value)} placeholder="Ex.: migrar cadastro de 2.000 produtos; treinamento no sábado" className="min-h-[64px]" />

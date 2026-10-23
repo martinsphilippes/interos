@@ -7,7 +7,8 @@
 import { revalidatePath } from "next/cache";
 import { PermissionError, can, failAction, requirePermission } from "@/server/auth/session";
 import type { ActionResult, CurrentUser, UserRef } from "@/domain/types";
-import { applyCostCenterSchema, archiveSchema, costCenterSchema, financeCategorySchema, financialAccountSchema, importSchema, mergeCategoriesSchema, moveSubcategoriesSchema } from "./schemas";
+import { applyCostCenterSchema, archiveSchema, costCenterSchema, financeCategorySchema, financialAccountSchema, importSchema, mergeCategoriesSchema, moveSubcategoriesSchema, readjustmentIndexSchema, readjustmentIndexValueSchema, refreshIndicesSchema } from "./schemas";
+import { refreshReadjustmentIndices, saveReadjustmentIndex, setReadjustmentIndexArchived, setReadjustmentIndexValue, type IndexRefreshItem } from "./indices";
 import {
   applyCostCenterToCategories,
   importFinanceRegistryFromSettings,
@@ -154,6 +155,70 @@ export async function mergeFinanceCategoriesAction(input: unknown): Promise<Acti
     return { ok: true, data: r };
   } catch (error) {
     return failAction(error, "Não foi possível mesclar as categorias", "cadastros");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Índices de reajuste
+// ---------------------------------------------------------------------------
+
+function revalidateIndices() {
+  revalidateRegistry();
+  revalidatePath("/financeiro/contratos", "layout");
+}
+
+/** Resumo da busca para o aviso da tela. */
+function refreshText(items: IndexRefreshItem[]): string {
+  return items
+    .map((i) => (i.status === "erro" ? `${i.name}: ${i.error}` : i.status === "atualizado" ? `${i.name}: ${i.newMonths.length} mês(es) novo(s)${i.revisedMonths.length ? `, ${i.revisedMonths.length} revisado(s)` : ""}` : i.status === "sem_novidade" ? `${i.name}: nada novo` : i.status === "manual" ? `${i.name}: manual` : `${i.name}: em dia`))
+    .join(" · ");
+}
+
+export async function saveReadjustmentIndexAction(input: unknown): Promise<ActionResult<{ id: string; created: boolean; refresh?: string; refreshError?: boolean }>> {
+  try {
+    const user = rawId(input) ? await requirePermission("financeiro.cadastros.indices.editar") : await requirePermission("financeiro.cadastros.indices.criar");
+    const data = readjustmentIndexSchema.parse(input);
+    const r = await saveReadjustmentIndex(data, actorOf(user));
+    revalidateIndices();
+    return { ok: true, data: { id: r.index.id, created: r.created, ...(r.refresh ? { refresh: refreshText([r.refresh]), refreshError: r.refresh.status === "erro" } : {}) } };
+  } catch (error) {
+    return failAction(error, "Não foi possível salvar o índice", "cadastros");
+  }
+}
+
+export async function setReadjustmentIndexArchivedAction(input: unknown): Promise<ActionResult<{ archived: boolean }>> {
+  try {
+    const user = await requirePermission("financeiro.cadastros.indices.arquivar");
+    const data = archiveSchema.parse(input);
+    const r = await setReadjustmentIndexArchived(data.id, data.archived, data.reason, actorOf(user));
+    revalidateIndices();
+    return { ok: true, data: { archived: Boolean(r.archived) } };
+  } catch (error) {
+    return failAction(error, "Não foi possível alterar o índice", "cadastros");
+  }
+}
+
+export async function setReadjustmentIndexValueAction(input: unknown): Promise<ActionResult> {
+  try {
+    const user = await requirePermission("financeiro.cadastros.indices.editar");
+    const data = readjustmentIndexValueSchema.parse(input);
+    await setReadjustmentIndexValue(data, actorOf(user));
+    revalidateIndices();
+    return { ok: true, data: undefined };
+  } catch (error) {
+    return failAction(error, "Não foi possível lançar o mês", "cadastros");
+  }
+}
+
+export async function refreshReadjustmentIndicesAction(input: unknown): Promise<ActionResult<{ updated: number; errors: number; summary: string }>> {
+  try {
+    const user = await requirePermission("financeiro.cadastros.indices.atualizar");
+    const data = refreshIndicesSchema.parse(input ?? {});
+    const r = await refreshReadjustmentIndices({ force: true, ids: data.ids, actor: actorOf(user) });
+    revalidateIndices();
+    return { ok: true, data: { updated: r.updated, errors: r.errors, summary: refreshText(r.items) } };
+  } catch (error) {
+    return failAction(error, "Não foi possível buscar os índices", "cadastros");
   }
 }
 

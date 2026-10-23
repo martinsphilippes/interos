@@ -15,6 +15,16 @@ import { bumpRuleRun, invalidateRulesCache, normalizeRule, recordStandaloneRun, 
 import { LEGACY_LAST_RUN_FIELDS, SWEEPS, mergeSweepsSetting, readSweepsSetting } from "./sweeps";
 import { SCHEDULE_INTERVAL_MS, SCHEDULE_LABELS, SCAN_ENTITY_LABELS, SWEEP_DEFINITIONS, SWEEP_KEYS, type AutomationRuleRecord, type RuleSchedule, type SweepKey } from "./schemas";
 
+/**
+ * Intervalo mínimo entre duas execuções: a frequência menos uma folga (10%, até 2 h). O cron diário da Vercel (plano
+ * Hobby) dispara em qualquer minuto da hora marcada: 09:40 num dia e 09:10 no outro dá 23,5 h — sem a folga, a
+ * varredura diária pularia esse dia.
+ */
+export function dueInterval(schedule: RuleSchedule): number {
+  const ms = SCHEDULE_INTERVAL_MS[schedule];
+  return ms - Math.min(2 * 3_600_000, ms / 10);
+}
+
 export interface SweepState {
   lastRunAt?: string;
   lastStatus?: "executada" | "erro";
@@ -49,6 +59,9 @@ export interface SweepReport {
 }
 
 const SCHEDULE_ORDER: RuleSchedule[] = ["horaria", "diaria", "semanal"];
+
+/** Até quando, depois do início, as varreduras pesadas aplicam mudanças (a função do cron tem 60 s). */
+const RUN_DEADLINE_MS = 45_000;
 
 function effectiveSchedule(key: SweepKey, rules: AutomationRuleRecord[]): { schedule: RuleSchedule; ruleIds: string[] } {
   const linked = rules.filter((r) => r.trigger.type === "agendado" && r.trigger.sweep === key);
@@ -90,7 +103,8 @@ export async function getSweepStatus(): Promise<SweepStatusItem[]> {
       schedule,
       ruleIds,
       lastRunAt,
-      nextRunAt: lastRunAt ? new Date(new Date(lastRunAt).getTime() + SCHEDULE_INTERVAL_MS[schedule]).toISOString() : undefined,
+      // Mesma folga do runSweeps: a varredura vence um pouco antes do intervalo cheio.
+      nextRunAt: lastRunAt ? new Date(new Date(lastRunAt).getTime() + dueInterval(schedule)).toISOString() : undefined,
     };
   });
 }
@@ -104,6 +118,8 @@ export async function runSweeps(options: { only?: string[]; force?: boolean } = 
   const only = options.only && options.only.length > 0 ? new Set(options.only) : null;
   const now = new Date();
   const ranAt = now.toISOString();
+  // A rota do cron tem 60 s: as varreduras pesadas (reajustes) param de aplicar perto do fim e deixam o resto para amanhã.
+  const deadline = now.getTime() + RUN_DEADLINE_MS;
   const [state, rules] = await Promise.all([readState(), activeScheduledRules()]);
   const items: SweepReportItem[] = [];
 
@@ -112,7 +128,7 @@ export async function runSweeps(options: { only?: string[]; force?: boolean } = 
     const def = SWEEP_DEFINITIONS[key];
     const { schedule, ruleIds } = effectiveSchedule(key, rules);
     const last = lastRunOf(key, state);
-    if (!force && last && now.getTime() - new Date(last).getTime() < SCHEDULE_INTERVAL_MS[schedule]) {
+    if (!force && last && now.getTime() - new Date(last).getTime() < dueInterval(schedule)) {
       items.push({ key, label: def.label, kind: "varredura", status: "pulada", summary: `${SCHEDULE_LABELS[schedule]}; última execução em ${new Date(last).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}` });
       continue;
     }
@@ -120,7 +136,7 @@ export async function runSweeps(options: { only?: string[]; force?: boolean } = 
     await mergeSweepsSetting({ automacoes: { [key]: { lastRunAt: ranAt } } });
     const started = Date.now();
     try {
-      const outcome = await SWEEPS[key](now);
+      const outcome = await SWEEPS[key](now, { deadline });
       const durationMs = Date.now() - started;
       await mergeSweepsSetting({ automacoes: { [key]: { lastRunAt: ranAt, lastStatus: "executada", lastSummary: outcome.summary, lastError: null, durationMs } } });
       items.push({ key, label: def.label, kind: "varredura", status: "executada", summary: outcome.summary, durationMs });
@@ -146,7 +162,7 @@ export async function runSweeps(options: { only?: string[]; force?: boolean } = 
   for (const rule of rules.filter((r) => r.trigger.entity)) {
     if (only && !only.has(rule.id)) continue;
     const schedule = rule.trigger.schedule as RuleSchedule;
-    if (!force && rule.lastScheduledAt && now.getTime() - new Date(rule.lastScheduledAt).getTime() < SCHEDULE_INTERVAL_MS[schedule]) {
+    if (!force && rule.lastScheduledAt && now.getTime() - new Date(rule.lastScheduledAt).getTime() < dueInterval(schedule)) {
       items.push({ key: rule.id, label: rule.name, kind: "regra", status: "pulada", summary: `${SCHEDULE_LABELS[schedule]}; última execução em ${new Date(rule.lastScheduledAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}` });
       continue;
     }

@@ -471,6 +471,15 @@ export const EVENT_TYPES = [
   "finance_category.merged",
   "finance_category.bulk_updated",
   "finance_registry.imported",
+  // índices de reajuste e reajuste anual dos contratos
+  "readjustment_index.created",
+  "readjustment_index.updated",
+  "readjustment_index.archived",
+  "readjustment_index.reactivated",
+  "readjustment_index.value_set",
+  "readjustment_index.values_updated",
+  "contract.readjusted",
+  "contract.readjustment_skipped",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

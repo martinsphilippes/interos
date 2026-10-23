@@ -33,6 +33,7 @@ import { clicksignConfigured } from "@/server/integrations/clicksign";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { DEFAULT_CLOSING, SALE_PAYMENT_METHOD_LABELS, contractEffectiveItems } from "@/domain/sale-closing";
 import { contractSnapshot, describeReadjustment } from "@/domain/contract-snapshot";
+import { sameReadjustmentRule } from "@/domain/readjustment";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import {
   COLLECTIONS,
@@ -550,7 +551,10 @@ function renewalPatch(input: Pick<UpdateConditionsInput, "autoRenew" | "renewalT
   const patch: Partial<Contract> = {};
   if (input.autoRenew !== undefined) patch.autoRenew = input.autoRenew;
   if (input.renewalTermMonths !== undefined) patch.renewalTermMonths = input.renewalTermMonths;
-  if (input.readjustment !== undefined) patch.readjustment = stripUndefined({ type: input.readjustment.type, percent: input.readjustment.type === "percentual" ? input.readjustment.percent : undefined, index: input.readjustment.type === "indice" ? input.readjustment.index : undefined });
+  if (input.readjustment !== undefined) {
+    const r = input.readjustment as ContractReadjustment;
+    patch.readjustment = stripUndefined({ type: r.type, percent: r.type === "percentual" ? r.percent : undefined, index: r.type === "indice" ? r.index : undefined, indexName: r.type === "indice" ? r.indexName : undefined });
+  }
   if (input.noticeDays !== undefined) patch.noticeDays = input.noticeDays;
   return patch;
 }
@@ -558,6 +562,8 @@ function renewalPatch(input: Pick<UpdateConditionsInput, "autoRenew" | "renewalT
 export async function updateContractConditions(input: UpdateConditionsInput, actor: UserRef): Promise<{ versioned: boolean }> {
   const contract = await loadContract(input.contractId);
   assertEditable(contract);
+  const { normalizeReadjustment } = await import("@/server/finance-registry/indices");
+  input = { ...input, readjustment: await normalizeReadjustment(input.readjustment as ContractReadjustment | undefined, contract.readjustment) };
   const version = await versionPatchIfSent(contract, actor, "Condições alteradas");
   const patch: Partial<Contract> = {
     ...version.patch,
@@ -580,6 +586,8 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
   if (version.versioned) await cancelClicksignSend(contract, sendAtWrite, actor, "O contrato ganhou uma versão nova (condições alteradas).");
   await version.announce();
   const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
+  // Mesma regra de reajuste com o nome do índice só acrescentado (contrato antigo sem `indexName`): não é mudança.
+  if (audit.changes.readjustment && patch.readjustment && sameReadjustmentRule(contract.readjustment, patch.readjustment) && Boolean(contract.readjustment?.pending) === Boolean(patch.readjustment.pending)) delete audit.changes.readjustment;
   // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão).
   if (hasChanges(audit)) {
     await emitEvent({

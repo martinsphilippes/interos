@@ -4,7 +4,8 @@ import * as React from "react";
 import { Pencil } from "lucide-react";
 import { SALE_PAYMENT_METHODS, type Contract, type ContractReadjustment } from "@/domain/types";
 import { MAX_SETUP_INSTALLMENTS, SALE_PAYMENT_METHOD_LABELS } from "@/domain/sale-closing";
-import { describeReadjustment, READJUSTMENT_INDEX_LABELS, READJUSTMENT_TYPE_LABELS } from "@/domain/contract-snapshot";
+import { describeReadjustment, READJUSTMENT_TYPE_LABELS } from "@/domain/contract-snapshot";
+import { indexSelectOptions, type ReadjustmentIndexOption } from "@/domain/readjustment";
 import { updateContractConditionsAction } from "@/server/finance/actions";
 import { RECURRENCE_LABELS, type UpdateConditionsInput } from "@/server/finance/schemas";
 import { dateKey, formatDate } from "@/lib/format";
@@ -32,7 +33,7 @@ export interface ConditionsForm {
   renewalTermMonths: string;
   readjustmentType: ContractReadjustment["type"];
   readjustmentPercent: string;
-  readjustmentIndex: NonNullable<ContractReadjustment["index"]> | "";
+  readjustmentIndex: string;
   noticeDays: string;
 }
 
@@ -80,10 +81,14 @@ export interface ConditionsFieldsProps {
   hasPaymentMethod: boolean;
   /** Mostrar o bloco "Renovação" (renovação automática, prazo, reajuste, antecedência). */
   renewal?: boolean;
+  /** Índices de reajuste do cadastro (campo «Índice»). */
+  indices?: ReadjustmentIndexOption[];
+  /** Índice que o contrato já usa (continua na lista mesmo desativado). */
+  currentIndex?: string;
 }
 
 /** Campos das condições do contrato (reutilizados pelo card de condições e pelo diálogo de aditivo). */
-export function ConditionsFields({ id, form, onChange, hasPaymentMethod, renewal = true }: ConditionsFieldsProps) {
+export function ConditionsFields({ id, form, onChange, hasPaymentMethod, renewal = true, indices = [], currentIndex }: ConditionsFieldsProps) {
   const set = (patch: Partial<ConditionsForm>) => onChange({ ...form, ...patch });
   return (
     <div className="flex flex-col gap-4">
@@ -120,7 +125,7 @@ export function ConditionsFields({ id, form, onChange, hasPaymentMethod, renewal
           <FormField label="Antecedência (dias)" htmlFor={`${id}-nd`} hint="Dias antes do fim da vigência para renovar">
             <Input id={`${id}-nd`} inputMode="numeric" value={form.noticeDays} onChange={(e) => set({ noticeDays: e.target.value })} className="h-11 md:h-9" />
           </FormField>
-          <FormField label="Reajuste" htmlFor={`${id}-rj`} hint="Índice: o valor NÃO é buscado automaticamente — o CS informa a cada renovação">
+          <FormField label="Reajuste anual" htmlFor={`${id}-rj`} hint="Aplicado no aniversário do contrato. Índice: acumulado de 12 meses buscado sozinho (Financeiro › Cadastros › Índices)">
             <Select id={`${id}-rj`} value={form.readjustmentType} onChange={(e) => set({ readjustmentType: e.target.value as ContractReadjustment["type"] })} options={(Object.keys(READJUSTMENT_TYPE_LABELS) as ContractReadjustment["type"][]).map((t) => ({ value: t, label: READJUSTMENT_TYPE_LABELS[t] }))} />
           </FormField>
           {form.readjustmentType === "percentual" ? (
@@ -129,7 +134,7 @@ export function ConditionsFields({ id, form, onChange, hasPaymentMethod, renewal
             </FormField>
           ) : form.readjustmentType === "indice" ? (
             <FormField label="Índice" htmlFor={`${id}-ri`} required>
-              <Select id={`${id}-ri`} value={form.readjustmentIndex} onChange={(e) => set({ readjustmentIndex: e.target.value as ConditionsForm["readjustmentIndex"] })} placeholder="Escolha" options={(Object.keys(READJUSTMENT_INDEX_LABELS) as NonNullable<ContractReadjustment["index"]>[]).map((i) => ({ value: i, label: READJUSTMENT_INDEX_LABELS[i] }))} />
+              <Select id={`${id}-ri`} value={form.readjustmentIndex} onChange={(e) => set({ readjustmentIndex: e.target.value })} placeholder="Escolha" options={indexSelectOptions(indices, currentIndex ?? (form.readjustmentIndex || undefined))} />
             </FormField>
           ) : null}
         </fieldset>
@@ -144,10 +149,12 @@ export interface ContractConditionsCardProps {
   sent: boolean;
   /** Contrato assinado/liberado: alterações entram por aditivo. */
   amendable?: boolean;
+  indices?: ReadjustmentIndexOption[];
 }
 
 /** Condições: dia de vencimento, primeira data, recorrência, prazo, condição de pagamento e renovação. */
-export function ContractConditionsCard({ contract, canEdit, sent, amendable }: ContractConditionsCardProps) {
+export function ContractConditionsCard({ contract, canEdit, sent, amendable, indices = [] }: ContractConditionsCardProps) {
+  const names = Object.fromEntries(indices.map((i) => [i.id, i.name]));
   const id = React.useId();
   const [editing, setEditing] = React.useState(false);
   const [form, setForm] = React.useState<ConditionsForm>(() => conditionsFormFromContract(contract));
@@ -161,7 +168,7 @@ export function ContractConditionsCard({ contract, canEdit, sent, amendable }: C
     if (ok) setEditing(false);
   };
 
-  const renewalText = contract.autoRenew ? `Automática · ${contract.renewalTermMonths ?? contract.termMonths} meses · ${describeReadjustment(contract.readjustment)}${contract.readjustment?.pending ? "" : ""} · ${contract.noticeDays ?? 30} dias antes` : contract.autoRenew === false ? `Pelo CS (sem renovação automática)${contract.readjustment ? ` · ${describeReadjustment(contract.readjustment)}` : ""}` : "Não definida (renovação negociada pelo CS)";
+  const renewalText = contract.autoRenew ? `Automática · ${contract.renewalTermMonths ?? contract.termMonths} meses · ${contract.noticeDays ?? 30} dias antes` : contract.autoRenew === false ? "Pelo CS (sem renovação automática)" : "Não definida (renovação negociada pelo CS)";
   const rows: [string, string][] = [
     ["Dia de vencimento", `Dia ${contract.billingDay}`],
     ["Primeiro vencimento", contract.firstDueDate ? formatDate(contract.firstDueDate) : "Definido ao gerar as cobranças"],
@@ -172,6 +179,7 @@ export function ContractConditionsCard({ contract, canEdit, sent, amendable }: C
     ["Condição de pagamento", contract.paymentCondition || "—"],
     ["Vigência", contract.startDate ? `${formatDate(contract.startDate)} a ${formatDate(contract.endDate)}` : "Começa na liberação"],
     ["Renovação", renewalText],
+    ["Reajuste anual", contract.readjustment && contract.readjustment.type !== "nenhum" ? `${describeReadjustment(contract.readjustment, names)} · no aniversário do contrato` : "Sem reajuste"],
   ];
 
   return (
@@ -199,7 +207,7 @@ export function ContractConditionsCard({ contract, canEdit, sent, amendable }: C
         {editing ? (
           <div className="flex flex-col gap-4">
             {sent ? <p className="rounded-md bg-warning-soft px-3 py-2 text-xs text-warning-fg">Alterar as condições após o envio cria a versão {contract.version + 1} e exige nova assinatura.</p> : null}
-            <ConditionsFields id={id} form={form} onChange={setForm} hasPaymentMethod={Boolean(contract.paymentMethod)} />
+            <ConditionsFields id={id} form={form} onChange={setForm} hasPaymentMethod={Boolean(contract.paymentMethod)} indices={indices} currentIndex={contract.readjustment?.index} />
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setEditing(false)} disabled={pending} className="h-11 md:h-9">
                 Cancelar

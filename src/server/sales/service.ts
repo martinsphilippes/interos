@@ -421,7 +421,7 @@ export interface ClosingData {
   // Renovação (D26), opcionais.
   autoRenew?: boolean;
   renewalTermMonths?: number;
-  readjustment?: { type: "nenhum" | "percentual" | "indice"; percent?: number; index?: "ipca" | "igpm" | "inpc" };
+  readjustment?: { type: "nenhum" | "percentual" | "indice"; percent?: number; index?: string };
   noticeDays?: number;
 }
 
@@ -479,6 +479,11 @@ export async function markOpportunityWon(data: MarkWonData, actor: UserRef): Pro
   if (totals.setupTotal + totals.monthlyTotal + totals.hardwareTotal <= 0) throw new Error("Informe os valores dos produtos (adesão, mensalidade ou hardware)");
   const client = await loadClientOf(opp);
   if (data.closing?.firstDueDate && data.closing.firstDueDate < dateKey(new Date())) throw new Error("O 1º vencimento não pode estar no passado");
+  let indexName: string | undefined;
+  if (data.closing?.readjustment?.type === "indice") {
+    const { normalizeReadjustment } = await import("@/server/finance-registry/indices");
+    indexName = (await normalizeReadjustment<{ type: "indice"; index?: string; indexName?: string }>({ type: "indice", index: data.closing.readjustment.index })).indexName;
+  }
   const now = nowIso();
 
   // Fechamento estruturado: contato responsável, proposta aceita (base dos itens do contrato) e condições.
@@ -507,7 +512,7 @@ export async function markOpportunityWon(data: MarkWonData, actor: UserRef): Pro
       // Renovação (D26): só quando informada no fechamento.
       ...(data.closing.autoRenew !== undefined ? { autoRenew: data.closing.autoRenew } : {}),
       ...(data.closing.renewalTermMonths ? { renewalTermMonths: data.closing.renewalTermMonths } : {}),
-      ...(data.closing.readjustment ? { readjustment: { type: data.closing.readjustment.type, ...(data.closing.readjustment.type === "percentual" ? { percent: data.closing.readjustment.percent } : {}), ...(data.closing.readjustment.type === "indice" ? { index: data.closing.readjustment.index } : {}) } } : {}),
+      ...(data.closing.readjustment ? { readjustment: { type: data.closing.readjustment.type, ...(data.closing.readjustment.type === "percentual" ? { percent: data.closing.readjustment.percent } : {}), ...(data.closing.readjustment.type === "indice" ? { index: data.closing.readjustment.index, ...(indexName ? { indexName } : {}) } : {}) } } : {}),
       ...(data.closing.noticeDays ? { noticeDays: data.closing.noticeDays } : {}),
     };
   }
