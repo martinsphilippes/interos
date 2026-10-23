@@ -65,7 +65,11 @@ async function readLimited(res: Response): Promise<Buffer> {
 
 const lastDayOf = (competence: string) => new Date(Date.UTC(Number(competence.slice(0, 4)), Number(competence.slice(5, 7)), 0)).getUTCDate();
 
-/** Converte a resposta do SGS em { "AAAA-MM": % }. Exportada para os testes. */
+/**
+ * Converte a resposta do SGS em { "AAAA-MM": % }. Só aceita série MENSAL de variação (data no dia 01, um valor por mês,
+ * entre −50% e 50%): série diária, acumulada ou de número-índice cadastrada por engano vira erro, nunca reajuste.
+ * Exportada para os testes.
+ */
 export function parseSgsResponse(body: unknown): Record<string, number> {
   if (!Array.isArray(body)) {
     const error = body && typeof body === "object" ? (body as { error?: unknown; message?: unknown }) : null;
@@ -79,7 +83,10 @@ export function parseSgsResponse(body: unknown): Record<string, number> {
     const value = Number(String(row?.valor ?? "").trim().replace(",", "."));
     if (!m || String(row?.valor ?? "").trim() === "" || !Number.isFinite(value)) continue;
     const competence = `${m[3]}-${m[2]}`;
-    if (isCompetence(competence)) out[competence] = value;
+    if (!isCompetence(competence)) continue;
+    if (m[1] !== "01" || competence in out) throw new IndexSourceError("a série não é mensal (use a série de variação mensal do índice no SGS)");
+    if (Math.abs(value) > 50) throw new IndexSourceError(`valor fora do esperado para variação mensal (${value}): confira se a série é a de variação mensal em %`);
+    out[competence] = value;
   }
   return out;
 }
@@ -239,7 +246,8 @@ export function parseIctiSpreadsheet(buf: Buffer): Record<string, number> {
   }
   const headerAt = rows.findIndex((r) => r.some((v) => normalize(v ?? "") === "mes"));
   if (headerAt < 0) throw new IndexSourceError("a planilha do ICTI mudou de formato (sem a coluna «Mês»)");
-  const header = rows[headerAt].map((v) => normalize(v ?? ""));
+  // Array.from preenche os buracos (célula ausente no XML): findIndex com undefined quebraria.
+  const header = Array.from(rows[headerAt], (v) => normalize(v ?? ""));
   const monthCol = header.findIndex((h) => h === "mes");
   const levelCol = header.findIndex((h) => h.startsWith("icti"));
   if (levelCol < 0) throw new IndexSourceError("a planilha do ICTI mudou de formato (sem a coluna do número-índice)");

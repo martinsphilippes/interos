@@ -40,6 +40,12 @@ describe("Banco Central (SGS)", () => {
     expect(parseSgsResponse([{ data: "01/08/2026", valor: "-0.32" }, { data: "01/09/2026", valor: "0.82" }, { data: "01/10/2026", valor: "" }])).toEqual({ "2026-08": -0.32, "2026-09": 0.82 });
   });
 
+  it("só série MENSAL de variação: diária (dia ≠ 01 ou repetida no mês) e valores absurdos viram erro", () => {
+    expect(() => parseSgsResponse([{ data: "01/09/2026", valor: "0.04" }, { data: "02/09/2026", valor: "0.04" }])).toThrow(/não é mensal/);
+    expect(() => parseSgsResponse([{ data: "15/09/2026", valor: "0.04" }])).toThrow(/não é mensal/);
+    expect(() => parseSgsResponse([{ data: "01/09/2026", valor: "6523.7" }])).toThrow(/fora do esperado/);
+  });
+
   it("resposta que não é lista vira erro legível", () => {
     expect(() => parseSgsResponse({ error: "Série não encontrada" })).toThrow(IndexSourceError);
     expect(() => parseSgsResponse({ error: "Série não encontrada" })).toThrow(/Série não encontrada/);
@@ -125,6 +131,13 @@ describe("ICTI (IPEA)", () => {
       "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Mês</t></is></c><c r="B1" t="inlineStr"><is><t>Outra</t></is></c></row></sheetData></worksheet>`,
     });
     expect(() => parseIctiSpreadsheet(noLevel)).toThrow(/número-índice/);
+    // Cabeçalho com célula ausente (buraco) antes da coluna do índice: lê normalmente.
+    const holes = xlsx({
+      "xl/workbook.xml": `<workbook><sheets><sheet name="Dados" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      "xl/_rels/workbook.xml.rels": `<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`,
+      "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="1"><c r="B1" t="inlineStr"><is><t>Mês</t></is></c><c r="D1" t="inlineStr"><is><t>ICTI (dez/2012=100)</t></is></c></row>${Array.from({ length: 14 }, (_, i) => `<row r="${i + 2}"><c r="B${i + 2}"><v>${serial(2025 + Math.floor(i / 12), (i % 12) + 1)}</v></c><c r="D${i + 2}"><v>${100 * 1.01 ** i}</v></c></row>`).join("")}</sheetData></worksheet>`,
+    });
+    expect(Object.keys(parseIctiSpreadsheet(holes))).toHaveLength(13);
     expect(() => parseIctiSpreadsheet(ictiFile([[2026, 1, 100], [2026, 2, 101]]))).toThrow(/menos de 12 meses/);
   });
 });

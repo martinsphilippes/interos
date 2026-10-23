@@ -13,8 +13,10 @@ import {
   describeQuote,
   hasReadjustmentRule,
   indexSelectOptions,
+  parseCompetenceInput,
   quoteReadjustment,
   readjustmentSchedule,
+  sameReadjustmentRule,
   summarizeIndex,
 } from "@/domain/readjustment";
 import { describeReadjustment } from "@/domain/contract-snapshot";
@@ -107,16 +109,37 @@ describe("datas-base", () => {
     expect(s.next?.anniversary).toBe("2027-05-02");
   });
 
-  it("decididas: registro do contrato, aditivos não cancelados e renovações antigas com percentual", () => {
+  it("decididas: registro do contrato, aditivos não cancelados e renovações ANTIGAS (qualquer reajuste)", () => {
     const amendments = [
       { status: "aplicado", kind: "reajuste", readjust: { anniversary: "2025-03-10" }, effectiveFrom: "2025-03-10" },
       { status: "cancelado", kind: "reajuste", readjust: { anniversary: "2024-03-10" }, effectiveFrom: "2024-03-10" },
       { status: "aplicado", kind: "renovacao", readjustment: { type: "percentual", percent: 5 }, effectiveFrom: "2024-03-10" },
+      // Renovação antiga com índice «a informar»: o CS reajustava à mão — conta como decidida (não reajusta de novo).
       { status: "aplicado", kind: "renovacao", readjustment: { type: "indice", index: "ipca", pending: true }, effectiveFrom: "2023-03-10" },
       { status: "rascunho", kind: "reajuste", readjust: { anniversary: "2026-03-10" }, effectiveFrom: "2026-03-10" },
+      // Renovação nova (reajuste anual) sem data-base: não conta.
+      { status: "aplicado", kind: "renovacao", annualModel: true, readjustment: { type: "nenhum" }, effectiveFrom: "2026-07-10" },
     ] as unknown as ContractAmendment[];
     const covered = coveredAnniversaries({ readjustmentLog: [{ anniversary: "2022-03-10", outcome: "dispensado", at: "", by: "x" }] }, amendments);
-    expect(covered.sort()).toEqual(["2022-03-10", "2024-03-10", "2025-03-10", "2026-03-10"]);
+    expect(covered.sort()).toEqual(["2022-03-10", "2023-03-10", "2024-03-10", "2025-03-10", "2026-03-10"]);
+  });
+
+  it("mesma regra de reajuste: tipo, percentual e índice (o «aguardando» e o nome não contam)", () => {
+    expect(sameReadjustmentRule({ type: "indice", index: "ipca", pending: true }, { type: "indice", index: "ipca", indexName: "IPCA" })).toBe(true);
+    expect(sameReadjustmentRule({ type: "indice", index: "ipca" }, { type: "indice", index: "igpm" })).toBe(false);
+    expect(sameReadjustmentRule({ type: "percentual", percent: 5 }, { type: "percentual", percent: 6 })).toBe(false);
+    expect(sameReadjustmentRule(undefined, { type: "nenhum" })).toBe(true);
+  });
+
+  it("mês digitado à mão: MM/AAAA, AAAA-MM ou nome do mês", () => {
+    expect(parseCompetenceInput("09/2026")).toBe("2026-09");
+    expect(parseCompetenceInput("9/2026")).toBe("2026-09");
+    expect(parseCompetenceInput("2026-9")).toBe("2026-09");
+    expect(parseCompetenceInput("set/2026")).toBe("2026-09");
+    expect(parseCompetenceInput("Setembro 2026")).toBe("2026-09");
+    expect(parseCompetenceInput("13/2026")).toBeNull();
+    expect(parseCompetenceInput("2026-13")).toBeNull();
+    expect(parseCompetenceInput("abc")).toBeNull();
   });
 
   it("regra que o motor aplica: percentual > 0 ou índice escolhido, cobrança recorrente", () => {
@@ -182,5 +205,7 @@ describe("telas", () => {
     expect(describeReadjustment({ type: "indice", index: "ipc-fipe" }, { "ipc-fipe": "IPC-Fipe" })).toBe("IPC-Fipe");
     expect(describeReadjustment({ type: "indice", index: "ipca", pending: true })).toBe("IPCA (aguardando o índice)");
     expect(describeReadjustment({ type: "percentual", percent: 2.5 })).toBe("2,5%");
+    // O nome gravado na escolha vale no documento e no portal (sem o cadastro à mão).
+    expect(describeReadjustment({ type: "indice", index: "indice-setorial-abc", indexName: "Índice Setorial ABC" })).toBe("Índice Setorial ABC");
   });
 });

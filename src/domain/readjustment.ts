@@ -102,6 +102,21 @@ export function addCompetence(competence: string, months: number): string {
   return `${String(y).padStart(4, "0")}-${String(m + 1).padStart(2, "0")}`;
 }
 
+/** "10/2026", "10-2026", "out/2026" ou "2026-10" → "2026-10" (o campo é texto: funciona em todo navegador). */
+export function parseCompetenceInput(raw: string): string | null {
+  const v = raw.trim().toLowerCase();
+  let m = /^(\d{4})-(\d{1,2})$/.exec(v);
+  if (m) return Number(m[2]) >= 1 && Number(m[2]) <= 12 ? `${m[1]}-${m[2].padStart(2, "0")}` : null;
+  m = /^(\d{1,2})[/.\s-](\d{4})$/.exec(v);
+  if (m) return Number(m[1]) >= 1 && Number(m[1]) <= 12 ? `${m[2]}-${m[1].padStart(2, "0")}` : null;
+  m = /^([a-zç]{3})[a-zç]*[/.\s-]+(\d{4})$/.exec(v);
+  if (m) {
+    const i = MONTH_ABBR.indexOf(m[1]);
+    return i >= 0 ? `${m[2]}-${String(i + 1).padStart(2, "0")}` : null;
+  }
+  return null;
+}
+
 /** Meses de `b` até `a` (a − b). */
 export function competenceDiff(a: string, b: string): number {
   return (Number(a.slice(0, 4)) - Number(b.slice(0, 4))) * 12 + (Number(a.slice(5, 7)) - Number(b.slice(5, 7)));
@@ -214,17 +229,24 @@ export function readjustmentSchedule(input: { startDate: string; covered: readon
 
 /**
  * Datas-base já decididas: registro do contrato (aplicado/mantido/dispensado), aditivos não cancelados que cobrem uma
- * data-base (inclusive em andamento — evita aplicar duas vezes) e renovações antigas com reajuste percentual (antes do
- * reajuste anual existir, o percentual entrava na renovação).
+ * data-base (inclusive em andamento — evita aplicar duas vezes) e renovações ANTIGAS aplicadas (sem `annualModel`):
+ * antes do reajuste anual, o reajuste era decidido na renovação — percentual aplicado, «sem reajuste» ou índice que o
+ * CS informava à mão por aditivo. Contar a renovação antiga como decidida evita reajustar de novo por cima disso.
  */
-export function coveredAnniversaries(contract: Pick<Contract, "readjustmentLog">, amendments: readonly Pick<ContractAmendment, "status" | "kind" | "readjust" | "readjustment" | "effectiveFrom">[]): string[] {
+export function coveredAnniversaries(contract: Pick<Contract, "readjustmentLog">, amendments: readonly Pick<ContractAmendment, "status" | "kind" | "readjust" | "annualModel" | "effectiveFrom">[]): string[] {
   const out = (contract.readjustmentLog ?? []).map((e) => e.anniversary);
   for (const a of amendments) {
     if (a.status === "cancelado") continue;
     if (a.readjust) out.push(a.readjust.anniversary);
-    else if (a.kind === "renovacao" && a.status === "aplicado" && a.readjustment?.type === "percentual" && (a.readjustment.percent ?? 0) > 0) out.push(a.effectiveFrom.slice(0, 10));
+    else if (a.kind === "renovacao" && a.status === "aplicado" && !a.annualModel) out.push(a.effectiveFrom.slice(0, 10));
   }
   return out;
+}
+
+/** Mesma regra de reajuste? (tipo, percentual e índice; o «aguardando» não conta). */
+export function sameReadjustmentRule(a: ContractReadjustment | undefined, b: ContractReadjustment | undefined): boolean {
+  const norm = (r: ContractReadjustment | undefined) => (!r || r.type === "nenhum" ? "nenhum" : r.type === "percentual" ? `percentual:${Number(r.percent ?? 0)}` : `indice:${r.index ?? ""}`);
+  return norm(a) === norm(b);
 }
 
 /** O contrato tem regra de reajuste que o motor sabe aplicar (percentual > 0 ou índice escolhido) e cobra recorrente. */

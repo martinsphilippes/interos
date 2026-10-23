@@ -550,7 +550,10 @@ function renewalPatch(input: Pick<UpdateConditionsInput, "autoRenew" | "renewalT
   const patch: Partial<Contract> = {};
   if (input.autoRenew !== undefined) patch.autoRenew = input.autoRenew;
   if (input.renewalTermMonths !== undefined) patch.renewalTermMonths = input.renewalTermMonths;
-  if (input.readjustment !== undefined) patch.readjustment = stripUndefined({ type: input.readjustment.type, percent: input.readjustment.type === "percentual" ? input.readjustment.percent : undefined, index: input.readjustment.type === "indice" ? input.readjustment.index : undefined });
+  if (input.readjustment !== undefined) {
+    const r = input.readjustment as ContractReadjustment;
+    patch.readjustment = stripUndefined({ type: r.type, percent: r.type === "percentual" ? r.percent : undefined, index: r.type === "indice" ? r.index : undefined, indexName: r.type === "indice" ? r.indexName : undefined });
+  }
   if (input.noticeDays !== undefined) patch.noticeDays = input.noticeDays;
   return patch;
 }
@@ -558,8 +561,8 @@ function renewalPatch(input: Pick<UpdateConditionsInput, "autoRenew" | "renewalT
 export async function updateContractConditions(input: UpdateConditionsInput, actor: UserRef): Promise<{ versioned: boolean }> {
   const contract = await loadContract(input.contractId);
   assertEditable(contract);
-  const { assertReadjustmentAllowed } = await import("@/server/finance-registry/indices");
-  await assertReadjustmentAllowed(input.readjustment as ContractReadjustment | undefined, contract.readjustment);
+  const { normalizeReadjustment } = await import("@/server/finance-registry/indices");
+  input = { ...input, readjustment: await normalizeReadjustment(input.readjustment as ContractReadjustment | undefined, contract.readjustment) };
   const version = await versionPatchIfSent(contract, actor, "Condições alteradas");
   const patch: Partial<Contract> = {
     ...version.patch,

@@ -19,6 +19,8 @@ export interface FinanceCapabilities {
     /** Seções da página do contrato. */
     signatureView: boolean;
     amendmentsView: boolean;
+    /** Cartão «Reajuste anual» (seção financeiro.contratos.reajuste.ver). */
+    readjustView: boolean;
     pendenciesView: boolean;
     documentsView: boolean;
     historyView: boolean;
@@ -76,6 +78,7 @@ export const NO_FINANCE_CAPABILITIES: FinanceCapabilities = {
     edit: false,
     signatureView: false,
     amendmentsView: false,
+    readjustView: false,
     pendenciesView: false,
     documentsView: false,
     historyView: false,

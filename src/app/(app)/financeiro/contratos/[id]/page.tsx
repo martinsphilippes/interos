@@ -98,7 +98,7 @@ export default async function ContractPage({ params }: { params: Params }) {
   // A opção "cadastrar novo contato" só aparece quando a action vai aceitar: chave de contatos E cliente no escopo.
   const canCreateContact = signerOptions ? can(user, "operacao.clientes.contatos.editar") && (await canSeeClient(user, client)) : false;
   // Reajuste anual: índices do cadastro (campos de condições) e a situação/prévia do próximo reajuste.
-  const [indexOptions, readjustmentView] = await Promise.all([listReadjustmentIndexOptions(), getContractReadjustmentView(raw.contract, raw.amendments, { hideValues: hidden })]);
+  const [indexOptions, readjustmentView] = await Promise.all([listReadjustmentIndexOptions(), sections.readjustView ? getContractReadjustmentView(raw.contract, raw.amendments, { hideValues: hidden }) : Promise.resolve(null)]);
 
   return (
     <FinanceAccessProvider value={caps}>

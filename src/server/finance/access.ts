@@ -60,6 +60,7 @@ export function financeCapabilities(user: PermissionHolder): FinanceCapabilities
       edit: k("financeiro.contratos.editar"),
       signatureView: k("financeiro.contratos.assinatura.ver"),
       amendmentsView: k("financeiro.contratos.aditivos.ver"),
+      readjustView: k("financeiro.contratos.reajuste.ver"),
       pendenciesView: k("financeiro.contratos.pendencias.ver"),
       documentsView: k("financeiro.contratos.documentos.ver"),
       historyView: k("financeiro.contratos.historico.ver"),

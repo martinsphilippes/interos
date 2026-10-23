@@ -5,9 +5,9 @@ import Link from "next/link";
 import { Archive, ArchiveRestore, ChevronDown, ChevronUp, Pencil, Plus, RefreshCw, Trash2, TrendingUp } from "lucide-react";
 import type { IndexRow } from "@/server/finance-registry/queries";
 import { refreshReadjustmentIndicesAction, saveReadjustmentIndexAction, setReadjustmentIndexArchivedAction, setReadjustmentIndexValueAction } from "@/server/finance-registry/actions";
-import { competenceLabel, formatPct, INDEX_SOURCE_KIND_LABELS } from "@/domain/readjustment";
+import { competenceLabel, formatPct, INDEX_SOURCE_KIND_LABELS, parseCompetenceInput } from "@/domain/readjustment";
 import type { ReadjustmentIndexSource } from "@/domain/types";
-import { formatDate, formatRelative } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ReasonDialog } from "@/components/commissions/commission-ui";
 import { CanSee, ScreenLink } from "@/components/auth/access-provider";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { useFinanceAction } from "@/components/finance/use-finance-action";
 import { ArchivedBadge } from "./shared";
 
@@ -37,6 +38,7 @@ const NEGATIVE_OPTIONS = [
 
 const pctText = (v: number) => formatPct(v);
 const parsePct = (v: string) => Number(v.trim().replace(",", "."));
+
 
 /**
  * Índices de reajuste: cada um com a fonte (Banco Central, IPEA ou manual), o último mês, o acumulado de 12 meses e a
@@ -170,13 +172,18 @@ function FetchStatus({ row }: { row: IndexRow }) {
         falha na busca{row.failingSince ? ` desde ${formatDate(row.failingSince)}` : ""}: {row.lastFetchError}
       </span>
     );
-  return <>buscado {formatRelative(row.lastFetchAt)}</>;
+  return (
+    <>
+      buscado <RelativeTime value={row.lastFetchAt} />
+    </>
+  );
 }
 
 function IndexDetail({ row, canEdit }: { row: IndexRow; canEdit: boolean }) {
   const id = React.useId();
   const { pending, run } = useFinanceAction();
-  const [competence, setCompetence] = React.useState("");
+  const [monthText, setMonthText] = React.useState("");
+  const competence = parseCompetenceInput(monthText) ?? "";
   const [pct, setPct] = React.useState("");
   const [reason, setReason] = React.useState("");
   const value = parsePct(pct);
@@ -186,7 +193,7 @@ function IndexDetail({ row, canEdit }: { row: IndexRow; canEdit: boolean }) {
       () => setReadjustmentIndexValueAction({ indexId: row.id, competence, pct: value, reason: reason || undefined }),
       `${row.name}: ${competenceLabel(competence)} lançado`,
       () => {
-        setCompetence("");
+        setMonthText("");
         setPct("");
         setReason("");
       },
@@ -242,8 +249,8 @@ function IndexDetail({ row, canEdit }: { row: IndexRow; canEdit: boolean }) {
             <p className="text-sm font-medium">Lançar um mês à mão</p>
             <p className="text-xs text-muted">{row.sourceKind === "manual" ? "Índice manual: lance a variação de cada mês (em %)." : "Só para o mês que a fonte ainda não trouxe (ex.: fonte fora do ar). Quando o valor oficial sair, ele substitui o lançado."}</p>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Mês" htmlFor={`${id}-m`} required>
-                <Input id={`${id}-m`} type="month" value={competence} onChange={(e) => setCompetence(e.target.value)} className="h-11 md:h-9" />
+              <FormField label="Mês" htmlFor={`${id}-m`} required hint={monthText && !competence ? "Use MM/AAAA (ex.: 09/2026)" : competence ? competenceLabel(competence) : "MM/AAAA"}>
+                <Input id={`${id}-m`} inputMode="numeric" value={monthText} onChange={(e) => setMonthText(e.target.value)} placeholder="09/2026" className="h-11 md:h-9" />
               </FormField>
               <FormField label="Variação no mês (%)" htmlFor={`${id}-p`} required>
                 <Input id={`${id}-p`} inputMode="decimal" value={pct} onChange={(e) => setPct(e.target.value)} placeholder="Ex.: 0,48" className="h-11 md:h-9" />

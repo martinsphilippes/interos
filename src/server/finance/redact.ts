@@ -6,7 +6,7 @@
  * Os dados originais continuam no servidor para as regras (gate, hash do documento, cobranças): redija só o que vai
  * para a tela, DEPOIS de calcular o que depende dos valores.
  */
-import type { Billing, Contract, ContractAmendment, ContractSnapshot, ProposalItem } from "@/domain/types";
+import type { Billing, Contract, ContractAmendment, ContractReadjustmentLogEntry, ContractSnapshot, ProposalItem } from "@/domain/types";
 import { RESTRICTED_CODE } from "@/components/finance/values";
 
 export { RESTRICTED_CODE };
@@ -29,7 +29,17 @@ export function redactSnapshot(s: ContractSnapshot): ContractSnapshot {
   return { ...s, items: redactItems(s.items), setupTotal: 0, monthlyTotal: 0, hardwareTotal: 0, paymentCondition: maskMoneyText(s.paymentCondition) };
 }
 
-/** Contrato sem valores: itens, totais, versões anteriores e condição de pagamento (texto livre). */
+/** Registro do reajuste anual sem as mensalidades antes/depois (e o motivo livre com quantias mascaradas). */
+export function redactReadjustmentLog(log: readonly ContractReadjustmentLogEntry[]): ContractReadjustmentLogEntry[] {
+  return log.map((e) => {
+    const { monthlyBefore: _before, monthlyAfter: _after, ...rest } = e;
+    void _before;
+    void _after;
+    return { ...rest, ...(e.reason ? { reason: maskMoneyText(e.reason) } : {}) };
+  });
+}
+
+/** Contrato sem valores: itens, totais, versões anteriores, condição de pagamento (texto livre) e registro do reajuste. */
 export function redactContract(c: Contract): Contract {
   return {
     ...c,
@@ -39,6 +49,7 @@ export function redactContract(c: Contract): Contract {
     hardwareTotal: 0,
     paymentCondition: maskMoneyText(c.paymentCondition),
     previousVersions: c.previousVersions?.map((v) => ({ ...v, snapshot: redactSnapshot(v.snapshot) })),
+    ...(c.readjustmentLog ? { readjustmentLog: redactReadjustmentLog(c.readjustmentLog) } : {}),
   };
 }
 

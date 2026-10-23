@@ -16,7 +16,8 @@ import { addCompetence, addMonthsClamped } from "@/domain/readjustment";
 import { COLLECTIONS, type Client, type Contract, type ContractAmendment, type DomainEvent, type ReadjustmentIndex, type Task } from "@/domain/types";
 import { applyReadjustmentNow, getContractReadjustmentView, runContractReadjustments, skipReadjustment } from "@/server/finance/readjustments";
 import { autoRenewContracts } from "@/server/finance/renewals";
-import { createAmendment } from "@/server/finance/amendments";
+import { applyAmendment, createAmendment } from "@/server/finance/amendments";
+import { redactContract } from "@/server/finance/redact";
 import { setReadjustmentIndexArchived, setReadjustmentIndexValue } from "@/server/finance-registry/indices";
 
 const RUN = `t${Date.now().toString(36)}`;
@@ -184,6 +185,94 @@ describe("reajuste anual na data-base", () => {
     const view = await getContractReadjustmentView(c, [], { hideValues: false });
     expect(view?.state.status).toBe("aguardando_indice");
     expect(view?.state.message).toMatch(/desatualizado/);
+  });
+});
+
+describe("revisão: renovação, regras antigas e travas", () => {
+  it("renovação na data-base com «Sem reajuste» registra a data-base como dispensada; a varredura não reajusta depois", async () => {
+    const end = daysFrom(TODAY, 20);
+    const c = await contract("g", { termMonths: 12, startDate: iso(addMonthsClamped(end, -12)), endDate: iso(end), readjustment: { type: "percentual", percent: 5 } });
+    const a = await createAmendment({ contractId: c.id, effectiveFrom: end, reason: "Renovação negociada pelo CS sem reajuste", requiresSignature: false, renewal: { months: 12, readjustment: { type: "nenhum" } } }, ACTOR, { source: "renovacao_cs" });
+    expect(a.readjust).toMatchObject({ anniversary: end, percent: 0, waived: true });
+    expect(a.annualModel).toBe(true);
+    await applyAmendment(a.id, ACTOR);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.monthlyTotal).toBe(1000);
+    expect(after.readjustment).toMatchObject({ type: "percentual", percent: 5 });
+    expect(after.readjustmentLog).toMatchObject([{ anniversary: end, outcome: "dispensado" }]);
+    const later = await runContractReadjustments(new Date(Date.parse(iso(daysFrom(end, 1)))));
+    expect(later.appliedContractIds).not.toContain(c.id);
+  });
+
+  it("escolha explícita de reajuste numa renovação fora da data-base é recusada com mensagem clara", async () => {
+    const start = addMonthsClamped(TODAY, -5);
+    const c = await contract("h", { termMonths: 6, startDate: iso(start), endDate: iso(addMonthsClamped(start, 6)), readjustment: { type: "indice", index: IDX } });
+    await expect(createAmendment({ contractId: c.id, effectiveFrom: addMonthsClamped(start, 6), reason: "Renovação com 5% negociado", requiresSignature: false, renewal: { months: 12, readjustment: { type: "percentual", percent: 5 } } }, ACTOR, { source: "renovacao_cs" })).rejects.toThrow(/não cai numa data-base/);
+  });
+
+  it("renovação antiga (antes do reajuste anual) conta como data-base decidida: não reajusta de novo", async () => {
+    const anniversary = daysFrom(TODAY, -10);
+    const c = await contract("i", { termMonths: 12, startDate: iso(addMonthsClamped(anniversary, -12)), endDate: iso(addMonthsClamped(anniversary, 12)), readjustment: { type: "indice", index: IDX, pending: true } });
+    await create<ContractAmendment>(
+      COLLECTIONS.contractAmendments,
+      { number: `${c.number}-A01`, contractId: c.id, clientId: CLIENT_ID, kind: "renovacao", status: "aplicado", effectiveFrom: anniversary, reason: "Renovação automática (antiga)", requiresSignature: false, before: {} as never, after: {} as never, changes: {}, readjustment: { type: "indice", index: IDX, pending: true } } as never,
+      `cta_${c.id}_1`,
+    );
+    const run = await runContractReadjustments(NOW);
+    expect(run.appliedContractIds).not.toContain(c.id);
+  });
+
+  it("o reajuste preserva a origem por aditivo (`since`) dos itens", async () => {
+    const anniversary = daysFrom(TODAY, -4);
+    const since = { amendmentId: `${RUN}_a`, installment: 7, setupInstallment: 2 };
+    const c = await contract("j", {
+      startDate: iso(addMonthsClamped(anniversary, -12)),
+      endDate: iso(addMonthsClamped(anniversary, 12)),
+      readjustment: { type: "percentual", percent: 10 },
+      items: [
+        { productId: `${RUN}_p1`, productName: "Sistema", quantity: 1, setupValue: 0, monthlyValue: 1000, hardwareValue: 0, discountPct: 0 },
+        { productId: `${RUN}_p2`, productName: "Ponto", quantity: 1, setupValue: 0, monthlyValue: 100, hardwareValue: 0, discountPct: 0, since },
+      ],
+      monthlyTotal: 1100,
+    });
+    await runContractReadjustments(NOW);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.monthlyTotal).toBe(1210);
+    expect(after.items.find((i) => i.productId === `${RUN}_p2`)?.since).toEqual(since);
+  });
+
+  it("regra trocada depois da data-base: não aplica sozinho, vira tarefa para o Financeiro decidir", async () => {
+    const anniversary = daysFrom(TODAY, -6);
+    const c = await contract("k", { startDate: iso(addMonthsClamped(anniversary, -12)), endDate: iso(addMonthsClamped(anniversary, 12)), readjustment: { type: "percentual", percent: 5 }, readjustmentRuleSince: daysFrom(TODAY, -2) });
+    const run = await runContractReadjustments(NOW);
+    expect(run.appliedContractIds).not.toContain(c.id);
+    expect((await list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", c.id]] })).some((t) => t.title.startsWith("Reajuste não aplicado"))).toBe(true);
+  });
+
+  it("cobrança anual: reajusta até 30 dias antes da data-base (vigente nela)", async () => {
+    const anniversary = daysFrom(TODAY, 20);
+    const c = await contract("l", { recurrence: "anual", startDate: iso(addMonthsClamped(anniversary, -12)), endDate: iso(addMonthsClamped(anniversary, 24)), readjustment: { type: "percentual", percent: 5 } });
+    const run = await runContractReadjustments(NOW);
+    expect(run.appliedContractIds).toContain(c.id);
+    const [a] = await amendmentsOf(c.id);
+    expect(a.effectiveFrom).toBe(anniversary);
+  });
+
+  it("percentual acima de 25% não é aplicado sozinho", async () => {
+    const anniversary = daysFrom(TODAY, -3);
+    const c = await contract("m", { startDate: iso(addMonthsClamped(anniversary, -12)), endDate: iso(addMonthsClamped(anniversary, 12)), readjustment: { type: "percentual", percent: 30 } });
+    const run = await runContractReadjustments(NOW);
+    expect(run.appliedContractIds).not.toContain(c.id);
+    const view = await getContractReadjustmentView(c, [], { hideValues: false });
+    expect(view?.state.message).toMatch(/fora do esperado/);
+  });
+
+  it("sem «ver valores»: o contrato redigido não leva as mensalidades do registro do reajuste", async () => {
+    const c = (await getById<Contract>(COLLECTIONS.contracts, `${RUN}_a`))!;
+    expect(c.readjustmentLog?.[0].monthlyAfter).toBeGreaterThan(0);
+    const redacted = redactContract(c);
+    expect(redacted.readjustmentLog?.[0]).not.toHaveProperty("monthlyBefore");
+    expect(redacted.readjustmentLog?.[0]).not.toHaveProperty("monthlyAfter");
   });
 });
 

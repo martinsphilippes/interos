@@ -113,13 +113,13 @@ describe("capacidades padrão ≡ comportamento anterior", () => {
   it("ações de contrato e cobrança ≡ módulo ∧ canOperateFinance (requireFinanceOperator)", () => {
     for (const u of ALL_USERS) {
       const caps = access.financeCapabilities(asCurrentUser(u));
-      const { view, signatureView, amendmentsView, pendenciesView, documentsView, historyView, releaseWithPendency, ...contractOps } = caps.contracts;
+      const { view, signatureView, amendmentsView, readjustView, pendenciesView, documentsView, historyView, releaseWithPendency, ...contractOps } = caps.contracts;
       const { view: billingView, boletoView, ...billingOps } = caps.billings;
       for (const [k, v] of Object.entries({ ...contractOps, ...billingOps })) expect(v, `${label(u)} ${k}`).toBe(operates(u));
       // Liberar com pendência: antes, isManager (com o botão só para quem opera).
       expect(releaseWithPendency, label(u)).toBe(operates(u) && isManager(u));
       // Visualização e seções: todos com o módulo (antes: só o módulo).
-      for (const [k, v] of Object.entries({ view, signatureView, amendmentsView, pendenciesView, documentsView, historyView, billingView, boletoView })) expect(v, `${label(u)} ${k}`).toBe(inModule(u));
+      for (const [k, v] of Object.entries({ view, signatureView, amendmentsView, readjustView, pendenciesView, documentsView, historyView, billingView, boletoView })) expect(v, `${label(u)} ${k}`).toBe(inModule(u));
     }
   });
 

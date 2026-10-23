@@ -163,6 +163,14 @@ export const FINANCEIRO = {
           rule: "all",
         },
         {
+          key: "financeiro.contratos.reajuste.ver",
+          label: "Reajuste anual",
+          // Onde: [id]/page.tsx (ContractReadjustmentCard): regra, data-base, prévia com o último índice, situação e as
+          // datas-base decididas (aditivo, quem decidiu, motivo). Mensalidades sob "Visualizar valores". Nova (reajuste
+          // anual), mesmo público da seção de Aditivos.
+          rule: "all",
+        },
+        {
           key: "financeiro.contratos.pendencias.ver",
           label: "Pendências do contrato",
           // Onde: [id]/page.tsx:211 (PendencyCard) · Hoje: só módulo; botões com canOperate

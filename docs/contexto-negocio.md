@@ -133,10 +133,12 @@ Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada 
   36 meses. Com índice, vale o acumulado dos 12 meses anteriores, buscado sozinho todo dia no Banco Central (IPCA,
   IGP-M, INPC, IGP-DI e séries cadastradas) ou na planilha do IPEA (ICTI); cada mês novo atualiza na hora a prévia de
   todos os contratos que usam o índice. Na data-base o INTEROS aplica sozinho (aditivo de reajuste, sem assinatura,
-  mensalidades em aberto refeitas) e avisa Financeiro, CS e o responsável; 30 dias antes manda a prévia. Acumulado
-  negativo mantém o valor (ou reduz, se o índice estiver configurado assim). Se o índice atrasar mais de 45 dias, ou
-  algo travar, vira tarefa ao Financeiro, que pode aplicar com outro percentual ou dispensar com motivo. Quando a
-  data-base coincide com a renovação, o reajuste entra junto no aditivo de renovação.
+  mensalidades em aberto refeitas; cobrança anual: até 30 dias antes, para a parcela do ano já sair reajustada) e
+  avisa Financeiro, CS e o responsável; 30 dias antes manda a prévia. Acumulado negativo mantém o valor (ou reduz, se
+  o índice estiver configurado assim). Se o índice atrasar mais de 45 dias, passar de 25% ou algo travar, vira tarefa
+  ao Financeiro, que pode aplicar com outro percentual ou dispensar com motivo. Quando a data-base coincide com a
+  renovação, o reajuste é decidido no aditivo de renovação (o CS pode renovar «sem reajuste», e isso fica registrado).
+  Trocar a regra de reajuste por aditivo vale da próxima data-base em diante.
 - **Cobrança recorrente**: contratos de prazo fixo têm todas as mensalidades geradas; contratos com renovação
   automática (ou sem prazo) têm horizonte rolante (padrão 3 meses, configurável) — a varredura diária gera as
   próximas sem duplicar. O gestor pode gerar as próximas na página do contrato.

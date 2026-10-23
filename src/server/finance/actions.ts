@@ -75,7 +75,7 @@ import {
   updateItemsSchema,
   zodMessage,
 } from "./schemas";
-import { assertAmendmentAccess, assertBillingAccess, assertContractAccess, assertOpportunityContractAccess } from "./access";
+import { assertAmendmentAccess, assertBillingAccess, assertContractAccess, assertOpportunityContractAccess, canSeeContractValues } from "./access";
 
 type Failure = { ok: false; error: string };
 
@@ -335,9 +335,11 @@ export async function applyAmendmentAction(input: unknown): Promise<ActionResult
   }
 }
 
-export async function applyContractReadjustmentAction(input: unknown): Promise<ActionResult<{ amendmentNumber: string; monthlyBefore: number; monthlyAfter: number }>> {
+export async function applyContractReadjustmentAction(input: unknown): Promise<ActionResult<{ amendmentNumber?: string; monthlyBefore: number; monthlyAfter: number }>> {
   try {
     const user = await requirePermission("financeiro.contratos.reajuste.aplicar");
+    // O reajuste muda a mensalidade e devolve os valores: exige ver os valores do contrato (A13), como a tela supõe.
+    if (!canSeeContractValues(user)) throw new PermissionError("Aplicar o reajuste exige visualizar os valores do contrato");
     const data = applyReadjustmentSchema.parse(input);
     await assertContractAccess(user, data.contractId);
     const { applyReadjustmentNow } = await import("./readjustments");

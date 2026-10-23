@@ -23,10 +23,11 @@ import { notify } from "@/server/notifications";
 import { getDepartmentManager } from "@/server/workflow/service";
 import { BusinessError } from "@/server/auth/error-classes";
 import { proposalTotals } from "@/components/sales/model";
-import { dateKey, formatCurrency, formatDate } from "@/lib/format";
+import { dateKey, formatDate } from "@/lib/format";
 import { AMENDMENT_OPEN_STATUSES, describeReadjustment } from "@/domain/contract-snapshot";
 import {
   coveredAnniversaries,
+  daysBetween,
   describeIndexSource,
   describeQuote,
   formatPct,
@@ -39,11 +40,19 @@ import {
 } from "@/domain/readjustment";
 import { COLLECTIONS, type AmendmentReadjust, type Client, type Contract, type ContractAmendment, type ContractReadjustmentLogEntry, type ReadjustmentIndex, type ReadjustmentQuote, type Task, type UserRef } from "@/domain/types";
 import { getReadjustmentIndexMap } from "@/server/finance-registry/indices";
+import { redactReadjustmentLog } from "./redact";
 import { applyAmendment, cancelAmendment, createAmendment, readjustItems } from "./amendments";
 import { dueIso, SYSTEM_ACTOR, todayKey } from "./billing";
 
-/** O Financeiro pode aplicar o reajuste com até N dias de antecedência da data-base. */
+/** O Financeiro pode aplicar (ou dispensar) o reajuste com até N dias de antecedência da data-base. */
 export const EARLY_APPLY_DAYS = 60;
+/** Acima disso (em módulo) o reajuste não é aplicado sozinho: série errada ou índice fora do normal → Financeiro decide. */
+export const MAX_AUTO_PERCENT = 25;
+
+/** Tempo máximo da varredura aplicando aditivos (o cron inteiro tem 60 s). */
+const RUN_BUDGET_MS = 25_000;
+
+const addDaysKey = (key: string, days: number) => new Date(Date.parse(`${key}T12:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
 const dmy = (key: string) => formatDate(dueIso(key));
 
@@ -74,6 +83,8 @@ export interface ContractReadjustmentState {
   quote?: ReadjustmentQuote;
   monthlyBefore?: number;
   monthlyAfter?: number;
+  /** A janela de aplicação abriu (data-base chegou; contrato anual: 30 dias antes). */
+  due: boolean;
   /** O Financeiro pode aplicar agora / dispensar esta data-base. */
   canApply: boolean;
   canSkip: boolean;
@@ -87,50 +98,80 @@ export interface ReadjustmentContext {
   today: string;
 }
 
-/** Situação do reajuste anual do contrato hoje: o que acontece, quando, com quanto. */
+/**
+ * Situação do reajuste anual do contrato hoje: o que acontece, quando, com quanto. Contrato com cobrança ANUAL abre a
+ * janela 30 dias antes da data-base (a parcela do ano vence perto dela: o valor novo precisa estar nela antes do
+ * vencimento); mensal, na própria data-base.
+ */
 export function contractReadjustmentState(contract: Contract, ctx: ReadjustmentContext): ContractReadjustmentState {
-  const none = { canApply: false, canSkip: false };
+  const none = { canApply: false, canSkip: false, due: false };
   if (!hasReadjustmentRule(contract)) return { ...none, status: "sem_regra", message: contract.readjustment?.type === "indice" ? "Escolha o índice do reajuste nas condições do contrato" : "Contrato sem reajuste anual" };
   if (!contract.startDate) return { ...none, status: "sem_vigencia", message: "O primeiro reajuste é 12 meses depois do início da vigência (na liberação do contrato)" };
   const covered = coveredAnniversaries(contract, ctx.amendments);
-  const sched = readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: ctx.today });
-  const target = sched.due ?? (sched.next ? { anniversary: sched.next.anniversary, overdueDays: -sched.next.daysUntil } : null);
-  if (!target) return { ...none, status: "sem_regra", message: "Sem data-base pela frente" };
-  const anniversary = target.anniversary;
+  const lead = contract.recurrence === "anual" ? READJUSTMENT_NOTICE_DAYS : 0;
+  const horizon = addDaysKey(ctx.today, lead);
+  const sched = readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: horizon });
+  const anniversary = sched.due?.anniversary ?? sched.next?.anniversary;
+  if (!anniversary) return { ...none, status: "sem_regra", message: "Sem data-base pela frente" };
+  const days = daysBetween(anniversary, ctx.today);
+  const due = Boolean(sched.due);
   const rule = contract.readjustment!;
   const index = rule.type === "indice" && rule.index ? ctx.indices.get(rule.index) : undefined;
   const q = quoteReadjustment(rule, index, anniversary);
   const quote = q.ok ? q.quote : undefined;
   const values = quote ? { monthlyBefore: contract.monthlyTotal, monthlyAfter: readjustedMonthly(contract, quote.percent) } : {};
-  const base = { anniversary, days: target.overdueDays, quote, ...values };
+  const base = { anniversary, days, due, quote, ...values };
   const open = ctx.amendments.find((a) => AMENDMENT_OPEN_STATUSES.includes(a.status));
   if (!withinTerm(contract, anniversary)) {
-    return { ...base, ...none, status: "renovacao", message: `A data-base ${dmy(anniversary)} coincide com o fim da vigência: o reajuste entra no aditivo de renovação${contract.autoRenew ? " (renovação automática)" : " (renovação pelo CS)"}.` };
+    const end = dateKey(contract.endDate!);
+    const message = sameMonth(anniversary, end)
+      ? `A data-base ${dmy(anniversary)} coincide com o fim da vigência: o reajuste entra no aditivo de renovação${contract.autoRenew ? " (renovação automática)" : " (renovação pelo CS)"}.`
+      : `A data-base ${dmy(anniversary)} é depois do fim da vigência (${dmy(end)}): se o contrato for renovado, o reajuste entra nela.`;
+    return { ...base, ...none, due, status: "renovacao", message };
   }
-  const due = target.overdueDays >= 0;
+  const window = due || -days <= EARLY_APPLY_DAYS;
   const indexName = index?.name ?? indexDisplayName(rule.index);
   if (open) {
-    return { ...base, ...none, canSkip: due, status: "bloqueado", blockingAmendment: open.number, message: `O aditivo ${open.number} está em andamento: o reajuste de ${dmy(anniversary)} espera ele ser aplicado ou cancelado.` };
+    return { ...base, canApply: false, canSkip: window, status: "bloqueado", blockingAmendment: open.number, message: `O aditivo ${open.number} está em andamento: o reajuste de ${dmy(anniversary)} espera ele ser aplicado ou cancelado.` };
   }
-  const canApply = Boolean(quote) && (due || -target.overdueDays <= EARLY_APPLY_DAYS);
-  if (due && target.overdueDays > READJUSTMENT_GRACE_DAYS) {
-    return { ...base, canApply: true, canSkip: true, status: "atrasado", message: `A data-base ${dmy(anniversary)} passou há ${target.overdueDays} dias sem reajuste${q.ok ? "" : ` (${q.reason})`}: aplique (com o índice ou um percentual informado) ou dispense.` };
+  if (due && contract.readjustmentRuleSince && anniversary < contract.readjustmentRuleSince) {
+    return { ...base, canApply: true, canSkip: true, status: "bloqueado", message: `A regra do reajuste mudou em ${dmy(contract.readjustmentRuleSince)}, depois desta data-base: decida se aplica (com a regra nova ou um percentual informado) ou não reajusta.` };
+  }
+  if (due && days > READJUSTMENT_GRACE_DAYS) {
+    return { ...base, canApply: true, canSkip: true, status: "atrasado", message: `A data-base ${dmy(anniversary)} passou há ${days} dias sem reajuste${q.ok ? "" : ` (${q.reason})`}: aplique (com o índice ou um percentual informado) ou dispense.` };
   }
   if (!q.ok) {
-    if (!q.waiting) return { ...base, canApply: due, canSkip: due, status: "bloqueado", message: `${q.reason}. Corrija no contrato ou no cadastro de índices.` };
-    return { ...base, canApply: due, canSkip: due, status: "aguardando_indice", message: `${q.reason}. ${due ? `Entra sozinho quando o ${indexName} sair (até ${READJUSTMENT_GRACE_DAYS} dias depois da data-base).` : "A prévia aparece quando o índice sair."}` };
+    if (!q.waiting) return { ...base, canApply: window, canSkip: window, status: "bloqueado", message: `${q.reason}. Corrija no contrato ou no cadastro de índices.` };
+    return { ...base, canApply: window, canSkip: window, status: "aguardando_indice", message: `${q.reason}. ${due ? `Entra sozinho quando o ${indexName} sair (até ${READJUSTMENT_GRACE_DAYS} dias depois da data-base).` : "A prévia aparece quando o índice sair."}` };
   }
-  if (due) return { ...base, canApply: true, canSkip: true, status: "pronto", message: `Data-base ${dmy(anniversary)}: o reajuste entra na próxima rotina diária (06h).` };
-  return { ...base, canApply, canSkip: false, status: "previsto", message: `Próximo reajuste em ${dmy(anniversary)} (em ${-target.overdueDays} dias). ${quote?.type === "indice" ? "Prévia com o último índice publicado: o valor final usa o acumulado até o mês anterior à data-base." : "Percentual fixo do contrato."}` };
+  if (Math.abs(q.quote.percent) > MAX_AUTO_PERCENT) {
+    return { ...base, canApply: window, canSkip: window, status: "bloqueado", message: `Reajuste de ${formatPct(q.quote.percent)} fora do esperado (acima de ${MAX_AUTO_PERCENT}%): não é aplicado sozinho. Confira o índice e aplique ou dispense.` };
+  }
+  if (due) {
+    const message = q.quote.percent === 0 ? `Data-base ${dmy(anniversary)}: ${describeQuote(q.quote)}. A próxima rotina diária (06h) registra «sem aumento».` : `Data-base ${dmy(anniversary)}: o reajuste entra na próxima rotina diária (06h)${lead && days < 0 ? `, ${-days} dias antes da data-base (cobrança anual)` : ""}.`;
+    return { ...base, canApply: q.quote.percent !== 0, canSkip: true, status: "pronto", message };
+  }
+  return { ...base, canApply: window && q.quote.percent !== 0, canSkip: window, status: "previsto", message: `Próximo reajuste em ${dmy(anniversary)} (em ${-days} dias). ${quote?.type === "indice" ? "Prévia com o último índice publicado: o valor final usa o acumulado até o mês anterior à data-base." : "Percentual fixo do contrato."}` };
 }
 
 // ---------------------------------------------------------------------------
 // Aplicar / manter / dispensar
 // ---------------------------------------------------------------------------
 
-async function recipients(contract: Pick<Contract, "clientId" | "ownerId">): Promise<{ ids: string[]; client: Client | null }> {
+/**
+ * Quem é avisado do reajuste: o gestor do Financeiro e o dono do contrato (link para o contrato) e o CS do cliente (ou
+ * o gestor de CS), com link para a ficha do cliente — o CS não abre a tela de contratos do Financeiro. Os avisos não
+ * levam valores em R$ (quem não vê valores também recebe): só o percentual; os valores ficam no contrato.
+ */
+async function notifyReadjustment(contract: Pick<Contract, "id" | "clientId" | "ownerId">, input: { kind: "informativa" | "acao"; key: string; title: (clientName: string) => string; body: string }): Promise<number> {
   const [finance, cs, client] = await Promise.all([getDepartmentManager("financeiro"), getDepartmentManager("cs"), getById<Client>(COLLECTIONS.clients, contract.clientId)]);
-  return { ids: [finance?.id, client?.ownerCsId ?? cs?.id, contract.ownerId].filter((v): v is string => Boolean(v)), client };
+  const name = client?.tradeName ?? "cliente";
+  const financeIds = [finance?.id, contract.ownerId].filter((v): v is string => Boolean(v));
+  const csIds = [client?.ownerCsId ?? cs?.id].filter((v): v is string => Boolean(v) && !financeIds.includes(v as string));
+  const base = { kind: input.kind, title: input.title(name), body: input.body, entity: { type: "contract", id: contract.id } };
+  const sent = await notify({ ...base, userIds: financeIds, key: input.key, href: `/financeiro/contratos/${contract.id}` });
+  const sentCs = await notify({ ...base, userIds: csIds, key: input.key, href: `/clientes/${contract.clientId}?aba=financeiro` });
+  return sent.length + sentCs.length;
 }
 
 /**
@@ -139,10 +180,9 @@ async function recipients(contract: Pick<Contract, "clientId" | "ownerId">): Pro
  */
 export async function announceReadjustment(contract: Pick<Contract, "id" | "number" | "clientId" | "ownerId">, amendment: Pick<ContractAmendment, "id" | "number" | "readjust" | "kind">, monthlyBefore: number, monthlyAfter: number, actor: UserRef): Promise<void> {
   const quote = amendment.readjust;
-  if (!quote) return;
+  // Renovação «sem reajuste» ou índice ≤ 0 mantido: nada mudou de valor (o registro da data-base já está no contrato).
+  if (!quote || quote.percent === 0) return;
   const anniversary = quote.anniversary;
-  const { ids, client } = await recipients(contract);
-  const name = client?.tradeName ?? contract.number;
   const renewal = amendment.kind === "renovacao" ? " junto com a renovação" : "";
   await emitEvent({
     type: "contract.readjusted",
@@ -150,18 +190,15 @@ export async function announceReadjustment(contract: Pick<Contract, "id" | "numb
     clientId: contract.clientId,
     entity: { type: "contract", id: contract.id },
     title: `Contrato ${contract.number} reajustado em ${formatPct(quote.percent)}${renewal} (data-base ${dmy(anniversary)})`,
-    description: `${describeQuote(quote)} · mensalidade ${formatCurrency(monthlyBefore)} → ${formatCurrency(monthlyAfter)} · aditivo ${amendment.number}`,
+    description: `${describeQuote(quote)} · aditivo ${amendment.number}`,
     department: "financeiro",
     payload: { contractId: contract.id, amendmentId: amendment.id, amendmentNumber: amendment.number, anniversary, percent: quote.percent, rawPercent: quote.rawPercent, indexId: quote.indexId ?? null, from: quote.from ?? null, to: quote.to ?? null, manual: quote.manual ?? false, monthlyBefore, monthlyAfter, changes: { monthlyTotal: { from: monthlyBefore, to: monthlyAfter } } },
   });
-  await notify({
-    userIds: ids,
+  await notifyReadjustment(contract, {
     kind: "informativa",
     key: `reajuste_aplicado_${contract.id}_${anniversary}`,
-    title: `Reajuste aplicado${renewal}: ${name} (${formatPct(quote.percent)})`,
-    body: `Contrato ${contract.number}: ${describeQuote(quote)}. Mensalidade ${formatCurrency(monthlyBefore)} → ${formatCurrency(monthlyAfter)} (aditivo ${amendment.number}); as cobranças em aberto da vigência foram refeitas. Avise o cliente.`,
-    href: `/financeiro/contratos/${contract.id}`,
-    entity: { type: "contract", id: contract.id },
+    title: (name) => `Reajuste aplicado${renewal}: ${name} (${formatPct(quote.percent)})`,
+    body: `Contrato ${contract.number}: ${describeQuote(quote)} (aditivo ${amendment.number}), vigente em ${dmy(anniversary)}; as cobranças em aberto foram refeitas com o novo valor. Avise o cliente.`,
   });
 }
 
@@ -190,7 +227,8 @@ export async function recordReadjustmentDecision(contractId: string, anniversary
     tx.update(ref, patch);
     return { entry, contract };
   });
-  const text = outcome === "mantido" ? `${details.quote ? describeQuote(details.quote) : "índice ≤ 0"}: mensalidade mantida em ${formatCurrency(contract.monthlyTotal)}` : `Reajuste dispensado pelo Financeiro${details.reason?.trim() ? `: ${details.reason.trim()}` : ""}`;
+  // O motivo (texto livre, pode citar valores) fica no payload: o histórico do contrato mostra a quem pode ver.
+  const text = outcome === "mantido" ? `${details.quote ? describeQuote(details.quote) : "índice ≤ 0"}: mensalidade mantida` : "Reajuste dispensado pelo Financeiro (motivo no registro)";
   await emitEvent({
     type: "contract.readjustment_skipped",
     actor,
@@ -201,15 +239,11 @@ export async function recordReadjustmentDecision(contractId: string, anniversary
     department: "financeiro",
     payload: { contractId: contract.id, anniversary, outcome, rawPercent: details.quote?.rawPercent ?? null, indexId: details.quote?.indexId ?? null, ...(details.reason?.trim() ? { reason: details.reason.trim() } : {}) },
   });
-  const { ids, client } = await recipients(contract);
-  await notify({
-    userIds: ids,
+  await notifyReadjustment(contract, {
     kind: "informativa",
     key: `reajuste_${outcome}_${contract.id}_${anniversary}`,
-    title: `Reajuste ${outcome === "mantido" ? "sem aumento" : "dispensado"}: ${client?.tradeName ?? contract.number}`,
+    title: (name) => `Reajuste ${outcome === "mantido" ? "sem aumento" : "dispensado"}: ${name}`,
     body: `Contrato ${contract.number}, data-base ${dmy(anniversary)}. ${text}.`,
-    href: `/financeiro/contratos/${contract.id}`,
-    entity: { type: "contract", id: contract.id },
   });
   return entry;
 }
@@ -248,22 +282,23 @@ export async function getContractReadjustmentView(contract: Contract, amendments
     startDate: contract.startDate ? dateKey(contract.startDate) : undefined,
     indexId: index?.id,
     state: hide ? { ...state, monthlyBefore: undefined, monthlyAfter: undefined } : state,
-    log: hide ? log.map((e) => ({ ...e, monthlyBefore: undefined, monthlyAfter: undefined })) : log,
+    log: hide ? redactReadjustmentLog(log) : log,
   };
 }
 
 /**
  * Financeiro aplica o reajuste agora: da data-base que chegou ou da próxima (até 60 dias antes). Sem `percent`, usa o
- * cálculo (índice/percentual do contrato); com `percent`, o informado (fica marcado como manual).
+ * cálculo (índice/percentual do contrato) — índice ≤ 0 com «manter» registra «sem aumento»; com `percent`, o
+ * informado (fica marcado como manual).
  */
-export async function applyReadjustmentNow(input: { contractId: string; anniversary: string; percent?: number }, actor: UserRef): Promise<{ amendmentNumber: string; monthlyBefore: number; monthlyAfter: number }> {
+export async function applyReadjustmentNow(input: { contractId: string; anniversary: string; percent?: number }, actor: UserRef): Promise<{ amendmentNumber?: string; monthlyBefore: number; monthlyAfter: number }> {
   const { contract, ctx } = await loadContext(input.contractId);
   if (contract.status !== "liberado") throw new BusinessError("O reajuste anual vale para contrato liberado");
   const state = contractReadjustmentState(contract, ctx);
   if (state.anniversary !== input.anniversary) throw new BusinessError("A data-base do reajuste mudou: recarregue a página");
-  if (state.status === "renovacao") throw new BusinessError("Essa data-base é a da renovação: o reajuste entra no aditivo de renovação");
-  if (state.status === "bloqueado" && state.blockingAmendment) throw new BusinessError(`Aplique ou cancele o aditivo ${state.blockingAmendment} antes`);
-  if ((state.days ?? 0) < -EARLY_APPLY_DAYS) throw new BusinessError(`Dá para aplicar a partir de ${EARLY_APPLY_DAYS} dias antes da data-base`);
+  if (state.status === "renovacao") throw new BusinessError("Essa data-base fica para a renovação: o reajuste entra no aditivo de renovação");
+  if (state.blockingAmendment) throw new BusinessError(`Aplique ou cancele o aditivo ${state.blockingAmendment} antes`);
+  if (!state.due && -(state.days ?? 0) > EARLY_APPLY_DAYS) throw new BusinessError(`Dá para aplicar a partir de ${EARLY_APPLY_DAYS} dias antes da data-base`);
   let quote: ReadjustmentQuote;
   if (input.percent !== undefined) {
     const p = Math.round(input.percent * 100) / 100;
@@ -274,7 +309,10 @@ export async function applyReadjustmentNow(input: { contractId: string; annivers
   } else {
     if (!state.quote) throw new BusinessError(`${state.message} Informe o percentual para aplicar agora.`);
     quote = state.quote;
-    if (quote.percent === 0) throw new BusinessError("O índice do período deu zero ou negativo: use «Não reajustar» (o valor fica igual)");
+    if (quote.percent === 0) {
+      await recordReadjustmentDecision(contract.id, input.anniversary, "mantido", { quote }, actor);
+      return { monthlyBefore: contract.monthlyTotal, monthlyAfter: contract.monthlyTotal };
+    }
   }
   const r = await applyReadjustment(contract, input.anniversary, quote, actor, "financeiro");
   return { amendmentNumber: r.amendment.number, monthlyBefore: r.monthlyBefore, monthlyAfter: r.monthlyAfter };
@@ -299,6 +337,8 @@ export interface ContractReadjustmentRunResult {
   waiting: number;
   notices: number;
   lateTasks: number;
+  /** Ficaram para a próxima rotina (orçamento de tempo esgotado). */
+  deferred: number;
   errors: string[];
   appliedContractIds: string[];
 }
@@ -331,7 +371,8 @@ async function ensureLateTask(existing: Task[], contract: Contract, client: Clie
 export async function runContractReadjustments(now: Date = new Date()): Promise<ContractReadjustmentRunResult> {
   const today = dateKey(now);
   const contracts = (await list<Contract>(COLLECTIONS.contracts, { where: [["status", "==", "liberado"]] })).filter((c) => hasReadjustmentRule(c) && c.startDate);
-  const result: ContractReadjustmentRunResult = { contracts: contracts.length, applied: 0, held: 0, waiting: 0, notices: 0, lateTasks: 0, errors: [], appliedContractIds: [] };
+  const result: ContractReadjustmentRunResult = { contracts: contracts.length, applied: 0, held: 0, waiting: 0, notices: 0, lateTasks: 0, deferred: 0, errors: [], appliedContractIds: [] };
+  const deadline = Date.now() + RUN_BUDGET_MS;
   if (contracts.length === 0) return result;
   const ids = contracts.map((c) => c.id);
   const [indices, clients, allAmendments, tasks] = await Promise.all([
@@ -345,26 +386,33 @@ export async function runContractReadjustments(now: Date = new Date()): Promise<
     if (!client || client.status === "cancelado") continue;
     try {
       const amendments = allAmendments.filter((a) => a.contractId === c.id);
-      // Reajuste automático que ficou em rascunho (falha entre criar e aplicar): aplica de novo.
+      // Reajuste automático que ficou em rascunho (falha entre criar e aplicar): aplica de novo — ou cancela, se o
+      // contrato mudou depois (outra versão) ou a data-base já foi decidida por outro caminho; a rotina recria.
       const stuck = amendments.find((a) => a.status === "rascunho" && a.readjust && !a.requiresSignature && a.source === "reajuste_automatico");
       if (stuck) {
+        const decided = (c.readjustmentLog ?? []).some((e) => sameMonth(e.anniversary, stuck.readjust!.anniversary));
         try {
+          if (decided || stuck.before.version !== c.version) throw new BusinessError(decided ? "data-base já decidida" : `contrato mudou (v${stuck.before.version} → v${c.version})`);
           await applyAmendment(stuck.id, SYSTEM_ACTOR);
           result.applied += 1;
           result.appliedContractIds.push(c.id);
         } catch (error) {
-          // O contrato mudou depois do rascunho (outra versão): cancela; a próxima rotina recalcula e cria de novo.
-          await cancelAmendment(stuck.id, `Rascunho de reajuste desatualizado: ${error instanceof Error ? error.message : String(error)}`.slice(0, 480), SYSTEM_ACTOR);
-          result.errors.push(`${c.number}: rascunho de reajuste ${stuck.number} cancelado (${error instanceof Error ? error.message : String(error)})`);
+          const why = error instanceof Error ? error.message : String(error);
+          await cancelAmendment(stuck.id, `Rascunho de reajuste desatualizado: ${why}`.slice(0, 480), SYSTEM_ACTOR);
+          result.errors.push(`${c.number}: rascunho de reajuste ${stuck.number} cancelado (${why})`);
         }
         continue;
       }
       const state = contractReadjustmentState(c, { indices, amendments, today });
       const anniversary = state.anniversary;
       if (!anniversary) continue;
-      const due = (state.days ?? -1) >= 0;
-      if (due) {
+      if (state.due) {
         if (state.status === "pronto" && state.quote) {
+          // Orçamento de tempo da rotina (cron de 60 s): o que sobrar fica para amanhã, dentro da folga.
+          if (Date.now() > deadline) {
+            result.deferred += 1;
+            continue;
+          }
           if (state.quote.percent === 0) {
             await recordReadjustmentDecision(c.id, anniversary, "mantido", { quote: state.quote }, SYSTEM_ACTOR);
             result.held += 1;
@@ -374,23 +422,19 @@ export async function runContractReadjustments(now: Date = new Date()): Promise<
             result.appliedContractIds.push(c.id);
           }
         } else if (state.status === "aguardando_indice") result.waiting += 1;
-        else if (state.status === "atrasado" || (state.status === "bloqueado" && (state.days ?? 0) > READJUSTMENT_GRACE_DAYS) || (state.status === "bloqueado" && !state.blockingAmendment)) {
+        else if (state.status === "atrasado" || (state.status === "bloqueado" && (!state.blockingAmendment || (state.days ?? 0) > READJUSTMENT_GRACE_DAYS))) {
           if (await ensureLateTask(tasks, c, client, anniversary, state.message)) result.lateTasks += 1;
         }
       } else if ((state.status === "previsto" || state.status === "aguardando_indice") && -(state.days ?? 0) <= READJUSTMENT_NOTICE_DAYS) {
-        const { ids: userIds } = await recipients(c);
         const index = c.readjustment?.type === "indice" && c.readjustment.index ? indices.get(c.readjustment.index) : undefined;
-        const preview = state.quote ? `${describeQuote(state.quote)} → mensalidade ${formatCurrency(state.monthlyBefore ?? c.monthlyTotal)} → ${formatCurrency(state.monthlyAfter ?? c.monthlyTotal)} (prévia)` : "prévia ainda sem o índice do período";
-        const sent = await notify({
-          userIds,
+        const preview = state.quote ? `prévia ${describeQuote(state.quote)}` : "prévia ainda sem o índice do período";
+        const sent = await notifyReadjustment(c, {
           kind: "acao",
           key: `reajuste_previa_${c.id}_${anniversary}`,
-          title: `Reajuste em ${dmy(anniversary)}: ${client.tradeName}`,
-          body: `Contrato ${c.number} (${index ? `${index.name} · ${describeIndexSource(index.source)}` : describeReadjustment(c.readjustment)}): ${preview}. Entra sozinho na data-base; avise o cliente.`,
-          href: `/financeiro/contratos/${c.id}`,
-          entity: { type: "contract", id: c.id },
+          title: (name) => `Reajuste em ${dmy(anniversary)}: ${name}`,
+          body: `Contrato ${c.number} (${index ? `${index.name} · ${describeIndexSource(index.source)}` : describeReadjustment(c.readjustment)}): ${preview}. Entra sozinho na data-base com o índice publicado até lá; avise o cliente.`,
         });
-        if (sent.length > 0) result.notices += 1;
+        if (sent > 0) result.notices += 1;
       }
     } catch (error) {
       result.errors.push(`${c.number}: ${error instanceof Error ? error.message : String(error)}`);

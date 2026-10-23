@@ -566,6 +566,8 @@ export interface ContractReadjustment {
   percent?: number;
   /** Id do índice no cadastro (`readjustment_indices`): "ipca", "igpm", "inpc", "igpdi", "icti" ou um cadastrado. */
   index?: string;
+  /** Nome do índice quando foi escolhido (documento, portal e «de → para» mostram o nome, não o id). */
+  indexName?: string;
   /** Renovação aplicada antes de o índice do período sair: o reajuste entra sozinho quando o índice for publicado. */
   pending?: boolean;
 }
@@ -592,6 +594,8 @@ export interface ReadjustmentQuote {
 export interface AmendmentReadjust extends ReadjustmentQuote {
   /** Data-base coberta (AAAA-MM-DD). */
   anniversary: string;
+  /** Renovação na data-base com «Sem reajuste» escolhido: a data-base fica decidida como dispensada (percent 0). */
+  waived?: boolean;
 }
 
 /** Decisão sobre o reajuste de uma data-base (fora do snapshot: não entra no hash nem no «de → para»). */
@@ -925,6 +929,11 @@ export interface Contract extends BaseEntity {
   noticeDays?: number;
   /** Reajustes anuais decididos, por data-base (aplicado, mantido ou dispensado). Fora do snapshot e do hash. */
   readjustmentLog?: ContractReadjustmentLogEntry[];
+  /**
+   * Quando a regra de reajuste mudou por aditivo (AAAA-MM-DD). Data-base anterior a isso não é aplicada sozinha: o
+   * Financeiro decide (a regra nova vale da próxima data-base em diante).
+   */
+  readjustmentRuleSince?: string;
   // Aditivos e versões (D25) — opcionais.
   /** Aditivos APLICADOS a este contrato, na ordem (`contract_amendments`). */
   amendmentIds?: string[];
@@ -1018,6 +1027,11 @@ export interface ContractAmendment extends BaseEntity {
   readjustment?: ContractReadjustment;
   /** Reajuste anual aplicado por este aditivo e a data-base que ele cobre. */
   readjust?: AmendmentReadjust;
+  /**
+   * Renovação criada com o reajuste anual por data-base (sem esta marca = renovação antiga, quando o reajuste era
+   * decidido na própria renovação: conta como data-base decidida).
+   */
+  annualModel?: boolean;
   /** Renovação: meses acrescentados à vigência (mensalidades a gerar na aplicação). */
   renewalMonths?: number;
   /** Cobranças refeitas na aplicação (canceladas → recriadas com a mesma numeração). */

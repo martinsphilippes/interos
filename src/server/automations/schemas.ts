@@ -62,6 +62,7 @@ export const SWEEP_KEYS = [
   "followup_vendas",
   "oportunidades_paradas",
   "leads_sem_contato_24h",
+  "indices_reajuste",
   "renovacoes",
   "reajustes_contratos",
   "saude_clientes",
@@ -77,7 +78,6 @@ export const SWEEP_KEYS = [
   "cobrancas_recorrentes",
   "contas_recorrentes",
   "contas_a_pagar_vencidas",
-  "indices_reajuste",
 ] as const;
 export type SweepKey = (typeof SWEEP_KEYS)[number];
 
@@ -141,7 +141,7 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   indices_reajuste: {
     label: "Índices de reajuste",
     description:
-      "Financeiro: busca os meses novos dos índices do cadastro (IPCA, IGP-M, INPC e IGP-DI no Banco Central; ICTI na planilha do IPEA; séries SGS cadastradas) só quando pode haver mês novo. Um mês novo atualiza na hora a prévia de todos os contratos indexados; o reajuste entra na data-base de cada um. Fica por último na rotina (depende de sites externos).",
+      "Financeiro: busca os meses novos dos índices do cadastro (IPCA, IGP-M, INPC e IGP-DI no Banco Central; ICTI na planilha do IPEA; séries SGS cadastradas) só quando pode haver mês novo. Um mês novo atualiza na hora a prévia de todos os contratos indexados; o reajuste entra na data-base de cada um. Roda antes de Renovações e do Reajuste anual (eles usam o índice do dia); cada fonte tem limite de 15 s.",
     schedule: "diaria",
   },
 };

@@ -174,7 +174,7 @@ export function clientSafeContract(contract: Contract): Contract {
     setupInstallments: contract.setupInstallments,
     autoRenew: contract.autoRenew,
     renewalTermMonths: contract.renewalTermMonths,
-    readjustment: contract.readjustment ? { type: contract.readjustment.type, percent: contract.readjustment.percent, index: contract.readjustment.index } : undefined,
+    readjustment: contract.readjustment ? { type: contract.readjustment.type, percent: contract.readjustment.percent, index: contract.readjustment.index, indexName: contract.readjustment.indexName } : undefined,
     noticeDays: contract.noticeDays,
   };
 }

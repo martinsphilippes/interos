@@ -31,7 +31,8 @@ import {
   summarizeIndex,
   type ReadjustmentIndexOption,
 } from "@/domain/readjustment";
-import { COLLECTIONS, type Contract, type ContractReadjustment, type ReadjustmentIndex, type ReadjustmentIndexMonth, type ReadjustmentIndexSource, type UserRef } from "@/domain/types";
+import { AMENDMENT_OPEN_STATUSES } from "@/domain/contract-snapshot";
+import { COLLECTIONS, type Contract, type ContractAmendment, type ContractReadjustment, type ReadjustmentIndex, type ReadjustmentIndexMonth, type ReadjustmentIndexSource, type UserRef } from "@/domain/types";
 import { fetchIctiMonthly, fetchSgsMonthly, IndexSourceError } from "@/server/integrations/indices";
 
 const SYSTEM: UserRef = { id: "system", name: "INTEROS (automação)" };
@@ -40,7 +41,7 @@ const REFETCH_AFTER_DAYS = 7;
 /** Aviso ao Financeiro quando a busca falha há N dias. */
 const FAILURE_NOTICE_DAYS = 3;
 /** Tempo máximo de cada fonte na varredura (todas em paralelo). */
-const SOURCE_DEADLINE_MS = 20_000;
+const SOURCE_DEADLINE_MS = 15_000;
 /** Meses buscados no Banco Central a cada vez (2 anos: cobre o acumulado e revisões). */
 const SGS_WINDOW_MONTHS = 24;
 
@@ -90,15 +91,17 @@ export async function countIndexedContracts(): Promise<Map<string, Contract[]>> 
 }
 
 /**
- * Confere o reajuste escolhido numa tela (venda, condições, aditivo, renovação): índice precisa existir e estar ativo
- * — exceto quando é o mesmo que o registro já usa (`current`), para não travar a edição de outros campos.
+ * Confere o reajuste escolhido numa tela (venda, condições, aditivo, renovação) e devolve o que gravar: índice precisa
+ * existir e estar ativo — exceto quando é o mesmo que o registro já usa (`current`), para não travar a edição de outros
+ * campos — e leva o nome do índice (`indexName`), que o documento e o portal mostram.
  */
-export async function assertReadjustmentAllowed(r: ContractReadjustment | undefined, current?: ContractReadjustment): Promise<void> {
-  if (!r || r.type !== "indice") return;
+export async function normalizeReadjustment<T extends ContractReadjustment | undefined>(r: T, current?: ContractReadjustment): Promise<T> {
+  if (!r || r.type !== "indice") return r;
   if (!r.index) throw new BusinessError("Escolha o índice do reajuste");
   const index = (await getReadjustmentIndexMap()).get(r.index);
   if (!index) throw new BusinessError("Índice de reajuste não encontrado no cadastro");
   if (index.archived && current?.index !== r.index) throw new BusinessError(`O índice ${index.name} está desativado no cadastro de índices`);
+  return { ...r, indexName: index.name } as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,16 +168,22 @@ export async function saveReadjustmentIndex(input: ReadjustmentIndexInput, actor
     const audit = auditChanges(indexView(current), indexView(next), INDEX_FIELDS);
     if (Object.keys(audit.changes).length === 0) return { index: current, created: false };
     const ref = col(COLLECTIONS.readjustmentIndices).doc(current.id);
-    const patch: Record<string, unknown> = { name, description: description ?? FieldValue.delete(), source, negativePolicy: input.negativePolicy, updatedBy: actor.id, updatedAt: nowIso() };
-    // Fonte nova: os meses da fonte antiga deixam de valer (os lançados à mão ficam); a próxima busca traz os novos.
-    if (changedSource) {
-      for (const [k, v] of Object.entries(current.values)) if (v.source !== "manual") patch[`values.${k}`] = FieldValue.delete();
-      patch.lastFetchAt = FieldValue.delete();
-      patch.lastFetchOk = FieldValue.delete();
-      patch.lastFetchError = FieldValue.delete();
-      patch.failingSince = FieldValue.delete();
-    }
-    await ref.update(patch);
+    await docdb.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const doc = snap.data() as Omit<ReadjustmentIndex, "id"> | undefined;
+      if (!doc) throw new BusinessError("Índice não encontrado");
+      const patch: Record<string, unknown> = { name, description: description ?? FieldValue.delete(), source, negativePolicy: input.negativePolicy, updatedBy: actor.id, updatedAt: nowIso() };
+      // Fonte nova: os meses da fonte antiga deixam de valer (os lançados à mão ficam); a próxima busca traz os novos.
+      // Lidos na transação: um mês gravado por uma busca em andamento também sai.
+      if (changedSource) {
+        for (const [k, v] of Object.entries(doc.values ?? {})) if (v.source !== "manual") patch[`values.${k}`] = FieldValue.delete();
+        patch.lastFetchAt = FieldValue.delete();
+        patch.lastFetchOk = FieldValue.delete();
+        patch.lastFetchError = FieldValue.delete();
+        patch.failingSince = FieldValue.delete();
+      }
+      tx.update(ref, patch);
+    });
     await emitEvent({ type: "readjustment_index.updated", actor, entity: { type: "readjustment_index", id: current.id }, title: `Índice ${name} alterado`, description: describeIndexAudit(audit), department: "financeiro", payload: { indexId: current.id, ...audit }, timeline: false });
     const saved = (await getById<ReadjustmentIndex>(COLLECTIONS.readjustmentIndices, current.id)) ?? next;
     const refresh = changedSource && source.kind !== "manual" ? (await refreshReadjustmentIndices({ force: true, ids: [current.id], actor })).items[0] : undefined;
@@ -202,7 +211,11 @@ export async function setReadjustmentIndexArchived(id: string, archived: boolean
   if (Boolean(current.archived) === archived) return current;
   if (archived) {
     const using = (await countIndexedContracts()).get(id) ?? [];
-    if (using.length > 0) throw new BusinessError(`O ${current.name} está em ${using.length} contrato(s) ativo(s) (${using.slice(0, 3).map((c) => c.number).join(", ")}${using.length > 3 ? "…" : ""}): troque o índice desses contratos antes de desativar`);
+    // Só a contagem: os números dos contratos podem estar fora do escopo de quem desativa.
+    if (using.length > 0) throw new BusinessError(`O ${current.name} está em ${using.length} contrato(s) ativo(s): troque o índice desses contratos (aba Índices › Ver meses lista os que você vê) antes de desativar`);
+    // Aditivo em andamento que passa um contrato para este índice também segura a desativação.
+    const open = (await list<ContractAmendment>(COLLECTIONS.contractAmendments, { where: [["status", "in", [...AMENDMENT_OPEN_STATUSES]]] })).filter((a) => a.after?.readjustment?.index === id || a.readjustment?.index === id);
+    if (open.length > 0) throw new BusinessError(`O ${current.name} está em ${open.length} aditivo(s) em andamento: aplique ou cancele antes de desativar`);
   } else {
     const dup = all.find((i) => !i.archived && i.id !== id && nameKey(i.name) === nameKey(current.name));
     if (dup) throw new BusinessError(`Já existe um índice ativo com o nome "${dup.name}"`);
@@ -277,6 +290,8 @@ export interface IndexRefreshItem {
   newMonths: string[];
   /** Meses que a fonte revisou (ou que substituíram lançamento manual). */
   revisedMonths: string[];
+  /** Meses lançados à mão que a fonte oficial substituiu por outro valor. */
+  replacedManual: { competence: string; manual: number; official: number }[];
   error?: string;
 }
 
@@ -312,8 +327,15 @@ async function fetchSource(index: ReadjustmentIndex, now: Date): Promise<Record<
 
 const sourceName = (s: ReadjustmentIndexSource) => (s.kind === "bcb_sgs" ? "Banco Central" : s.kind === "ipea_icti" ? "IPEA" : "fonte");
 
+async function markFetchError(index: ReadjustmentIndex, stamp: string, message: string): Promise<IndexRefreshItem> {
+  await col(COLLECTIONS.readjustmentIndices)
+    .doc(index.id)
+    .update({ lastFetchAt: stamp, lastFetchOk: false, lastFetchError: message.slice(0, 300), failingSince: index.failingSince ?? stamp, updatedAt: nowIso() });
+  return { id: index.id, name: index.name, status: "erro", newMonths: [], revisedMonths: [], replacedManual: [], error: message };
+}
+
 async function refreshOne(index: ReadjustmentIndex, now: Date, force: boolean): Promise<IndexRefreshItem> {
-  const base: IndexRefreshItem = { id: index.id, name: index.name, status: "em_dia", newMonths: [], revisedMonths: [] };
+  const base: IndexRefreshItem = { id: index.id, name: index.name, status: "em_dia", newMonths: [], revisedMonths: [], replacedManual: [] };
   if (index.source.kind === "manual") return { ...base, status: "manual" };
   if (!force && !indexNeedsFetch(index, now)) return base;
   const ref = col(COLLECTIONS.readjustmentIndices).doc(index.id);
@@ -323,28 +345,36 @@ async function refreshOne(index: ReadjustmentIndex, now: Date, force: boolean): 
     fetched = await fetchSource(index, now);
   } catch (error) {
     const message = `${sourceName(index.source)}: ${error instanceof Error ? error.message : String(error)}${index.source.kind === "bcb_sgs" && /tempo|demorou/.test(String((error as Error)?.message)) ? " (confira o código da série)" : ""}`;
-    await ref.update({ lastFetchAt: stamp, lastFetchOk: false, lastFetchError: message.slice(0, 300), failingSince: index.failingSince ?? stamp, updatedAt: nowIso() });
-    return { ...base, status: "erro", error: message };
+    return markFetchError(index, stamp, message);
   }
+  // Série mensal válida sempre tem valores numa janela de 2 anos: vazio = código errado ou série parada.
+  if (Object.keys(fetched).length === 0) return markFetchError(index, stamp, `${sourceName(index.source)}: a série não tem valores nos últimos ${SGS_WINDOW_MONTHS} meses (confira o código da série)`);
   const kind = index.source.kind;
   const result = await docdb.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    const current = (snap.data() as Omit<ReadjustmentIndex, "id"> | undefined)?.values ?? {};
+    const doc = snap.data() as Omit<ReadjustmentIndex, "id"> | undefined;
+    // A fonte mudou enquanto a busca rodava (alguém trocou a série): descarta o resultado da fonte antiga.
+    if (!doc || !sameSource(doc.source, index.source)) return null;
+    const current = doc.values ?? {};
     const patch: Record<string, unknown> = { lastFetchAt: stamp, lastFetchOk: true, lastFetchError: FieldValue.delete(), failingSince: FieldValue.delete(), updatedAt: nowIso() };
     const newMonths: string[] = [];
     const revisedMonths: string[] = [];
+    const replacedManual: IndexRefreshItem["replacedManual"] = [];
     for (const [competence, pct] of Object.entries(fetched)) {
       if (!isCompetence(competence) || !Number.isFinite(pct)) continue;
       const existing = current[competence];
       if (existing && existing.source === kind && Math.abs(existing.pct - pct) < 1e-9) continue;
-      if (existing) revisedMonths.push(competence);
-      else newMonths.push(competence);
+      if (existing) {
+        revisedMonths.push(competence);
+        if (existing.source === "manual" && Math.abs(existing.pct - pct) >= 0.005) replacedManual.push({ competence, manual: existing.pct, official: pct });
+      } else newMonths.push(competence);
       patch[`values.${competence}`] = { pct, source: kind, at: stamp } satisfies ReadjustmentIndexMonth;
     }
     tx.update(ref, patch);
-    return { newMonths: newMonths.sort(), revisedMonths: revisedMonths.sort(), values: { ...current, ...Object.fromEntries(newMonths.concat(revisedMonths).map((c) => [c, { pct: fetched[c], source: kind, at: stamp }])) } };
+    return { newMonths: newMonths.sort(), revisedMonths: revisedMonths.sort(), replacedManual };
   });
-  return { ...base, status: result.newMonths.length || result.revisedMonths.length ? "atualizado" : "sem_novidade", newMonths: result.newMonths, revisedMonths: result.revisedMonths };
+  if (!result) return { ...base, status: "sem_novidade" };
+  return { ...base, status: result.newMonths.length || result.revisedMonths.length ? "atualizado" : "sem_novidade", newMonths: result.newMonths, revisedMonths: result.revisedMonths, replacedManual: result.replacedManual };
 }
 
 export interface IndexRefreshResult {
@@ -362,7 +392,12 @@ export async function refreshReadjustmentIndices(options: { now?: Date; force?: 
   const now = options.now ?? new Date();
   const actor = options.actor ?? SYSTEM;
   const indices = (await listReadjustmentIndices()).filter((i) => !i.archived && (!options.ids || options.ids.includes(i.id)));
-  const items = await Promise.all(indices.map((i) => refreshOne(i, now, options.force === true)));
+  // Um índice que falha (rede, banco) não derruba os outros: vira «erro» só dele.
+  const items = await Promise.all(
+    indices.map((i) =>
+      refreshOne(i, now, options.force === true).catch((error): IndexRefreshItem => ({ id: i.id, name: i.name, status: "erro", newMonths: [], revisedMonths: [], replacedManual: [], error: error instanceof Error ? error.message : String(error) })),
+    ),
+  );
   const changed = items.filter((i) => i.status === "atualizado");
   const failing = items.filter((i) => i.status === "erro");
   if (changed.length > 0 || failing.length > 0) {
@@ -384,13 +419,26 @@ export async function refreshReadjustmentIndices(options: { now?: Date; force?: 
         payload: { indexId: item.id, newMonths: item.newMonths, revisedMonths: item.revisedMonths, months, latest: summary.latest, accumulated12m: acc, contracts },
         timeline: false,
       });
-      const latest = summary.latest?.competence;
+      // «Último mês» do aviso = o último OFICIAL (um mês lançado à mão mais novo não esconde a publicação).
+      const official = summarizeIndex(Object.fromEntries(Object.entries(index.values).filter(([, v]) => v.source !== "manual")));
+      const latest = official.latest?.competence;
+      if (manager && contracts > 0 && item.replacedManual.length > 0) {
+        await notify({
+          userIds: [manager.id],
+          kind: "atencao",
+          key: `indice_manual_${item.id}_${item.replacedManual.map((r) => r.competence).join("_")}`,
+          title: `${index.name}: valor oficial diferente do lançado à mão`,
+          body: `${item.replacedManual.map((r) => `${competenceLabel(r.competence)}: lançado ${formatPct(r.manual)}, oficial ${formatPct(r.official)}`).join(" · ")}. Reajustes já aplicados com o valor lançado não mudam sozinhos: confira os contratos que usam o ${index.name}.`,
+          href: `/financeiro/cadastros?aba=indices&item=${item.id}`,
+          entity: { type: "readjustment_index", id: item.id },
+        });
+      }
       if (manager && contracts > 0 && latest && item.newMonths.includes(latest)) {
         await notify({
           userIds: [manager.id],
           kind: "informativa",
           key: `indice_${item.id}_${latest}`,
-          title: `${index.name} de ${competenceLabel(latest)} publicado: ${formatPct(summary.latest!.pct)}${acc ? ` · 12 meses: ${formatPct(acc.pct)}` : ""}`,
+          title: `${index.name} de ${competenceLabel(latest)} publicado: ${formatPct(official.latest!.pct)}${official.accumulated12m ? ` · 12 meses: ${formatPct(official.accumulated12m.pct)}` : ""}`,
           body: `${contracts} contrato(s) usam o ${index.name}: a prévia do próximo reajuste de cada um já usa o valor novo. O reajuste entra sozinho na data-base de cada contrato.`,
           href: `/financeiro/cadastros?aba=indices&item=${item.id}`,
           entity: { type: "readjustment_index", id: item.id },

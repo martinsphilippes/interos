@@ -45,7 +45,7 @@ export const READJUSTMENT_TYPE_LABELS: Record<ContractReadjustment["type"], stri
 export function describeReadjustment(r: ContractReadjustment | undefined, names?: Readonly<Record<string, string>>): string {
   if (!r || r.type === "nenhum") return "Sem reajuste";
   if (r.type === "percentual") return `${String(r.percent ?? 0).replace(".", ",")}%`;
-  return `${r.index ? indexDisplayName(r.index, names) : "Índice"}${r.pending ? " (aguardando o índice)" : ""}`;
+  return `${r.index ? (names?.[r.index] ?? r.indexName ?? indexDisplayName(r.index)) : "Índice"}${r.pending ? " (aguardando o índice)" : ""}`;
 }
 
 /** Campos do contrato que o snapshot (e o hash do documento) cobrem. */

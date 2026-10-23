@@ -40,8 +40,9 @@ Formas de execução:
    agenda `0 9 * * *` (06:00 em Brasília) porque o plano **Hobby só permite cron diário**. Em planos pagos,
    basta trocar o schedule (ex.: `0 * * * *`) para cumprir as frequências horárias. No Hobby o cron dispara em
    qualquer minuto da hora marcada: por isso a varredura vence com uma folga (`dueInterval`: frequência − 10%, até
-   2 h) — 09:40 num dia e 09:10 no outro não pula o segundo dia. `indices_reajuste` é a última da lista (depende de
-   sites externos; cada fonte tem limite de tempo) e `reajustes_contratos` roda logo depois de `renovacoes`.
+   2 h) — 09:40 num dia e 09:10 no outro não pula o segundo dia. `indices_reajuste` roda antes de `renovacoes` e
+   `reajustes_contratos` (eles usam o índice do dia; cada fonte tem limite de 15 s e, na maioria dos dias, nada é
+   buscado) e `reajustes_contratos` tem orçamento de 25 s (o que sobrar fica para o dia seguinte, dentro da folga).
 2. **Botão "Executar varreduras agora"** em `/admin/automacoes` (força todas ou uma a uma).
 3. **De forma preguiçosa ao abrir as telas**, como os módulos já fazem: Central de Vendas (follow-up, 1x/h),
    `/cs/saude` e `/cs/renovacoes` (1x/dia), Central de Suporte (SLA de chamados, a cada 10 min). As

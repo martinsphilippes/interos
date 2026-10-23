@@ -23,7 +23,7 @@ type Variant = "default" | "success" | "warning" | "danger" | "info" | "brand" |
 
 const STATUS: Record<ReadjustmentStatus, { label: string; variant: Variant }> = {
   previsto: { label: "Previsto", variant: "info" },
-  pronto: { label: "Entra hoje", variant: "brand" },
+  pronto: { label: "Na próxima rotina", variant: "brand" },
   aguardando_indice: { label: "Aguardando o índice", variant: "warning" },
   atrasado: { label: "Atrasado", variant: "danger" },
   bloqueado: { label: "Travado", variant: "warning" },
@@ -63,10 +63,12 @@ export function ContractReadjustmentCard({ contractId, rule, startDate, state, l
   const { pending, run } = useFinanceAction();
   const [applying, setApplying] = React.useState(false);
   const [skipping, setSkipping] = React.useState(false);
-  const status = STATUS[state.status];
+  const held = Boolean(state.quote && state.quote.percent === 0);
+  const status = held && (state.status === "pronto" || state.status === "previsto") ? { label: "Sem aumento", variant: "muted" as Variant } : STATUS[state.status];
   const anniversary = state.anniversary;
   const money = (v: number | undefined) => (hideValues || v === undefined ? "Restrito" : formatCurrency(v));
-  const canApply = access.contracts.readjustApply && state.canApply && Boolean(anniversary);
+  // Índice ≤ 0 com «manter»: o botão registra «sem aumento» (sem aditivo) — também exige a chave de aplicar.
+  const canApply = access.contracts.readjustApply && (state.canApply || (held && state.due && state.canSkip)) && Boolean(anniversary);
   const canSkip = access.contracts.readjustSkip && state.canSkip && Boolean(anniversary);
 
   return (
@@ -117,7 +119,7 @@ export function ContractReadjustmentCard({ contractId, rule, startDate, state, l
             <div className="flex flex-wrap gap-2 pt-1">
               {canApply ? (
                 <Button size="sm" className="h-10 md:h-8" onClick={() => setApplying(true)}>
-                  <TrendingUp /> Aplicar reajuste
+                  <TrendingUp /> {held ? "Registrar sem aumento" : "Aplicar reajuste"}
                 </Button>
               ) : null}
               {canSkip ? (
@@ -173,7 +175,8 @@ export function ContractReadjustmentCard({ contractId, rule, startDate, state, l
 function ApplyDialog({ contractId, anniversary, state, hideValues, onClose }: { contractId: string; anniversary: string; state: ContractReadjustmentState; hideValues: boolean; onClose: () => void }) {
   const id = React.useId();
   const { pending, run } = useFinanceAction();
-  const [manual, setManual] = React.useState(!state.quote || state.quote.percent === 0);
+  const held = Boolean(state.quote && state.quote.percent === 0);
+  const [manual, setManual] = React.useState(!state.quote);
   const [percent, setPercent] = React.useState(state.quote && state.quote.percent !== 0 ? String(state.quote.percent).replace(".", ",") : "");
   const value = Number(percent.trim().replace(",", "."));
   const valid = !manual || (Number.isFinite(value) && value !== 0 && Math.abs(value) <= 100);
@@ -181,20 +184,21 @@ function ApplyDialog({ contractId, anniversary, state, hideValues, onClose }: { 
   const submit = () =>
     void run(
       () => applyContractReadjustmentAction({ contractId, anniversary, ...(manual ? { percent: value } : {}) }),
-      (d) => `Reajuste aplicado (aditivo ${d.amendmentNumber})${hideValues ? "" : `: ${formatCurrency(d.monthlyBefore)} → ${formatCurrency(d.monthlyAfter)}`}`,
+      (d) => (d.amendmentNumber ? `Reajuste aplicado (aditivo ${d.amendmentNumber})${hideValues ? "" : `: ${formatCurrency(d.monthlyBefore)} → ${formatCurrency(d.monthlyAfter)}`}` : "Data-base registrada sem aumento"),
       () => onClose(),
     );
   return (
     <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
       <DialogContent size="sm">
         <DialogHeader>
-          <DialogTitle>Aplicar o reajuste da data-base {day(anniversary)}</DialogTitle>
+          <DialogTitle>{held ? "Reajuste" : "Aplicar o reajuste"} da data-base {day(anniversary)}</DialogTitle>
           <DialogDescription>
             Cria e aplica um aditivo de reajuste (sem assinatura: o reajuste já está no contrato), vigente na data-base. As mensalidades em aberto a partir dela são refeitas com o novo valor.{early ? " A data-base ainda não chegou: o valor passa a valer só nela." : ""}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-4">
           {state.quote ? <p className="rounded-md bg-info-soft px-3 py-2 text-sm">{describeQuote(state.quote)}</p> : <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning-fg">{state.message}</p>}
+          {held && !manual ? <p className="text-sm text-muted">O acumulado do período não dá aumento: confirmar registra a data-base «sem aumento» (sem aditivo). Para reajustar mesmo assim, informe o percentual.</p> : null}
           {state.quote ? <Switch label="Informar outro percentual" description="Use quando o combinado com o cliente for diferente do índice (fica registrado como informado pelo Financeiro)." checked={manual} onCheckedChange={setManual} className="w-full rounded-lg border border-border px-3 py-2" /> : null}
           {manual ? (
             <FormField label="Percentual do reajuste (%)" htmlFor={`${id}-p`} required hint="Negativo reduz a mensalidade">
@@ -207,7 +211,7 @@ function ApplyDialog({ contractId, anniversary, state, hideValues, onClose }: { 
             Cancelar
           </Button>
           <Button onClick={submit} loading={pending} disabled={!valid}>
-            Aplicar reajuste
+            {held && !manual ? "Registrar sem aumento" : "Aplicar reajuste"}
           </Button>
         </DialogFooter>
       </DialogContent>
