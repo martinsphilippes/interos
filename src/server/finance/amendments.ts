@@ -31,7 +31,7 @@ import {
   SNAPSHOT_FIELDS,
 } from "@/domain/contract-snapshot";
 import { COLLECTIONS, type AmendmentReadjust, type Billing, type Client, type Contract, type ContractAmendment, type ContractReadjustment, type ContractReadjustmentLogEntry, type ContractSignerEntry, type ContractSnapshot, type Document, type ItemSince, type Product, type ProposalItem, type UserRef } from "@/domain/types";
-import { addCompetence, addDaysKey, addMonthsClamped, coveredAnniversaries, formatPct, hasReadjustmentRule, MAX_AUTO_PERCENT, quoteReadjustment, READJUSTMENT_NOTICE_DAYS, readjustmentFloor, readjustmentSchedule, sameReadjustmentRule } from "@/domain/readjustment";
+import { addCompetence, addDaysKey, addMonthsClamped, coveredAnniversaries, formatPct, hasReadjustmentRule, MAX_AUTO_PERCENT, nextReadjustmentGaps, quoteReadjustment, READJUSTMENT_NOTICE_DAYS, readjustmentFloor, readjustmentSchedule, sameReadjustmentRule } from "@/domain/readjustment";
 import { BusinessError } from "@/server/auth/error-classes";
 import { getReadjustmentIndexMap, normalizeReadjustment } from "@/server/finance-registry/indices";
 import { billingDocId, dayInMonth, dueIso, lastRecurringBilling, recurringStep, round2, todayKey } from "./billing";
@@ -168,7 +168,7 @@ export interface CreateAmendmentOptions {
 function renewalAnniversary(contract: Contract, covered: readonly string[], effectiveFrom: string): { anniversary: string | null; blockedBy?: string; waiting?: string } {
   if (!contract.startDate) return { anniversary: covered.some((c) => c.slice(0, 7) === effectiveFrom.slice(0, 7)) ? null : effectiveFrom };
   const monthEnd = addMonthsClamped(`${effectiveFrom.slice(0, 7)}-31`, 0);
-  const base = { startDate: dateKey(contract.startDate), covered, today: monthEnd, notBefore: contract.readjustmentTrackedFrom };
+  const base = { startDate: dateKey(contract.startDate), covered, today: monthEnd, gaps: contract.readjustmentGaps };
   const own = readjustmentSchedule(base).due;
   if (!own || (contract.endDate && own.anniversary < dateKey(contract.endDate))) return { anniversary: null };
   if (hasReadjustmentRule(contract)) {
@@ -496,16 +496,20 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
       });
       patch.readjustmentLog = [...(current.readjustmentLog ?? []), entry];
     }
-    // Regra de reajuste trocada por aditivo: vale da próxima data-base em diante (as anteriores ficam para decisão).
-    // Regra INCLUÍDA num contrato que NUNCA teve (inclusive passar de cobrança única a recorrente): as datas-base
-    // anteriores não tinham o que decidir — o acompanhamento começa na vigência do aditivo. Regra reincluída depois de
-    // removida conta como troca: a data-base da regra antiga, se pendente, fica para o Financeiro.
+    // Regra de reajuste por aditivo (não vale para renovação nem reajuste):
+    // - trocada (havia e continua havendo regra, diferente): vale da próxima data-base em diante; a anterior pendente
+    //   fica para o Financeiro (`readjustmentRuleSince`);
+    // - incluída, removida (inclusive cobrança que virou única) ou reincluída: o período sem regra entra em
+    //   `readjustmentGaps` (datas-base nele não têm o que decidir); na reinclusão, a pendente da regra antiga (antes da
+    //   remoção) também fica para o Financeiro.
     if (!a.readjust && a.kind !== "renovacao") {
       const hadRule = hasReadjustmentRule(current);
       const hasRule = hasReadjustmentRule({ readjustment: a.after.readjustment, recurrence: a.after.recurrence });
-      const everHadRule = hadRule || Boolean(current.readjustmentRuleSince || current.readjustmentTrackedFrom) || (current.readjustmentLog?.length ?? 0) > 0;
-      if (!everHadRule && hasRule) patch.readjustmentTrackedFrom = a.effectiveFrom;
-      else if (!sameReadjustmentRule(current.readjustment, a.after.readjustment) || (!hadRule && hasRule)) patch.readjustmentRuleSince = a.effectiveFrom;
+      const gaps = nextReadjustmentGaps(current.readjustmentGaps, { hadRule, hasRule, effectiveFrom: a.effectiveFrom });
+      if (gaps) {
+        patch.readjustmentGaps = gaps.gaps;
+        if (gaps.reincluded) patch.readjustmentRuleSince = a.effectiveFrom;
+      } else if (hadRule && hasRule && !sameReadjustmentRule(current.readjustment, a.after.readjustment)) patch.readjustmentRuleSince = a.effectiveFrom;
     }
     tx.update(contractRef, stripUndefined(patch));
     tx.update(amendmentRef, { status: "aplicado", appliedAt: now, appliedBy: actor.id, appliedVersion: version, updatedAt: now });

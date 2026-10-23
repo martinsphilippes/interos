@@ -288,8 +288,11 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   contrato (`readjustmentFloor`: o mais tardio entre `READJUSTMENT_TRACKING_SINCE` e a criação do contrato) são
   decididas NA ORDEM — a seguinte espera a anterior, nenhuma some sem registro; antes disso, só a mais recente (a
   tarefa de atraso de uma data-base que ficou para trás ou foi decidida por outro caminho é cancelada pela rotina).
-  Regra INCLUÍDA por aditivo num contrato que não tinha (`readjustmentTrackedFrom`): datas-base anteriores não viram
-  pendência; regra TROCADA grava `readjustmentRuleSince`. Prévia sem o índice do período e prévia com o percentual
+  Períodos SEM regra efetiva ficam em `Contract.readjustmentGaps` (gravados pelo aditivo: regra incluída num contrato
+  que nunca teve → `{ to }`; removida ou cobrança que virou única → `{ from }`; reincluída → fecha o período e grava
+  `readjustmentRuleSince`, para a pendente da regra antiga ir ao Financeiro); datas-base dentro deles não viram
+  pendência nem travam as seguintes. Regra TROCADA (havia e continua havendo) grava `readjustmentRuleSince`. Tarefa de
+  data-base coberta por aditivo ainda em andamento não é cancelada. Prévia sem o índice do período e prévia com o percentual
   têm chaves próprias (a com número sai quando o índice é publicado). Cada
   data-base é decidida UMA vez:
   `Contract.readjustmentLog` (aplicado/mantido/dispensado; fora do snapshot e do hash), gravado na mesma transação do

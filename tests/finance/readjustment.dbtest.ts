@@ -430,7 +430,7 @@ describe("revisão 3: ordem das datas-base, regra incluída depois", () => {
     const a = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Inclui o reajuste", requiresSignature: false, conditions: { readjustment: { type: "indice", index: IDX } } }, ACTOR);
     await applyAmendment(a.id, ACTOR);
     const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
-    expect(after.readjustmentTrackedFrom).toBe(TODAY);
+    expect(after.readjustmentGaps).toEqual([{ to: TODAY }]);
     expect(after.readjustmentRuleSince).toBeUndefined();
     const view = await getContractReadjustmentView(after, await amendmentsOf(c.id), { hideValues: false });
     expect(view?.state.anniversary).not.toBe(past);
@@ -448,14 +448,55 @@ describe("revisão 3: ordem das datas-base, regra incluída depois", () => {
     const a = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Passa a mensal", requiresSignature: false, conditions: { recurrence: "mensal" } }, ACTOR);
     await applyAmendment(a.id, ACTOR);
     const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
-    expect(after.readjustmentTrackedFrom).toBe(TODAY);
+    expect(after.readjustmentGaps).toEqual([{ to: TODAY }]);
     const view = await getContractReadjustmentView(after, await amendmentsOf(c.id), { hideValues: false });
     expect(view?.state.anniversary).not.toBe(past);
     expect(view?.state.due).toBe(false);
   });
 
+  it("contrato sem regra com reajuste só na renovação: incluir a regra depois não cria pendência (o registro da renovação não conta como regra)", async () => {
+    const c = await contract("u2", { termMonths: 24, startDate: iso(start), endDate: iso(second), readjustment: { type: "nenhum" } });
+    const r = await createAmendment({ contractId: c.id, effectiveFrom: second, reason: "Renovação com 5% negociado", requiresSignature: false, renewal: { months: 12, readjustment: { type: "percentual", percent: 5 } } }, ACTOR, { source: "renovacao_cs" });
+    await applyAmendment(r.id, ACTOR);
+    const inc = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Inclui o reajuste", requiresSignature: false, conditions: { readjustment: { type: "indice", index: IDX } } }, ACTOR);
+    await applyAmendment(inc.id, ACTOR);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.readjustmentRuleSince).toBeUndefined();
+    expect(after.readjustmentGaps).toEqual([{ to: TODAY }]);
+  });
+
+  it("data-base que cai no período sem regra (removida e reincluída) não vira pendência", async () => {
+    const { start: s0, anniversary: inside } = baseFrom(-5);
+    const c = await contract("x2", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "percentual", percent: 5 } });
+    const off = await createAmendment({ contractId: c.id, effectiveFrom: daysFrom(TODAY, -10), reason: "Remove o reajuste", requiresSignature: false, conditions: { readjustment: { type: "nenhum" } } }, ACTOR);
+    await applyAmendment(off.id, ACTOR);
+    const on = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Volta o reajuste", requiresSignature: false, conditions: { readjustment: { type: "percentual", percent: 5 } } }, ACTOR);
+    await applyAmendment(on.id, ACTOR);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.readjustmentGaps).toEqual([{ from: daysFrom(TODAY, -10), to: TODAY }]);
+    const view = await getContractReadjustmentView(after, await amendmentsOf(c.id), { hideValues: false });
+    expect(view?.state.anniversary).not.toBe(inside);
+    expect(view?.state.due).toBe(false);
+    await runContractReadjustments(NOW);
+    expect((await list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", c.id]] })).filter((t) => t.title.startsWith("Reajuste não aplicado"))).toHaveLength(0);
+  });
+
+  it("mensal → única → mensal com data-base pendente antes: ela continua para o Financeiro", async () => {
+    const { start: s0, anniversary } = baseFrom(-3);
+    const c = await contract("x3", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "percentual", percent: 5 } });
+    const once = await createAmendment({ contractId: c.id, effectiveFrom: daysFrom(TODAY, -1), reason: "Cobrança única", requiresSignature: false, conditions: { recurrence: "unico" } }, ACTOR);
+    await applyAmendment(once.id, ACTOR);
+    const back = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Volta a mensal", requiresSignature: false, conditions: { recurrence: "mensal" } }, ACTOR);
+    await applyAmendment(back.id, ACTOR);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.readjustmentGaps).toEqual([{ from: daysFrom(TODAY, -1), to: TODAY }]);
+    expect(after.readjustmentRuleSince).toBe(TODAY);
+    const view = await getContractReadjustmentView(after, await amendmentsOf(c.id), { hideValues: false });
+    expect(view?.state).toMatchObject({ anniversary, status: "bloqueado" });
+  });
+
   it("regra removida e reincluída: a data-base pendente da regra antiga continua em foco (o Financeiro decide)", async () => {
-    const { start: s0, anniversary } = baseFrom(0);
+    const { start: s0, anniversary } = baseFrom(-3);
     const c = await contract("x", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "indice", index: IDX } });
     const off = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Remove o reajuste", requiresSignature: false, conditions: { readjustment: { type: "nenhum" } } }, ACTOR);
     await applyAmendment(off.id, ACTOR);
@@ -463,7 +504,7 @@ describe("revisão 3: ordem das datas-base, regra incluída depois", () => {
     const on = await createAmendment({ contractId: c.id, effectiveFrom: tomorrow, reason: "Volta o reajuste", requiresSignature: false, conditions: { readjustment: { type: "indice", index: IDX } } }, ACTOR);
     await applyAmendment(on.id, ACTOR);
     const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
-    expect(after.readjustmentTrackedFrom).toBeUndefined();
+    expect(after.readjustmentGaps).toEqual([{ from: TODAY, to: tomorrow }]);
     expect(after.readjustmentRuleSince).toBe(tomorrow);
     const view = await getContractReadjustmentView(after, await amendmentsOf(c.id), { hideValues: false });
     expect(view?.state).toMatchObject({ anniversary, status: "bloqueado" });
@@ -481,13 +522,20 @@ describe("revisão 3: ordem das datas-base, regra incluída depois", () => {
     expect(after.readjustment?.pending).toBeUndefined();
   });
 
-  it("aditivo em andamento: a rotina não cancela a tarefa de atraso de outra data-base", async () => {
-    const { start: s0 } = baseFrom(-3);
-    const c = await contract("z", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "percentual", percent: 5 } });
-    await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Muda o vencimento", requiresSignature: true, conditions: { billingDay: 20 } }, ACTOR);
-    const other = await createTaskInternal({ title: `Reajuste não aplicado: ACME ${RUN} (data-base 10/01/2020)`, clientId: CLIENT_ID, departmentId: "financeiro", priority: "alta", processType: "contract", processId: c.id, origin: "automacao" }, ACTOR);
+  it("tarefa de data-base coberta por aditivo em andamento fica; a de outra data-base (aditivo sem reajuste aberto) é cancelada", async () => {
+    // Renovação na data-base aguardando assinatura: a data-base dela ainda não foi decidida de fato.
+    const { start: s0, anniversary: end } = baseFrom(20);
+    const c = await contract("z", { termMonths: 12, startDate: iso(s0), endDate: iso(end), readjustment: { type: "percentual", percent: 5 } });
+    await createAmendment({ contractId: c.id, effectiveFrom: end, reason: "Renovação com assinatura", requiresSignature: true, renewal: { months: 12 } }, ACTOR, { source: "renovacao_cs" });
+    const held = await createTaskInternal({ title: `Reajuste não aplicado: ACME ${RUN} (data-base ${end.split("-").reverse().join("/")})`, clientId: CLIENT_ID, departmentId: "financeiro", priority: "alta", processType: "contract", processId: c.id, origin: "automacao" }, ACTOR);
+    // Aditivo de condições aberto (sem reajuste) não segura a tarefa de uma data-base que ficou para trás.
+    const { start: s1 } = baseFrom(-3);
+    const d = await contract("z2", { startDate: iso(s1), endDate: iso(addMonthsClamped(s1, 36)), readjustment: { type: "percentual", percent: 5 } });
+    await createAmendment({ contractId: d.id, effectiveFrom: TODAY, reason: "Muda o vencimento", requiresSignature: true, conditions: { billingDay: 20 } }, ACTOR);
+    const stale = await createTaskInternal({ title: `Reajuste não aplicado: ACME ${RUN} (data-base 10/01/2020)`, clientId: CLIENT_ID, departmentId: "financeiro", priority: "alta", processType: "contract", processId: d.id, origin: "automacao" }, ACTOR);
     await runContractReadjustments(NOW);
-    expect((await getById<Task>(COLLECTIONS.tasks, other.id))?.status).toBe("aberta");
+    expect((await getById<Task>(COLLECTIONS.tasks, held.id))?.status).toBe("aberta");
+    expect((await getById<Task>(COLLECTIONS.tasks, stale.id))?.status).toBe("cancelada");
   });
 });
 

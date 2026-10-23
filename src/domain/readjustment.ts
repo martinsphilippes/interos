@@ -10,7 +10,7 @@
  *   publicado se ele ainda não saiu. Mais de 3 meses de atraso = índice desatualizado (espera).
  * - Acumulado negativo: o índice diz se mantém o valor (padrão) ou reduz.
  */
-import type { Contract, ContractAmendment, ContractReadjustment, ReadjustmentIndex, ReadjustmentIndexMonth, ReadjustmentIndexSource, ReadjustmentQuote } from "./types";
+import type { Contract, ContractAmendment, ContractReadjustment, ReadjustmentGap, ReadjustmentIndex, ReadjustmentIndexMonth, ReadjustmentIndexSource, ReadjustmentQuote } from "./types";
 
 /** Dias depois da data-base em que o reajuste ainda é aplicado sozinho; depois disso vira tarefa ao Financeiro. */
 export const READJUSTMENT_GRACE_DAYS = 45;
@@ -218,6 +218,29 @@ export interface ReadjustmentSchedule {
   next: { anniversary: string; daysUntil: number } | null;
 }
 
+/** A data-base cai num período em que o contrato estava sem regra de reajuste? */
+export function inReadjustmentGap(anniversary: string, gaps: readonly ReadjustmentGap[] | undefined): boolean {
+  return (gaps ?? []).some((g) => (!g.from || anniversary >= g.from) && (!g.to || anniversary < g.to));
+}
+
+/**
+ * Períodos sem regra depois de um aditivo: regra incluída num contrato que nunca teve → período desde o início até a
+ * vigência; removida (ou cobrança que virou única) → período aberto a partir da vigência; reincluída → fecha o aberto.
+ * `reincluded` = havia um período aberto (o contrato já teve regra): a data-base pendente da regra antiga, se houver,
+ * fica para o Financeiro (regra trocada).
+ */
+export function nextReadjustmentGaps(gaps: readonly ReadjustmentGap[] | undefined, change: { hadRule: boolean; hasRule: boolean; effectiveFrom: string }): { gaps: ReadjustmentGap[]; reincluded: boolean } | null {
+  const list = [...(gaps ?? [])];
+  if (change.hadRule === change.hasRule) return null;
+  if (change.hadRule) return { gaps: [...list, { from: change.effectiveFrom }], reincluded: false };
+  const open = list.findIndex((g) => !g.to);
+  if (open >= 0) {
+    list[open] = { ...list[open], to: change.effectiveFrom };
+    return { gaps: list, reincluded: true };
+  }
+  return { gaps: [...list, { to: change.effectiveFrom }], reincluded: false };
+}
+
 /** Desde quando o sistema responde pelas datas-base do contrato (o mais tardio entre o acompanhamento e a criação). */
 export function readjustmentFloor(contract: Pick<Contract, "createdAt">): string {
   const created = typeof contract.createdAt === "string" ? contract.createdAt.slice(0, 10) : "";
@@ -228,10 +251,10 @@ export function readjustmentFloor(contract: Pick<Contract, "createdAt">): string
  * Datas-base pendentes. `covered` = datas-base já decididas (aplicadas, mantidas, dispensadas ou em aditivo aberto);
  * compara por mês. Tudo até a última decidida fica para trás. Das que chegaram sem decisão: a partir de `floor`
  * (desde quando o sistema acompanha o contrato) vale a MAIS ANTIGA — a seguinte espera, para nenhuma data-base sumir
- * sem registro; antes dele, só a mais recente (as anteriores foram tratadas fora do sistema). Datas-base antes de
- * `notBefore` (regra incluída depois por aditivo) não contam: o contrato não tinha reajuste nelas.
+ * sem registro; antes dele, só a mais recente (as anteriores foram tratadas fora do sistema). Datas-base dentro de
+ * `gaps` (períodos sem regra de reajuste) não contam: o contrato não tinha reajuste nelas.
  */
-export function readjustmentSchedule(input: { startDate: string; covered: readonly string[]; today: string; floor?: string; notBefore?: string }): ReadjustmentSchedule {
+export function readjustmentSchedule(input: { startDate: string; covered: readonly string[]; today: string; floor?: string; gaps?: readonly ReadjustmentGap[] }): ReadjustmentSchedule {
   const start = input.startDate.slice(0, 10);
   const coveredMonths = new Set(input.covered.map((c) => c.slice(0, 7)));
   const lastCovered = [...coveredMonths].sort().pop() ?? null;
@@ -240,7 +263,7 @@ export function readjustmentSchedule(input: { startDate: string; covered: readon
   for (let k = 1; k <= 200; k++) {
     const a = anniversaryOf(start, k);
     const month = a.slice(0, 7);
-    const open = !coveredMonths.has(month) && (!lastCovered || month > lastCovered) && (!input.notBefore || a >= input.notBefore);
+    const open = !coveredMonths.has(month) && (!lastCovered || month > lastCovered) && !inReadjustmentGap(a, input.gaps);
     if (a <= input.today) {
       if (open && !pinned) {
         due = { anniversary: a, overdueDays: daysBetween(a, input.today) };

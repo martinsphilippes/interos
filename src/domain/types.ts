@@ -599,6 +599,12 @@ export interface AmendmentReadjust extends ReadjustmentQuote {
 }
 
 /** Decisão sobre o reajuste de uma data-base (fora do snapshot: não entra no hash nem no «de → para»). */
+/** Período sem regra de reajuste efetiva no contrato (ver `Contract.readjustmentGaps`). */
+export interface ReadjustmentGap {
+  from?: string;
+  to?: string;
+}
+
 export interface ContractReadjustmentLogEntry {
   /** Data-base (AAAA-MM-DD). */
   anniversary: string;
@@ -935,10 +941,12 @@ export interface Contract extends BaseEntity {
    */
   readjustmentRuleSince?: string;
   /**
-   * Regra de reajuste INCLUÍDA por aditivo num contrato que não tinha (AAAA-MM-DD, vigência do aditivo): datas-base
-   * anteriores não tinham o que decidir — não viram pendência.
+   * Períodos em que o contrato ficou SEM regra de reajuste efetiva (AAAA-MM-DD; `from` ausente = desde o início, `to`
+   * ausente = ainda sem regra). Gravados pelos aditivos: regra incluída num contrato que nunca teve → { to }; removida
+   * (ou cobrança passou a única) → { from }; reincluída → fecha o período. Datas-base dentro deles não têm o que
+   * decidir: não viram pendência nem travam as seguintes.
    */
-  readjustmentTrackedFrom?: string;
+  readjustmentGaps?: ReadjustmentGap[];
   // Aditivos e versões (D25) — opcionais.
   /** Aditivos APLICADOS a este contrato, na ordem (`contract_amendments`). */
   amendmentIds?: string[];

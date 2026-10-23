@@ -15,6 +15,8 @@ import {
   hasReadjustmentRule,
   indexSelectOptions,
   parseCompetenceInput,
+  inReadjustmentGap,
+  nextReadjustmentGaps,
   quoteReadjustment,
   READJUSTMENT_TRACKING_SINCE,
   readjustmentFloor,
@@ -117,10 +119,25 @@ describe("datas-base", () => {
     expect(readjustmentSchedule({ startDate: "2020-03-10", covered: [], today: "2026-10-23", floor: "2026-10-23" }).due?.anniversary).toBe("2026-03-10");
   });
 
-  it("regra incluída depois (notBefore): datas-base anteriores não contam", () => {
-    const s = readjustmentSchedule({ startDate: "2024-03-10", covered: [], today: "2026-10-23", notBefore: "2026-06-01" });
+  it("períodos sem regra (gaps): datas-base dentro deles não contam nem travam as seguintes", () => {
+    // Regra incluída em 2026-06 num contrato que nunca teve.
+    const s = readjustmentSchedule({ startDate: "2024-03-10", covered: [], today: "2026-10-23", gaps: [{ to: "2026-06-01" }] });
     expect(s.due).toBeNull();
     expect(s.next?.anniversary).toBe("2027-03-10");
+    // Removida em 2027-01 e reincluída em 2027-06: a de 2027-03 (sem regra) some; a de 2026-12 (regra antiga) continua.
+    const gaps = [{ from: "2027-01-15", to: "2027-06-01" }];
+    expect(readjustmentSchedule({ startDate: "2025-12-01", covered: [], today: "2027-06-02", floor: "2026-10-23", gaps }).due?.anniversary).toBe("2026-12-01");
+    expect(readjustmentSchedule({ startDate: "2025-03-01", covered: ["2026-03-01"], today: "2028-03-05", floor: "2026-10-23", gaps }).due?.anniversary).toBe("2028-03-01");
+  });
+
+  it("aditivo que inclui, remove ou reinclui a regra atualiza os períodos sem regra", () => {
+    expect(nextReadjustmentGaps(undefined, { hadRule: false, hasRule: true, effectiveFrom: "2026-11-10" })).toEqual({ gaps: [{ to: "2026-11-10" }], reincluded: false });
+    const removed = nextReadjustmentGaps([{ to: "2026-11-10" }], { hadRule: true, hasRule: false, effectiveFrom: "2027-01-15" });
+    expect(removed).toEqual({ gaps: [{ to: "2026-11-10" }, { from: "2027-01-15" }], reincluded: false });
+    expect(nextReadjustmentGaps(removed!.gaps, { hadRule: false, hasRule: true, effectiveFrom: "2027-06-01" })).toEqual({ gaps: [{ to: "2026-11-10" }, { from: "2027-01-15", to: "2027-06-01" }], reincluded: true });
+    expect(nextReadjustmentGaps(undefined, { hadRule: true, hasRule: true, effectiveFrom: "2027-06-01" })).toBeNull();
+    expect(inReadjustmentGap("2027-03-01", [{ from: "2027-01-15", to: "2027-06-01" }])).toBe(true);
+    expect(inReadjustmentGap("2027-06-01", [{ from: "2027-01-15", to: "2027-06-01" }])).toBe(false);
   });
 
   it("acompanhamento: o mais tardio entre a entrada do reajuste automático e a criação do contrato", () => {

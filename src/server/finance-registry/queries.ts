@@ -351,7 +351,7 @@ async function indexRows(user: CurrentUser, detailed: boolean): Promise<IndexRow
     const contracts = (using.get(i.id) ?? [])
       .filter((c) => visible.has(c.id))
       .map((c) => {
-        const next = c.startDate ? readjustmentSchedule({ startDate: dateKey(c.startDate), covered: coveredAnniversaries(c, amendmentsByContract.get(c.id) ?? []), today, floor: readjustmentFloor(c), notBefore: c.readjustmentTrackedFrom }) : null;
+        const next = c.startDate ? readjustmentSchedule({ startDate: dateKey(c.startDate), covered: coveredAnniversaries(c, amendmentsByContract.get(c.id) ?? []), today, floor: readjustmentFloor(c), gaps: c.readjustmentGaps }) : null;
         return { id: c.id, number: c.number, clientName: clientNames.get(c.clientId) ?? "—", nextAnniversary: next?.due?.anniversary ?? next?.next?.anniversary };
       })
       .sort((a, b) => (a.nextAnniversary ?? "9999").localeCompare(b.nextAnniversary ?? "9999"));

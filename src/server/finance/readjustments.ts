@@ -118,7 +118,7 @@ export function contractReadjustmentState(contract: Contract, ctx: ReadjustmentC
   const covered = coveredAnniversaries(contract, ctx.amendments);
   const lead = readjustmentLeadDays(contract);
   const horizon = addDaysKey(ctx.today, lead);
-  const sched = readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: horizon, floor: readjustmentFloor(contract), notBefore: contract.readjustmentTrackedFrom });
+  const sched = readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: horizon, floor: readjustmentFloor(contract), gaps: contract.readjustmentGaps });
   const anniversary = sched.due?.anniversary ?? sched.next?.anniversary;
   if (!anniversary) return { ...none, status: "sem_regra", message: "Sem data-base pela frente" };
   const days = daysBetween(anniversary, ctx.today);
@@ -414,9 +414,9 @@ async function ensureLateTask(existing: Task[], contract: Contract, client: Clie
  * Tarefas «Reajuste não aplicado» de OUTRA data-base que a em foco: a anterior foi decidida por outro caminho ou
  * substituída pela seguinte (anterior ao acompanhamento) — não há mais o que fazer nela. Canceladas com o motivo.
  */
-async function cancelObsoleteLateTasks(tasks: Task[], contract: Contract, anniversary: string): Promise<void> {
-  const suffix = `(data-base ${dmy(anniversary)})`;
-  const stale = tasks.filter((t) => t.processId === contract.id && t.processType === "contract" && OPEN_TASK_STATUSES.includes(t.status) && t.title.startsWith("Reajuste não aplicado") && !t.title.endsWith(suffix));
+async function cancelObsoleteLateTasks(tasks: Task[], contract: Contract, anniversary: string, held: readonly string[] = []): Promise<void> {
+  const keep = [anniversary, ...held].map((a) => `(data-base ${dmy(a)})`);
+  const stale = tasks.filter((t) => t.processId === contract.id && t.processType === "contract" && OPEN_TASK_STATUSES.includes(t.status) && t.title.startsWith("Reajuste não aplicado") && !keep.some((k) => t.title.endsWith(k)));
   if (stale.length === 0) return;
   const { cancelTaskInternal } = await import("@/server/tasks/service");
   for (const t of stale) {
@@ -494,8 +494,10 @@ export async function runContractReadjustments(now: Date = new Date(), options: 
       const state = contractReadjustmentState(c, { indices, amendments, today });
       const anniversary = state.anniversary;
       if (!anniversary) continue;
-      // Com aditivo em andamento, a data-base que ele cobre ainda não foi decidida de fato: as tarefas ficam.
-      if (!amendments.some((a) => AMENDMENT_OPEN_STATUSES.includes(a.status))) await cancelObsoleteLateTasks(tasks, c, anniversary);
+      // Data-base coberta por aditivo AINDA em andamento (renovação aguardando assinatura…) não foi decidida de fato:
+      // a tarefa dela fica até ele ser aplicado (conclui) ou cancelado (volta ao foco).
+      const held = amendments.filter((a) => AMENDMENT_OPEN_STATUSES.includes(a.status) && a.readjust).map((a) => a.readjust!.anniversary);
+      await cancelObsoleteLateTasks(tasks, c, anniversary, held);
       if (state.due) {
         if (state.status === "pronto" && state.quote) {
           // Orçamento de tempo da rotina (cron de 60 s): o que sobrar fica para amanhã, dentro da folga.
