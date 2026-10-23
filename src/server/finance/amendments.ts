@@ -165,11 +165,12 @@ export interface CreateAmendmentOptions {
  * Contrato com regra decide as datas-base na ordem: uma anterior ainda pendente (desde o acompanhamento) segura a da
  * renovação (`blockedBy`), que fica para a rotina depois dela.
  */
-function renewalAnniversary(contract: Contract, covered: readonly string[], effectiveFrom: string): { anniversary: string | null; blockedBy?: string; waiting?: string } {
+function renewalAnniversary(contract: Contract, covered: readonly string[], effectiveFrom: string, explicit: boolean): { anniversary: string | null; blockedBy?: string; waiting?: string } {
   if (!contract.startDate) return { anniversary: covered.some((c) => c.slice(0, 7) === effectiveFrom.slice(0, 7)) ? null : effectiveFrom };
   const monthEnd = addMonthsClamped(`${effectiveFrom.slice(0, 7)}-31`, 0);
   const base = { startDate: dateKey(contract.startDate), covered, today: monthEnd, gaps: contract.readjustmentGaps };
-  const own = readjustmentSchedule(base).due;
+  // Os períodos sem regra valem para a regra do contrato; a escolha do CS na renovação vale para a data-base dela.
+  const own = readjustmentSchedule(explicit ? { ...base, gaps: undefined } : base).due;
   if (!own || (contract.endDate && own.anniversary < dateKey(contract.endDate))) return { anniversary: null };
   if (hasReadjustmentRule(contract)) {
     const first = readjustmentSchedule({ ...base, floor: readjustmentFloor(contract) }).due;
@@ -206,7 +207,7 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
     const chosen = input.renewal.readjustment as ContractReadjustment | undefined;
     const explicit = chosen && !sameReadjustmentRule(chosen, contract.readjustment) ? chosen : undefined;
     const contractHasRule = hasReadjustmentRule(contract);
-    const { anniversary, blockedBy, waiting } = renewalAnniversary(contract, covered, effectiveFrom);
+    const { anniversary, blockedBy, waiting } = renewalAnniversary(contract, covered, effectiveFrom, Boolean(explicit));
     const indexOf = async (r: ContractReadjustment) => (r.type === "indice" && r.index ? (await getReadjustmentIndexMap()).get(r.index) : undefined);
     if (anniversary) {
       if (explicit?.type === "nenhum") {

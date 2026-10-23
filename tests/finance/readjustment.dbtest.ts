@@ -481,6 +481,21 @@ describe("revisão 3: ordem das datas-base, regra incluída depois", () => {
     expect((await list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", c.id]] })).filter((t) => t.title.startsWith("Reajuste não aplicado"))).toHaveLength(0);
   });
 
+  it("regra removida: o reajuste negociado na renovação ainda vale para a data-base dela", async () => {
+    const { start: s0, anniversary: end } = baseFrom(20);
+    const c = await contract("x4", { termMonths: 12, startDate: iso(s0), endDate: iso(end), readjustment: { type: "percentual", percent: 5 } });
+    const off = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Remove o reajuste", requiresSignature: false, conditions: { readjustment: { type: "nenhum" } } }, ACTOR);
+    await applyAmendment(off.id, ACTOR);
+    const r = await createAmendment({ contractId: c.id, effectiveFrom: end, reason: "Renovação com 4% negociado", requiresSignature: false, renewal: { months: 12, readjustment: { type: "percentual", percent: 4 } } }, ACTOR, { source: "renovacao_cs" });
+    expect(r.readjust).toMatchObject({ anniversary: end, percent: 4 });
+    // «Conforme o contrato» (sem regra agora) não reajusta.
+    const d = await contract("x5", { termMonths: 12, startDate: iso(s0), endDate: iso(end), readjustment: { type: "percentual", percent: 5 } });
+    const off2 = await createAmendment({ contractId: d.id, effectiveFrom: TODAY, reason: "Remove o reajuste", requiresSignature: false, conditions: { readjustment: { type: "nenhum" } } }, ACTOR);
+    await applyAmendment(off2.id, ACTOR);
+    const r2 = await createAmendment({ contractId: d.id, effectiveFrom: end, reason: "Renovação conforme o contrato", requiresSignature: false, renewal: { months: 12 } }, ACTOR, { source: "renovacao_cs" });
+    expect(r2.readjust).toBeUndefined();
+  });
+
   it("mensal → única → mensal com data-base pendente antes: ela continua para o Financeiro", async () => {
     const { start: s0, anniversary } = baseFrom(-3);
     const c = await contract("x3", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "percentual", percent: 5 } });

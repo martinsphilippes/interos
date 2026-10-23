@@ -263,11 +263,14 @@ export function readjustmentSchedule(input: { startDate: string; covered: readon
   for (let k = 1; k <= 200; k++) {
     const a = anniversaryOf(start, k);
     const month = a.slice(0, 7);
-    const open = !coveredMonths.has(month) && (!lastCovered || month > lastCovered) && !inReadjustmentGap(a, input.gaps);
+    const fresh = !coveredMonths.has(month) && (!lastCovered || month > lastCovered);
+    const open = fresh && !inReadjustmentGap(a, input.gaps);
     if (a <= input.today) {
-      if (open && !pinned) {
-        due = { anniversary: a, overdueDays: daysBetween(a, input.today) };
-        if (input.floor && a >= input.floor) pinned = true;
+      if (!pinned) {
+        if (open) {
+          due = { anniversary: a, overdueDays: daysBetween(a, input.today) };
+          if (input.floor && a >= input.floor) pinned = true;
+        } else if (fresh) due = null; // sem regra nesta: a anterior (antes do acompanhamento) também fica para trás
       }
       continue;
     }

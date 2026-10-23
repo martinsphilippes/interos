@@ -128,6 +128,11 @@ describe("datas-base", () => {
     const gaps = [{ from: "2027-01-15", to: "2027-06-01" }];
     expect(readjustmentSchedule({ startDate: "2025-12-01", covered: [], today: "2027-06-02", floor: "2026-10-23", gaps }).due?.anniversary).toBe("2026-12-01");
     expect(readjustmentSchedule({ startDate: "2025-03-01", covered: ["2026-03-01"], today: "2028-03-05", floor: "2026-10-23", gaps }).due?.anniversary).toBe("2028-03-01");
+    // Antes do acompanhamento: a mais recente caiu no período sem regra → as anteriores não voltam.
+    const old = readjustmentSchedule({ startDate: "2020-03-10", covered: [], today: "2026-10-23", floor: "2026-10-23", gaps: [{ from: "2026-01-01", to: "2026-11-01" }] });
+    expect(old.due).toBeNull();
+    expect(old.next?.anniversary).toBe("2027-03-10");
+    expect(readjustmentSchedule({ startDate: "2022-05-01", covered: [], today: "2026-11-05", floor: "2026-10-23", gaps: [{ from: "2026-04-01", to: "2026-11-01" }] }).due).toBeNull();
   });
 
   it("aditivo que inclui, remove ou reinclui a regra atualiza os períodos sem regra", () => {
