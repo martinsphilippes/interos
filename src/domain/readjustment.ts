@@ -228,9 +228,10 @@ export function readjustmentFloor(contract: Pick<Contract, "createdAt">): string
  * Datas-base pendentes. `covered` = datas-base já decididas (aplicadas, mantidas, dispensadas ou em aditivo aberto);
  * compara por mês. Tudo até a última decidida fica para trás. Das que chegaram sem decisão: a partir de `floor`
  * (desde quando o sistema acompanha o contrato) vale a MAIS ANTIGA — a seguinte espera, para nenhuma data-base sumir
- * sem registro; antes dele, só a mais recente (as anteriores foram tratadas fora do sistema).
+ * sem registro; antes dele, só a mais recente (as anteriores foram tratadas fora do sistema). Datas-base antes de
+ * `notBefore` (regra incluída depois por aditivo) não contam: o contrato não tinha reajuste nelas.
  */
-export function readjustmentSchedule(input: { startDate: string; covered: readonly string[]; today: string; floor?: string }): ReadjustmentSchedule {
+export function readjustmentSchedule(input: { startDate: string; covered: readonly string[]; today: string; floor?: string; notBefore?: string }): ReadjustmentSchedule {
   const start = input.startDate.slice(0, 10);
   const coveredMonths = new Set(input.covered.map((c) => c.slice(0, 7)));
   const lastCovered = [...coveredMonths].sort().pop() ?? null;
@@ -239,7 +240,7 @@ export function readjustmentSchedule(input: { startDate: string; covered: readon
   for (let k = 1; k <= 200; k++) {
     const a = anniversaryOf(start, k);
     const month = a.slice(0, 7);
-    const open = !coveredMonths.has(month) && (!lastCovered || month > lastCovered);
+    const open = !coveredMonths.has(month) && (!lastCovered || month > lastCovered) && (!input.notBefore || a >= input.notBefore);
     if (a <= input.today) {
       if (open && !pinned) {
         due = { anniversary: a, overdueDays: daysBetween(a, input.today) };

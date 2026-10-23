@@ -126,7 +126,8 @@ export function buildAmendmentAfter(contract: Contract, input: Omit<AmendmentInp
     if (c.setupInstallments !== undefined) after.setupInstallments = c.setupInstallments;
     if (c.autoRenew !== undefined) after.autoRenew = c.autoRenew;
     if (c.renewalTermMonths !== undefined) after.renewalTermMonths = c.renewalTermMonths;
-    if (c.readjustment !== undefined) after.readjustment = stripUndefined({ ...c.readjustment });
+    // Mesma regra reenviada pelo formulário: o «aguardando o índice» do contrato continua (não é mudança).
+    if (c.readjustment !== undefined) after.readjustment = stripUndefined({ ...c.readjustment, pending: sameReadjustmentRule(before.readjustment, c.readjustment as ContractReadjustment) ? before.readjustment?.pending : undefined });
     if (c.noticeDays !== undefined) after.noticeDays = c.noticeDays;
   }
   const readjust = options.readjust;
@@ -161,14 +162,20 @@ export interface CreateAmendmentOptions {
  * Data-base que a renovação decide: a mais recente ainda não decidida que cai do fim atual da vigência (inclusive) até
  * o mês da vigência da renovação. Data-base dentro da vigência atual é do aditivo de reajuste próprio (varredura
  * `reajustes_contratos`), vigente nela. Contrato antigo sem início registrado: a própria renovação é a data-base.
+ * Contrato com regra decide as datas-base na ordem: uma anterior ainda pendente (desde o acompanhamento) segura a da
+ * renovação (`blockedBy`), que fica para a rotina depois dela.
  */
-function renewalAnniversary(contract: Contract, covered: readonly string[], effectiveFrom: string): string | null {
-  if (!contract.startDate) return covered.some((c) => c.slice(0, 7) === effectiveFrom.slice(0, 7)) ? null : effectiveFrom;
+function renewalAnniversary(contract: Contract, covered: readonly string[], effectiveFrom: string): { anniversary: string | null; blockedBy?: string; waiting?: string } {
+  if (!contract.startDate) return { anniversary: covered.some((c) => c.slice(0, 7) === effectiveFrom.slice(0, 7)) ? null : effectiveFrom };
   const monthEnd = addMonthsClamped(`${effectiveFrom.slice(0, 7)}-31`, 0);
-  const due = readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: monthEnd, floor: readjustmentFloor(contract) }).due;
-  if (!due) return null;
-  if (contract.endDate && due.anniversary < dateKey(contract.endDate)) return null;
-  return due.anniversary;
+  const base = { startDate: dateKey(contract.startDate), covered, today: monthEnd, notBefore: contract.readjustmentTrackedFrom };
+  const own = readjustmentSchedule(base).due;
+  if (!own || (contract.endDate && own.anniversary < dateKey(contract.endDate))) return { anniversary: null };
+  if (hasReadjustmentRule(contract)) {
+    const first = readjustmentSchedule({ ...base, floor: readjustmentFloor(contract) }).due;
+    if (first && first.anniversary < own.anniversary) return { anniversary: null, blockedBy: first.anniversary, waiting: own.anniversary };
+  }
+  return { anniversary: own.anniversary };
 }
 
 /** Cria o aditivo em rascunho com before/after/changes calculados no servidor. Um aditivo em andamento por contrato. */
@@ -199,7 +206,7 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
     const chosen = input.renewal.readjustment as ContractReadjustment | undefined;
     const explicit = chosen && !sameReadjustmentRule(chosen, contract.readjustment) ? chosen : undefined;
     const contractHasRule = hasReadjustmentRule(contract);
-    const anniversary = renewalAnniversary(contract, covered, effectiveFrom);
+    const { anniversary, blockedBy, waiting } = renewalAnniversary(contract, covered, effectiveFrom);
     const indexOf = async (r: ContractReadjustment) => (r.type === "indice" && r.index ? (await getReadjustmentIndexMap()).get(r.index) : undefined);
     if (anniversary) {
       if (explicit?.type === "nenhum") {
@@ -210,6 +217,9 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
         if (!q.ok) throw new BusinessError(`${q.reason}. Renove «Conforme o contrato» (o reajuste entra sozinho quando o índice sair) ou informe um percentual.`);
         if (q.quote.type === "indice" && Math.abs(q.quote.rawPercent) > MAX_AUTO_PERCENT) throw new BusinessError(`O ${q.quote.indexName ?? "índice"} acumulado dá ${formatPct(q.quote.rawPercent)} (acima de ${MAX_AUTO_PERCENT}% em módulo): confira o índice ou informe um percentual.`);
         readjust = { ...q.quote, anniversary };
+      } else if (contractHasRule && contract.readjustmentRuleSince && anniversary < contract.readjustmentRuleSince) {
+        // Regra trocada por aditivo vigente depois desta data-base: o Financeiro decide (mesma ordem da rotina).
+        readjustNote = `o reajuste da data-base ${formatDate(dueIso(anniversary))} fica para o Financeiro decidir (a regra mudou depois dela)`;
       } else if (contractHasRule) {
         const rule = contract.readjustment!;
         const index = await indexOf(rule);
@@ -231,10 +241,12 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
           pendingIndexName = index?.name ?? rule.indexName;
         } else if (Math.abs(q.quote.rawPercent) > MAX_AUTO_PERCENT) {
           readjustNote = `o reajuste da data-base ${formatDate(dueIso(anniversary))} (${formatPct(q.quote.rawPercent)}, acima de ${MAX_AUTO_PERCENT}%) fica para o Financeiro decidir`;
-        } else if (contract.readjustmentRuleSince && anniversary < contract.readjustmentRuleSince) {
-          readjustNote = `o reajuste da data-base ${formatDate(dueIso(anniversary))} fica para o Financeiro decidir (a regra mudou depois dela)`;
         } else readjust = { ...q.quote, anniversary };
       }
+    } else if (blockedBy && waiting) {
+      // Data-base anterior ainda pendente: as datas-base são decididas na ordem.
+      if (explicit && (explicit.type !== "nenhum" || contractHasRule)) throw new BusinessError(`A data-base de ${formatDate(dueIso(blockedBy))} ainda não foi decidida: as datas-base são decididas na ordem — o Financeiro decide essa antes (cartão «Reajuste anual» do contrato). Renove «Conforme o contrato»: a data-base desta renovação (${formatDate(dueIso(waiting))}) fica para depois dela.`);
+      readjustNote = `o reajuste da data-base ${formatDate(dueIso(waiting))} espera a decisão da data-base ${formatDate(dueIso(blockedBy))} (Financeiro)`;
     } else if (explicit && (explicit.type !== "nenhum" || contractHasRule)) {
       throw new BusinessError("A renovação não cai numa data-base do contrato: o reajuste anual entra no aniversário do início da vigência. Renove «Conforme o contrato»; para mudar a regra do reajuste, o Financeiro faz um aditivo de condições.");
     }
@@ -483,7 +495,14 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
       patch.readjustmentLog = [...(current.readjustmentLog ?? []), entry];
     }
     // Regra de reajuste trocada por aditivo: vale da próxima data-base em diante (as anteriores ficam para decisão).
-    if (!a.readjust && a.kind !== "renovacao" && !sameReadjustmentRule(current.readjustment, a.after.readjustment)) patch.readjustmentRuleSince = a.effectiveFrom;
+    // Regra INCLUÍDA (o contrato não tinha): as datas-base anteriores não tinham o que decidir — o acompanhamento começa
+    // na vigência do aditivo.
+    if (!a.readjust && a.kind !== "renovacao" && !sameReadjustmentRule(current.readjustment, a.after.readjustment)) {
+      const hadRule = hasReadjustmentRule(current);
+      const hasRule = hasReadjustmentRule({ readjustment: a.after.readjustment, recurrence: a.after.recurrence });
+      if (!hadRule && hasRule) patch.readjustmentTrackedFrom = a.effectiveFrom;
+      else patch.readjustmentRuleSince = a.effectiveFrom;
+    }
     tx.update(contractRef, stripUndefined(patch));
     tx.update(amendmentRef, { status: "aplicado", appliedAt: now, appliedBy: actor.id, appliedVersion: version, updatedAt: now });
     const merged = { ...current } as Record<string, unknown>;
@@ -540,7 +559,9 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
     const all = await list<Billing>(COLLECTIONS.billing, { where: [["contractId", "==", next.id]] });
     const createdIds = new Set(billings.created);
     const fromComp = a.effectiveFrom.slice(0, 7);
-    const openFrom = all.filter((b) => b.type === "mensalidade" && b.status === "aberta" && b.competence >= fromComp).map((b) => b.installment ?? 1);
+    // Mesmo critério do refazimento (passo 3): mensalidade em aberto já vencida ficou com o valor antigo, sem o item.
+    const notDue = todayKey();
+    const openFrom = all.filter((b) => b.type === "mensalidade" && b.status === "aberta" && dateKey(b.dueDate) >= notDue && b.competence >= fromComp).map((b) => b.installment ?? 1);
     const installment = openFrom.length > 0 ? Math.min(...openFrom) : lastRecurringBilling(all).installment + 1;
     const setupInstallment = all.find((b) => b.type === "setup" && createdIds.has(b.id))?.installment;
     const hardwareInstallment = all.find((b) => b.type === "hardware" && createdIds.has(b.id))?.installment;

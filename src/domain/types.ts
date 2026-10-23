@@ -934,6 +934,11 @@ export interface Contract extends BaseEntity {
    * Financeiro decide (a regra nova vale da próxima data-base em diante).
    */
   readjustmentRuleSince?: string;
+  /**
+   * Regra de reajuste INCLUÍDA por aditivo num contrato que não tinha (AAAA-MM-DD, vigência do aditivo): datas-base
+   * anteriores não tinham o que decidir — não viram pendência.
+   */
+  readjustmentTrackedFrom?: string;
   // Aditivos e versões (D25) — opcionais.
   /** Aditivos APLICADOS a este contrato, na ordem (`contract_amendments`). */
   amendmentIds?: string[];

@@ -8,7 +8,7 @@ import "server-only";
  * src/domain/permissions/implantacao.ts; dono = responsável ou equipe do projeto); a VISÃO da URL (?escopo=
  * todos/equipe/meus) só estreita dentro dele. Padrão = comportamento anterior: limite "empresa" para todos.
  */
-import { redactChanges } from "@/domain/audit-format";
+import { redactTimelineEvent } from "@/server/finance/redact";
 import { viewerHidesValues } from "@/server/finance/queries";
 import { getById, getManyByIds, list } from "@/server/db";
 import { computeDataScope, filterByScope, resolveDataScope, type DataScope } from "@/server/auth/scope";
@@ -433,11 +433,12 @@ export async function getProject(id: string, options: ProjectDetailOptions = {})
 
   // Histórico: eventos do cliente desde a criação do projeto (inclui workflow, financeiro e suporte do período).
   const since = project.createdAt < (project.startDate ?? project.createdAt) ? project.createdAt : (project.startDate ?? project.createdAt);
-  // D29/A13: alterações com quantias só para quem vê valores (a timeline do cliente traz eventos financeiros).
-  const hideValues = timeline.some((e) => e.changes) ? await viewerHidesValues() : false;
+  // D29/A13: quantias só para quem vê valores (a timeline do cliente traz eventos financeiros: aditivo, reajuste,
+  // cobranças) — nas alterações "de → para" e no texto (título, descrição, motivo).
+  const hideValues = options.hideValues ?? (timeline.length > 0 ? await viewerHidesValues() : false);
   const events = timeline
     .filter((e) => e.occurredAt >= since || e.entityId === project.id)
-    .map((e) => (e.changes ? { ...e, changes: redactChanges(e.changes, { hideValues }) } : e))
+    .map((e) => redactTimelineEvent(e, hideValues))
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 
   return {

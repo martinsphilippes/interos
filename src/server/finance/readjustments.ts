@@ -118,7 +118,7 @@ export function contractReadjustmentState(contract: Contract, ctx: ReadjustmentC
   const covered = coveredAnniversaries(contract, ctx.amendments);
   const lead = readjustmentLeadDays(contract);
   const horizon = addDaysKey(ctx.today, lead);
-  const sched = readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: horizon, floor: readjustmentFloor(contract) });
+  const sched = readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: horizon, floor: readjustmentFloor(contract), notBefore: contract.readjustmentTrackedFrom });
   const anniversary = sched.due?.anniversary ?? sched.next?.anniversary;
   if (!anniversary) return { ...none, status: "sem_regra", message: "Sem data-base pela frente" };
   const days = daysBetween(anniversary, ctx.today);
@@ -143,8 +143,9 @@ export function contractReadjustmentState(contract: Contract, ctx: ReadjustmentC
     return { ...base, canApply: false, canSkip: window, status: "bloqueado", blockingAmendment: open.number, message: `O aditivo ${open.number} está em andamento: o reajuste de ${dmy(anniversary)} espera ele ser aplicado ou cancelado.` };
   }
   // Regra trocada por aditivo vigente DEPOIS desta data-base: não entra sozinho (nem prévia de «entra sozinho»).
+  const decideFrom = window ? "decida" : `a partir de ${dmy(addDaysKey(anniversary, -EARLY_APPLY_DAYS))}, decida`;
   if (contract.readjustmentRuleSince && anniversary < contract.readjustmentRuleSince) {
-    return { ...base, canApply: window, canSkip: window, status: "bloqueado", message: `A regra do reajuste mudou em ${dmy(contract.readjustmentRuleSince)}, depois desta data-base: o reajuste não entra sozinho; decida se aplica (com a regra nova ou um percentual informado) ou não reajusta.` };
+    return { ...base, canApply: window, canSkip: window, status: "bloqueado", message: `A regra do reajuste mudou em ${dmy(contract.readjustmentRuleSince)}, depois desta data-base: o reajuste não entra sozinho; ${decideFrom} se aplica (com a regra nova ou um percentual informado) ou não reajusta.` };
   }
   if (due && days > READJUSTMENT_GRACE_DAYS) {
     return { ...base, canApply: true, canSkip: true, status: "atrasado", message: `A data-base ${dmy(anniversary)} passou há ${days} dias sem reajuste${q.ok ? "" : ` (${q.reason})`}: aplique (com o índice ou um percentual informado) ou dispense.` };
@@ -156,7 +157,7 @@ export function contractReadjustmentState(contract: Contract, ctx: ReadjustmentC
   }
   // Acumulado BRUTO (antes do «manter»): série errada para baixo também não vira «sem aumento» definitivo sozinha.
   if (Math.abs(q.quote.rawPercent) > MAX_AUTO_PERCENT) {
-    return { ...base, canApply: window, canSkip: window, status: "bloqueado", message: `Reajuste de ${formatPct(q.quote.rawPercent)} fora do esperado (acima de ${MAX_AUTO_PERCENT}% em módulo): não entra sozinho. Confira o índice e aplique (com o índice ou um percentual informado) ou dispense.` };
+    return { ...base, canApply: window, canSkip: window, status: "bloqueado", message: `Reajuste de ${formatPct(q.quote.rawPercent)} fora do esperado (acima de ${MAX_AUTO_PERCENT}% em módulo): não entra sozinho. Confira o índice e ${window ? "aplique" : `aplique a partir de ${dmy(addDaysKey(anniversary, -EARLY_APPLY_DAYS))}`} (com o índice ou um percentual informado) ou dispense.` };
   }
   if (due) {
     const message = q.quote.percent === 0 ? `Data-base ${dmy(anniversary)}: ${describeQuote(q.quote)}. A próxima rotina diária (06h) registra «sem aumento».` : `Data-base ${dmy(anniversary)}: o reajuste entra na próxima rotina diária (06h)${lead && days < 0 ? `, ${-days} dias antes da data-base (cobrança anual)` : ""}.`;
@@ -409,6 +410,21 @@ async function ensureLateTask(existing: Task[], contract: Contract, client: Clie
   return true;
 }
 
+/**
+ * Tarefas «Reajuste não aplicado» de OUTRA data-base que a em foco: a anterior foi decidida por outro caminho ou
+ * substituída pela seguinte (anterior ao acompanhamento) — não há mais o que fazer nela. Canceladas com o motivo.
+ */
+async function cancelObsoleteLateTasks(tasks: Task[], contract: Contract, anniversary: string): Promise<void> {
+  const suffix = `(data-base ${dmy(anniversary)})`;
+  const stale = tasks.filter((t) => t.processId === contract.id && t.processType === "contract" && OPEN_TASK_STATUSES.includes(t.status) && t.title.startsWith("Reajuste não aplicado") && !t.title.endsWith(suffix));
+  if (stale.length === 0) return;
+  const { cancelTaskInternal } = await import("@/server/tasks/service");
+  for (const t of stale) {
+    await cancelTaskInternal(t, SYSTEM_ACTOR, `A data-base desta tarefa já foi decidida ou ficou para trás: o reajuste em foco agora é o de ${dmy(anniversary)}`);
+    t.status = "cancelada";
+  }
+}
+
 export interface ContractReadjustmentRunOptions {
   /** Limite global da rotina (epoch ms): o cron inteiro tem 60 s e outras varreduras rodam antes. */
   deadline?: number;
@@ -428,7 +444,8 @@ async function sendReadjustmentPreview(c: Contract, state: ContractReadjustmentS
       : "entra sozinho na data-base com o índice publicado até lá";
   const sent = await notifyReadjustment(c, {
     kind: "acao",
-    key: `reajuste_previa_${c.id}_${anniversary}`,
+    // Sem o índice do período, uma prévia sem número; quando ele sai, a prévia com o percentual (chave própria).
+    key: `reajuste_previa_${c.id}_${anniversary}${state.quote ? "" : "_sem_indice"}`,
     title: (name) => `Reajuste em ${dmy(anniversary)}: ${name}`,
     body: `Contrato ${c.number} (${index ? `${index.name} · ${describeIndexSource(index.source)}` : describeReadjustment(c.readjustment)}): ${preview}. ${when[0].toUpperCase()}${when.slice(1)}; avise o cliente.`,
   });
@@ -477,6 +494,7 @@ export async function runContractReadjustments(now: Date = new Date(), options: 
       const state = contractReadjustmentState(c, { indices, amendments, today });
       const anniversary = state.anniversary;
       if (!anniversary) continue;
+      await cancelObsoleteLateTasks(tasks, c, anniversary);
       if (state.due) {
         if (state.status === "pronto" && state.quote) {
           // Orçamento de tempo da rotina (cron de 60 s): o que sobrar fica para amanhã, dentro da folga.

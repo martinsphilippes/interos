@@ -117,6 +117,12 @@ describe("datas-base", () => {
     expect(readjustmentSchedule({ startDate: "2020-03-10", covered: [], today: "2026-10-23", floor: "2026-10-23" }).due?.anniversary).toBe("2026-03-10");
   });
 
+  it("regra incluída depois (notBefore): datas-base anteriores não contam", () => {
+    const s = readjustmentSchedule({ startDate: "2024-03-10", covered: [], today: "2026-10-23", notBefore: "2026-06-01" });
+    expect(s.due).toBeNull();
+    expect(s.next?.anniversary).toBe("2027-03-10");
+  });
+
   it("acompanhamento: o mais tardio entre a entrada do reajuste automático e a criação do contrato", () => {
     expect(readjustmentFloor({ createdAt: "2024-01-05T10:00:00.000Z" })).toBe(READJUSTMENT_TRACKING_SINCE);
     expect(readjustmentFloor({ createdAt: "2027-02-01T10:00:00.000Z" })).toBe("2027-02-01");

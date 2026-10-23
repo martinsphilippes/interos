@@ -256,7 +256,9 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   `noticeDays`) — → renova sem reajuste com `readjustment.pending=true` e a varredura `reajustes_contratos` aplica na
   data-base com o acumulado certo. A escolha da renovação vale só para essa data-base (a regra do contrato não muda);
   escolha explícita fora de data-base (inclusive «Sem reajuste» em contrato com regra), índice diferente do contrato
-  ainda não publicado ou acima de 25% é recusada com mensagem. O termo da renovação só fala de reajuste quando decide
+  ainda não publicado ou acima de 25% é recusada com mensagem. Contrato com regra e uma data-base ANTERIOR ainda
+  pendente: a da renovação espera (as datas-base são decididas na ordem) — escolha explícita é recusada dizendo qual
+  falta decidir; «conforme» renova e deixa a dela para a rotina. O termo da renovação só fala de reajuste quando decide
   (ou deixa aguardando) a data-base, com o nome do índice. Renovações antigas (sem `annualModel`) contam como
   data-base decidida. Pelo CS: `completeRenewal(renewalId, termMonths, notes, actor,
   { readjustment?, requiresSignature? })` (source `renovacao_cs`; com assinatura fica `em_negociacao` até aplicar no
@@ -284,7 +286,11 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   avisa) ao gestor do Financeiro e ao dono do contrato (link do contrato) e ao CS do cliente (link da ficha do
   cliente), sem valores em R$ (notificação única por chave). Datas-base a partir de quando o sistema acompanha o
   contrato (`readjustmentFloor`: o mais tardio entre `READJUSTMENT_TRACKING_SINCE` e a criação do contrato) são
-  decididas NA ORDEM — a seguinte espera a anterior, nenhuma some sem registro; antes disso, só a mais recente. Cada
+  decididas NA ORDEM — a seguinte espera a anterior, nenhuma some sem registro; antes disso, só a mais recente (a
+  tarefa de atraso de uma data-base que ficou para trás ou foi decidida por outro caminho é cancelada pela rotina).
+  Regra INCLUÍDA por aditivo num contrato que não tinha (`readjustmentTrackedFrom`): datas-base anteriores não viram
+  pendência; regra TROCADA grava `readjustmentRuleSince`. Prévia sem o índice do período e prévia com o percentual
+  têm chaves próprias (a com número sai quando o índice é publicado). Cada
   data-base é decidida UMA vez:
   `Contract.readjustmentLog` (aplicado/mantido/dispensado; fora do snapshot e do hash), gravado na mesma transação do
   aditivo; `coveredAnniversaries` também conta aditivos não cancelados com `readjust` e renovações antigas aplicadas
@@ -295,8 +301,9 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   valores) e "Não reajustar" (motivo) — `financeiro.contratos.reajuste.{aplicar,dispensar}`. O índice escolhido
   guarda o nome (`indexName`) para o documento e o portal; reenviar a mesma regra só com o nome acrescentado não é
   mudança (nem aditivo «sem alteração»). Eventos `contract.readjusted` e `contract.readjustment_skipped` (descrição sem
-  valores; o motivo fica no payload). Na ficha do cliente, sem "ver valores", título, descrição e motivo dos eventos
-  saem com os R$ mascarados (`maskMoneyText`), como no histórico do contrato.
+  valores; o motivo fica no payload). Na ficha do cliente e no Histórico do projeto de implantação, sem "ver
+  valores", título, descrição e motivo dos eventos saem com os R$ mascarados (`redactTimelineEvent`), como no
+  histórico do contrato.
 - **3ª mensalidade (D27)**: `Commission.gateBillingId`/`expectedAt` gravados pelo motor (gatilho `mensalidade_n` e
   parcelas aguardando recebimento) — "Previsão (vencimento da 3ª mensalidade)" em Minhas comissões e no painel.
 

@@ -95,7 +95,7 @@ export async function autoRenewContracts(now: Date = new Date(), options: { clie
 export function renewalReadjustmentText(a: Pick<ContractAmendment, "readjust" | "readjustment" | "readjustNote">): string {
   if (a.readjust?.waived) return "sem reajuste nesta data-base (dispensado na renovação)";
   if (a.readjust) return describeQuote(a.readjust);
-  if (a.readjustment?.type === "indice" && a.readjustment.pending) return "aguardando o índice do período (entra sozinho na data-base)";
+  if (a.readjustment?.type === "indice" && a.readjustment.pending) return "aguardando o índice do período (a rotina diária aplica quando ele sair)";
   if (a.readjustNote) return a.readjustNote;
   return "nenhum nesta renovação";
 }

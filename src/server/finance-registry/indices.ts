@@ -480,7 +480,7 @@ export async function refreshReadjustmentIndices(options: { now?: Date; force?: 
         kind: "atencao",
         key: `indice_falha_${item.id}_${dateKey(index.failingSince)}`,
         title: `Não consigo buscar o ${index.name} desde ${dateKey(index.failingSince).split("-").reverse().join("/")}`,
-        body: `${item.error ?? "Falha na fonte"}. Os contratos que usam o ${index.name} esperam o índice para reajustar; se a fonte continuar fora, lance o mês à mão em Cadastros › Índices.`,
+        body: `${item.error ?? "Falha na fonte"}. Os contratos que usam o ${index.name} esperam o índice para reajustar; ${index.archived ? `o ${index.name} está desativado: reative-o em Cadastros › Índices para lançar o mês à mão, ou troque o índice dos contratos.` : "se a fonte continuar fora, lance o mês à mão em Cadastros › Índices."}`,
         href: `/financeiro/cadastros?aba=indices&item=${item.id}`,
         entity: { type: "readjustment_index", id: item.id },
       });

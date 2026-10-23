@@ -18,6 +18,7 @@ import { COLLECTIONS, type Billing, type Client, type Contract, type ContractAme
 import { applyReadjustmentNow, getContractReadjustmentView, runContractReadjustments as runAll, skipReadjustment } from "@/server/finance/readjustments";
 import { autoRenewContracts as renewAll, renewalReadjustmentText } from "@/server/finance/renewals";
 import { billingDocId } from "@/server/finance/billing";
+import { createTaskInternal } from "@/server/tasks/service";
 import { applyAmendment, createAmendment } from "@/server/finance/amendments";
 import { redactContract } from "@/server/finance/redact";
 import { setReadjustmentIndexArchived, setReadjustmentIndexValue } from "@/server/finance-registry/indices";
@@ -203,8 +204,11 @@ describe("reajuste anual na data-base", () => {
     expect(view?.state.status).toBe("previsto");
     expect(view?.state.anniversary).toBe(anniversaryOf(start, 2));
     expect(view?.state.monthlyAfter).toBeUndefined();
+    // Tarefa de atraso de outra data-base (já decidida ou que ficou para trás) é cancelada pela rotina.
+    const stale = await createTaskInternal({ title: `Reajuste não aplicado: ACME ${RUN} (data-base 10/01/2020)`, clientId: CLIENT_ID, departmentId: "financeiro", priority: "alta", processType: "contract", processId: c.id, origin: "automacao" }, ACTOR);
     const run = await runContractReadjustments(NOW);
     expect(run.appliedContractIds).not.toContain(c.id);
+    expect((await getById<Task>(COLLECTIONS.tasks, stale.id))?.status).toBe("cancelada");
   });
 
   it("índice desatualizado: espera (sem aplicar) e a tela diz o porquê", async () => {
@@ -394,6 +398,48 @@ describe("revisão 2: renovação com as travas da rotina, série errada e decis
     const { start } = baseFrom(100);
     const c = await contract("s", { startDate: iso(start), endDate: iso(addMonthsClamped(start, 24)), readjustment: { type: "indice", index: IDX } });
     await expect(createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Sem mudança", requiresSignature: false, conditions: { readjustment: { type: "indice", index: IDX } } }, ACTOR)).rejects.toThrow(/Nenhuma alteração/);
+    // Contrato «aguardando o índice»: reenviar a mesma regra também não é mudança (o «aguardando» continua).
+    const p = await contract("s2", { startDate: iso(start), endDate: iso(addMonthsClamped(start, 24)), readjustment: { type: "indice", index: IDX, indexName: `Índice ${RUN}`, pending: true } });
+    await expect(createAmendment({ contractId: p.id, effectiveFrom: TODAY, reason: "Sem mudança", requiresSignature: false, conditions: { readjustment: { type: "indice", index: IDX } } }, ACTOR)).rejects.toThrow(/Nenhuma alteração/);
+  });
+});
+
+describe("revisão 3: ordem das datas-base, regra incluída depois", () => {
+  // 1ª data-base daqui a 10 dias (pendente); a renovação, com vigência no fim (2ª data-base), vem depois dela.
+  const start = addMonthsClamped(daysFrom(TODAY, 10), -12);
+  const first = anniversaryOf(start, 1);
+  const second = anniversaryOf(start, 2);
+
+  it("data-base anterior pendente segura a da renovação: escolha explícita recusada com o motivo certo, «conforme» deixa para a rotina", async () => {
+    const c = await contract("t", { termMonths: 24, startDate: iso(start), endDate: iso(second), readjustment: { type: "percentual", percent: 5 } });
+    await expect(createAmendment({ contractId: c.id, effectiveFrom: second, reason: "Renovação sem reajuste", requiresSignature: false, renewal: { months: 12, readjustment: { type: "nenhum" } } }, ACTOR, { source: "renovacao_cs" })).rejects.toThrow(/ainda não foi decidida/);
+    const a = await createAmendment({ contractId: c.id, effectiveFrom: second, reason: "Renovação conforme o contrato", requiresSignature: false, renewal: { months: 12 } }, ACTOR, { source: "renovacao_cs" });
+    expect(a.readjust).toBeUndefined();
+    expect(renewalReadjustmentText(a)).toMatch(new RegExp(`espera a decisão da data-base ${first.split("-").reverse().join("/")}`));
+  });
+
+  it("contrato SEM regra: o percentual negociado na renovação vale para a data-base dela (nada fica pendente antes)", async () => {
+    const c = await contract("u", { termMonths: 24, startDate: iso(start), endDate: iso(second), readjustment: { type: "nenhum" } });
+    const a = await createAmendment({ contractId: c.id, effectiveFrom: second, reason: "Renovação com 5% negociado", requiresSignature: false, renewal: { months: 12, readjustment: { type: "percentual", percent: 5 } } }, ACTOR, { source: "renovacao_cs" });
+    expect(a.readjust).toMatchObject({ anniversary: second, percent: 5 });
+  });
+
+  it("regra incluída por aditivo num contrato sem reajuste: as datas-base anteriores não viram pendência", async () => {
+    const { start: s0, anniversary: past } = baseFrom(-5);
+    const c = await contract("v", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "nenhum" } });
+    const a = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Inclui o reajuste", requiresSignature: false, conditions: { readjustment: { type: "indice", index: IDX } } }, ACTOR);
+    await applyAmendment(a.id, ACTOR);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.readjustmentTrackedFrom).toBe(TODAY);
+    expect(after.readjustmentRuleSince).toBeUndefined();
+    const view = await getContractReadjustmentView(after, await amendmentsOf(c.id), { hideValues: false });
+    expect(view?.state.anniversary).not.toBe(past);
+    // A próxima é a do ano que vem (o índice do período dela ainda não saiu): nada travado nem pendente agora.
+    expect(view?.state).toMatchObject({ due: false, anniversary: anniversaryOf(s0, 2) });
+    expect(["previsto", "aguardando_indice"]).toContain(view?.state.status);
+    const run = await runContractReadjustments(NOW);
+    expect(run.appliedContractIds).not.toContain(c.id);
+    expect((await list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", c.id]] })).filter((t) => t.title.startsWith("Reajuste não aplicado"))).toHaveLength(0);
   });
 });
 
