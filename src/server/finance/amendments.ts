@@ -464,6 +464,8 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
         if (current[f] !== undefined) patch[f] = FieldValue.delete();
       } else patch[f] = v;
     }
+    // Mesma regra: o «aguardando o índice» é o do contrato AGORA (a data-base pode ter sido decidida com o rascunho aberto).
+    if (a.after.readjustment && sameReadjustmentRule(current.readjustment, a.after.readjustment)) patch.readjustment = stripUndefined({ ...a.after.readjustment, pending: current.readjustment?.pending });
     // Renovação numa data-base cujo índice ainda não saiu: o contrato mostra "aguardando o índice" até o reajuste entrar.
     if (a.kind === "renovacao" && a.readjustment?.type === "indice" && a.readjustment.pending) patch.readjustment = { ...(current.readjustment ?? { type: "indice" }), type: "indice", index: a.readjustment.index, pending: true };
     // Reajuste anual aplicado: registra a decisão da data-base (uma só por data-base) e tira o "aguardando".
@@ -495,13 +497,15 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
       patch.readjustmentLog = [...(current.readjustmentLog ?? []), entry];
     }
     // Regra de reajuste trocada por aditivo: vale da próxima data-base em diante (as anteriores ficam para decisão).
-    // Regra INCLUÍDA (o contrato não tinha): as datas-base anteriores não tinham o que decidir — o acompanhamento começa
-    // na vigência do aditivo.
-    if (!a.readjust && a.kind !== "renovacao" && !sameReadjustmentRule(current.readjustment, a.after.readjustment)) {
+    // Regra INCLUÍDA num contrato que NUNCA teve (inclusive passar de cobrança única a recorrente): as datas-base
+    // anteriores não tinham o que decidir — o acompanhamento começa na vigência do aditivo. Regra reincluída depois de
+    // removida conta como troca: a data-base da regra antiga, se pendente, fica para o Financeiro.
+    if (!a.readjust && a.kind !== "renovacao") {
       const hadRule = hasReadjustmentRule(current);
       const hasRule = hasReadjustmentRule({ readjustment: a.after.readjustment, recurrence: a.after.recurrence });
-      if (!hadRule && hasRule) patch.readjustmentTrackedFrom = a.effectiveFrom;
-      else patch.readjustmentRuleSince = a.effectiveFrom;
+      const everHadRule = hadRule || Boolean(current.readjustmentRuleSince || current.readjustmentTrackedFrom) || (current.readjustmentLog?.length ?? 0) > 0;
+      if (!everHadRule && hasRule) patch.readjustmentTrackedFrom = a.effectiveFrom;
+      else if (!sameReadjustmentRule(current.readjustment, a.after.readjustment) || (!hadRule && hasRule)) patch.readjustmentRuleSince = a.effectiveFrom;
     }
     tx.update(contractRef, stripUndefined(patch));
     tx.update(amendmentRef, { status: "aplicado", appliedAt: now, appliedBy: actor.id, appliedVersion: version, updatedAt: now });

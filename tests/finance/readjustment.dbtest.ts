@@ -441,6 +441,54 @@ describe("revisão 3: ordem das datas-base, regra incluída depois", () => {
     expect(run.appliedContractIds).not.toContain(c.id);
     expect((await list<Task>(COLLECTIONS.tasks, { where: [["processId", "==", c.id]] })).filter((t) => t.title.startsWith("Reajuste não aplicado"))).toHaveLength(0);
   });
+
+  it("cobrança única que passa a recorrente com a mesma regra: começa a acompanhar na vigência do aditivo", async () => {
+    const { start: s0, anniversary: past } = baseFrom(-5);
+    const c = await contract("w", { recurrence: "unico", startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "indice", index: IDX } });
+    const a = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Passa a mensal", requiresSignature: false, conditions: { recurrence: "mensal" } }, ACTOR);
+    await applyAmendment(a.id, ACTOR);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.readjustmentTrackedFrom).toBe(TODAY);
+    const view = await getContractReadjustmentView(after, await amendmentsOf(c.id), { hideValues: false });
+    expect(view?.state.anniversary).not.toBe(past);
+    expect(view?.state.due).toBe(false);
+  });
+
+  it("regra removida e reincluída: a data-base pendente da regra antiga continua em foco (o Financeiro decide)", async () => {
+    const { start: s0, anniversary } = baseFrom(0);
+    const c = await contract("x", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "indice", index: IDX } });
+    const off = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Remove o reajuste", requiresSignature: false, conditions: { readjustment: { type: "nenhum" } } }, ACTOR);
+    await applyAmendment(off.id, ACTOR);
+    const tomorrow = daysFrom(TODAY, 1);
+    const on = await createAmendment({ contractId: c.id, effectiveFrom: tomorrow, reason: "Volta o reajuste", requiresSignature: false, conditions: { readjustment: { type: "indice", index: IDX } } }, ACTOR);
+    await applyAmendment(on.id, ACTOR);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.readjustmentTrackedFrom).toBeUndefined();
+    expect(after.readjustmentRuleSince).toBe(tomorrow);
+    const view = await getContractReadjustmentView(after, await amendmentsOf(c.id), { hideValues: false });
+    expect(view?.state).toMatchObject({ anniversary, status: "bloqueado" });
+  });
+
+  it("«aguardando» preservado no rascunho não volta depois que a data-base foi decidida", async () => {
+    const { start: s0, anniversary } = baseFrom(-3);
+    const c = await contract("y", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "indice", index: IDX, indexName: `Índice ${RUN}`, pending: true } });
+    const a = await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Muda o vencimento", requiresSignature: false, conditions: { billingDay: 15, readjustment: { type: "indice", index: IDX } } }, ACTOR);
+    expect(a.after.readjustment?.pending).toBe(true);
+    await skipReadjustment({ contractId: c.id, anniversary, reason: "Negociado" }, ACTOR);
+    await applyAmendment(a.id, ACTOR);
+    const after = (await getById<Contract>(COLLECTIONS.contracts, c.id))!;
+    expect(after.billingDay).toBe(15);
+    expect(after.readjustment?.pending).toBeUndefined();
+  });
+
+  it("aditivo em andamento: a rotina não cancela a tarefa de atraso de outra data-base", async () => {
+    const { start: s0 } = baseFrom(-3);
+    const c = await contract("z", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "percentual", percent: 5 } });
+    await createAmendment({ contractId: c.id, effectiveFrom: TODAY, reason: "Muda o vencimento", requiresSignature: true, conditions: { billingDay: 20 } }, ACTOR);
+    const other = await createTaskInternal({ title: `Reajuste não aplicado: ACME ${RUN} (data-base 10/01/2020)`, clientId: CLIENT_ID, departmentId: "financeiro", priority: "alta", processType: "contract", processId: c.id, origin: "automacao" }, ACTOR);
+    await runContractReadjustments(NOW);
+    expect((await getById<Task>(COLLECTIONS.tasks, other.id))?.status).toBe("aberta");
+  });
 });
 
 describe("cadastro de índices", () => {

@@ -494,7 +494,8 @@ export async function runContractReadjustments(now: Date = new Date(), options: 
       const state = contractReadjustmentState(c, { indices, amendments, today });
       const anniversary = state.anniversary;
       if (!anniversary) continue;
-      await cancelObsoleteLateTasks(tasks, c, anniversary);
+      // Com aditivo em andamento, a data-base que ele cobre ainda não foi decidida de fato: as tarefas ficam.
+      if (!amendments.some((a) => AMENDMENT_OPEN_STATUSES.includes(a.status))) await cancelObsoleteLateTasks(tasks, c, anniversary);
       if (state.due) {
         if (state.status === "pronto" && state.quote) {
           // Orçamento de tempo da rotina (cron de 60 s): o que sobrar fica para amanhã, dentro da folga.
