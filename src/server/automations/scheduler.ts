@@ -15,6 +15,16 @@ import { bumpRuleRun, invalidateRulesCache, normalizeRule, recordStandaloneRun, 
 import { LEGACY_LAST_RUN_FIELDS, SWEEPS, mergeSweepsSetting, readSweepsSetting } from "./sweeps";
 import { SCHEDULE_INTERVAL_MS, SCHEDULE_LABELS, SCAN_ENTITY_LABELS, SWEEP_DEFINITIONS, SWEEP_KEYS, type AutomationRuleRecord, type RuleSchedule, type SweepKey } from "./schemas";
 
+/**
+ * Intervalo mínimo entre duas execuções: a frequência menos uma folga (10%, até 2 h). O cron diário da Vercel (plano
+ * Hobby) dispara em qualquer minuto da hora marcada: 09:40 num dia e 09:10 no outro dá 23,5 h — sem a folga, a
+ * varredura diária pularia esse dia.
+ */
+export function dueInterval(schedule: RuleSchedule): number {
+  const ms = SCHEDULE_INTERVAL_MS[schedule];
+  return ms - Math.min(2 * 3_600_000, ms / 10);
+}
+
 export interface SweepState {
   lastRunAt?: string;
   lastStatus?: "executada" | "erro";
@@ -112,7 +122,7 @@ export async function runSweeps(options: { only?: string[]; force?: boolean } = 
     const def = SWEEP_DEFINITIONS[key];
     const { schedule, ruleIds } = effectiveSchedule(key, rules);
     const last = lastRunOf(key, state);
-    if (!force && last && now.getTime() - new Date(last).getTime() < SCHEDULE_INTERVAL_MS[schedule]) {
+    if (!force && last && now.getTime() - new Date(last).getTime() < dueInterval(schedule)) {
       items.push({ key, label: def.label, kind: "varredura", status: "pulada", summary: `${SCHEDULE_LABELS[schedule]}; última execução em ${new Date(last).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}` });
       continue;
     }
@@ -146,7 +156,7 @@ export async function runSweeps(options: { only?: string[]; force?: boolean } = 
   for (const rule of rules.filter((r) => r.trigger.entity)) {
     if (only && !only.has(rule.id)) continue;
     const schedule = rule.trigger.schedule as RuleSchedule;
-    if (!force && rule.lastScheduledAt && now.getTime() - new Date(rule.lastScheduledAt).getTime() < SCHEDULE_INTERVAL_MS[schedule]) {
+    if (!force && rule.lastScheduledAt && now.getTime() - new Date(rule.lastScheduledAt).getTime() < dueInterval(schedule)) {
       items.push({ key: rule.id, label: rule.name, kind: "regra", status: "pulada", summary: `${SCHEDULE_LABELS[schedule]}; última execução em ${new Date(rule.lastScheduledAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}` });
       continue;
     }

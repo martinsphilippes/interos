@@ -558,6 +558,8 @@ function renewalPatch(input: Pick<UpdateConditionsInput, "autoRenew" | "renewalT
 export async function updateContractConditions(input: UpdateConditionsInput, actor: UserRef): Promise<{ versioned: boolean }> {
   const contract = await loadContract(input.contractId);
   assertEditable(contract);
+  const { assertReadjustmentAllowed } = await import("@/server/finance-registry/indices");
+  await assertReadjustmentAllowed(input.readjustment as ContractReadjustment | undefined, contract.readjustment);
   const version = await versionPatchIfSent(contract, actor, "Condições alteradas");
   const patch: Partial<Contract> = {
     ...version.patch,

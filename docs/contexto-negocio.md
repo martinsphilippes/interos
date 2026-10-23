@@ -125,11 +125,18 @@ Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada 
   nunca um projeto de implantação novo. Só um aditivo em andamento por contrato. Quem opera o Financeiro cria e
   aplica aditivos; a renovação pelo CS continua no CS.
 - **Renovação**: no fechamento da venda o vendedor combina renovação automática (sim/não), prazo da renovação,
-  reajuste (nenhum, percentual ou índice IPCA/IGP-M/INPC) e antecedência do aviso (padrão 30 dias). Renovar
-  (pelo CS ou automaticamente) soma o novo prazo ao fim da vigência, preserva o prazo original e gera as mensalidades
-  do novo período. Reajuste percentual entra na hora; **índice oficial não é consultado automaticamente** — o
-  contrato renova sem reajuste e o CS recebe a tarefa "Informar índice de reajuste". Contrato vencido sem renovação
-  fica marcado "Vencido" e sai do MRR (nada é apagado).
+  reajuste anual (nenhum, percentual fixo ou um índice do cadastro: IPCA, IGP-M, INPC, IGP-DI, ICTI ou outro
+  cadastrado pelo Financeiro) e antecedência do aviso (padrão 30 dias). Renovar (pelo CS ou automaticamente) soma o
+  novo prazo ao fim da vigência, preserva o prazo original e gera as mensalidades do novo período. Contrato vencido
+  sem renovação fica marcado "Vencido" e sai do MRR (nada é apagado).
+- **Reajuste anual**: acontece no aniversário do início da vigência (data-base), também dentro de contratos de 24 ou
+  36 meses. Com índice, vale o acumulado dos 12 meses anteriores, buscado sozinho todo dia no Banco Central (IPCA,
+  IGP-M, INPC, IGP-DI e séries cadastradas) ou na planilha do IPEA (ICTI); cada mês novo atualiza na hora a prévia de
+  todos os contratos que usam o índice. Na data-base o INTEROS aplica sozinho (aditivo de reajuste, sem assinatura,
+  mensalidades em aberto refeitas) e avisa Financeiro, CS e o responsável; 30 dias antes manda a prévia. Acumulado
+  negativo mantém o valor (ou reduz, se o índice estiver configurado assim). Se o índice atrasar mais de 45 dias, ou
+  algo travar, vira tarefa ao Financeiro, que pode aplicar com outro percentual ou dispensar com motivo. Quando a
+  data-base coincide com a renovação, o reajuste entra junto no aditivo de renovação.
 - **Cobrança recorrente**: contratos de prazo fixo têm todas as mensalidades geradas; contratos com renovação
   automática (ou sem prazo) têm horizonte rolante (padrão 3 meses, configurável) — a varredura diária gera as
   próximas sem duplicar. O gestor pode gerar as próximas na página do contrato.

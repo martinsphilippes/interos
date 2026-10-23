@@ -5,6 +5,7 @@
  */
 import type { Contract, ContractAmendmentKind, ContractAmendmentStatus, ContractReadjustment, ContractSnapshot } from "./types";
 import { SALE_PAYMENT_METHOD_LABELS, SALE_RECURRENCE_LABELS } from "./sale-closing";
+import { indexDisplayName } from "./readjustment";
 
 type Variant = "default" | "success" | "warning" | "danger" | "info" | "brand" | "purple" | "secondary" | "muted";
 
@@ -36,13 +37,15 @@ export const AMENDMENT_STATUS_VARIANT: Record<ContractAmendmentStatus, Variant> 
 export const AMENDMENT_OPEN_STATUSES: readonly ContractAmendmentStatus[] = ["rascunho", "aguardando_assinatura", "assinado"];
 
 export const READJUSTMENT_TYPE_LABELS: Record<ContractReadjustment["type"], string> = { nenhum: "Sem reajuste", percentual: "Percentual", indice: "Índice" };
-export const READJUSTMENT_INDEX_LABELS: Record<NonNullable<ContractReadjustment["index"]>, string> = { ipca: "IPCA", igpm: "IGP-M", inpc: "INPC" };
 
-/** Texto curto do reajuste ("2,5%", "IPCA (índice a informar)", "Sem reajuste"). */
-export function describeReadjustment(r: ContractReadjustment | undefined): string {
+/**
+ * Texto curto do reajuste ("2,5%", "IPCA", "IPCA (aguardando o índice)", "Sem reajuste"). `names` = nomes do cadastro
+ * de índices (sem ele, os padrões; índice cadastrado aparece pelo id).
+ */
+export function describeReadjustment(r: ContractReadjustment | undefined, names?: Readonly<Record<string, string>>): string {
   if (!r || r.type === "nenhum") return "Sem reajuste";
   if (r.type === "percentual") return `${String(r.percent ?? 0).replace(".", ",")}%`;
-  return `${r.index ? READJUSTMENT_INDEX_LABELS[r.index] : "Índice"}${r.pending ? " (índice a informar)" : ""}`;
+  return `${r.index ? indexDisplayName(r.index, names) : "Índice"}${r.pending ? " (aguardando o índice)" : ""}`;
 }
 
 /** Campos do contrato que o snapshot (e o hash do documento) cobrem. */

@@ -30,6 +30,7 @@ import { CancelContractCard } from "@/components/finance/cancel-contract-button"
 import { ContractAmendmentsCard } from "@/components/finance/contract-amendments-card";
 import { ContractBillingCard } from "@/components/finance/contract-billing-card";
 import { ContractConditionsCard } from "@/components/finance/contract-conditions-card";
+import { ContractReadjustmentCard } from "@/components/finance/contract-readjustment-card";
 import { buildFlow, ContractFlow } from "@/components/finance/contract-flow";
 import { ContractItemsCard } from "@/components/finance/contract-items-card";
 import { ContractSummaryCard } from "@/components/finance/contract-summary-card";
@@ -41,6 +42,8 @@ import { FinanceAccessProvider } from "@/components/finance/finance-access";
 import { money, RESTRICTED_HINT } from "@/components/finance/values";
 import { PortalLinksCard } from "@/components/portal/portal-links-card";
 import { listPortalLinks } from "@/server/portal/service";
+import { listReadjustmentIndexOptions } from "@/server/finance-registry/indices";
+import { getContractReadjustmentView } from "@/server/finance/readjustments";
 
 type Params = Promise<{ id: string }>;
 
@@ -94,6 +97,8 @@ export default async function ContractPage({ params }: { params: Params }) {
   const signerOptions = sections.signatureView && sections.signersEdit && !closed ? await loadSignerOptions(client.id) : undefined;
   // A opção "cadastrar novo contato" só aparece quando a action vai aceitar: chave de contatos E cliente no escopo.
   const canCreateContact = signerOptions ? can(user, "operacao.clientes.contatos.editar") && (await canSeeClient(user, client)) : false;
+  // Reajuste anual: índices do cadastro (campos de condições) e a situação/prévia do próximo reajuste.
+  const [indexOptions, readjustmentView] = await Promise.all([listReadjustmentIndexOptions(), getContractReadjustmentView(raw.contract, raw.amendments, { hideValues: hidden })]);
 
   return (
     <FinanceAccessProvider value={caps}>
@@ -201,8 +206,9 @@ export default async function ContractPage({ params }: { params: Params }) {
             <ContractSummaryCard summary={detail.summary} />
             {/* Itens e condições (a condição de pagamento cita valores) pedem os valores para editar; dados de faturamento, só a chave. */}
             <ContractItemsCard contractId={contract.id} items={contract.items} products={detail.products} canEdit={sections.edit && !hidden && detail.editable} sent={sent} version={contract.version} amendable={signedByAll && !closed} />
-            <ContractConditionsCard contract={contract} canEdit={sections.edit && !hidden && detail.editable} sent={sent} amendable={signedByAll && !closed} />
-            {sections.amendmentsView && (signedByAll || detail.amendments.length > 0) ? <ContractAmendmentsCard contract={contract} amendments={detail.amendments} products={detail.products} closed={contract.status === "cancelado"} /> : null}
+            <ContractConditionsCard contract={contract} canEdit={sections.edit && !hidden && detail.editable} sent={sent} amendable={signedByAll && !closed} indices={indexOptions} />
+            {readjustmentView && contract.status !== "cancelado" ? <ContractReadjustmentCard contractId={contract.id} rule={readjustmentView.rule} startDate={readjustmentView.startDate} state={readjustmentView.state} log={readjustmentView.log} hideValues={hidden} indexHref={readjustmentView.indexId ? `/financeiro/cadastros?aba=indices&item=${readjustmentView.indexId}` : undefined} /> : null}
+            {sections.amendmentsView && (signedByAll || detail.amendments.length > 0) ? <ContractAmendmentsCard contract={contract} amendments={detail.amendments} products={detail.products} closed={contract.status === "cancelado"} indices={indexOptions} /> : null}
             {caps.billings.view ? (
               <ContractBillingCard
                 contractId={contract.id}

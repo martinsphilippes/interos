@@ -336,6 +336,8 @@ export const TRIGGER_ENTITY_TYPES: Partial<Record<EventType, string>> = {
   "contract.pendency_resolved": "contract",
   "contract.renewed": "contract",
   "contract.amendment_applied": "contract",
+  "contract.readjusted": "contract",
+  "contract.readjustment_skipped": "contract",
   "financial.released": "contract",
   "customer.activated": "cs_account",
   "customer.risk.detected": "cs_account",

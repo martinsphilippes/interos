@@ -266,8 +266,33 @@ async function renovacoes(now: Date): Promise<SweepOutcome> {
   const { autoRenewContracts } = await import("@/server/finance/renewals");
   const auto = await autoRenewContracts(now);
   return {
-    summary: `${r.created} renovação(ões) criada(s) · ${r.dueEmitted} aviso(s) de renovação próxima · automáticas: ${auto.candidates} candidato(s), ${auto.renewed} renovado(s)${auto.indexPending ? ` (${auto.indexPending} com índice a informar)` : ""}${auto.errors.length ? ` · ${auto.errors.length} erro(s)` : ""}`,
+    summary: `${r.created} renovação(ões) criada(s) · ${r.dueEmitted} aviso(s) de renovação próxima · automáticas: ${auto.candidates} candidato(s), ${auto.renewed} renovado(s)${auto.indexPending ? ` (${auto.indexPending} aguardando o índice do período)` : ""}${auto.errors.length ? ` · ${auto.errors.length} erro(s)` : ""}`,
     data: { ...r, autoRenew: auto },
+  };
+}
+
+/** Reajuste anual dos contratos na data-base (src/server/finance/readjustments.ts). */
+async function reajustesContratos(now: Date): Promise<SweepOutcome> {
+  const { runContractReadjustments } = await import("@/server/finance/readjustments");
+  const r = await runContractReadjustments(now);
+  return {
+    summary: `${r.contracts} contrato(s) com reajuste · ${r.applied} reajustado(s) · ${r.held} sem aumento (índice ≤ 0) · ${r.waiting} aguardando o índice · ${r.notices} prévia(s) enviada(s) · ${r.lateTasks} tarefa(s) de reajuste atrasado${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
+    data: { ...r, errors: r.errors.slice(0, 20) },
+  };
+}
+
+/** Índices de reajuste: meses novos no Banco Central/IPEA (src/server/finance-registry/indices.ts). */
+async function indicesReajuste(now: Date): Promise<SweepOutcome> {
+  const { refreshReadjustmentIndices } = await import("@/server/finance-registry/indices");
+  const r = await refreshReadjustmentIndices({ now });
+  const fetched = r.items.filter((i) => i.status !== "em_dia" && i.status !== "manual");
+  const detail = r.items
+    .filter((i) => i.status === "atualizado" || i.status === "erro")
+    .map((i) => (i.status === "erro" ? `${i.name}: ${i.error}` : `${i.name}: ${i.newMonths.length} mês(es) novo(s)`))
+    .join(" · ");
+  return {
+    summary: `${r.items.length} índice(s) · ${fetched.length} consultado(s) na fonte · ${r.updated} com mês novo · ${r.errors} com erro${detail ? ` — ${detail}` : ""}`,
+    data: { items: r.items.map((i) => ({ id: i.id, status: i.status, newMonths: i.newMonths, revisedMonths: i.revisedMonths, error: i.error })) },
   };
 }
 
@@ -502,6 +527,7 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   oportunidades_paradas: oportunidadesParadas,
   leads_sem_contato_24h: leadsSemContato24h,
   renovacoes,
+  reajustes_contratos: reajustesContratos,
   saude_clientes: saudeClientes,
   implantacoes_atrasadas: implantacoesAtrasadas,
   tarefas_recorrentes: tarefasRecorrentes,
@@ -515,6 +541,7 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   cobrancas_recorrentes: cobrancasRecorrentes,
   contas_recorrentes: contasRecorrentes,
   contas_a_pagar_vencidas: contasAPagarVencidas,
+  indices_reajuste: indicesReajuste,
 };
 
 /** Campos antigos (dos módulos) que também contam como "última execução" da varredura. */

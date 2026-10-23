@@ -27,11 +27,13 @@ import {
   amendmentKindFor,
   amendmentRequiresSignatureByDefault,
   contractSnapshot,
-  describeReadjustment,
   describeSnapshotValue,
   SNAPSHOT_FIELDS,
 } from "@/domain/contract-snapshot";
-import { COLLECTIONS, type Billing, type Client, type Contract, type ContractAmendment, type ContractReadjustment, type ContractSignerEntry, type ContractSnapshot, type Document, type ItemSince, type Product, type ProposalItem, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type AmendmentReadjust, type Billing, type Client, type Contract, type ContractAmendment, type ContractReadjustment, type ContractReadjustmentLogEntry, type ContractSignerEntry, type ContractSnapshot, type Document, type ItemSince, type Product, type ProposalItem, type UserRef } from "@/domain/types";
+import { coveredAnniversaries, quoteReadjustment, readjustmentSchedule } from "@/domain/readjustment";
+import { BusinessError } from "@/server/auth/error-classes";
+import { assertReadjustmentAllowed, getReadjustmentIndexMap } from "@/server/finance-registry/indices";
 import { billingDocId, dayInMonth, dueIso, lastRecurringBilling, recurringStep, round2, todayKey } from "./billing";
 import type { AmendmentInput, AmendmentSignatureInput } from "./schemas";
 import { addContractDocument, billingCancellationPatch, cancelChargeAtProvider, createBillingWithDeterministicId, generateNextBillings, loadContract, providerChargeFields, syncClientProductsFromContract } from "./service";
@@ -82,11 +84,19 @@ function normalizeItems(items: NonNullable<AmendmentInput["items"]>, previous: P
   });
 }
 
+export interface AmendmentReadjustOptions {
+  /** Reajuste anual calculado (data-base + percentual): aplicado na mensalidade (renovação ou aditivo "reajuste"). */
+  readjust?: AmendmentReadjust;
+  /** Renovação numa data-base cujo índice ainda não saiu: fica pendente (entra sozinho quando sair). */
+  pendingIndex?: string;
+}
+
 /**
  * Calcula o "depois" a partir do contrato e da entrada. Renovação: endDate = base (fim atual ou hoje) + meses,
- * `termMonths` PRESERVADO, reajuste percentual aplicado à mensalidade; índice NÃO é buscado (fica pendente).
+ * `termMonths` PRESERVADO. Reajuste anual (`readjust`, calculado no servidor pela data-base): mensalidade de cada item
+ * × (1 + %), na renovação ou sozinho (aditivo "reajuste").
  */
-export function buildAmendmentAfter(contract: Contract, input: Omit<AmendmentInput, "contractId" | "reason" | "effectiveFrom" | "requiresSignature">): { after: ContractSnapshot; renewalMonths?: number; readjustment?: ContractReadjustment } {
+export function buildAmendmentAfter(contract: Contract, input: Omit<AmendmentInput, "contractId" | "reason" | "effectiveFrom" | "requiresSignature">, options: AmendmentReadjustOptions = {}): { after: ContractSnapshot; renewalMonths?: number; readjustment?: ContractReadjustment } {
   const before = contractSnapshot(contract);
   const after: ContractSnapshot = { ...before, items: before.items.map((i) => ({ ...i })) };
   let readjustment: ContractReadjustment | undefined;
@@ -118,20 +128,19 @@ export function buildAmendmentAfter(contract: Contract, input: Omit<AmendmentInp
     if (c.readjustment !== undefined) after.readjustment = stripUndefined({ ...c.readjustment });
     if (c.noticeDays !== undefined) after.noticeDays = c.noticeDays;
   }
+  const readjust = options.readjust;
+  if (readjust && readjust.percent !== 0) {
+    after.items = readjustItems(after.items, readjust.percent);
+    after.monthlyTotal = proposalTotals(after.items).monthlyTotal;
+  }
   if (input.renewal) {
     const today = todayKey();
     const base = contract.endDate && dateKey(contract.endDate) >= today ? contract.endDate : dueIso(today);
     after.endDate = addMonthsIso(base, input.renewal.months);
     renewalMonths = input.renewal.months;
-    const r = input.renewal.readjustment ?? contract.readjustment;
-    if (r?.type === "percentual" && r.percent && r.percent > 0) {
-      readjustment = { type: "percentual", percent: r.percent };
-      after.items = readjustItems(after.items, r.percent);
-      after.monthlyTotal = proposalTotals(after.items).monthlyTotal;
-    } else if (r?.type === "indice") {
-      // Índice oficial NÃO é buscado automaticamente: renova sem reajuste e o CS informa o índice (tarefa).
-      readjustment = { type: "indice", index: r.index, pending: true };
-    } else readjustment = { type: "nenhum" };
+    if (readjust) readjustment = readjust.type === "percentual" ? { type: "percentual", percent: readjust.percent } : stripUndefined({ type: "indice" as const, index: readjust.indexId });
+    else if (options.pendingIndex) readjustment = { type: "indice", index: options.pendingIndex, pending: true };
+    else readjustment = { type: "nenhum" };
   }
   return { after, renewalMonths, readjustment };
 }
@@ -141,6 +150,8 @@ export interface CreateAmendmentOptions {
   renewalId?: string;
   /** Emitir eventos (o seed desliga). */
   emit?: boolean;
+  /** Aditivo de reajuste anual (sem itens/condições/renovação): data-base e percentual já calculados. */
+  readjust?: AmendmentReadjust;
 }
 
 /** Cria o aditivo em rascunho com before/after/changes calculados no servidor. Um aditivo em andamento por contrato. */
@@ -151,15 +162,38 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
   const open = existing.find((a) => AMENDMENT_OPEN_STATUSES.includes(a.status));
   if (open) throw new Error(`Já existe o aditivo ${open.number} em andamento (${open.status.replace("_", " ")}). Aplique ou cancele antes de criar outro.`);
   if (input.items && input.items.length === 0) throw new Error("O contrato precisa de pelo menos um item");
+  // Índice escolhido precisa estar no cadastro e ativo (o que o contrato já usa continua valendo).
+  await assertReadjustmentAllowed(input.conditions?.readjustment as ContractReadjustment | undefined, contract.readjustment);
+  await assertReadjustmentAllowed(input.renewal?.readjustment as ContractReadjustment | undefined, contract.readjustment);
   const effectiveFrom = input.effectiveFrom.slice(0, 10);
+  const covered = coveredAnniversaries(contract, existing);
+  let readjust = options.readjust;
+  let pendingIndex: string | undefined;
+  if (readjust) {
+    if (input.items || input.conditions || input.renewal) throw new BusinessError("O reajuste anual vai num aditivo só dele");
+    const month = readjust.anniversary.slice(0, 7);
+    if (covered.some((c) => c.slice(0, 7) === month)) throw new BusinessError(`O reajuste da data-base ${formatDate(dueIso(readjust.anniversary))} já foi decidido`);
+  } else if (input.renewal) {
+    // Renovação numa data-base (aniversário da vigência) ainda não decidida: o reajuste anual entra junto.
+    const rule = (input.renewal.readjustment as ContractReadjustment | undefined) ?? contract.readjustment;
+    if (rule && rule.type !== "nenhum") {
+      const due = contract.startDate ? readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: effectiveFrom }).due : covered.some((c) => c.slice(0, 7) === effectiveFrom.slice(0, 7)) ? null : { anniversary: effectiveFrom, overdueDays: 0 };
+      if (due && due.overdueDays < 366) {
+        const index = rule.type === "indice" && rule.index ? (await getReadjustmentIndexMap()).get(rule.index) : undefined;
+        const q = quoteReadjustment(rule, index, due.anniversary);
+        if (q.ok) readjust = { ...q.quote, anniversary: due.anniversary };
+        else if (rule.type === "indice" && rule.index) pendingIndex = rule.index;
+      }
+    }
+  }
   const before = contractSnapshot(contract);
-  const { after, renewalMonths, readjustment } = buildAmendmentAfter(contract, input);
+  const { after, renewalMonths, readjustment } = buildAmendmentAfter(contract, input, { readjust, pendingIndex });
   const audit = auditChanges<ContractSnapshot>(before, after, [...SNAPSHOT_FIELDS]);
   const changed = Object.keys(audit.changes);
   if (changed.length === 0) throw new Error("Nenhuma alteração em relação ao contrato atual");
-  const readjustmentOnly = Boolean(input.renewal) === false && changed.every((f) => f === "items" || f === "monthlyTotal") && Boolean(input.conditions?.readjustment) && !input.items;
+  const readjustmentOnly = Boolean(options.readjust) && !input.renewal && !input.items && !input.conditions;
   const kind = amendmentKindFor(changed, { renewal: Boolean(input.renewal), readjustmentOnly });
-  const requiresSignature = input.requiresSignature ?? (kind === "renovacao" ? false : amendmentRequiresSignatureByDefault(changed));
+  const requiresSignature = input.requiresSignature ?? (kind === "renovacao" || kind === "reajuste" ? false : amendmentRequiresSignatureByDefault(changed));
   const n = existing.length + 1;
   const signers: ContractSignerEntry[] = contract.signers.map((s) => ({ name: s.name, email: s.email, role: s.role, status: "pendente" as const }));
   let created: ContractAmendment | null = null;
@@ -185,6 +219,7 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
         source: options.source ?? "financeiro",
         renewalId: options.renewalId,
         readjustment,
+        readjust,
         renewalMonths,
         createdBy: actor.id,
       }) as Omit<ContractAmendment, "id" | "organizationId" | "createdAt" | "updatedAt">,
@@ -303,8 +338,6 @@ export async function cancelAmendment(amendmentId: string, reason: string, actor
 
 export interface ApplyAmendmentOptions {
   emit?: boolean;
-  /** Renovação automática: aviso ao CS quando o índice fica pendente. */
-  notifyIndexPending?: boolean;
 }
 
 export interface ApplyAmendmentResult {
@@ -357,8 +390,34 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
         if (current[f] !== undefined) patch[f] = FieldValue.delete();
       } else patch[f] = v;
     }
-    // Renovação com índice pendente: o contrato guarda o reajuste pendente para o CS informar.
+    // Renovação numa data-base cujo índice ainda não saiu: o contrato mostra "aguardando o índice" até o reajuste entrar.
     if (a.kind === "renovacao" && a.readjustment?.type === "indice" && a.readjustment.pending) patch.readjustment = { ...(current.readjustment ?? { type: "indice" }), type: "indice", index: a.readjustment.index, pending: true };
+    // Reajuste anual aplicado: registra a decisão da data-base (uma só por data-base) e tira o "aguardando".
+    if (a.readjust) {
+      const month = a.readjust.anniversary.slice(0, 7);
+      if ((current.readjustmentLog ?? []).some((e) => e.anniversary.slice(0, 7) === month)) throw new BusinessError(`O reajuste da data-base ${formatDate(dueIso(a.readjust.anniversary))} já foi decidido`);
+      const rule = (patch.readjustment as ContractReadjustment | undefined) ?? current.readjustment;
+      if (rule?.pending) patch.readjustment = stripUndefined({ ...rule, pending: undefined });
+      const entry: ContractReadjustmentLogEntry = stripUndefined({
+        anniversary: a.readjust.anniversary,
+        outcome: "aplicado" as const,
+        at: now,
+        by: actor.id,
+        byName: actor.name,
+        percent: a.readjust.percent,
+        rawPercent: a.readjust.rawPercent,
+        indexId: a.readjust.indexId,
+        indexName: a.readjust.indexName,
+        from: a.readjust.from,
+        to: a.readjust.to,
+        manual: a.readjust.manual,
+        amendmentId: a.id,
+        amendmentNumber: a.number,
+        monthlyBefore: current.monthlyTotal,
+        monthlyAfter: a.after.monthlyTotal,
+      });
+      patch.readjustmentLog = [...(current.readjustmentLog ?? []), entry];
+    }
     tx.update(contractRef, stripUndefined(patch));
     tx.update(amendmentRef, { status: "aplicado", appliedAt: now, appliedBy: actor.id, appliedVersion: version, updatedAt: now });
     const merged = { ...current } as Record<string, unknown>;
@@ -452,30 +511,14 @@ export async function applyAmendment(amendmentId: string, actor: UserRef, option
     }
   }
 
-  // 6. Renovação com índice pendente → tarefa ao CS "Informar índice de reajuste".
-  if (a.kind === "renovacao" && a.readjustment?.type === "indice" && a.readjustment.pending && options.notifyIndexPending !== false) {
-    const { createTaskInternal } = await import("@/server/tasks/service");
-    const client = await getById<Client>(COLLECTIONS.clients, next.clientId);
-    const csManager = await getDepartmentManager("cs");
-    const assigneeId = client?.ownerCsId ?? csManager?.id;
-    const existingTasks = await list<import("@/domain/types").Task>(COLLECTIONS.tasks, { where: [["processId", "==", a.id]] });
-    if (assigneeId && !existingTasks.some((t) => t.title.startsWith("Informar índice de reajuste"))) {
-      await createTaskInternal(
-        {
-          title: `Informar índice de reajuste: ${client?.tradeName ?? next.number} (${a.number})`,
-          description: `Contrato ${next.number} renovado por ${a.renewalMonths} meses com reajuste por ${describeReadjustment({ type: "indice", index: a.readjustment.index })}. O índice oficial NÃO é buscado automaticamente: consulte o índice acumulado, crie um aditivo de reajuste com o percentual e informe o cliente.`,
-          clientId: next.clientId,
-          assigneeId,
-          departmentId: "cs",
-          priority: "media",
-          dueAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
-          processType: "renewal",
-          processId: a.id,
-          origin: "automacao",
-          tags: ["renovacao", "reajuste"],
-        },
-        actor,
-      );
+  // 6. Reajuste anual aplicado (aditivo "reajuste" ou renovação na data-base): evento contract.readjusted + aviso
+  // ao Financeiro, ao CS e ao dono do contrato (uma vez por data-base).
+  if (emit && a.readjust) {
+    try {
+      const { announceReadjustment } = await import("./readjustments");
+      await announceReadjustment(next, applied, before.monthlyTotal, next.monthlyTotal, actor);
+    } catch (error) {
+      console.error(`[financeiro] aditivo ${a.number}: falha ao avisar o reajuste`, error);
     }
   }
 

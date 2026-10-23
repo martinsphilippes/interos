@@ -63,6 +63,7 @@ export const SWEEP_KEYS = [
   "oportunidades_paradas",
   "leads_sem_contato_24h",
   "renovacoes",
+  "reajustes_contratos",
   "saude_clientes",
   "implantacoes_atrasadas",
   "tarefas_recorrentes",
@@ -76,6 +77,7 @@ export const SWEEP_KEYS = [
   "cobrancas_recorrentes",
   "contas_recorrentes",
   "contas_a_pagar_vencidas",
+  "indices_reajuste",
 ] as const;
 export type SweepKey = (typeof SWEEP_KEYS)[number];
 
@@ -84,7 +86,13 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   followup_vendas: { label: "Follow-up de vendas", description: "Serviço de Vendas: tarefa de follow-up para próxima ação vencida e oportunidade parada.", schedule: "horaria" },
   oportunidades_paradas: { label: "Resumo de oportunidades paradas", description: "Resumo diário ao vendedor e ao gestor comercial de oportunidades paradas ou sem próxima ação.", schedule: "diaria" },
   leads_sem_contato_24h: { label: "Leads sem contato em 24h", description: "Lead novo sem primeiro contato há mais de 24 horas gera tarefa para o responsável (ou gestor de marketing).", schedule: "horaria" },
-  renovacoes: { label: "Renovações", description: "Serviço de CS: cria renovações na janela de 90 dias e emite renovação próxima. Contratos com renovação automática são renovados por aditivo dentro da antecedência combinada (índice de reajuste nunca é buscado automaticamente: vira tarefa ao CS).", schedule: "diaria" },
+  renovacoes: { label: "Renovações", description: "Serviço de CS: cria renovações na janela de 90 dias e emite renovação próxima. Contratos com renovação automática são renovados por aditivo dentro da antecedência combinada; se a renovação cai na data-base, o reajuste anual (percentual ou acumulado do índice) entra junto.", schedule: "diaria" },
+  reajustes_contratos: {
+    label: "Reajuste anual dos contratos",
+    description:
+      "Financeiro: na data-base (aniversário da vigência) de cada contrato liberado com reajuste, aplica o percentual fixo ou o acumulado de 12 meses do índice por aditivo de reajuste (cobranças em aberto refeitas). Índice ainda não publicado: espera até 45 dias; depois disso, tarefa ao Financeiro. Prévia ao Financeiro e ao CS 30 dias antes. A data-base que coincide com o fim da vigência fica com a renovação.",
+    schedule: "diaria",
+  },
   saude_clientes: { label: "Saúde dos clientes", description: "Serviço de CS: recalcula o health score de toda a carteira.", schedule: "diaria" },
   implantacoes_atrasadas: { label: "Implantações atrasadas", description: "Projetos com prazo vencido: avisa o responsável e o gestor de implantação uma vez por dia.", schedule: "diaria" },
   tarefas_recorrentes: { label: "Tarefas recorrentes", description: "Garante a próxima ocorrência das tarefas recorrentes concluídas que ficaram sem sucessora.", schedule: "diaria" },
@@ -128,6 +136,12 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   contas_a_pagar_vencidas: {
     label: "Contas a pagar vencidas",
     description: "Financeiro: avisa o Financeiro uma única vez por título vencido (previsto, aprovado ou a pagar com vencimento passado).",
+    schedule: "diaria",
+  },
+  indices_reajuste: {
+    label: "Índices de reajuste",
+    description:
+      "Financeiro: busca os meses novos dos índices do cadastro (IPCA, IGP-M, INPC e IGP-DI no Banco Central; ICTI na planilha do IPEA; séries SGS cadastradas) só quando pode haver mês novo. Um mês novo atualiza na hora a prévia de todos os contratos indexados; o reajuste entra na data-base de cada um. Fica por último na rotina (depende de sites externos).",
     schedule: "diaria",
   },
 };

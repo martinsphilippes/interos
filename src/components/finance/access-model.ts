@@ -33,6 +33,9 @@ export interface FinanceCapabilities {
     amendmentSign: boolean;
     amendmentApply: boolean;
     amendmentCancel: boolean;
+    /** Reajuste anual: aplicar agora (exige ver os valores do contrato) e dispensar uma data-base. */
+    readjustApply: boolean;
+    readjustSkip: boolean;
     pendencyCreate: boolean;
     pendencyResolve: boolean;
     documentAttach: boolean;
@@ -84,6 +87,8 @@ export const NO_FINANCE_CAPABILITIES: FinanceCapabilities = {
     amendmentSign: false,
     amendmentApply: false,
     amendmentCancel: false,
+    readjustApply: false,
+    readjustSkip: false,
     pendencyCreate: false,
     pendencyResolve: false,
     documentAttach: false,

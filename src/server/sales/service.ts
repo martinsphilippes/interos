@@ -421,7 +421,7 @@ export interface ClosingData {
   // Renovação (D26), opcionais.
   autoRenew?: boolean;
   renewalTermMonths?: number;
-  readjustment?: { type: "nenhum" | "percentual" | "indice"; percent?: number; index?: "ipca" | "igpm" | "inpc" };
+  readjustment?: { type: "nenhum" | "percentual" | "indice"; percent?: number; index?: string };
   noticeDays?: number;
 }
 
@@ -479,6 +479,10 @@ export async function markOpportunityWon(data: MarkWonData, actor: UserRef): Pro
   if (totals.setupTotal + totals.monthlyTotal + totals.hardwareTotal <= 0) throw new Error("Informe os valores dos produtos (adesão, mensalidade ou hardware)");
   const client = await loadClientOf(opp);
   if (data.closing?.firstDueDate && data.closing.firstDueDate < dateKey(new Date())) throw new Error("O 1º vencimento não pode estar no passado");
+  if (data.closing?.readjustment?.type === "indice") {
+    const { assertReadjustmentAllowed } = await import("@/server/finance-registry/indices");
+    await assertReadjustmentAllowed(data.closing.readjustment);
+  }
   const now = nowIso();
 
   // Fechamento estruturado: contato responsável, proposta aceita (base dos itens do contrato) e condições.

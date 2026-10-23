@@ -244,17 +244,35 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   (`isContractExpired`: liberado com `endDate` < hoje): fora do MRR/contratos ativos (overview, workspace,
   recorrência, resumo do cliente, KPI `contractEndOfMrr`) e badge nas listas/página — nada gravado no banco.
 - **Renovação (D26)**: fechamento da venda e contrato ganham `autoRenew`, `renewalTermMonths`, `readjustment`
-  { nenhum | percentual(percent) | indice(ipca|igpm|inpc) } e `noticeDays` (opcionais). Renovar = aditivo kind
-  "renovacao": `endDate` = max(endDate, hoje) + meses, `termMonths` PRESERVADO, percentual aplicado à mensalidade
-  (itens reajustados), mensalidades do novo prazo geradas (`generateNextBillings`, descontando as que o horizonte já
-  criou além do fim anterior). Índice oficial NÃO é buscado: renova sem reajuste, `readjustment.pending=true` e
-  tarefa ao CS "Informar índice de reajuste". Pelo CS: `completeRenewal(renewalId, termMonths, notes, actor,
+  { nenhum | percentual(percent) | indice(id do cadastro de índices) } e `noticeDays` (opcionais). Renovar = aditivo
+  kind "renovacao": `endDate` = max(endDate, hoje) + meses, `termMonths` PRESERVADO, mensalidades do novo prazo geradas
+  (`generateNextBillings`, descontando as que o horizonte já criou além do fim anterior). Se a renovação cai numa
+  data-base ainda não decidida (ver "Reajuste anual"), o reajuste entra no MESMO aditivo (`readjust`); índice do
+  período ainda não publicado → renova sem reajuste com `readjustment.pending=true` e a varredura
+  `reajustes_contratos` aplica quando o índice sair. Pelo CS: `completeRenewal(renewalId, termMonths, notes, actor,
   { readjustment?, requiresSignature? })` (source `renovacao_cs`; com assinatura fica `em_negociacao` até aplicar no
   Financeiro). Automática: `autoRenewContracts` (`src/server/finance/renewals.ts`, dentro da varredura
   `renovacoes`): liberado + `autoRenew` + fim em até `noticeDays` (padrão 30) → aditivo `renovacao_automatica`
   aplicado 1x (a vigência estendida sai da janela; aditivo aberto bloqueia). `ensureRenewals` não abre renovação
   de CS para contratos com `autoRenew`. Evento `contract.renewed` (+ `renewal.completed` com `amendmentId`).
   Previstas de recorrência limitadas ao fim da vigência (`recurringHorizon`).
+- **Reajuste anual (`src/domain/readjustment.ts` + `src/server/finance/readjustments.ts`)**: data-base = aniversário do
+  início da vigência (início + 12, 24… meses, dia limitado ao fim do mês). Percentual fixo do contrato ou acumulado
+  COMPOSTO de 12 meses do índice até o mês anterior à data-base (ou o último publicado, no máximo 3 meses de atraso);
+  acumulado negativo segue a regra do índice (`negativePolicy`: manter = sem aditivo, «mantido»; reduzir). Varredura
+  diária `reajustes_contratos` (liberados com regra): data-base que chegou e não foi decidida → aditivo kind
+  "reajuste" (`createAmendment(…, { readjust })`, sem assinatura, vigente na data-base, `source`
+  `reajuste_automatico`) aplicado na hora (cobranças em aberto refeitas, comissões e produtos como em todo aditivo);
+  índice não publicado espera até 45 dias (`READJUSTMENT_GRACE_DAYS`); depois disso, aditivo em andamento ou índice
+  fora do cadastro → tarefa ao Financeiro "Reajuste não aplicado" (uma por data-base), sem aplicar sozinho. A data-base
+  igual ou depois do fim da vigência fica para a renovação. Prévia ao gestor do Financeiro, ao CS do cliente e ao dono
+  do contrato 30 dias antes (notificação única por chave). Cada data-base é decidida UMA vez:
+  `Contract.readjustmentLog` (aplicado/mantido/dispensado; fora do snapshot e do hash), gravado na mesma transação do
+  aditivo; `coveredAnniversaries` também conta aditivos não cancelados com `readjust` e renovações antigas com
+  percentual. Na página do contrato, cartão "Reajuste anual" (situação, prévia com o último índice, histórico) com
+  "Aplicar reajuste" (até 60 dias antes; percentual informado fica `manual`) e "Não reajustar" (motivo) —
+  `financeiro.contratos.reajuste.{aplicar,dispensar}`. Eventos `contract.readjusted` e
+  `contract.readjustment_skipped`.
 - **3ª mensalidade (D27)**: `Commission.gateBillingId`/`expectedAt` gravados pelo motor (gatilho `mensalidade_n` e
   parcelas aguardando recebimento) — "Previsão (vencimento da 3ª mensalidade)" em Minhas comissões e no painel.
 
@@ -306,8 +324,22 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   `finance_category.*` (created/updated/archived/reactivated; `merged`; `bulk_updated` com `payload.kind`
   aplicar_centro|mover_subcategorias) e `finance_registry.imported`. Entidades no relatório de Auditoria: "Conta
   financeira", "Centro de custo", "Categoria financeira", "Cadastros financeiros"; histórico também na própria tela.
+- **Índices de reajuste** (aba `?aba=indices`, `src/server/finance-registry/indices.ts`, coleção
+  `readjustment_indices`): cada índice tem a fonte (`bcb_sgs` com o código da série, `ipea_icti` ou `manual`), a regra do
+  acumulado negativo e `values` (AAAA-MM → variação % do mês, com a origem). Os 5 padrão (ids fixos `ipca` 433,
+  `igpm` 189, `inpc` 188, `igpdi` 190 no SGS do Banco Central e `icti` na planilha .xlsx da Carta de Conjuntura do IPEA,
+  variação calculada pelo número-índice) são criados na primeira leitura e não trocam de fonte. Busca automática:
+  varredura diária `indices_reajuste` (a última da rotina; cada fonte em paralelo com limite de 20 s) só quando pode
+  haver mês novo (defasagem 1 mês no BCB, 2 no ICTI; ou a cada 7 dias para revisões) e o botão "Atualizar agora". O
+  valor oficial sempre vence: lançamento manual só em mês que a fonte não trouxe (ou índice manual). Mês novo →
+  evento `readjustment_index.values_updated` e aviso ao gestor do Financeiro (se há contratos indexados); a prévia de
+  todos os contratos que usam o índice é calculada na leitura, então já mostra o valor novo. Busca falhando há 3 dias
+  → aviso único. Desativar exige nenhum contrato ativo usando o índice. As listas de índice da venda (contexto do
+  diálogo de ganho), das condições/aditivo e da renovação do CS vêm do cadastro (`assertReadjustmentAllowed` recusa
+  índice inexistente ou desativado, exceto o que o registro já usa).
 - **Acesso**: tela `financeiro.cadastros` (padrão = público de Contas a Pagar: equipe financeira e gestores; gestor fora
-  do Financeiro só consulta), abas = seções `financeiro.cadastros.{contas,centros,categorias}.ver`, 12 ações com padrão =
+  do Financeiro só consulta), abas = seções `financeiro.cadastros.{contas,centros,categorias,indices}.ver`; índices:
+  `financeiro.cadastros.indices.{criar,editar,arquivar,atualizar}` com a mesma regra das demais ações; 12 ações com padrão =
   quem opera Contas a Pagar/Fornecedores (administrador, diretoria, papel ou departamento Financeiro). Sem item de menu:
   entra pelo cabeçalho de Contas a Pagar e por Configurações › Contas a pagar. Saldo sob "Visualizar valores" (editar
   conta exige a chave).

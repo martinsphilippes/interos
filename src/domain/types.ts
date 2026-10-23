@@ -141,6 +141,8 @@ export const COLLECTIONS = {
   signatureInbox: "signature_inbox",
   /** PDF assinado devolvido pela Clicksign, guardado no INTEROS (os links da Clicksign expiram). */
   signedFiles: "signed_files",
+  /** Índices de reajuste (IPCA, IGP-M…): cadastro + variação mensal de cada mês (buscada no Banco Central/IPEA). */
+  readjustmentIndices: "readjustment_indices",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -555,13 +557,101 @@ export interface OpportunityClosing {
   noticeDays?: number;
 }
 
-/** Reajuste combinado para a renovação: nenhum, percentual informado ou índice (informado pelo CS a cada renovação). */
+/**
+ * Reajuste anual do contrato (na data-base = aniversário da vigência): nenhum, percentual fixo ou índice do cadastro
+ * «Índices de reajuste» (acumulado de 12 meses buscado no Banco Central/IPEA).
+ */
 export interface ContractReadjustment {
   type: "nenhum" | "percentual" | "indice";
   percent?: number;
-  index?: "ipca" | "igpm" | "inpc";
-  /** Renovação automática com índice: o índice NÃO é buscado — renova sem reajuste e fica pendente para o CS informar. */
+  /** Id do índice no cadastro (`readjustment_indices`): "ipca", "igpm", "inpc", "igpdi", "icti" ou um cadastrado. */
+  index?: string;
+  /** Renovação aplicada antes de o índice do período sair: o reajuste entra sozinho quando o índice for publicado. */
   pending?: boolean;
+}
+
+/** Cálculo do reajuste de uma data-base (percentual fixo ou acumulado de 12 meses do índice). */
+export interface ReadjustmentQuote {
+  type: "percentual" | "indice";
+  /** Percentual aplicado (0 quando o índice ficou negativo e a regra do índice é manter o valor). */
+  percent: number;
+  /** Acumulado bruto do índice no período (ou o percentual fixo). */
+  rawPercent: number;
+  indexId?: string;
+  indexName?: string;
+  /** Período do acumulado (AAAA-MM). */
+  from?: string;
+  to?: string;
+  /** Índice negativo com a regra «manter o valor». */
+  held?: boolean;
+  /** Percentual informado à mão pelo Financeiro (no lugar do calculado). */
+  manual?: boolean;
+}
+
+/** Reajuste aplicado por um aditivo (renovação ou reajuste anual) e a data-base que ele cobre. */
+export interface AmendmentReadjust extends ReadjustmentQuote {
+  /** Data-base coberta (AAAA-MM-DD). */
+  anniversary: string;
+}
+
+/** Decisão sobre o reajuste de uma data-base (fora do snapshot: não entra no hash nem no «de → para»). */
+export interface ContractReadjustmentLogEntry {
+  /** Data-base (AAAA-MM-DD). */
+  anniversary: string;
+  /** aplicado = aditivo; mantido = índice ≤ 0 sem reduzir o valor; dispensado = o Financeiro decidiu não reajustar. */
+  outcome: "aplicado" | "mantido" | "dispensado";
+  at: string;
+  by: string;
+  byName?: string;
+  percent?: number;
+  rawPercent?: number;
+  indexId?: string;
+  indexName?: string;
+  from?: string;
+  to?: string;
+  manual?: boolean;
+  amendmentId?: string;
+  amendmentNumber?: string;
+  monthlyBefore?: number;
+  monthlyAfter?: number;
+  reason?: string;
+}
+
+/** De onde vêm os valores mensais de um índice. */
+export type ReadjustmentIndexSource = { kind: "bcb_sgs"; seriesCode: number } | { kind: "ipea_icti" } | { kind: "manual" };
+
+/** Variação de um mês (%), com a origem do valor. */
+export interface ReadjustmentIndexMonth {
+  pct: number;
+  source: ReadjustmentIndexSource["kind"];
+  at: string;
+  by?: string;
+}
+
+/**
+ * Índice de reajuste (cadastro do Financeiro). Id estável: os padrões usam "ipca", "igpm", "inpc", "igpdi", "icti" (os
+ * contratos guardam o id). `values` = variação mensal por competência (AAAA-MM); o acumulado de 12 meses é calculado.
+ */
+export interface ReadjustmentIndex extends BaseEntity {
+  name: string;
+  description?: string;
+  source: ReadjustmentIndexSource;
+  /** Acumulado negativo: manter o valor do contrato (padrão) ou reduzir. */
+  negativePolicy: "manter" | "reduzir";
+  values: Record<string, ReadjustmentIndexMonth>;
+  /** Um dos índices que o INTEROS já traz (não troca de fonte). */
+  builtIn?: boolean;
+  archived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
+  /** Última busca automática na fonte. */
+  lastFetchAt?: string;
+  lastFetchOk?: boolean;
+  lastFetchError?: string;
+  /** Desde quando a busca falha (some quando volta a funcionar). */
+  failingSince?: string;
+  updatedBy?: string;
 }
 
 export interface Visit extends BaseEntity {
@@ -833,6 +923,8 @@ export interface Contract extends BaseEntity {
   readjustment?: ContractReadjustment;
   /** Dias antes do fim da vigência em que a renovação automática é aplicada (padrão 30). */
   noticeDays?: number;
+  /** Reajustes anuais decididos, por data-base (aplicado, mantido ou dispensado). Fora do snapshot e do hash. */
+  readjustmentLog?: ContractReadjustmentLogEntry[];
   // Aditivos e versões (D25) — opcionais.
   /** Aditivos APLICADOS a este contrato, na ordem (`contract_amendments`). */
   amendmentIds?: string[];
@@ -919,11 +1011,13 @@ export interface ContractAmendment extends BaseEntity {
   cancelledAt?: string;
   cancelledBy?: string;
   cancelReason?: string;
-  /** Origem: página do contrato, renovação pelo CS ou renovação automática (varredura). */
-  source?: "financeiro" | "renovacao_cs" | "renovacao_automatica";
+  /** Origem: página do contrato, renovação pelo CS, renovação automática ou reajuste anual (varredura). */
+  source?: "financeiro" | "renovacao_cs" | "renovacao_automatica" | "reajuste_automatico";
   renewalId?: string;
-  /** Reajuste aplicado na renovação (percentual) ou pendente (índice a informar). */
+  /** Reajuste da renovação: aplicado (percentual/índice) ou pendente (índice do período ainda não publicado). */
   readjustment?: ContractReadjustment;
+  /** Reajuste anual aplicado por este aditivo e a data-base que ele cobre. */
+  readjust?: AmendmentReadjust;
   /** Renovação: meses acrescentados à vigência (mensalidades a gerar na aplicação). */
   renewalMonths?: number;
   /** Cobranças refeitas na aplicação (canceladas → recriadas com a mesma numeração). */

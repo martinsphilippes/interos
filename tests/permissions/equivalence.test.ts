@@ -217,11 +217,16 @@ describe("T0 — ações e seções com predicado equivalente", () => {
     expect(differences(["financeiro.contratos.portal.ver", "financeiro.contratos.portal.gerar", "financeiro.contratos.portal.revogar"], legacy)).toEqual([]);
   });
 
-  it("Cadastros financeiros (novo, etapa CP/CR 1: 12 ações) ≡ módulo Financeiro ∧ canOperatePayables (quem opera Contas a Pagar e Fornecedores)", () => {
+  it("Cadastros financeiros (novo, etapa CP/CR 1: 12 ações + 4 dos índices de reajuste) ≡ módulo Financeiro ∧ canOperatePayables (quem opera Contas a Pagar e Fornecedores)", () => {
     const keys = actionKeys("financeiro.cadastros");
-    expect(keys.length).toBe(12);
+    expect(keys.length).toBe(16);
     const legacy = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") && legacyCanOperatePayables(u);
     expect(differences(keys, legacy)).toEqual([]);
+  });
+
+  it("Reajuste anual do contrato (novo: aplicar agora e dispensar) ≡ módulo Financeiro ∧ canOperateFinance (mesmo público dos aditivos)", () => {
+    const legacy = (u: LegacyUser) => legacyCanAccessModule(u, "financeiro") && legacyCanOperateFinance(u);
+    expect(differences(["financeiro.contratos.reajuste.aplicar", "financeiro.contratos.reajuste.dispensar"], legacy)).toEqual([]);
   });
 
   it("relatório de Auditoria (novo, D29: ver e exportar) ≡ diretoria/administrador (isDirector)", () => {

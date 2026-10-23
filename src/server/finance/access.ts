@@ -72,6 +72,9 @@ export function financeCapabilities(user: PermissionHolder): FinanceCapabilities
       amendmentSign: k("financeiro.contratos.aditivos.assinar"),
       amendmentApply: k("financeiro.contratos.aditivos.aplicar"),
       amendmentCancel: k("financeiro.contratos.aditivos.cancelar"),
+      // O reajuste mostra e muda a mensalidade: sem ver os valores do contrato, não há como conferir antes de aplicar.
+      readjustApply: k("financeiro.contratos.reajuste.aplicar") && contractValues,
+      readjustSkip: k("financeiro.contratos.reajuste.dispensar"),
       pendencyCreate: k("financeiro.contratos.pendencias.criar"),
       pendencyResolve: k("financeiro.contratos.pendencias.concluir"),
       documentAttach: k("financeiro.contratos.documentos.anexar"),

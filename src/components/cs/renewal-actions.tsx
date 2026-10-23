@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { CalendarPlus, Handshake, RefreshCw, XCircle } from "lucide-react";
 import { createRenewal, markRenewalLost, renewContract, startNegotiation } from "@/server/cs/actions";
 import type { ContractReadjustment, Renewal } from "@/domain/types";
-import { READJUSTMENT_INDEX_LABELS, READJUSTMENT_TYPE_LABELS } from "@/domain/contract-snapshot";
+import { READJUSTMENT_TYPE_LABELS } from "@/domain/contract-snapshot";
+import { indexSelectOptions, type ReadjustmentIndexOption } from "@/domain/readjustment";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -35,26 +36,32 @@ export interface RenewalActionsProps {
   contractNumber: string;
   dueDate: string;
   mrr: number;
+  /** Índices de reajuste do cadastro (campo «Índice»). */
+  indices?: ReadjustmentIndexOption[];
 }
 
+/** "contrato" = manter o reajuste combinado no contrato (nada é enviado: o servidor usa o do contrato). */
+type RenewalReadjustmentChoice = ContractReadjustment["type"] | "contrato";
+const READJUSTMENT_CHOICES: { value: RenewalReadjustmentChoice; label: string }[] = [{ value: "contrato", label: "Conforme o contrato" }, ...(Object.keys(READJUSTMENT_TYPE_LABELS) as ContractReadjustment["type"][]).map((t) => ({ value: t, label: READJUSTMENT_TYPE_LABELS[t] }))];
+
 /** Ações de uma renovação aberta: iniciar negociação, renovar (novo prazo no contrato) ou perder (abre o churn). */
-export function RenewalActions({ renewalId, status, tradeName, contractNumber, dueDate, mrr, capabilities = ALL_RENEWAL_ACTIONS }: RenewalActionsProps) {
+export function RenewalActions({ renewalId, status, tradeName, contractNumber, dueDate, mrr, indices = [], capabilities = ALL_RENEWAL_ACTIONS }: RenewalActionsProps) {
   const router = useRouter();
   const { pending, run } = useCsAction();
   const [dialog, setDialog] = React.useState<"renovar" | "perder" | null>(null);
   const [term, setTerm] = React.useState("12");
   const [notes, setNotes] = React.useState("");
   const [reason, setReason] = React.useState("");
-  const [readjustmentType, setReadjustmentType] = React.useState<ContractReadjustment["type"]>("nenhum");
+  const [readjustmentType, setReadjustmentType] = React.useState<RenewalReadjustmentChoice>("contrato");
   const [readjustmentPercent, setReadjustmentPercent] = React.useState("");
-  const [readjustmentIndex, setReadjustmentIndex] = React.useState<NonNullable<ContractReadjustment["index"]> | "">("");
+  const [readjustmentIndex, setReadjustmentIndex] = React.useState("");
   const [requiresSignature, setRequiresSignature] = React.useState(false);
   const id = React.useId();
-  const readjustmentValid = readjustmentType === "nenhum" || (readjustmentType === "percentual" ? Number(readjustmentPercent.replace(",", ".")) > 0 : Boolean(readjustmentIndex));
+  const readjustmentValid = readjustmentType === "nenhum" || readjustmentType === "contrato" || (readjustmentType === "percentual" ? Number(readjustmentPercent.replace(",", ".")) > 0 : Boolean(readjustmentIndex));
 
   const renew = async (e: React.FormEvent) => {
     e.preventDefault();
-    const readjustment: ContractReadjustment = readjustmentType === "percentual" ? { type: "percentual", percent: Number(readjustmentPercent.replace(",", ".")) } : readjustmentType === "indice" ? { type: "indice", index: readjustmentIndex || undefined } : { type: "nenhum" };
+    const readjustment: ContractReadjustment | undefined = readjustmentType === "contrato" ? undefined : readjustmentType === "percentual" ? { type: "percentual", percent: Number(readjustmentPercent.replace(",", ".")) } : readjustmentType === "indice" ? { type: "indice", index: readjustmentIndex || undefined } : { type: "nenhum" };
     const ok = await run(
       () => renewContract({ renewalId, termMonths: Number(term), notes, readjustment, requiresSignature }),
       (d) => (d.applied ? `Contrato renovado até ${formatDate(d.newEndDate)} (aditivo ${d.amendmentNumber}; mensalidades geradas)` : `Aditivo ${d.amendmentNumber} criado: aguardando assinatura do cliente no Financeiro`),
@@ -103,8 +110,8 @@ export function RenewalActions({ renewalId, status, tradeName, contractNumber, d
                 <Input id={`${id}-term`} type="number" min={1} max={60} inputMode="numeric" value={term} onChange={(e) => setTerm(e.target.value)} required />
               </FormField>
               <div className="grid gap-3 sm:grid-cols-2" data-testid="renewal-readjustment">
-                <FormField label="Reajuste" htmlFor={`${id}-rj`} hint={readjustmentType === "indice" ? "O índice oficial não é buscado: informe o percentual depois (tarefa)" : undefined}>
-                  <Select id={`${id}-rj`} value={readjustmentType} onChange={(e) => setReadjustmentType(e.target.value as ContractReadjustment["type"])} options={(Object.keys(READJUSTMENT_TYPE_LABELS) as ContractReadjustment["type"][]).map((t) => ({ value: t, label: READJUSTMENT_TYPE_LABELS[t] }))} />
+                <FormField label="Reajuste" htmlFor={`${id}-rj`} hint={readjustmentType === "contrato" ? "O reajuste anual do contrato entra se a renovação cai no aniversário" : readjustmentType === "indice" ? "Acumulado de 12 meses do índice, buscado sozinho" : undefined}>
+                  <Select id={`${id}-rj`} value={readjustmentType} onChange={(e) => setReadjustmentType(e.target.value as RenewalReadjustmentChoice)} options={READJUSTMENT_CHOICES} />
                 </FormField>
                 {readjustmentType === "percentual" ? (
                   <FormField label="Percentual (%)" htmlFor={`${id}-rp`} required>
@@ -112,7 +119,7 @@ export function RenewalActions({ renewalId, status, tradeName, contractNumber, d
                   </FormField>
                 ) : readjustmentType === "indice" ? (
                   <FormField label="Índice" htmlFor={`${id}-ri`} required>
-                    <Select id={`${id}-ri`} value={readjustmentIndex} onChange={(e) => setReadjustmentIndex(e.target.value as NonNullable<ContractReadjustment["index"]> | "")} placeholder="Escolha" options={(Object.keys(READJUSTMENT_INDEX_LABELS) as NonNullable<ContractReadjustment["index"]>[]).map((i) => ({ value: i, label: READJUSTMENT_INDEX_LABELS[i] }))} />
+                    <Select id={`${id}-ri`} value={readjustmentIndex} onChange={(e) => setReadjustmentIndex(e.target.value)} placeholder="Escolha" options={indexSelectOptions(indices, readjustmentIndex || undefined)} />
                   </FormField>
                 ) : null}
               </div>

@@ -5,6 +5,7 @@ import { requireScreen } from "@/server/auth/session";
 import { csCapabilities, csLinks } from "@/server/cs/access";
 import { listRenewals, type RenewalRow } from "@/server/cs/queries";
 import { runDueSweeps } from "@/server/automations/lazy";
+import { listReadjustmentIndexOptions } from "@/server/finance-registry/indices";
 import { RENEWAL_STATUS_LABELS, RENEWAL_STATUS_VARIANT } from "@/server/cs/schemas";
 import { formatCurrency, formatDate, formatNumber, formatRelative } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
@@ -49,7 +50,7 @@ export default async function RenewalsPage() {
   const links = csLinks(user);
   // Cria renovações da janela de 90 dias e emite renewal.due pela varredura central (padrão: 1x por dia).
   await runDueSweeps(["renovacoes"]);
-  const data = await listRenewals(user);
+  const [data, indices] = await Promise.all([listRenewals(user), caps.renew ? listReadjustmentIndexOptions().then((all) => all.filter((i) => !i.archived)) : Promise.resolve([])]);
   const actionCaps = { negotiate: caps.negotiate, renew: caps.renew, lose: caps.loseRenewal, registerChurn: caps.churn && links.churn };
   const hasActions = actionCaps.negotiate || actionCaps.renew || actionCaps.lose;
   const { totals } = data;
@@ -126,7 +127,7 @@ export default async function RenewalsPage() {
                       <TableCell className="max-w-[240px] text-sm text-muted">{r.notes ?? (r.windowOpen ? "Janela de negociação aberta" : "Janela ainda não aberta")}</TableCell>
                       {hasActions ? (
                         <TableCell>
-                          <RenewalActions renewalId={r.id} status={r.status} tradeName={r.tradeName} contractNumber={r.contractNumber} dueDate={r.dueDate} mrr={r.mrr} capabilities={actionCaps} />
+                          <RenewalActions renewalId={r.id} status={r.status} tradeName={r.tradeName} contractNumber={r.contractNumber} dueDate={r.dueDate} mrr={r.mrr} indices={indices} capabilities={actionCaps} />
                         </TableCell>
                       ) : null}
                     </TableRow>
@@ -150,7 +151,7 @@ export default async function RenewalsPage() {
                       <HealthIndicator score={r.healthScore} level={r.healthLevel} showLabel />
                     </div>
                     {r.notes ? <p className="text-sm">{r.notes}</p> : null}
-                    {hasActions ? <RenewalActions renewalId={r.id} status={r.status} tradeName={r.tradeName} contractNumber={r.contractNumber} dueDate={r.dueDate} mrr={r.mrr} capabilities={actionCaps} /> : null}
+                    {hasActions ? <RenewalActions renewalId={r.id} status={r.status} tradeName={r.tradeName} contractNumber={r.contractNumber} dueDate={r.dueDate} mrr={r.mrr} indices={indices} capabilities={actionCaps} /> : null}
                   </Card>
                 </li>
               ))}
