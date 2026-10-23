@@ -31,7 +31,7 @@ import {
   SNAPSHOT_FIELDS,
 } from "@/domain/contract-snapshot";
 import { COLLECTIONS, type AmendmentReadjust, type Billing, type Client, type Contract, type ContractAmendment, type ContractReadjustment, type ContractReadjustmentLogEntry, type ContractSignerEntry, type ContractSnapshot, type Document, type ItemSince, type Product, type ProposalItem, type UserRef } from "@/domain/types";
-import { addCompetence, addDaysKey, addMonthsClamped, coveredAnniversaries, formatPct, hasReadjustmentRule, MAX_AUTO_PERCENT, nextReadjustmentGaps, quoteReadjustment, READJUSTMENT_NOTICE_DAYS, readjustmentFloor, readjustmentSchedule, sameReadjustmentRule } from "@/domain/readjustment";
+import { addCompetence, addDaysKey, addMonthsClamped, coveredAnniversaries, formatPct, hasReadjustmentRule, inReadjustmentGap, MAX_AUTO_PERCENT, nextReadjustmentGaps, quoteReadjustment, READJUSTMENT_NOTICE_DAYS, readjustmentFloor, readjustmentSchedule, sameReadjustmentRule } from "@/domain/readjustment";
 import { BusinessError } from "@/server/auth/error-classes";
 import { getReadjustmentIndexMap, normalizeReadjustment } from "@/server/finance-registry/indices";
 import { billingDocId, dayInMonth, dueIso, lastRecurringBilling, recurringStep, round2, todayKey } from "./billing";
@@ -172,7 +172,8 @@ function renewalAnniversary(contract: Contract, covered: readonly string[], effe
   // Os períodos sem regra valem para a regra do contrato; a escolha do CS na renovação vale para a data-base dela.
   const own = readjustmentSchedule(explicit ? { ...base, gaps: undefined } : base).due;
   if (!own || (contract.endDate && own.anniversary < dateKey(contract.endDate))) return { anniversary: null };
-  if (hasReadjustmentRule(contract)) {
+  // Contrato com regra (ou que já teve: períodos sem regra registrados) decide na ordem.
+  if (hasReadjustmentRule(contract) || (contract.readjustmentGaps?.length ?? 0) > 0) {
     const first = readjustmentSchedule({ ...base, floor: readjustmentFloor(contract) }).due;
     if (first && first.anniversary < own.anniversary) return { anniversary: null, blockedBy: first.anniversary, waiting: own.anniversary };
   }
@@ -205,9 +206,11 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
     // «Conforme o contrato» (sem escolha, ou a própria regra do contrato) segue a regra com as MESMAS travas da rotina
     // `reajustes_contratos`; uma escolha diferente (do CS) vale só para essa data-base — a regra do contrato não muda.
     const chosen = input.renewal.readjustment as ContractReadjustment | undefined;
-    const explicit = chosen && !sameReadjustmentRule(chosen, contract.readjustment) ? chosen : undefined;
+    let explicit = chosen && !sameReadjustmentRule(chosen, contract.readjustment) ? chosen : undefined;
     const contractHasRule = hasReadjustmentRule(contract);
-    const { anniversary, blockedBy, waiting } = renewalAnniversary(contract, covered, effectiveFrom, Boolean(explicit));
+    const { anniversary, blockedBy, waiting } = renewalAnniversary(contract, covered, effectiveFrom, Boolean(chosen && chosen.type !== "nenhum"));
+    // Data-base num período sem regra: a escolha do CS (mesmo igual à regra guardada no contrato) vale como explícita.
+    if (anniversary && chosen && chosen.type !== "nenhum" && !explicit && inReadjustmentGap(anniversary, contract.readjustmentGaps)) explicit = chosen;
     const indexOf = async (r: ContractReadjustment) => (r.type === "indice" && r.index ? (await getReadjustmentIndexMap()).get(r.index) : undefined);
     if (anniversary) {
       if (explicit?.type === "nenhum") {
@@ -246,7 +249,13 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
       }
     } else if (blockedBy && waiting) {
       // Data-base anterior ainda pendente: as datas-base são decididas na ordem.
-      if (explicit && (explicit.type !== "nenhum" || contractHasRule)) throw new BusinessError(`A data-base de ${formatDate(dueIso(blockedBy))} ainda não foi decidida: as datas-base são decididas na ordem — o Financeiro decide essa antes (cartão «Reajuste anual» do contrato). Renove «Conforme o contrato»: a data-base desta renovação (${formatDate(dueIso(waiting))}) fica para depois dela.`);
+      if (explicit && (explicit.type !== "nenhum" || contractHasRule)) {
+        throw new BusinessError(
+          contractHasRule
+            ? `A data-base de ${formatDate(dueIso(blockedBy))} ainda não foi decidida: as datas-base são decididas na ordem — o Financeiro decide essa antes (cartão «Reajuste anual» do contrato). Renove «Conforme o contrato»: a data-base desta renovação (${formatDate(dueIso(waiting))}) fica para depois dela.`
+            : `A data-base de ${formatDate(dueIso(blockedBy))}, da regra de reajuste anterior, ainda não foi decidida: o Financeiro reinclui a regra (aditivo de condições) e a decide no cartão «Reajuste anual», ou renove «Conforme o contrato».`,
+        );
+      }
       readjustNote = `o reajuste da data-base ${formatDate(dueIso(waiting))} espera a decisão da data-base ${formatDate(dueIso(blockedBy))} (Financeiro)`;
     } else if (explicit && (explicit.type !== "nenhum" || contractHasRule)) {
       throw new BusinessError("A renovação não cai numa data-base do contrato: o reajuste anual entra no aniversário do início da vigência. Renove «Conforme o contrato»; para mudar a regra do reajuste, o Financeiro faz um aditivo de condições.");
