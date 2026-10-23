@@ -39,7 +39,7 @@ import {
 } from "@/domain/readjustment";
 import { COLLECTIONS, type AmendmentReadjust, type Client, type Contract, type ContractAmendment, type ContractReadjustmentLogEntry, type ReadjustmentIndex, type ReadjustmentQuote, type Task, type UserRef } from "@/domain/types";
 import { getReadjustmentIndexMap } from "@/server/finance-registry/indices";
-import { applyAmendment, createAmendment, readjustItems } from "./amendments";
+import { applyAmendment, cancelAmendment, createAmendment, readjustItems } from "./amendments";
 import { dueIso, SYSTEM_ACTOR, todayKey } from "./billing";
 
 /** O Financeiro pode aplicar o reajuste com até N dias de antecedência da data-base. */
@@ -348,9 +348,15 @@ export async function runContractReadjustments(now: Date = new Date()): Promise<
       // Reajuste automático que ficou em rascunho (falha entre criar e aplicar): aplica de novo.
       const stuck = amendments.find((a) => a.status === "rascunho" && a.readjust && !a.requiresSignature && a.source === "reajuste_automatico");
       if (stuck) {
-        await applyAmendment(stuck.id, SYSTEM_ACTOR);
-        result.applied += 1;
-        result.appliedContractIds.push(c.id);
+        try {
+          await applyAmendment(stuck.id, SYSTEM_ACTOR);
+          result.applied += 1;
+          result.appliedContractIds.push(c.id);
+        } catch (error) {
+          // O contrato mudou depois do rascunho (outra versão): cancela; a próxima rotina recalcula e cria de novo.
+          await cancelAmendment(stuck.id, `Rascunho de reajuste desatualizado: ${error instanceof Error ? error.message : String(error)}`.slice(0, 480), SYSTEM_ACTOR);
+          result.errors.push(`${c.number}: rascunho de reajuste ${stuck.number} cancelado (${error instanceof Error ? error.message : String(error)})`);
+        }
         continue;
       }
       const state = contractReadjustmentState(c, { indices, amendments, today });
