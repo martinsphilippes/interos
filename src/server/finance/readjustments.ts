@@ -371,7 +371,7 @@ export async function runContractReadjustments(now: Date = new Date()): Promise<
         else if (state.status === "atrasado" || (state.status === "bloqueado" && (state.days ?? 0) > READJUSTMENT_GRACE_DAYS) || (state.status === "bloqueado" && !state.blockingAmendment)) {
           if (await ensureLateTask(tasks, c, client, anniversary, state.message)) result.lateTasks += 1;
         }
-      } else if (state.status === "previsto" && -(state.days ?? 0) <= READJUSTMENT_NOTICE_DAYS) {
+      } else if ((state.status === "previsto" || state.status === "aguardando_indice") && -(state.days ?? 0) <= READJUSTMENT_NOTICE_DAYS) {
         const { ids: userIds } = await recipients(c);
         const index = c.readjustment?.type === "indice" && c.readjustment.index ? indices.get(c.readjustment.index) : undefined;
         const preview = state.quote ? `${describeQuote(state.quote)} → mensalidade ${formatCurrency(state.monthlyBefore ?? c.monthlyTotal)} → ${formatCurrency(state.monthlyAfter ?? c.monthlyTotal)} (prévia)` : "prévia ainda sem o índice do período";
