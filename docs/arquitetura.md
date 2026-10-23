@@ -248,11 +248,17 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   kind "renovacao": `endDate` = max(endDate, hoje) + meses, `termMonths` PRESERVADO, mensalidades do novo prazo geradas
   (`generateNextBillings`, descontando as que o horizonte já criou além do fim anterior). A data-base que cai do fim
   atual da vigência (inclusive) até o mês da renovação é decidida no MESMO aditivo (`readjust`): reajuste aplicado,
-  «mantido» (índice ≤ 0) ou «dispensado» quando o CS escolhe «Sem reajuste» (`waived`). A escolha da renovação vale só
-  para essa data-base (a regra do contrato não muda); escolha explícita fora de data-base, ou índice diferente do
-  contrato ainda não publicado, é recusada com mensagem. Índice do contrato ainda não publicado → renova sem reajuste
-  com `readjustment.pending=true` e a varredura `reajustes_contratos` aplica quando o índice sair. Renovações antigas
-  (sem `annualModel`) contam como data-base decidida. Pelo CS: `completeRenewal(renewalId, termMonths, notes, actor,
+  «mantido» (índice ≤ 0) ou «dispensado» quando o CS escolhe «Sem reajuste» num contrato com regra (`waived`; contrato
+  sem regra não grava nada). «Conforme o contrato» (sem escolha ou a própria regra) segue as MESMAS travas da rotina:
+  acumulado acima de 25% em módulo ou regra trocada depois da data-base → renova sem reajuste (`readjustNote` no texto)
+  e a data-base, agora dentro da vigência, vira tarefa ao Financeiro pela rotina. Índice do período ainda não
+  publicado — inclusive o mês anterior à data-base quando a renovação vem antes de o reajuste entrar (antecedência
+  `noticeDays`) — → renova sem reajuste com `readjustment.pending=true` e a varredura `reajustes_contratos` aplica na
+  data-base com o acumulado certo. A escolha da renovação vale só para essa data-base (a regra do contrato não muda);
+  escolha explícita fora de data-base (inclusive «Sem reajuste» em contrato com regra), índice diferente do contrato
+  ainda não publicado ou acima de 25% é recusada com mensagem. O termo da renovação só fala de reajuste quando decide
+  (ou deixa aguardando) a data-base, com o nome do índice. Renovações antigas (sem `annualModel`) contam como
+  data-base decidida. Pelo CS: `completeRenewal(renewalId, termMonths, notes, actor,
   { readjustment?, requiresSignature? })` (source `renovacao_cs`; com assinatura fica `em_negociacao` até aplicar no
   Financeiro). Automática: `autoRenewContracts` (`src/server/finance/renewals.ts`, dentro da varredura
   `renovacoes`): liberado + `autoRenew` + fim em até `noticeDays` (padrão 30) → aditivo `renovacao_automatica`
@@ -263,25 +269,34 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   início da vigência (início + 12, 24… meses, dia limitado ao fim do mês). Percentual fixo do contrato ou acumulado
   COMPOSTO de 12 meses do índice até o mês anterior à data-base (ou o último publicado, no máximo 3 meses de atraso);
   acumulado negativo segue a regra do índice (`negativePolicy`: manter = sem aditivo, «mantido»; reduzir). Varredura
-  diária `reajustes_contratos` (liberados com regra; orçamento de 25 s, o resto fica para o dia seguinte): data-base que
-  chegou e não foi decidida (cobrança ANUAL: 30 dias antes, para a parcela do ano já sair reajustada) → aditivo kind
-  "reajuste" (`createAmendment(…, { readjust })`, sem assinatura, vigente na data-base, `source`
-  `reajuste_automatico`) aplicado na hora (mensalidades em aberto com competência ≥ mês da data-base refeitas,
-  comissões e produtos como em todo aditivo; o `since` dos itens é preservado); índice não publicado espera até 45 dias
-  (`READJUSTMENT_GRACE_DAYS`); depois disso, aditivo em andamento, índice fora do cadastro, percentual acima de 25%
-  (`MAX_AUTO_PERCENT`) ou regra trocada por aditivo depois da data-base (`readjustmentRuleSince`) → tarefa ao
-  Financeiro "Reajuste não aplicado" (uma por data-base), sem aplicar sozinho. A data-base igual ou depois do fim da
-  vigência fica para a renovação. Prévia 30 dias antes ao gestor do Financeiro e ao dono do contrato (link do
-  contrato) e ao CS do cliente (link da ficha do cliente), sem valores em R$ (notificação única por chave). Cada
+  diária `reajustes_contratos` (liberados com regra; orçamento de 25 s dentro do limite de 45 s da execução do cron,
+  o resto fica para o dia seguinte e aparece no resumo): data-base que chegou e não foi decidida (cobrança ANUAL: 30
+  dias antes, para a parcela do ano já sair reajustada) → aditivo kind "reajuste" (`createAmendment(…, { readjust })`,
+  sem assinatura, vigente na data-base, `source` `reajuste_automatico`) aplicado na hora (mensalidades em aberto e
+  ainda não vencidas com competência ≥ mês da data-base refeitas — no contrato anual, também a parcela que vence nos
+  30 dias antes dela —; comissões e produtos como em todo aditivo; o `since` dos itens é preservado); índice não
+  publicado espera até 45 dias (`READJUSTMENT_GRACE_DAYS`); depois disso, aditivo em andamento, índice fora do
+  cadastro, acumulado BRUTO acima de 25% em módulo (`MAX_AUTO_PERCENT`; vale também para o negativo com «manter») ou
+  regra trocada por aditivo vigente depois da data-base (`readjustmentRuleSince`; nem prévia de «entra sozinho») →
+  tarefa ao Financeiro "Reajuste não aplicado" (uma por data-base, concluída sozinha quando a data-base é decidida por
+  qualquer caminho), sem aplicar sozinho. A data-base igual ou depois do fim da vigência fica para a renovação. Prévia
+  30 dias antes de o reajuste entrar (cobrança anual: 60 dias antes da data-base; índice atrasado na janela também
+  avisa) ao gestor do Financeiro e ao dono do contrato (link do contrato) e ao CS do cliente (link da ficha do
+  cliente), sem valores em R$ (notificação única por chave). Datas-base a partir de quando o sistema acompanha o
+  contrato (`readjustmentFloor`: o mais tardio entre `READJUSTMENT_TRACKING_SINCE` e a criação do contrato) são
+  decididas NA ORDEM — a seguinte espera a anterior, nenhuma some sem registro; antes disso, só a mais recente. Cada
   data-base é decidida UMA vez:
   `Contract.readjustmentLog` (aplicado/mantido/dispensado; fora do snapshot e do hash), gravado na mesma transação do
-  aditivo; `coveredAnniversaries` também conta aditivos não cancelados com `readjust` e renovações antigas com
-  percentual. Na página do contrato, cartão "Reajuste anual" (seção `financeiro.contratos.reajuste.ver`: situação,
+  aditivo; `coveredAnniversaries` também conta aditivos não cancelados com `readjust` e renovações antigas aplicadas
+  (sem `annualModel`), com ou sem percentual. «Registrar sem aumento» (índice ≤ 0) só com a data-base chegada; cartão e
+  servidor (`applyReadjustmentNow`/`skipReadjustment`, só contrato liberado) seguem a mesma regra. Na página do contrato, cartão "Reajuste anual" (seção `financeiro.contratos.reajuste.ver`: situação,
   prévia com o último índice, histórico; mensalidades e motivo mascarados sem "Visualizar valores", como no
   `redactContract`) com "Aplicar reajuste" (até 60 dias antes; percentual informado fica `manual`; exige ver os
   valores) e "Não reajustar" (motivo) — `financeiro.contratos.reajuste.{aplicar,dispensar}`. O índice escolhido
-  guarda o nome (`indexName`) para o documento e o portal. Eventos `contract.readjusted` e
-  `contract.readjustment_skipped` (descrição sem valores; o motivo fica no payload).
+  guarda o nome (`indexName`) para o documento e o portal; reenviar a mesma regra só com o nome acrescentado não é
+  mudança (nem aditivo «sem alteração»). Eventos `contract.readjusted` e `contract.readjustment_skipped` (descrição sem
+  valores; o motivo fica no payload). Na ficha do cliente, sem "ver valores", título, descrição e motivo dos eventos
+  saem com os R$ mascarados (`maskMoneyText`), como no histórico do contrato.
 - **3ª mensalidade (D27)**: `Commission.gateBillingId`/`expectedAt` gravados pelo motor (gatilho `mensalidade_n` e
   parcelas aguardando recebimento) — "Previsão (vencimento da 3ª mensalidade)" em Minhas comissões e no painel.
 
@@ -345,9 +360,12 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   por mês, |v| ≤ 50) e ter valores nos últimos 24 meses — senão a busca fica em erro. Mês novo →
   evento `readjustment_index.values_updated` e aviso ao gestor do Financeiro (se há contratos indexados); a prévia de
   todos os contratos que usam o índice é calculada na leitura, então já mostra o valor novo. Busca falhando há 3 dias
-  → aviso único. Desativar exige nenhum contrato ativo nem aditivo em andamento usando o índice. As listas de índice da venda (contexto do
-  diálogo de ganho), das condições/aditivo e da renovação do CS vêm do cadastro (`assertReadjustmentAllowed` recusa
-  índice inexistente ou desativado, exceto o que o registro já usa).
+  → aviso único (o erro de uma busca cuja fonte foi trocada no meio é descartado). Desativar exige nenhum contrato
+  ativo, aditivo em andamento ou venda ganha que ainda não gerou contrato usando o índice; desativado que ainda tem
+  contrato continua sendo buscado. As listas de índice da venda (contexto do diálogo de ganho), das condições/aditivo e
+  da renovação do CS vêm do cadastro (`normalizeReadjustment` recusa índice inexistente ou desativado, exceto o que o
+  registro já usa, e grava `indexName`). "Ver meses" mostra a próxima data-base de cada contrato pela mesma regra do
+  cartão (aditivos e renovações antigas contam).
 - **Acesso**: tela `financeiro.cadastros` (padrão = público de Contas a Pagar: equipe financeira e gestores; gestor fora
   do Financeiro só consulta), abas = seções `financeiro.cadastros.{contas,centros,categorias,indices}.ver`; índices:
   `financeiro.cadastros.indices.{criar,editar,arquivar,atualizar}` com a mesma regra das demais ações; 12 ações com padrão =

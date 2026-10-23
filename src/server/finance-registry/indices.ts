@@ -6,8 +6,10 @@ import "server-only";
  * de cada contrato são CALCULADOS na leitura: um mês novo atualiza na hora todos os contratos indexados.
  *
  * Os 5 índices padrão (IPCA, IGP-M, INPC, IGP-DI, ICTI) são criados na primeira leitura (ids fixos: os contratos
- * guardam o id). Nada é excluído: desativar só some das listas de escolha e exige que nenhum contrato ativo use o
- * índice. Valor oficial sempre vence: o lançamento manual só preenche mês que a fonte ainda não trouxe (ou índice
+ * guardam o id). Nada é excluído: desativar só some das listas de escolha e exige que nenhum contrato ativo, aditivo em
+ * andamento ou venda ganha que ainda não gerou contrato use o índice; desativado que ainda tem contrato continua sendo
+ * buscado.
+ * Valor oficial sempre vence: o lançamento manual só preenche mês que a fonte ainda não trouxe (ou índice
  * manual). Toda mudança gera evento de auditoria (`payload.changes` de → para).
  */
 import { col, createIfAbsent, getById, list, nowIso } from "@/server/db";
@@ -32,7 +34,7 @@ import {
   type ReadjustmentIndexOption,
 } from "@/domain/readjustment";
 import { AMENDMENT_OPEN_STATUSES } from "@/domain/contract-snapshot";
-import { COLLECTIONS, type Contract, type ContractAmendment, type ContractReadjustment, type ReadjustmentIndex, type ReadjustmentIndexMonth, type ReadjustmentIndexSource, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type Contract, type ContractAmendment, type ContractReadjustment, type Opportunity, type ReadjustmentIndex, type ReadjustmentIndexMonth, type ReadjustmentIndexSource, type UserRef } from "@/domain/types";
 import { fetchIctiMonthly, fetchSgsMonthly, IndexSourceError } from "@/server/integrations/indices";
 
 const SYSTEM: UserRef = { id: "system", name: "INTEROS (automação)" };
@@ -216,6 +218,15 @@ export async function setReadjustmentIndexArchived(id: string, archived: boolean
     // Aditivo em andamento que passa um contrato para este índice também segura a desativação.
     const open = (await list<ContractAmendment>(COLLECTIONS.contractAmendments, { where: [["status", "in", [...AMENDMENT_OPEN_STATUSES]]] })).filter((a) => a.after?.readjustment?.index === id || a.readjustment?.index === id);
     if (open.length > 0) throw new BusinessError(`O ${current.name} está em ${open.length} aditivo(s) em andamento: aplique ou cancele antes de desativar`);
+    // Venda ganha que ainda não gerou contrato também: o contrato nasce depois copiando `closing.readjustment` sem
+    // reconferir o índice (ensureContractForOpportunity). Venda cujo contrato foi cancelado não segura (senão travaria
+    // para sempre): se gerar contrato de novo, o índice desativado em uso continua sendo buscado.
+    const won = await list<Opportunity>(COLLECTIONS.opportunities, { where: [["closing.readjustment.index", "==", id], ["stage", "==", "ganho"]] });
+    if (won.length > 0) {
+      const contracted = new Set((await list<Contract>(COLLECTIONS.contracts, { where: [["opportunityId", "in", won.map((o) => o.id)]] })).map((c) => c.opportunityId));
+      const pending = won.filter((o) => !contracted.has(o.id));
+      if (pending.length > 0) throw new BusinessError(`O ${current.name} está em ${pending.length} venda(s) ganha(s) ainda sem contrato: gere o contrato e troque o índice dele antes de desativar`);
+    }
   } else {
     const dup = all.find((i) => !i.archived && i.id !== id && nameKey(i.name) === nameKey(current.name));
     if (dup) throw new BusinessError(`Já existe um índice ativo com o nome "${dup.name}"`);
@@ -327,11 +338,22 @@ async function fetchSource(index: ReadjustmentIndex, now: Date): Promise<Record<
 
 const sourceName = (s: ReadjustmentIndexSource) => (s.kind === "bcb_sgs" ? "Banco Central" : s.kind === "ipea_icti" ? "IPEA" : "fonte");
 
+/**
+ * Registra a falha da busca (lida de novo na transação, como o caminho de sucesso). Se o índice sumiu ou a fonte mudou
+ * enquanto a busca rodava, o erro é da fonte antiga: nada é gravado e o item sai «sem novidade» (não «erro»), para o
+ * aviso de falha não usar o `failingSince` antigo. `failingSince` vem do documento lido, não do retrato da varredura.
+ */
 async function markFetchError(index: ReadjustmentIndex, stamp: string, message: string): Promise<IndexRefreshItem> {
-  await col(COLLECTIONS.readjustmentIndices)
-    .doc(index.id)
-    .update({ lastFetchAt: stamp, lastFetchOk: false, lastFetchError: message.slice(0, 300), failingSince: index.failingSince ?? stamp, updatedAt: nowIso() });
-  return { id: index.id, name: index.name, status: "erro", newMonths: [], revisedMonths: [], replacedManual: [], error: message };
+  const base: IndexRefreshItem = { id: index.id, name: index.name, status: "sem_novidade", newMonths: [], revisedMonths: [], replacedManual: [] };
+  const ref = col(COLLECTIONS.readjustmentIndices).doc(index.id);
+  const recorded = await docdb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const doc = snap.data() as Omit<ReadjustmentIndex, "id"> | undefined;
+    if (!doc || !sameSource(doc.source, index.source)) return false;
+    tx.update(ref, { lastFetchAt: stamp, lastFetchOk: false, lastFetchError: message.slice(0, 300), failingSince: doc.failingSince ?? stamp, updatedAt: nowIso() });
+    return true;
+  });
+  return recorded ? { ...base, status: "erro", error: message } : base;
 }
 
 async function refreshOne(index: ReadjustmentIndex, now: Date, force: boolean): Promise<IndexRefreshItem> {
@@ -384,14 +406,17 @@ export interface IndexRefreshResult {
 }
 
 /**
- * Busca os índices ativos nas fontes (em paralelo, cada um com tempo-limite). Sem `force`, só os que podem ter mês
- * novo. Mês novo → evento de auditoria e aviso ao gestor do Financeiro (se algum contrato usa o índice); busca
- * falhando há 3 dias → aviso único.
+ * Busca nas fontes os índices ativos e os desativados que ainda têm contrato não cancelado usando (senão o reajuste
+ * desses contratos esperaria o índice para sempre) — em paralelo, cada um com tempo-limite. Sem `force`, só os que
+ * podem ter mês novo. Mês novo → evento de auditoria e aviso ao gestor do Financeiro (se algum contrato usa o índice);
+ * busca falhando há 3 dias → aviso único.
  */
 export async function refreshReadjustmentIndices(options: { now?: Date; force?: boolean; ids?: string[]; actor?: UserRef } = {}): Promise<IndexRefreshResult> {
   const now = options.now ?? new Date();
   const actor = options.actor ?? SYSTEM;
-  const indices = (await listReadjustmentIndices()).filter((i) => !i.archived && (!options.ids || options.ids.includes(i.id)));
+  const [all, using] = await Promise.all([listReadjustmentIndices(), countIndexedContracts()]);
+  const inUse = (id: string) => (using.get(id)?.length ?? 0) > 0;
+  const indices = all.filter((i) => (!i.archived || inUse(i.id)) && (!options.ids || options.ids.includes(i.id)));
   // Um índice que falha (rede, banco) não derruba os outros: vira «erro» só dele.
   const items = await Promise.all(
     indices.map((i) =>
@@ -401,7 +426,7 @@ export async function refreshReadjustmentIndices(options: { now?: Date; force?: 
   const changed = items.filter((i) => i.status === "atualizado");
   const failing = items.filter((i) => i.status === "erro");
   if (changed.length > 0 || failing.length > 0) {
-    const [fresh, using, manager] = await Promise.all([getReadjustmentIndexMap(), countIndexedContracts(), getDepartmentManager("financeiro")]);
+    const [fresh, manager] = await Promise.all([getReadjustmentIndexMap(), getDepartmentManager("financeiro")]);
     for (const item of changed) {
       const index = fresh.get(item.id);
       if (!index) continue;
@@ -449,7 +474,7 @@ export async function refreshReadjustmentIndices(options: { now?: Date; force?: 
       const index = fresh.get(item.id);
       if (!index?.failingSince || !manager) continue;
       if (now.getTime() - Date.parse(index.failingSince) < FAILURE_NOTICE_DAYS * 86_400_000) continue;
-      if (((using.get(item.id) ?? []).length ?? 0) === 0) continue;
+      if (!inUse(item.id)) continue;
       await notify({
         userIds: [manager.id],
         kind: "atencao",

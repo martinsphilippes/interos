@@ -35,7 +35,12 @@ export interface SweepOutcome {
   data: Record<string, unknown>;
 }
 
-type SweepFn = (now: Date) => Promise<SweepOutcome>;
+export interface SweepContext {
+  /** Limite da execução inteira (epoch ms): varreduras pesadas param de aplicar e deixam o resto para a próxima. */
+  deadline?: number;
+}
+
+type SweepFn = (now: Date, ctx?: SweepContext) => Promise<SweepOutcome>;
 
 const DAY_MS = 86_400_000;
 const OPEN_TASK = new Set<Task["status"]>(["aberta", "em_andamento", "aguardando"]);
@@ -272,11 +277,11 @@ async function renovacoes(now: Date): Promise<SweepOutcome> {
 }
 
 /** Reajuste anual dos contratos na data-base (src/server/finance/readjustments.ts). */
-async function reajustesContratos(now: Date): Promise<SweepOutcome> {
+async function reajustesContratos(now: Date, ctx?: SweepContext): Promise<SweepOutcome> {
   const { runContractReadjustments } = await import("@/server/finance/readjustments");
-  const r = await runContractReadjustments(now);
+  const r = await runContractReadjustments(now, { deadline: ctx?.deadline });
   return {
-    summary: `${r.contracts} contrato(s) com reajuste · ${r.applied} reajustado(s) · ${r.held} sem aumento (índice ≤ 0) · ${r.waiting} aguardando o índice · ${r.notices} prévia(s) enviada(s) · ${r.lateTasks} tarefa(s) de reajuste atrasado${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
+    summary: `${r.contracts} contrato(s) com reajuste · ${r.applied} reajustado(s) · ${r.held} sem aumento (índice ≤ 0) · ${r.waiting} aguardando o índice · ${r.notices} prévia(s) enviada(s) · ${r.lateTasks} tarefa(s) de reajuste atrasado${r.deferred ? ` · ${r.deferred} para a próxima rotina (limite de tempo)` : ""}${r.errors.length ? ` · ${r.errors.length} erro(s)` : ""}`,
     data: { ...r, errors: r.errors.slice(0, 20) },
   };
 }

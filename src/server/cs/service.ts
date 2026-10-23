@@ -1001,7 +1001,7 @@ export async function completeRenewal(renewalId: string, termMonths: number, not
   const { applyAmendment, createAmendment } = await import("@/server/finance/amendments");
   const reason = notes?.trim() ? `Renovação negociada pelo CS: ${notes.trim()}` : "Renovação negociada pelo CS";
   const amendment = await createAmendment(
-    { contractId: contract.id, effectiveFrom: (contract.endDate ?? nowIso()).slice(0, 10), reason, requiresSignature: options.requiresSignature ?? false, renewal: { months: termMonths, readjustment: options.readjustment ?? contract.readjustment } },
+    { contractId: contract.id, effectiveFrom: (contract.endDate ?? nowIso()).slice(0, 10), reason, requiresSignature: options.requiresSignature ?? false, renewal: { months: termMonths, readjustment: options.readjustment } },
     actor,
     { source: "renovacao_cs", renewalId: renewal.id },
   );
@@ -1013,7 +1013,7 @@ export async function completeRenewal(renewalId: string, termMonths: number, not
   }
   const applied = await applyAmendment(amendment.id, actor);
   const { renewalReadjustmentText } = await import("@/server/finance/renewals");
-  const result = `Renovado por ${termMonths} meses até ${formatDate(newEndDate)} (aditivo ${amendment.number}${amendment.readjust || amendment.readjustment?.pending ? `, reajuste: ${renewalReadjustmentText(amendment)}` : ""}).${notes ? ` ${notes}` : ""}`;
+  const result = `Renovado por ${termMonths} meses até ${formatDate(newEndDate)} (aditivo ${amendment.number}${amendment.readjust || amendment.readjustment?.pending || amendment.readjustNote ? `, reajuste: ${renewalReadjustmentText(amendment)}` : ""}).${notes ? ` ${notes}` : ""}`;
   await update<Renewal>(COLLECTIONS.renewals, renewal.id, { status: "renovado", result });
   const account = await getCsAccount(renewal.clientId);
   if (account) await update<CsAccount>(COLLECTIONS.csAccounts, account.id, { renewalDate: newEndDate });

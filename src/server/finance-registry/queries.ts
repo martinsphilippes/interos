@@ -10,14 +10,14 @@ import { getManyByIds, list } from "@/server/db";
 import { resolveDataScope } from "@/server/auth/scope";
 import { filterContractsByScope } from "@/server/finance/access";
 import { dateKey } from "@/lib/format";
-import { accumulatedPct, addCompetence, describeIndexSource, readjustmentSchedule, summarizeIndex, type IndexSummary } from "@/domain/readjustment";
+import { accumulatedPct, addCompetence, coveredAnniversaries, describeIndexSource, readjustmentFloor, readjustmentSchedule, summarizeIndex, type IndexSummary } from "@/domain/readjustment";
 import { countIndexedContracts, listReadjustmentIndices } from "./indices";
 import { payableAllowed, payableVisibility } from "@/server/commissions/access";
 import { canSeeFinanceValues } from "@/server/finance/access";
 import { redactChanges } from "@/domain/audit-format";
 import { accountBalance, activeCategoriesByCenter, categoriesWithoutCenter, categoryUsageTotal, countCategoryUsage, nameKey, planLegacyImport, type LegacyImportPlan } from "@/domain/finance-registry";
 import type { EventType } from "@/domain/constants";
-import { COLLECTIONS, type Client, type CostCenter, type CurrentUser, type DomainEvent, type FinanceCategory, type FinancialAccount, type Payable, type ReadjustmentIndex, type ReadjustmentIndexSource, type TimelineEvent } from "@/domain/types";
+import { COLLECTIONS, type Client, type ContractAmendment, type CostCenter, type CurrentUser, type DomainEvent, type FinanceCategory, type FinancialAccount, type Payable, type ReadjustmentIndex, type ReadjustmentIndexSource, type TimelineEvent } from "@/domain/types";
 import { getSetting } from "@/server/admin/queries";
 import { SETTING_DEFAULTS, type ContasAPagarConfig } from "@/server/admin/schemas";
 import { listCostCenters, listFinanceCategories, listFinancialAccounts } from "./service";
@@ -330,6 +330,11 @@ async function indexRows(user: CurrentUser, detailed: boolean): Promise<IndexRow
     const clients = await getManyByIds<Client>(COLLECTIONS.clients, scoped.map((c) => c.clientId));
     for (const [id, c] of clients) clientNames.set(id, c.tradeName);
   }
+  // Datas-base já decididas por aditivo (inclusive renovações antigas): mesma regra do cartão do contrato.
+  const amendmentsByContract = new Map<string, ContractAmendment[]>();
+  if (visible.size > 0) {
+    for (const a of await list<ContractAmendment>(COLLECTIONS.contractAmendments, { where: [["contractId", "in", [...visible]]] })) amendmentsByContract.set(a.contractId, [...(amendmentsByContract.get(a.contractId) ?? []), a]);
+  }
   const today = dateKey(new Date());
   return indices.map((i) => {
     const summary = summarizeIndex(i.values);
@@ -346,7 +351,7 @@ async function indexRows(user: CurrentUser, detailed: boolean): Promise<IndexRow
     const contracts = (using.get(i.id) ?? [])
       .filter((c) => visible.has(c.id))
       .map((c) => {
-        const next = c.startDate ? readjustmentSchedule({ startDate: dateKey(c.startDate), covered: (c.readjustmentLog ?? []).map((e) => e.anniversary), today }) : null;
+        const next = c.startDate ? readjustmentSchedule({ startDate: dateKey(c.startDate), covered: coveredAnniversaries(c, amendmentsByContract.get(c.id) ?? []), today, floor: readjustmentFloor(c) }) : null;
         return { id: c.id, number: c.number, clientName: clientNames.get(c.clientId) ?? "—", nextAnniversary: next?.due?.anniversary ?? next?.next?.anniversary };
       })
       .sort((a, b) => (a.nextAnniversary ?? "9999").localeCompare(b.nextAnniversary ?? "9999"));

@@ -1028,6 +1028,11 @@ export interface ContractAmendment extends BaseEntity {
   /** Reajuste anual aplicado por este aditivo e a data-base que ele cobre. */
   readjust?: AmendmentReadjust;
   /**
+   * Renovação numa data-base cujo reajuste NÃO entrou nela (acima do limite automático ou regra trocada depois da
+   * data-base): por que fica para a rotina/Financeiro decidir. Só texto (evento e resultado da renovação).
+   */
+  readjustNote?: string;
+  /**
    * Renovação criada com o reajuste anual por data-base (sem esta marca = renovação antiga, quando o reajuste era
    * decidido na própria renovação: conta como data-base decidida).
    */

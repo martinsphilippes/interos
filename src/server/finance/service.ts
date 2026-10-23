@@ -33,6 +33,7 @@ import { clicksignConfigured } from "@/server/integrations/clicksign";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { DEFAULT_CLOSING, SALE_PAYMENT_METHOD_LABELS, contractEffectiveItems } from "@/domain/sale-closing";
 import { contractSnapshot, describeReadjustment } from "@/domain/contract-snapshot";
+import { sameReadjustmentRule } from "@/domain/readjustment";
 import { dateKey, formatCurrency, formatDate } from "@/lib/format";
 import {
   COLLECTIONS,
@@ -585,6 +586,8 @@ export async function updateContractConditions(input: UpdateConditionsInput, act
   if (version.versioned) await cancelClicksignSend(contract, sendAtWrite, actor, "O contrato ganhou uma versão nova (condições alteradas).");
   await version.announce();
   const audit = auditChanges<Contract>(contract, { ...contract, ...patch, firstDueDate: patch.firstDueDate, paymentCondition: patch.paymentCondition }, ["billingDay", "recurrence", "termMonths", "paymentCondition", "firstDueDate", "paymentMethod", "setupInstallments", "autoRenew", "renewalTermMonths", "readjustment", "noticeDays"]);
+  // Mesma regra de reajuste com o nome do índice só acrescentado (contrato antigo sem `indexName`): não é mudança.
+  if (audit.changes.readjustment && patch.readjustment && sameReadjustmentRule(contract.readjustment, patch.readjustment) && Boolean(contract.readjustment?.pending) === Boolean(patch.readjustment.pending)) delete audit.changes.readjustment;
   // Auditoria (D29): contract.updated SEMPRE (também na revisão que gera nova versão).
   if (hasChanges(audit)) {
     await emitEvent({

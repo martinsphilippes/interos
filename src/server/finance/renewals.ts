@@ -4,8 +4,9 @@ import "server-only";
  * vigência termina em até `noticeDays` (padrão 30) recebem um aditivo "renovacao" aplicado na hora (mesmo caminho da
  * renovação pelo CS): endDate + `renewalTermMonths` (ou o prazo do contrato), `termMonths` preservado. Se a renovação
  * cai numa data-base, o reajuste anual entra junto (percentual do contrato ou acumulado de 12 meses do índice, do
- * cadastro «Índices de reajuste»); índice do período ainda não publicado → renova sem reajuste, marca
- * `readjustment.pending` e a varredura `reajustes_contratos` aplica quando o índice sair. Idempotente: a renovação
+ * cadastro «Índices de reajuste»); índice do período ainda não publicado (inclusive o mês anterior à data-base, quando a
+ * renovação vem antes dela) → renova sem reajuste, marca `readjustment.pending` e a varredura `reajustes_contratos`
+ * aplica na data-base; acima de 25% ou regra trocada depois da data-base → fica para o Financeiro. Idempotente: a renovação
  * estende `endDate` (sai da janela) e só existe um aditivo em andamento por contrato. Renovação aberta no CS para o
  * mesmo contrato é marcada "renovado".
  */
@@ -31,9 +32,9 @@ export interface AutoRenewResult {
   renewedContractIds: string[];
 }
 
-export async function autoRenewContracts(now: Date = new Date()): Promise<AutoRenewResult> {
+export async function autoRenewContracts(now: Date = new Date(), options: { clientId?: string } = {}): Promise<AutoRenewResult> {
   const today = dateKey(now);
-  const contracts = (await list<Contract>(COLLECTIONS.contracts, { where: [["status", "==", "liberado"]] })).filter((c) => c.autoRenew && c.endDate && c.recurrence !== "unico");
+  const contracts = (await list<Contract>(COLLECTIONS.contracts, { where: [["status", "==", "liberado"]] })).filter((c) => c.autoRenew && c.endDate && c.recurrence !== "unico" && (!options.clientId || c.clientId === options.clientId));
   const result: AutoRenewResult = { candidates: contracts.length, renewed: 0, indexPending: 0, skipped: 0, errors: [], renewedContractIds: [] };
   if (contracts.length === 0) return result;
   const clientById = await getManyByIds<Client>(COLLECTIONS.clients, contracts.map((c) => c.clientId));
@@ -60,7 +61,8 @@ export async function autoRenewContracts(now: Date = new Date()): Promise<AutoRe
           effectiveFrom: dateKey(c.endDate!) < today ? today : dateKey(c.endDate!),
           reason: `Renovação automática por ${months} meses (renovação automática combinada no contrato, ${noticeDays} dias antes do fim da vigência)`,
           requiresSignature: false,
-          renewal: { months, readjustment: c.readjustment },
+          // Sem escolha de reajuste: «conforme o contrato» (com as travas da rotina).
+          renewal: { months },
         },
         SYSTEM_ACTOR,
         { source: "renovacao_automatica" },
@@ -90,9 +92,11 @@ export async function autoRenewContracts(now: Date = new Date()): Promise<AutoRe
 }
 
 /** Texto do reajuste de um aditivo de renovação (evento e resultado da renovação). */
-export function renewalReadjustmentText(a: Pick<ContractAmendment, "readjust" | "readjustment">): string {
+export function renewalReadjustmentText(a: Pick<ContractAmendment, "readjust" | "readjustment" | "readjustNote">): string {
+  if (a.readjust?.waived) return "sem reajuste nesta data-base (dispensado na renovação)";
   if (a.readjust) return describeQuote(a.readjust);
-  if (a.readjustment?.type === "indice" && a.readjustment.pending) return "aguardando o índice do período (entra sozinho quando sair)";
+  if (a.readjustment?.type === "indice" && a.readjustment.pending) return "aguardando o índice do período (entra sozinho na data-base)";
+  if (a.readjustNote) return a.readjustNote;
   return "nenhum nesta renovação";
 }
 

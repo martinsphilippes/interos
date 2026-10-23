@@ -22,7 +22,8 @@
 ## Varreduras agendadas
 
 `sweeps.ts` registra as varreduras nativas (`sla_alerts`, `followup_vendas`, `oportunidades_paradas`,
-`leads_sem_contato_24h`, `renovacoes`, `saude_clientes`, `implantacoes_atrasadas`, `tarefas_recorrentes`,
+`leads_sem_contato_24h`, `indices_reajuste` — meses novos dos índices de reajuste no Banco Central/IPEA —,
+`renovacoes`, `reajustes_contratos` — reajuste anual dos contratos na data-base —, `saude_clientes`, `implantacoes_atrasadas`, `tarefas_recorrentes`,
 `kpi_snapshots`, `processos_esperas`, `cobrancas_vencidas`, `contratos_alertas`, `comissoes`,
 `conciliacao_bancaria` — só age com provedor de cobrança conectado, senão "ignorada" —, `regua_cobranca` — marcos
 da régua de cobrança, idempotente por cobrança e marco, desligada por padrão; ambas rodam também de forma
@@ -42,7 +43,9 @@ Formas de execução:
    qualquer minuto da hora marcada: por isso a varredura vence com uma folga (`dueInterval`: frequência − 10%, até
    2 h) — 09:40 num dia e 09:10 no outro não pula o segundo dia. `indices_reajuste` roda antes de `renovacoes` e
    `reajustes_contratos` (eles usam o índice do dia; cada fonte tem limite de 15 s e, na maioria dos dias, nada é
-   buscado) e `reajustes_contratos` tem orçamento de 25 s (o que sobrar fica para o dia seguinte, dentro da folga).
+   buscado) e `reajustes_contratos` tem orçamento de 25 s, limitado a 45 s do início da execução (`runSweeps` passa o
+   prazo às varreduras): o que sobrar fica para o dia seguinte, dentro da folga, e o resumo mostra quantos. O painel
+   mostra a próxima execução com a mesma folga.
 2. **Botão "Executar varreduras agora"** em `/admin/automacoes` (força todas ou uma a uma).
 3. **De forma preguiçosa ao abrir as telas**, como os módulos já fazem: Central de Vendas (follow-up, 1x/h),
    `/cs/saude` e `/cs/renovacoes` (1x/dia), Central de Suporte (SLA de chamados, a cada 10 min). As

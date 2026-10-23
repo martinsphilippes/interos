@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   accumulatedPct,
   addCompetence,
+  addDaysKey,
   addMonthsClamped,
   competenceDiff,
   competenceLabel,
@@ -15,6 +16,8 @@ import {
   indexSelectOptions,
   parseCompetenceInput,
   quoteReadjustment,
+  READJUSTMENT_TRACKING_SINCE,
+  readjustmentFloor,
   readjustmentSchedule,
   sameReadjustmentRule,
   summarizeIndex,
@@ -101,6 +104,23 @@ describe("datas-base", () => {
     const ahead = readjustmentSchedule({ startDate: "2025-11-20", covered: ["2026-11-20"], today: "2026-10-23" });
     expect(ahead.due).toBeNull();
     expect(ahead.next?.anniversary).toBe("2027-11-20");
+  });
+
+  it("a partir do acompanhamento (floor), a data-base anterior sem decisão fica em foco: a seguinte espera", () => {
+    // Contrato acompanhado desde 2026-11: a data-base de 2026-11-20 não foi decidida e a de 2027-11-20 chegou.
+    const pinned = readjustmentSchedule({ startDate: "2025-11-20", covered: [], today: "2027-11-25", floor: "2026-11-01" });
+    expect(pinned.due).toEqual({ anniversary: "2026-11-20", overdueDays: 370 });
+    expect(pinned.next?.anniversary).toBe("2028-11-20");
+    // Decidida a anterior, a seguinte entra.
+    expect(readjustmentSchedule({ startDate: "2025-11-20", covered: ["2026-11-20"], today: "2027-11-25", floor: "2026-11-01" }).due?.anniversary).toBe("2027-11-20");
+    // Antes do acompanhamento: só a mais recente (as anteriores foram tratadas fora do sistema).
+    expect(readjustmentSchedule({ startDate: "2020-03-10", covered: [], today: "2026-10-23", floor: "2026-10-23" }).due?.anniversary).toBe("2026-03-10");
+  });
+
+  it("acompanhamento: o mais tardio entre a entrada do reajuste automático e a criação do contrato", () => {
+    expect(readjustmentFloor({ createdAt: "2024-01-05T10:00:00.000Z" })).toBe(READJUSTMENT_TRACKING_SINCE);
+    expect(readjustmentFloor({ createdAt: "2027-02-01T10:00:00.000Z" })).toBe("2027-02-01");
+    expect(addDaysKey("2026-03-02", -30)).toBe("2026-01-31");
   });
 
   it("antes do primeiro aniversário não há data-base vencida", () => {

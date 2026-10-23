@@ -67,8 +67,9 @@ export function ContractReadjustmentCard({ contractId, rule, startDate, state, l
   const status = held && (state.status === "pronto" || state.status === "previsto") ? { label: "Sem aumento", variant: "muted" as Variant } : STATUS[state.status];
   const anniversary = state.anniversary;
   const money = (v: number | undefined) => (hideValues || v === undefined ? "Restrito" : formatCurrency(v));
-  // Índice ≤ 0 com «manter»: o botão registra «sem aumento» (sem aditivo) — também exige a chave de aplicar.
-  const canApply = access.contracts.readjustApply && (state.canApply || (held && state.due && state.canSkip)) && Boolean(anniversary);
+  // Índice ≤ 0 com «manter»: o botão registra «sem aumento» (sem aditivo), só com a data-base chegada e sem aditivo
+  // em andamento — mesma regra do servidor (applyReadjustmentNow). Também exige a chave de aplicar.
+  const canApply = access.contracts.readjustApply && Boolean(anniversary) && (held ? state.due && !state.blockingAmendment && (state.canApply || state.canSkip) : state.canApply);
   const canSkip = access.contracts.readjustSkip && state.canSkip && Boolean(anniversary);
 
   return (

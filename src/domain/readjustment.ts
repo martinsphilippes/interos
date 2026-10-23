@@ -18,6 +18,14 @@ export const READJUSTMENT_GRACE_DAYS = 45;
 export const READJUSTMENT_NOTICE_DAYS = 30;
 /** Meses de atraso aceitos entre o último mês do índice e a data-base. */
 export const MAX_INDEX_LAG_MONTHS = 3;
+/** Acima disso (em módulo, acumulado bruto) o reajuste não entra sozinho: série errada ou índice fora do normal → Financeiro decide. */
+export const MAX_AUTO_PERCENT = 25;
+/**
+ * Início do acompanhamento das datas-base pelo INTEROS (entrada do reajuste anual automático). Datas-base anteriores
+ * a isso (ou à criação do contrato no sistema) foram tratadas fora dele: só a mais recente aparece; dali em diante
+ * cada data-base é decidida na ordem — a seguinte espera a anterior.
+ */
+export const READJUSTMENT_TRACKING_SINCE = "2026-10-23";
 
 export interface DefaultIndexDef {
   id: string;
@@ -188,6 +196,11 @@ export function addMonthsClamped(dateKey: string, months: number): string {
   return `${comp}-${String(day).padStart(2, "0")}`;
 }
 
+/** Data AAAA-MM-DD + n dias. */
+export function addDaysKey(key: string, days: number): string {
+  return new Date(Date.parse(`${key.slice(0, 10)}T12:00:00.000Z`) + days * DAY_MS).toISOString().slice(0, 10);
+}
+
 /** Dias de `a` até `b` (b − a), datas AAAA-MM-DD. */
 export function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T12:00:00.000Z`) - Date.parse(`${a}T12:00:00.000Z`)) / DAY_MS);
@@ -199,27 +212,39 @@ export function anniversaryOf(startKey: string, k: number): string {
 }
 
 export interface ReadjustmentSchedule {
-  /** Data-base já chegada e ainda não decidida (só a mais recente: anteriores ficaram para trás). */
+  /** Data-base já chegada e ainda não decidida (a que está em foco: ver `readjustmentSchedule`). */
   due: { anniversary: string; overdueDays: number } | null;
   /** Próxima data-base (futura) ainda não decidida. */
   next: { anniversary: string; daysUntil: number } | null;
 }
 
+/** Desde quando o sistema responde pelas datas-base do contrato (o mais tardio entre o acompanhamento e a criação). */
+export function readjustmentFloor(contract: Pick<Contract, "createdAt">): string {
+  const created = typeof contract.createdAt === "string" ? contract.createdAt.slice(0, 10) : "";
+  return created > READJUSTMENT_TRACKING_SINCE ? created : READJUSTMENT_TRACKING_SINCE;
+}
+
 /**
  * Datas-base pendentes. `covered` = datas-base já decididas (aplicadas, mantidas, dispensadas ou em aditivo aberto);
- * compara por mês. Tudo até a última decidida fica para trás.
+ * compara por mês. Tudo até a última decidida fica para trás. Das que chegaram sem decisão: a partir de `floor`
+ * (desde quando o sistema acompanha o contrato) vale a MAIS ANTIGA — a seguinte espera, para nenhuma data-base sumir
+ * sem registro; antes dele, só a mais recente (as anteriores foram tratadas fora do sistema).
  */
-export function readjustmentSchedule(input: { startDate: string; covered: readonly string[]; today: string }): ReadjustmentSchedule {
+export function readjustmentSchedule(input: { startDate: string; covered: readonly string[]; today: string; floor?: string }): ReadjustmentSchedule {
   const start = input.startDate.slice(0, 10);
   const coveredMonths = new Set(input.covered.map((c) => c.slice(0, 7)));
   const lastCovered = [...coveredMonths].sort().pop() ?? null;
   let due: ReadjustmentSchedule["due"] = null;
+  let pinned = false;
   for (let k = 1; k <= 200; k++) {
     const a = anniversaryOf(start, k);
     const month = a.slice(0, 7);
     const open = !coveredMonths.has(month) && (!lastCovered || month > lastCovered);
     if (a <= input.today) {
-      if (open) due = { anniversary: a, overdueDays: daysBetween(a, input.today) };
+      if (open && !pinned) {
+        due = { anniversary: a, overdueDays: daysBetween(a, input.today) };
+        if (input.floor && a >= input.floor) pinned = true;
+      }
       continue;
     }
     if (open) return { due, next: { anniversary: a, daysUntil: daysBetween(input.today, a) } };

@@ -60,6 +60,9 @@ export interface SweepReport {
 
 const SCHEDULE_ORDER: RuleSchedule[] = ["horaria", "diaria", "semanal"];
 
+/** Até quando, depois do início, as varreduras pesadas aplicam mudanças (a função do cron tem 60 s). */
+const RUN_DEADLINE_MS = 45_000;
+
 function effectiveSchedule(key: SweepKey, rules: AutomationRuleRecord[]): { schedule: RuleSchedule; ruleIds: string[] } {
   const linked = rules.filter((r) => r.trigger.type === "agendado" && r.trigger.sweep === key);
   if (linked.length === 0) return { schedule: SWEEP_DEFINITIONS[key].schedule, ruleIds: [] };
@@ -100,7 +103,8 @@ export async function getSweepStatus(): Promise<SweepStatusItem[]> {
       schedule,
       ruleIds,
       lastRunAt,
-      nextRunAt: lastRunAt ? new Date(new Date(lastRunAt).getTime() + SCHEDULE_INTERVAL_MS[schedule]).toISOString() : undefined,
+      // Mesma folga do runSweeps: a varredura vence um pouco antes do intervalo cheio.
+      nextRunAt: lastRunAt ? new Date(new Date(lastRunAt).getTime() + dueInterval(schedule)).toISOString() : undefined,
     };
   });
 }
@@ -114,6 +118,8 @@ export async function runSweeps(options: { only?: string[]; force?: boolean } = 
   const only = options.only && options.only.length > 0 ? new Set(options.only) : null;
   const now = new Date();
   const ranAt = now.toISOString();
+  // A rota do cron tem 60 s: as varreduras pesadas (reajustes) param de aplicar perto do fim e deixam o resto para amanhã.
+  const deadline = now.getTime() + RUN_DEADLINE_MS;
   const [state, rules] = await Promise.all([readState(), activeScheduledRules()]);
   const items: SweepReportItem[] = [];
 
@@ -130,7 +136,7 @@ export async function runSweeps(options: { only?: string[]; force?: boolean } = 
     await mergeSweepsSetting({ automacoes: { [key]: { lastRunAt: ranAt } } });
     const started = Date.now();
     try {
-      const outcome = await SWEEPS[key](now);
+      const outcome = await SWEEPS[key](now, { deadline });
       const durationMs = Date.now() - started;
       await mergeSweepsSetting({ automacoes: { [key]: { lastRunAt: ranAt, lastStatus: "executada", lastSummary: outcome.summary, lastError: null, durationMs } } });
       items.push({ key, label: def.label, kind: "varredura", status: "executada", summary: outcome.summary, durationMs });
