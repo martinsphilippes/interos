@@ -208,9 +208,10 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
     const chosen = input.renewal.readjustment as ContractReadjustment | undefined;
     let explicit = chosen && !sameReadjustmentRule(chosen, contract.readjustment) ? chosen : undefined;
     const contractHasRule = hasReadjustmentRule(contract);
-    const { anniversary, blockedBy, waiting } = renewalAnniversary(contract, covered, effectiveFrom, Boolean(chosen && chosen.type !== "nenhum"));
+    const { anniversary, blockedBy, waiting } = renewalAnniversary(contract, covered, effectiveFrom, Boolean(chosen && (explicit || chosen.type !== "nenhum")));
     // Data-base num período sem regra: a escolha do CS (mesmo igual à regra guardada no contrato) vale como explícita.
-    if (anniversary && chosen && chosen.type !== "nenhum" && !explicit && inReadjustmentGap(anniversary, contract.readjustmentGaps)) explicit = chosen;
+    const target = anniversary ?? waiting;
+    if (target && chosen && chosen.type !== "nenhum" && !explicit && inReadjustmentGap(target, contract.readjustmentGaps)) explicit = chosen;
     const indexOf = async (r: ContractReadjustment) => (r.type === "indice" && r.index ? (await getReadjustmentIndexMap()).get(r.index) : undefined);
     if (anniversary) {
       if (explicit?.type === "nenhum") {

@@ -512,6 +512,15 @@ describe("revisão 3: ordem das datas-base, regra incluída depois", () => {
     expect(r.readjust).toMatchObject({ anniversary: end, percent: 5 });
   });
 
+  it("regra incluída depois da data-base: «Sem reajuste» na renovação ainda dispensa a data-base dela", async () => {
+    const { start: s0, anniversary: end } = baseFrom(20);
+    const c = await contract("x8", { termMonths: 12, startDate: iso(s0), endDate: iso(end), readjustment: { type: "nenhum" } });
+    const inc = await createAmendment({ contractId: c.id, effectiveFrom: daysFrom(end, 10), reason: "Reajuste a partir do próximo período", requiresSignature: false, conditions: { readjustment: { type: "percentual", percent: 5 } } }, ACTOR);
+    await applyAmendment(inc.id, ACTOR);
+    const r = await createAmendment({ contractId: c.id, effectiveFrom: end, reason: "Renovação sem reajuste", requiresSignature: false, renewal: { months: 12, readjustment: { type: "nenhum" } } }, ACTOR, { source: "renovacao_cs" });
+    expect(r.readjust).toMatchObject({ anniversary: end, waived: true });
+  });
+
   it("mensal → única → mensal com data-base pendente antes: ela continua para o Financeiro", async () => {
     const { start: s0, anniversary } = baseFrom(-3);
     const c = await contract("x3", { startDate: iso(s0), endDate: iso(addMonthsClamped(s0, 36)), readjustment: { type: "percentual", percent: 5 } });
