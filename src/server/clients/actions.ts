@@ -37,6 +37,7 @@ import {
   upsellSchema,
 } from "./schemas";
 import { createWorkflowInstanceForClient } from "@/server/workflow/service";
+import { syncContractSignersFromContact } from "@/server/finance/service";
 import { canSeeClient, clientScope, scopeClients } from "./access";
 import { createContact } from "./contacts";
 
@@ -303,7 +304,7 @@ export async function addContact(input: unknown): Promise<ActionResult<{ id: str
   }
 }
 
-export async function updateContact(input: unknown): Promise<ActionResult<{ id: string }>> {
+export async function updateContact(input: unknown): Promise<ActionResult<{ id: string; contractsUpdated?: number }>> {
   try {
     const user = await requirePermission("operacao.clientes.contatos.editar");
     const data = updateContactSchema.parse(input);
@@ -330,8 +331,14 @@ export async function updateContact(input: unknown): Promise<ActionResult<{ id: 
       department: user.departmentId,
       payload: { contactId: data.id },
     });
+    // Contratos ainda não enviados para assinatura passam a ter o nome/e-mail novos em quem é este contato.
+    const identityChanged = data.name.trim() !== contact.name.trim() || (data.email ?? "").trim().toLowerCase() !== (contact.email ?? "").trim().toLowerCase();
+    const contractsUpdated = identityChanged
+      ? await syncContractSignersFromContact({ id: contact.id, clientId: data.clientId, name: data.name, email: data.email }, { name: contact.name, email: contact.email }, actor(user))
+      : 0;
     revalidateClient(data.clientId);
-    return { ok: true, data: { id: data.id } };
+    if (contractsUpdated > 0) revalidatePath("/financeiro", "layout");
+    return { ok: true, data: { id: data.id, contractsUpdated } };
   } catch (error) {
     return fail(error, "Não foi possível salvar o contato");
   }

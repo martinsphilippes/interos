@@ -271,6 +271,17 @@ export type NewContactSignerInput = z.input<typeof newContactSignerSchema>;
 
 export const signerRefSchema = z.object({ contractId: id("Contrato"), email: signerEmailRef });
 
+/** Correção de quem assina (nome, e-mail, papel); `updateContact` grava também no contato do cliente. */
+export const signerEditSchema = z.object({
+  contractId: id("Contrato"),
+  email: signerEmailRef,
+  name: z.string().trim().min(2, "Informe o nome do signatário").max(120, "Nome muito longo"),
+  newEmail: z.email("E-mail do signatário inválido"),
+  role: signerRole,
+  updateContact: z.boolean(),
+});
+export type SignerEditInput = z.input<typeof signerEditSchema>;
+
 /** CPF de quem assina pelo cliente, informado no painel de pendências do contrato. */
 export const representativeDocumentSchema = z.object({
   contractId: id("Contrato"),

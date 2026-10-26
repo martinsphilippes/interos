@@ -2,8 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { BellRing, CheckCircle2, FileText, Mail, PenLine, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
-import type { Contract } from "@/domain/types";
+import { AlertTriangle, BellRing, CheckCircle2, FileText, Mail, PenLine, Pencil, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
+import type { Contract, ContractSignerEntry } from "@/domain/types";
+import type { SignerWarning } from "@/domain/contract-signers";
+import { EditSignerDialog } from "./edit-signer-dialog";
 import type { IntegrationFlags } from "@/server/integrations/types";
 import { addContactAsSignerAction, addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
 import { clicksignSignerNameProblem, isSignerEmail } from "@/domain/contract-templates";
@@ -39,6 +41,8 @@ export interface SignatureCardProps {
   clientId: string;
   /** Quem pode ser escolhido como signatário: contatos do cliente e equipe da Intercert. */
   signerOptions?: SignerOptions;
+  /** Avisos sobre quem assina, calculados no servidor (`signerWarnings`): confirmação antes de enviar. */
+  signerWarnings?: SignerWarning[];
   /** Pode cadastrar contato no cliente (operacao.clientes.contatos.editar): mostra "cadastrar novo contato". */
   canCreateContact?: boolean;
   /** Estado real das integrações (e-mail e assinatura decidem envio automático x manual). */
@@ -61,7 +65,7 @@ const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "da
  * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
  * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
  */
-export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo, readiness, canEditTemplates = false, canEditBilling = false, canEditSignatureSettings = false }: SignatureCardProps) {
+export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, signerWarnings = [], canCreateContact, integrations, documentInfo, readiness, canEditTemplates = false, canEditBilling = false, canEditSignatureSettings = false }: SignatureCardProps) {
   const id = React.useId();
   // Capacidades do servidor (assinatura: editar signatários, enviar/lembrar, registrar assinatura; documento: ver).
   const { contracts: can } = useFinanceAccess();
@@ -72,6 +76,8 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
   const [role, setRole] = React.useState(DEFAULT_CLIENT_SIGNER_ROLE);
   const [newContact, setNewContact] = React.useState({ name: "", email: "", position: "", phone: "", document: "" });
   const [removing, setRemoving] = React.useState<{ email: string; name: string } | null>(null);
+  const [editing, setEditing] = React.useState<ContractSignerEntry | null>(null);
+  const [confirmSend, setConfirmSend] = React.useState(false);
   const [busy, setBusy] = React.useState<string | null>(null);
   const sent = Boolean(contract.signatureEnvelopeId);
   const closed = contract.status === "liberado" || contract.status === "cancelado";
@@ -117,6 +123,16 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
     ? Boolean(newContact.name.trim() && newEmail && role.trim() && !newContactProblem && !newEmailProblem && !roleProblem)
     : Boolean(selected && !selected.disabledReason && !selected.nameProblem && role.trim() && !roleProblem);
   const noContacts = (signerOptions?.contacts.length ?? 0) === 0;
+  const teamEmails = React.useMemo(() => (signerOptions?.users ?? []).map((u) => u.email), [signerOptions]);
+  // Nome de teste ou alguém da equipe assinando pelo cliente: aviso no cartão e confirmação antes de enviar.
+  const warnings = closed ? [] : signerWarnings;
+  const send = () =>
+    act("send", () =>
+      run(
+        () => sendForSignatureAction({ contractId: contract.id }),
+        (d) => (nextManual ? `Documento gerado (${d.envelopeId}): aguardando assinatura — envio manual` : `Contrato enviado para assinatura pela Clicksign (envelope ${d.envelopeId})`),
+      ),
+    );
 
   const resetAdd = () => {
     setChoice("");
@@ -251,6 +267,11 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                         )}
                       </>
                     ) : null}
+                    {can.signersEdit && editable && !sent && s.party !== "contratada" ? (
+                      <Button variant="ghost" size="sm" className="h-10 md:h-8" disabled={pending} onClick={() => setEditing(s)}>
+                        <Pencil /> Corrigir
+                      </Button>
+                    ) : null}
                     {can.signersEdit && editable ? (
                       <Button variant="ghost" size="sm" className="h-10 text-danger md:h-8" disabled={pending} onClick={() => setRemoving({ email: s.email, name: s.name })}>
                         <Trash2 /> Remover
@@ -262,6 +283,17 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
             );
           })}
         </ul>
+
+        {warnings.length > 0 ? (
+          <div role="status" className="flex flex-col gap-1 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-warning-fg">
+            {warnings.map((w) => (
+              <p key={`${w.email}:${w.message}`} className="flex items-start gap-1.5">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> {w.message}
+              </p>
+            ))}
+            {can.signersEdit && editable ? <p className="text-muted">Use «Corrigir» no signatário: a correção pode ir também para o contato do cliente.</p> : null}
+          </div>
+        ) : null}
 
         {can.signersEdit && editable ? (
           adding ? (
@@ -368,14 +400,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
 
         {can.signatureSend && editable ? (
           <Button
-            onClick={() =>
-              act("send", () =>
-                run(
-                  () => sendForSignatureAction({ contractId: contract.id }),
-                  (d) => (nextManual ? `Documento gerado (${d.envelopeId}): aguardando assinatura — envio manual` : `Contrato enviado para assinatura pela Clicksign (envelope ${d.envelopeId})`),
-                ),
-              )
-            }
+            onClick={() => (warnings.length > 0 ? setConfirmSend(true) : void send())}
             loading={busy === "send"}
             disabled={pending || contract.signers.length === 0 || (readiness?.gaps.length ?? 0) > 0}
             title={readiness?.gaps.length ? "Complete os dados do modelo antes de gerar o documento" : undefined}
@@ -413,6 +438,38 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
           <p className="text-xs text-muted">Envio manual: baixe o PDF (ou o Word preenchido) e anexe ao e-mail. Depois registre cada assinatura com a evidência.</p>
         ) : null}
       </CardContent>
+
+      {editing ? (
+        <EditSignerDialog
+          key={editing.email}
+          contractId={contract.id}
+          signer={editing}
+          others={contract.signers.filter((x) => x !== editing).map((x) => x.email)}
+          contacts={signerOptions?.contacts ?? []}
+          teamEmails={teamEmails}
+          clientName={clientName}
+          canEditContacts={Boolean(canCreateContact)}
+          providerConnected={providerConnected}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
+
+      <ConfirmDialog
+        open={confirmSend}
+        onOpenChange={setConfirmSend}
+        title={nextManual ? "Gerar o documento mesmo assim?" : "Enviar para assinatura mesmo assim?"}
+        description={
+          <span className="flex flex-col gap-1">
+            {warnings.map((w) => (
+              <span key={`${w.email}:${w.message}`}>• {w.message}</span>
+            ))}
+          </span>
+        }
+        confirmLabel={nextManual ? "Gerar mesmo assim" : "Enviar mesmo assim"}
+        onConfirm={async () => {
+          await send();
+        }}
+      />
 
       <ConfirmDialog
         open={removing !== null}

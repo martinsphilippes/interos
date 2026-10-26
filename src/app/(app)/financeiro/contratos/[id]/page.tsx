@@ -1,3 +1,4 @@
+import { signerWarnings } from "@/domain/contract-signers";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -97,6 +98,16 @@ export default async function ContractPage({ params }: { params: Params }) {
   const signerOptions = sections.signatureView && sections.signersEdit && !closed ? await loadSignerOptions(client.id) : undefined;
   // A opção "cadastrar novo contato" só aparece quando a action vai aceitar: chave de contatos E cliente no escopo.
   const canCreateContact = signerOptions ? can(user, "operacao.clientes.contatos.editar") && (await canSeeClient(user, client)) : false;
+  // Avisos sobre quem assina (nome de teste, equipe assinando pelo cliente): calculados aqui para quem edita E para
+  // quem só envia — a confirmação antes do envio vale para os dois.
+  const warningOptions = sections.signatureView && !closed && (sections.signersEdit || sections.signatureSend) ? (signerOptions ?? (await loadSignerOptions(client.id))) : undefined;
+  const signersWarnings = warningOptions
+    ? signerWarnings(
+        raw.contract.signers,
+        warningOptions.users.map((u) => u.email),
+        warningOptions.contacts.flatMap((c) => (c.email ? [c.email] : [])),
+      )
+    : [];
   // Reajuste anual: índices do cadastro (campos de condições) e a situação/prévia do próximo reajuste.
   const [indexOptions, readjustmentView] = await Promise.all([listReadjustmentIndexOptions(), sections.readjustView ? getContractReadjustmentView(raw.contract, raw.amendments, { hideValues: hidden }) : Promise.resolve(null)]);
 
@@ -247,7 +258,7 @@ export default async function ContractPage({ params }: { params: Params }) {
               closed={closed}
             />
             {sections.signatureView ? (
-              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} clientId={client.id} signerOptions={signerOptions} canCreateContact={canCreateContact} integrations={getIntegrationFlags()} documentInfo={documentInfo} readiness={readiness} canEditTemplates={can(user, "financeiro.assinaturas.modelos.editar")}
+              <SignatureCard contract={contract} sentAt={detail.sentAt} reminders={detail.reminders} editable={detail.editable} clientName={client.tradeName} clientId={client.id} signerOptions={signerOptions} signerWarnings={signersWarnings} canCreateContact={canCreateContact} integrations={getIntegrationFlags()} documentInfo={documentInfo} readiness={readiness} canEditTemplates={can(user, "financeiro.assinaturas.modelos.editar")}
                 canEditBilling={sections.edit && !closed}
                 canEditSignatureSettings={can(user, "financeiro.assinaturas.configuracao.editar")}
               />
