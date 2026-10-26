@@ -669,14 +669,19 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   guarda `contactId` (contato do fechamento/principal na criação, `addSignerFrom` contato, `addContactAsSigner`).
   Editar o contato (`clients/actions#updateContact`) chama `syncContractSignersFromContact`: contratos do cliente ainda
   não enviados (sem envelope, não cancelados/liberados/assinados) passam a ter o nome e o e-mail novos — pelo vínculo
-  ou, em signatário antigo sem vínculo, pelo e-mail antigo; quem já assinou e quem assina pela Intercert não mudam.
+  ou, em signatário antigo sem vínculo, pelo e-mail E nome antigos; quem já assinou e quem assina pela Intercert não
+  mudam; só sincroniza quando o nome ou o e-mail do contato mudou.
   «Corrigir» no signatário (`editSignerAction`, chave de assinatura; gravar no contato exige também
-  `operacao.clientes.contatos.editar` + cliente no escopo) troca nome/e-mail/papel e, marcado por padrão, atualiza o
-  contato (ou o cadastra), levando a correção aos outros contratos não enviados; e-mail de OUTRO contato é recusado.
-  Contrato refeito da mesma venda (`ensureContractForOpportunity` com contrato cancelado da oportunidade) reaproveita os
-  signatários do último cancelado (`reuseSigners`: pendentes, sem evidência, com os dados atuais do contato), em vez
-  de voltar ao contato do fechamento. Avisos no cartão e confirmação antes de enviar (`signerWarnings`): nome com cara
-  de teste ("TESTE", "Fulano"…) e alguém da equipe Intercert assinando como contratante.
+  `operacao.clientes.contatos.editar` + cliente no escopo; recusado em contrato já enviado) troca nome/e-mail/papel e,
+  marcado por padrão, atualiza o contato (ou o cadastra), levando a correção aos outros contratos não enviados; e-mail
+  de OUTRO contato é recusado. Corrigido só no contrato, o signatário perde o vínculo (`contactId` só fica quando nome e
+  e-mail batem com o contato), e nada depois desfaz a correção.
+  Contrato refeito da mesma venda (`ensureContractForOpportunity` com contrato cancelado da oportunidade e o MESMO
+  contato do fechamento) reaproveita os signatários do último cancelado (`reuseSigners`: pendentes, sem evidência,
+  ligados ao contato com os dados atuais, sem vínculo como estavam), se houver quem assine pelo cliente; a Intercert
+  vem sempre da configuração atual. Avisos no cartão e confirmação antes de enviar (`signerWarnings`, calculados na
+  página para quem edita ou envia): nome com cara de teste ("TESTE", "Fulano"…) e alguém da equipe Intercert
+  assinando como contratante sem ser contato do cliente.
 - **Configuração** (settings `assinatura_eletronica`): quem assina pela Intercert (padrão: usuário ativo chamado
   Hércules, trocável; com usuário escolhido, nome/e-mail seguem o cadastro) e a autenticação padrão (`email` = código por
   e-mail; também `whatsapp`, `sms`, `icp_brasil`). O signatário entra com `party: "contratada"` na criação do contrato e

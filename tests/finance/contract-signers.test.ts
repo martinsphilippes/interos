@@ -23,7 +23,7 @@ describe("signerContact", () => {
 });
 
 describe("reuseSigners", () => {
-  it("volta tudo a pendente, sem assinatura/evidência, com os dados atuais do contato; Intercert como estava", () => {
+  it("volta tudo a pendente, sem assinatura/evidência, com os dados atuais do contato ligado; Intercert fica de fora", () => {
     const previous: ContractSignerEntry[] = [
       { name: "Nome Antigo", email: "antigo@quantso.com.br", role: "Contratante", status: "assinado", signedAt: "2026-10-01", evidence: "x", providerSignerId: "p1", contactId: "c1" },
       { name: "Ana Paula Macêdo", email: "anapaula@intercert.com.br", role: "Representante legal da Contratada", status: "pendente", party: "contratada" },
@@ -32,14 +32,14 @@ describe("reuseSigners", () => {
     ];
     expect(reuseSigners(previous, contacts)).toEqual([
       { name: "Philippe Martins", email: "philippe@quantso.com.br", role: "Contratante", status: "pendente", contactId: "c1" },
-      { name: "Ana Paula Macêdo", email: "anapaula@intercert.com.br", role: "Representante legal da Contratada", status: "pendente", party: "contratada" },
     ]);
   });
 
-  it("signatário antigo sem vínculo e sem contato fica como estava", () => {
+  it("sem vínculo fica como foi acertado no contrato, mesmo com contato de mesmo e-mail (correção à mão não é desfeita)", () => {
     expect(reuseSigners([{ name: "TESTE", email: "teste@x.com.br", role: "Contratante", status: "pendente" }], contacts)).toEqual([
       { name: "TESTE", email: "teste@x.com.br", role: "Contratante", status: "pendente" },
     ]);
+    expect(reuseSigners([{ name: "Philippe M. Corrigido", email: "philippe@quantso.com.br", role: "Contratante", status: "pendente" }], contacts)[0].name).toBe("Philippe M. Corrigido");
   });
 });
 
@@ -49,26 +49,31 @@ describe("syncSignersFromContact", () => {
     { name: "Hércules Andrade", email: "hercules@intercert.com.br", role: "Representante legal da Contratada", status: "pendente", party: "contratada" },
   ];
 
-  it("contato editado (sem vínculo, pelo e-mail antigo) troca nome e e-mail e grava o vínculo", () => {
-    const r = syncSignersFromContact(signers, { id: "c9", name: "Philippe Martins", email: "martinsphilippes@gmail.com" }, "herculesabenevides@gmail.com");
+  it("contato editado (sem vínculo, pelo e-mail e nome antigos) troca nome e e-mail e grava o vínculo", () => {
+    const r = syncSignersFromContact(signers, { id: "c9", name: "Philippe Martins", email: "martinsphilippes@gmail.com" }, { name: "TESTE", email: "herculesabenevides@gmail.com" });
     expect(r.changed).toHaveLength(1);
     expect(r.signers[0]).toEqual({ name: "Philippe Martins", email: "martinsphilippes@gmail.com", role: "Contratante", status: "pendente", contactId: "c9" });
     expect(r.signers[1]).toBe(signers[1]);
   });
 
+  it("sem vínculo e corrigido à mão (nome diferente do contato antigo): editar o contato não sobrescreve", () => {
+    const fixed = [{ ...signers[0], name: "João Silva" }];
+    expect(syncSignersFromContact(fixed, { id: "c9", name: "TESTE 2", email: "herculesabenevides@gmail.com" }, { name: "TESTE", email: "herculesabenevides@gmail.com" }).changed).toEqual([]);
+  });
+
   it("não mexe em quem já assinou, na Intercert, com e-mail inválido ou já usado por outro signatário", () => {
     const signed = [{ ...signers[0], status: "assinado" as const }, signers[1]];
-    expect(syncSignersFromContact(signed, { id: "c9", name: "X Y", email: "novo@x.com.br" }, signers[0].email).changed).toEqual([]);
-    expect(syncSignersFromContact(signers, { id: "c9", name: "X Y", email: "a..b@x.com" }, signers[0].email).changed).toEqual([]);
-    expect(syncSignersFromContact(signers, { id: "c9", name: "X Y", email: "hercules@intercert.com.br" }, signers[0].email).changed).toEqual([]);
-    expect(syncSignersFromContact(signers, { id: "c9", name: "X Y", email: "hercules@intercert.com.br" }, "hercules@intercert.com.br").changed).toEqual([]);
+    expect(syncSignersFromContact(signed, { id: "c9", name: "X Y", email: "novo@x.com.br" }, { name: "TESTE", email: signers[0].email }).changed).toEqual([]);
+    expect(syncSignersFromContact(signers, { id: "c9", name: "X Y", email: "a..b@x.com" }, { name: "TESTE", email: signers[0].email }).changed).toEqual([]);
+    expect(syncSignersFromContact(signers, { id: "c9", name: "X Y", email: "hercules@intercert.com.br" }, { name: "TESTE", email: signers[0].email }).changed).toEqual([]);
+    expect(syncSignersFromContact(signers, { id: "c9", name: "X Y", email: "hercules@intercert.com.br" }, { name: "Hércules Andrade", email: "hercules@intercert.com.br" }).changed).toEqual([]);
   });
 
   it("com vínculo, acha pelo contactId mesmo com e-mail antigo diferente; sem mudança não acusa nada", () => {
     const linked: ContractSignerEntry[] = [{ name: "Maria", email: "maria@old.com.br", role: "Contratante", status: "pendente", contactId: "c2", providerSignerId: "p" }];
-    const r = syncSignersFromContact(linked, { id: "c2", name: "Maria Souza", email: "maria@quantso.com.br" }, "outro@x.com");
+    const r = syncSignersFromContact(linked, { id: "c2", name: "Maria Souza", email: "maria@quantso.com.br" }, { name: "Outra", email: "outro@x.com" });
     expect(r.signers[0]).toEqual({ name: "Maria Souza", email: "maria@quantso.com.br", role: "Contratante", status: "pendente", contactId: "c2" });
-    expect(syncSignersFromContact(r.signers, { id: "c2", name: "Maria Souza", email: "maria@quantso.com.br" }, "maria@quantso.com.br").changed).toEqual([]);
+    expect(syncSignersFromContact(r.signers, { id: "c2", name: "Maria Souza", email: "maria@quantso.com.br" }, { name: "Maria Souza", email: "maria@quantso.com.br" }).changed).toEqual([]);
   });
 });
 
@@ -91,5 +96,9 @@ describe("signerWarnings", () => {
     expect(w.map((x) => x.email)).toEqual(["t@x.com.br", "martinsphilippes@gmail.com"]);
     expect(w[0].message).toMatch(/nome de teste/);
     expect(w[1].message).toMatch(/equipe Intercert/);
+    // Usuário que também é contato do cliente (sócio com acesso ao sistema) não é aviso.
+    const socio = { name: "Philippe Martins", email: "martinsphilippes@gmail.com", role: "Contratante", status: "pendente" as const };
+    expect(signerWarnings([socio], ["martinsphilippes@gmail.com"], ["MartinsPhilippes@gmail.com"])).toEqual([]);
+    expect(signerWarnings([{ ...socio, contactId: "c1" }], ["martinsphilippes@gmail.com"])).toEqual([]);
   });
 });

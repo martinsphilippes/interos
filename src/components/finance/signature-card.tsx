@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { AlertTriangle, BellRing, CheckCircle2, FileText, Mail, PenLine, Pencil, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
 import type { Contract, ContractSignerEntry } from "@/domain/types";
-import { signerWarnings } from "@/domain/contract-signers";
+import type { SignerWarning } from "@/domain/contract-signers";
 import { EditSignerDialog } from "./edit-signer-dialog";
 import type { IntegrationFlags } from "@/server/integrations/types";
 import { addContactAsSignerAction, addSignerAction, removeSignerAction, sendForSignatureAction, sendSignatureReminderAction } from "@/server/finance/actions";
@@ -41,6 +41,8 @@ export interface SignatureCardProps {
   clientId: string;
   /** Quem pode ser escolhido como signatário: contatos do cliente e equipe da Intercert. */
   signerOptions?: SignerOptions;
+  /** Avisos sobre quem assina, calculados no servidor (`signerWarnings`): confirmação antes de enviar. */
+  signerWarnings?: SignerWarning[];
   /** Pode cadastrar contato no cliente (operacao.clientes.contatos.editar): mostra "cadastrar novo contato". */
   canCreateContact?: boolean;
   /** Estado real das integrações (e-mail e assinatura decidem envio automático x manual). */
@@ -63,7 +65,7 @@ const SIGNER_VARIANT = { pendente: "warning", assinado: "success", recusado: "da
  * Signatários (adicionar/remover) e assinatura. Sem provedor de assinatura conectado: "Gerar documento para
  * assinatura" (hash do conteúdo), envio pelo e-mail do usuário (mailto) e assinatura registrada com evidência.
  */
-export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, canCreateContact, integrations, documentInfo, readiness, canEditTemplates = false, canEditBilling = false, canEditSignatureSettings = false }: SignatureCardProps) {
+export function SignatureCard({ contract, sentAt, reminders, editable, clientName, clientId, signerOptions, signerWarnings = [], canCreateContact, integrations, documentInfo, readiness, canEditTemplates = false, canEditBilling = false, canEditSignatureSettings = false }: SignatureCardProps) {
   const id = React.useId();
   // Capacidades do servidor (assinatura: editar signatários, enviar/lembrar, registrar assinatura; documento: ver).
   const { contracts: can } = useFinanceAccess();
@@ -123,7 +125,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
   const noContacts = (signerOptions?.contacts.length ?? 0) === 0;
   const teamEmails = React.useMemo(() => (signerOptions?.users ?? []).map((u) => u.email), [signerOptions]);
   // Nome de teste ou alguém da equipe assinando pelo cliente: aviso no cartão e confirmação antes de enviar.
-  const warnings = React.useMemo(() => (closed ? [] : signerWarnings(contract.signers, teamEmails)), [closed, contract.signers, teamEmails]);
+  const warnings = closed ? [] : signerWarnings;
   const send = () =>
     act("send", () =>
       run(
@@ -265,7 +267,7 @@ export function SignatureCard({ contract, sentAt, reminders, editable, clientNam
                         )}
                       </>
                     ) : null}
-                    {can.signersEdit && editable && s.party !== "contratada" ? (
+                    {can.signersEdit && editable && !sent && s.party !== "contratada" ? (
                       <Button variant="ghost" size="sm" className="h-10 md:h-8" disabled={pending} onClick={() => setEditing(s)}>
                         <Pencil /> Corrigir
                       </Button>

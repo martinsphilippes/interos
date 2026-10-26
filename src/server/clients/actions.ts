@@ -332,7 +332,10 @@ export async function updateContact(input: unknown): Promise<ActionResult<{ id: 
       payload: { contactId: data.id },
     });
     // Contratos ainda não enviados para assinatura passam a ter o nome/e-mail novos em quem é este contato.
-    const contractsUpdated = await syncContractSignersFromContact({ id: contact.id, clientId: data.clientId, name: data.name, email: data.email }, contact.email, actor(user));
+    const identityChanged = data.name.trim() !== contact.name.trim() || (data.email ?? "").trim().toLowerCase() !== (contact.email ?? "").trim().toLowerCase();
+    const contractsUpdated = identityChanged
+      ? await syncContractSignersFromContact({ id: contact.id, clientId: data.clientId, name: data.name, email: data.email }, { name: contact.name, email: contact.email }, actor(user))
+      : 0;
     revalidateClient(data.clientId);
     if (contractsUpdated > 0) revalidatePath("/financeiro", "layout");
     return { ok: true, data: { id: data.id, contractsUpdated } };

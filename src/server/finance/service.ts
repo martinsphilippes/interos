@@ -26,7 +26,7 @@ import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
 import { clicksignSignerNameProblem, isSignerEmail, resolveRepresentativeDocument, samePersonName, type TemplateDataGap } from "@/domain/contract-templates";
 import { isValidCpf } from "@/domain/documents";
-import { reuseSigners, signerContact, syncSignersFromContact } from "@/domain/contract-signers";
+import { hasClientSigner, reuseSigners, signerContact, syncSignersFromContact } from "@/domain/contract-signers";
 import { createContact } from "@/server/clients/contacts";
 import type { DepartmentKey } from "@/domain/constants";
 import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
@@ -248,11 +248,14 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
   const signerEmail = [primary?.email, opp.billingData?.email, client.email].find((e): e is string => Boolean(e && isSignerEmail(e)));
   const companySigner = companySignerEntry(await getSignatureSettings());
   // Contrato refeito da mesma venda: quem assina é quem foi acertado no último contrato cancelado (com os dados atuais
-  // dos contatos), não de novo o contato do fechamento — senão a correção feita no contrato anterior se perde.
+  // dos contatos), não de novo o contato do fechamento — senão a correção feita no contrato anterior se perde. Só
+  // quando o contato do fechamento é o mesmo daquele contrato (venda refechada com outro contato manda) e ele tinha
+  // quem assina pelo cliente; a Intercert vem sempre da configuração atual.
   const previous = ofOpportunity
     .filter((c) => c.status === "cancelado" && c.signers.length > 0)
     .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0];
-  const reused = previous ? reuseSigners(previous.signers, contacts) : [];
+  const reusable = previous && (previous.contactId ?? null) === (primary?.id ?? null) ? reuseSigners(previous.signers, contacts) : [];
+  const reused = hasClientSigner(reusable) ? reusable : [];
   const primarySigner: ContractSignerEntry[] = signerEmail
     ? [{ name: primary?.name ?? opp.billingData?.legalName ?? client.legalName, email: signerEmail.trim().toLowerCase(), role: "Contratante", status: "pendente", ...(primary && primary.email && signerEmail === primary.email ? { contactId: primary.id } : {}) }]
     : [];
@@ -775,6 +778,8 @@ export async function editSigner(
   if (!signer) throw new Error("Signatário não encontrado");
   if (signer.status === "assinado") throw new Error("Quem já assinou não pode ser alterado");
   if (signer.party === "contratada") throw new Error("Quem assina pela Intercert é definido em Financeiro › Assinaturas › Configuração");
+  // Já enviado: o documento e a Clicksign têm os dados antigos (o aviso de assinatura chega pelo e-mail enviado).
+  if (contract.signatureEnvelopeId) throw new Error("Contrato já enviado para assinatura: remova o signatário, adicione o correto e reenvie");
   const name = input.name.trim();
   const email = input.newEmail.trim().toLowerCase();
   const role = input.role.trim();
@@ -789,6 +794,10 @@ export async function editSigner(
   let contactCreated = false;
   let otherContracts = 0;
   if (input.updateContact) {
+    const current = signer.email.trim().toLowerCase();
+    if (!contact && contacts.filter((c) => (c.email ?? "").trim().toLowerCase() === current).length > 1) {
+      throw new Error(`${current} é usado por mais de um contato do cliente: corrija na ficha do cliente ou desmarque «atualizar o contato»`);
+    }
     // O e-mail novo não pode ser de OUTRO contato do cliente: seriam duas pessoas com o mesmo e-mail.
     const owner = contacts.find((c) => c.id !== contact?.id && (c.email ?? "").trim().toLowerCase() === email);
     if (owner) throw new Error(`${email} já é o e-mail do contato ${owner.name}: escolha esse contato como signatário`);
@@ -807,14 +816,16 @@ export async function editSigner(
           payload: { contactId: before.id, contractId: contract.id, changes: { name: { from: before.name, to: name }, email: { from: before.email ?? null, to: email } } },
         });
         contact = { ...before, name, email };
-        otherContracts = await syncContractSignersFromContact(contact, before.email, actor, { exceptContractId: contract.id });
+        otherContracts = await syncContractSignersFromContact(contact, { name: before.name, email: before.email }, actor, { exceptContractId: contract.id });
       }
     } else {
       contact = await createContact({ clientId: contract.clientId, name, email }, actor, department);
       contactCreated = true;
     }
   }
-  const linked = contact && (contact.email ?? "").trim().toLowerCase() === email ? contact.id : undefined;
+  // Vínculo só quando o signatário É o contato (nome e e-mail iguais): corrigido só no contrato, fica solto e a próxima
+  // edição do contato (ou o contrato refeito) não desfaz a correção.
+  const linked = contact && (contact.email ?? "").trim().toLowerCase() === email && samePersonName(contact.name, name) ? contact.id : undefined;
   const signers = contract.signers.map((s) => {
     if (s !== signer) return s;
     const { providerSignerId, contactId: _old, ...rest } = s;
@@ -843,7 +854,7 @@ export async function editSigner(
  */
 export async function syncContractSignersFromContact(
   contact: Pick<Contact, "id" | "clientId" | "name" | "email">,
-  previousEmail: string | undefined,
+  previous: { name?: string; email?: string },
   actor: UserRef,
   opts: { exceptContractId?: string } = {},
 ): Promise<number> {
@@ -851,7 +862,7 @@ export async function syncContractSignersFromContact(
   let count = 0;
   for (const c of contracts) {
     if (c.id === opts.exceptContractId || c.status === "cancelado" || c.status === "liberado" || c.signatureEnvelopeId || isSignedContract(c)) continue;
-    const { signers, changed } = syncSignersFromContact(c.signers, contact, previousEmail);
+    const { signers, changed } = syncSignersFromContact(c.signers, contact, previous);
     if (changed.length === 0) continue;
     await update<Contract>(COLLECTIONS.contracts, c.id, { signers });
     count++;

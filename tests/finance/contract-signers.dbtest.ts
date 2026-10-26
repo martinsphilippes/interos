@@ -57,6 +57,13 @@ describe("signatários e contatos do cliente", () => {
     expect(second.id).not.toBe(first.id);
     expect(clientSigner(second)).toMatchObject({ name: "Philippe Martins", email: certo, contactId: teste.id, status: "pendente" });
     expect(second.signers.filter((s) => s.party !== "contratada")).toHaveLength(1);
+
+    // Venda refechada com OUTRO contato: vale o contato do fechamento novo, não o contrato cancelado.
+    const outro = await createContact({ clientId: CLIENT_ID, name: "Outro Socio", email: `outro.${RUN}@quantso-teste.com.br` }, ACTOR);
+    await update<Contract>(COLLECTIONS.contracts, second.id, { status: "cancelado" });
+    await update<Opportunity>(COLLECTIONS.opportunities, OPP_ID, { closing: { contactId: outro.id, contactName: outro.name } } as never);
+    const third = (await ensureContractForOpportunity(OPP_ID, ACTOR))!;
+    expect(clientSigner(third)).toMatchObject({ name: "Outro Socio", contactId: outro.id });
   });
 
   it("corrigir sem atualizar o contato vale só para o contrato; e-mail de outro contato é recusado", async () => {
@@ -75,6 +82,16 @@ describe("signatários e contatos do cliente", () => {
     const created = await editSigner({ contractId: c.id, email: after.email, name: "Pessoa Nova", newEmail: `nova.${RUN}@quantso-teste.com.br`, role: "Contratante", updateContact: true }, ACTOR);
     expect(created.contactCreated).toBe(true);
     expect(clientSigner((await getById<Contract>(COLLECTIONS.contracts, c.id))!)).toMatchObject({ name: "Pessoa Nova", contactId: created.contactId });
+
+    // Só o nome corrigido no contrato (contato intocado): o vínculo cai e editar o contato não desfaz a correção.
+    await editSigner({ contractId: c.id, email: `nova.${RUN}@quantso-teste.com.br`, name: "Pessoa Corrigida", newEmail: `nova.${RUN}@quantso-teste.com.br`, role: "Contratante", updateContact: false }, ACTOR);
+    const solto = clientSigner((await getById<Contract>(COLLECTIONS.contracts, c.id))!)!;
+    expect(solto.contactId).toBeUndefined();
+    expect(await syncContractSignersFromContact({ id: created.contactId!, clientId: CLIENT_ID, name: "Pessoa Nova B", email: `nova.${RUN}@quantso-teste.com.br` }, { name: "Pessoa Nova", email: `nova.${RUN}@quantso-teste.com.br` }, ACTOR)).toBe(0);
+
+    // Já enviado: corrigir é recusado (o documento e a Clicksign têm os dados antigos).
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signatureEnvelopeId: "env_y" });
+    await expect(editSigner({ contractId: c.id, email: solto.email, name: "Outro Nome", newEmail: solto.email, role: "Contratante", updateContact: false }, ACTOR)).rejects.toThrow(/já enviado/);
   });
 
   it("editar o contato atualiza contratos não enviados; enviado e cancelado ficam como estão", async () => {
@@ -92,7 +109,7 @@ describe("signatários e contatos do cliente", () => {
 
     const novo = `carlos.novo.${RUN}@quantso-teste.com.br`;
     await update<Contact>(COLLECTIONS.contacts, pessoa.id, { name: "Carlos Novo", email: novo });
-    const n = await syncContractSignersFromContact({ id: pessoa.id, clientId: CLIENT_ID, name: "Carlos Novo", email: novo }, pessoa.email, ACTOR);
+    const n = await syncContractSignersFromContact({ id: pessoa.id, clientId: CLIENT_ID, name: "Carlos Novo", email: novo }, { name: "Carlos Antigo", email: pessoa.email }, ACTOR);
     expect(n).toBe(2);
     const byId = new Map((await contractsOfClient()).map((c) => [c.id, c]));
     expect(byId.get(open)!.signers[0]).toMatchObject({ name: "Carlos Novo", email: novo, contactId: pessoa.id });

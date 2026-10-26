@@ -83,7 +83,7 @@ export function EditSignerDialog({
           className="contents"
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid && !(unchanged && !updateContact)) void save();
+            if (valid && !(unchanged && (!updateContact || Boolean(contact)))) void save();
           }}
         >
           <DialogBody className="grid gap-3 py-2">
@@ -115,7 +115,7 @@ export function EditSignerDialog({
             <Button type="button" variant="outline" onClick={onClose} disabled={pending} className="h-11 md:h-9">
               Cancelar
             </Button>
-            <Button type="submit" loading={pending} disabled={!valid || (unchanged && !updateContact)} className="h-11 md:h-9">
+            <Button type="submit" loading={pending} disabled={!valid || (unchanged && (!updateContact || Boolean(contact)))} className="h-11 md:h-9">
               Salvar
             </Button>
           </DialogFooter>
