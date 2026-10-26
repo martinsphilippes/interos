@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { BillingActions, billingLabel, BoletoBadge } from "./billing-actions";
+import { BillingActions, billingLabel, BoletoBadge, InvoiceBadge } from "./billing-actions";
 import { useFinanceAction } from "./use-finance-action";
 import { hasBillingActions } from "./access-model";
 import { useFinanceAccess } from "./finance-access";
@@ -94,6 +94,7 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                         {BILLING_STATUS_LABELS[b.status]}
                       </Badge>
                       {b.status !== "cancelada" ? <BoletoBadge billing={b} /> : null}
+                      <InvoiceBadge billing={b} />
                     </span>
                   </div>
                   {canOperate ? <BillingActions billing={{ ...b, clientName }} compact hideValues={hideValues} /> : null}
@@ -130,6 +131,7 @@ export function ContractBillingCard({ contractId, clientName, billings, required
                             {BILLING_STATUS_LABELS[b.status]}
                           </Badge>
                           {b.status !== "cancelada" ? <BoletoBadge billing={b} /> : null}
+                          <InvoiceBadge billing={b} />
                         </span>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted">

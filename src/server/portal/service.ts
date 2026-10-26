@@ -36,9 +36,9 @@ import {
   shouldEmitPortalAccess,
   type PortalLinkState,
 } from "@/domain/portal";
-import { COLLECTIONS, type Billing, type Client, type Contact, type Contract, type ContractAmendment, type DomainEvent, type Opportunity, type Organization, type PortalLink, type User, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type Billing, type Client, type Contact, type Contract, type ContractAmendment, type DomainEvent, type Invoice, type InvoiceFile, type Opportunity, type Organization, type PortalLink, type User, type UserRef } from "@/domain/types";
 import { generatePortalToken, hashPortalToken, portalLinkIdFor } from "./token";
-import { buildPortalContent, isContractVisibleInPortal, type PortalContent } from "./content";
+import { buildPortalContent, isContractVisibleInPortal, orderPortalBillings, type PortalContent } from "./content";
 
 /** Quem "age" no acesso público (não é usuário do sistema). */
 export const PORTAL_VISITOR: UserRef = { id: "cliente", name: "Cliente (portal)" };
@@ -394,10 +394,11 @@ async function registerAccess(token: string, now: Date): Promise<{ link: PortalL
 async function readPortalContent(link: PortalLink, now: Date): Promise<PortalContent | null> {
   const client = await getById<Client>(COLLECTIONS.clients, link.clientId);
   if (!client) return null;
-  const [contracts, billings, amendments] = await Promise.all([
+  const [contracts, billings, amendments, invoices] = await Promise.all([
     list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", client.id]] }),
     list<Billing>(COLLECTIONS.billing, { where: [["clientId", "==", client.id]] }),
     list<ContractAmendment>(COLLECTIONS.contractAmendments, { where: [["clientId", "==", client.id]] }),
+    list<Invoice>(COLLECTIONS.invoices, { where: [["clientId", "==", client.id]] }),
   ]);
   const today = dateKey(now);
   const visible = contracts.filter((c) => isContractVisibleInPortal(c, today));
@@ -419,7 +420,26 @@ async function readPortalContent(link: PortalLink, now: Date): Promise<PortalCon
       }
     }),
   );
-  return buildPortalContent({ client, contracts, billings, amendments, billingDataByContract, sentAtByContract, today });
+  return buildPortalContent({ client, contracts, billings, amendments, billingDataByContract, sentAtByContract, today, invoices });
+}
+
+/**
+ * Arquivo (PDF/XML) da nota fiscal de uma cobrança do portal, pela chave posicional (b1, b2…) da página. Só leitura:
+ * valida o token SEM registrar acesso (a página já registrou) e entrega só nota emitida da própria cobrança do cliente.
+ * null = qualquer caso inválido (mesma resposta genérica da página).
+ */
+export async function portalInvoiceFile(token: string, key: string, kind: "pdf" | "xml", now: Date = new Date()): Promise<InvoiceFile | null> {
+  const id = portalLinkIdFor(token);
+  if (!id || !/^b\d{1,4}$/.test(key)) return null;
+  const link = await getById<PortalLink>(COLLECTIONS.portalLinks, id);
+  if (!link || !isPortalLinkUsable(link, now)) return null;
+  const billings = await list<Billing>(COLLECTIONS.billing, { where: [["clientId", "==", link.clientId]] });
+  const hit = orderPortalBillings(billings, link.clientId, dateKey(now)).find((x) => x.key === key);
+  if (!hit?.b.invoiceId) return null;
+  const invoice = await getById<Invoice>(COLLECTIONS.invoices, hit.b.invoiceId);
+  if (!invoice || invoice.status !== "emitida" || invoice.clientId !== link.clientId || invoice.billingId !== hit.b.id) return null;
+  const fileId = kind === "pdf" ? invoice.pdfFileId : invoice.xmlFileId;
+  return fileId ? getById<InvoiceFile>(COLLECTIONS.invoiceFiles, fileId) : null;
 }
 
 /**

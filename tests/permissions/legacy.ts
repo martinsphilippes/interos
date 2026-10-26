@@ -25,7 +25,20 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "financeiro.assinaturas.modelos.editar",
   "financeiro.assinaturas.configuracao.editar",
   "financeiro.assinaturas.configuracao.testar",
+  // Faturamento (notas fiscais): tela nova de Financeiro (item novo no menu, depois de Cobranças).
+  "financeiro.faturamento.ver",
+  "financeiro.faturamento.configuracao.ver",
+  "financeiro.faturamento.registrar",
+  "financeiro.faturamento.enviar",
+  "financeiro.faturamento.cancelar",
+  "financeiro.faturamento.dispensar",
+  "financeiro.faturamento.dados.consultar",
+  "financeiro.faturamento.arquivos.baixar",
+  "financeiro.faturamento.configuracao.editar",
 ];
+
+/** Rotas de telas novas em módulos antigos (itens de menu criados depois do T0). */
+export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento"];
 
 /** A chave (ou tela) pertence a um módulo criado depois do T0 (ou é uma chave nova)? */
 export function isAfterT0Key(key: string): boolean {
@@ -34,6 +47,7 @@ export function isAfterT0Key(key: string): boolean {
 
 /** O href é de uma tela de módulo criado depois do T0? (prefixo da rota = módulo) */
 export function isAfterT0Href(href: string): boolean {
+  if (HREFS_AFTER_T0.some((h) => href === h || href.startsWith(`${h}?`) || href.startsWith(`${h}/`))) return true;
   return MODULES_AFTER_T0.some((m) => href === `/${m}` || href.startsWith(`/${m}/`) || href.startsWith(`/${m}?`));
 }
 

@@ -480,6 +480,14 @@ export const EVENT_TYPES = [
   "readjustment_index.values_updated",
   "contract.readjusted",
   "contract.readjustment_skipped",
+  // faturamento: notas fiscais das cobranças
+  "invoice.issued",
+  "invoice.cancelled",
+  "invoice.sent",
+  "invoice.waived",
+  "invoice.waiver_removed",
+  "fiscal.settings_updated",
+  "fiscal.product_updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

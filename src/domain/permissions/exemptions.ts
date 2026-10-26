@@ -65,6 +65,12 @@ export const EXEMPTIONS = [
     reason: "Portal do Cliente (público, sem login): protegido pelo token de 256 bits da URL (só o hash é gravado em portal_links), revogável e com validade; somente leitura (as únicas escritas são lastAccessAt/accessCount e o evento portal.accessed 1×/dia). Inexistente, revogado e expirado têm a mesma resposta genérica; no-store e noindex. Rate limit na infraestrutura (Vercel).",
   },
   {
+    target: "src/app/portal/[token]/nota/[key]/[arquivo]/route.ts#GET",
+    kind: "api",
+    // Faturamento (fase 1): PDF/XML da nota no Portal do Cliente.
+    reason: "Portal do Cliente (público, sem login): o mesmo token de 256 bits da página; só leitura, sem registrar acesso; entrega só o PDF/XML de nota EMITIDA da própria cobrança do cliente dono do link, pela chave posicional da página. Inválido = mesma resposta genérica; no-store e noindex.",
+  },
+  {
     target: "src/server/search/actions.ts#searchGlobal",
     kind: "action",
     // Hoje: requireUser (search/actions.ts:13); 'automacao' só role admin (l.16)

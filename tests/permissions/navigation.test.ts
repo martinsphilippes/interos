@@ -22,7 +22,7 @@ const USERS = ALL_USERS.map((u) => ({ fixture: u, current: asCurrentUser(u), leg
 describe("T0 — tabelas de navegação derivadas ≡ listas anteriores (congeladas)", () => {
   it("NAVIGATION: mesmas seções, itens, rótulos, ícones, ordem e onda", () => {
     const strip = (sections: { key: string; label: string; items: { label: string; href: string; icon: string; wave?: number }[] }[]) =>
-      sections.map((s) => ({ key: s.key, label: s.label, items: s.items.map((i) => ({ label: i.label, href: i.href, icon: i.icon, wave: i.wave })) }));
+      sections.map((s) => ({ key: s.key, label: s.label, items: s.items.filter((i) => !isAfterT0Href(i.href)).map((i) => ({ label: i.label, href: i.href, icon: i.icon, wave: i.wave })) }));
     // Seções de módulos criados depois do T0 não existiam na lista congelada.
     expect(strip(NAVIGATION.filter((s) => !MODULES_AFTER_T0.includes(s.key)))).toEqual(strip(LEGACY_NAVIGATION));
   });

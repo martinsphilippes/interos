@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 12 módulos, 74 telas, 160 seções e 290 ações (536 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 20 abas, 27 ações); fase 4: + 2 relatórios, agendar envio; assinatura eletrônica: + 3 abas e 4 ações (inclui testar a conexão com a Clicksign); reajuste: + aba Índices (4 ações), seção Reajuste anual e aplicar/dispensar o reajuste do contrato", () => {
+  it("tem 12 módulos, 75 telas, 161 seções e 297 ações (545 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 20 abas, 27 ações); fase 4: + 2 relatórios, agendar envio; assinatura eletrônica: + 3 abas e 4 ações (inclui testar a conexão com a Clicksign); reajuste: + aba Índices (4 ações), seção Reajuste anual e aplicar/dispensar o reajuste do contrato; faturamento: + tela Faturamento (1 aba, 7 ações)", () => {
     expect(MODULES.length).toBe(12);
-    expect(SCREENS.length).toBe(74);
-    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(160);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(290);
-    expect(PERMISSION_KEYS.length).toBe(536);
+    expect(SCREENS.length).toBe(75);
+    expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(161);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(297);
+    expect(PERMISSION_KEYS.length).toBe(545);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -201,8 +201,8 @@ describe("catálogo — cobertura de páginas", () => {
       .filter((s) => s && !/^\(.*\)$/.test(s))
       .join("/");
 
-  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (101 páginas — Central de Atendimento: + /comunicacao, canais, historico, supervisao, supervisao/tv, ativacao, ligacoes, correio-de-voz e pabx)", () => {
-    expect(pages.length).toBe(101);
+  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (102 páginas — Central de Atendimento: + /comunicacao, canais, historico, supervisao, supervisao/tv, ativacao, ligacoes, correio-de-voz e pabx; faturamento: + /financeiro/faturamento)", () => {
+    expect(pages.length).toBe(102);
     const exempt = new Set<string>(EXEMPTIONS.filter((e) => e.kind === "page").map((e) => e.target));
     const routes = new Set(SCREENS.flatMap((s) => [...s.routes, ...s.sections.flatMap((x) => x.routes ?? [])]));
     const missing = pages.filter((p) => !exempt.has(p) && !routes.has(toRoute(p)));
@@ -233,6 +233,7 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
     const { REGISTRY_TABS } = await import("@/components/finance-registry/registry-tabs");
     const { CANAIS_TABS, SUPERVISAO_TABS } = await import("@/components/conversations/model");
     const { ASSINATURAS_TABS } = await import("@/components/finance/signature-model");
+    const { INVOICING_TABS } = await import("@/components/finance/invoicing/model");
     const { PABX_TABS } = await import("@/components/telephony/model");
     const pageTabs: Record<string, readonly string[]> = {
       "admin.configuracoes": SETTINGS_TABS,
@@ -243,6 +244,7 @@ describe("catálogo — abas (?aba=) controladas por seção", () => {
       "comunicacao.supervisao": SUPERVISAO_TABS,
       "comunicacao.pabx": PABX_TABS,
       "financeiro.assinaturas": ASSINATURAS_TABS,
+      "financeiro.faturamento": INVOICING_TABS,
     };
     const modeled = new Set<string>();
     for (const screen of SCREENS) {
