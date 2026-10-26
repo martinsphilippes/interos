@@ -12,6 +12,7 @@ import { filterContractsByScope } from "@/server/finance/access";
 import { dateKey } from "@/lib/format";
 import { accumulatedPct, addCompetence, coveredAnniversaries, describeIndexSource, readjustmentFloor, readjustmentSchedule, summarizeIndex, type IndexSummary } from "@/domain/readjustment";
 import { countIndexedContracts, listReadjustmentIndices } from "./indices";
+import { readjustmentBaseDate } from "@/server/finance/readjustment-base";
 import { payableAllowed, payableVisibility } from "@/server/commissions/access";
 import { canSeeFinanceValues } from "@/server/finance/access";
 import { redactChanges } from "@/domain/audit-format";
@@ -351,7 +352,8 @@ async function indexRows(user: CurrentUser, detailed: boolean): Promise<IndexRow
     const contracts = (using.get(i.id) ?? [])
       .filter((c) => visible.has(c.id))
       .map((c) => {
-        const next = c.startDate ? readjustmentSchedule({ startDate: dateKey(c.startDate), covered: coveredAnniversaries(c, amendmentsByContract.get(c.id) ?? []), today, floor: readjustmentFloor(c), gaps: c.readjustmentGaps }) : null;
+        const baseDate = readjustmentBaseDate(c);
+        const next = baseDate ? readjustmentSchedule({ startDate: baseDate, covered: coveredAnniversaries(c, amendmentsByContract.get(c.id) ?? []), today, floor: readjustmentFloor(c), gaps: c.readjustmentGaps }) : null;
         return { id: c.id, number: c.number, clientName: clientNames.get(c.clientId) ?? "—", nextAnniversary: next?.due?.anniversary ?? next?.next?.anniversary };
       })
       .sort((a, b) => (a.nextAnniversary ?? "9999").localeCompare(b.nextAnniversary ?? "9999"));

@@ -268,7 +268,9 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   de CS para contratos com `autoRenew`. Evento `contract.renewed` (+ `renewal.completed` com `amendmentId`).
   Previstas de recorrência limitadas ao fim da vigência (`recurringHorizon`).
 - **Reajuste anual (`src/domain/readjustment.ts` + `src/server/finance/readjustments.ts`)**: data-base = aniversário do
-  início da vigência (início + 12, 24… meses, dia limitado ao fim do mês). Percentual fixo do contrato ou acumulado
+  dia da ASSINATURA do contrato (`signedAt`, quando todos assinaram; sem assinatura registrada no sistema, o início da
+  vigência — `readjustmentBaseDate` em `src/server/finance/readjustment-base.ts`), + 12, 24… meses, dia limitado ao fim
+  do mês. Percentual fixo do contrato ou acumulado
   COMPOSTO de 12 meses do índice até o mês anterior à data-base (ou o último publicado, no máximo 3 meses de atraso);
   acumulado negativo segue a regra do índice (`negativePolicy`: manter = sem aditivo, «mantido»; reduzir). Varredura
   diária `reajustes_contratos` (liberados com regra; orçamento de 25 s dentro do limite de 45 s da execução do cron,

@@ -5,7 +5,8 @@
  * (src/server/finance/readjustments.ts), pelos aditivos e pelas telas.
  *
  * Regras:
- * - O reajuste é ANUAL, na data-base = aniversário do início da vigência (início + 12, 24, 36… meses).
+ * - O reajuste é ANUAL, na data-base = aniversário da assinatura do contrato (assinatura + 12, 24, 36… meses; contrato
+ *   sem assinatura registrada no sistema conta do início da vigência — src/server/finance/readjustment-base.ts).
  * - Índice: acumulado (composto) dos 12 meses que terminam no mês anterior ao da data-base, ou no último mês já
  *   publicado se ele ainda não saiu. Mais de 3 meses de atraso = índice desatualizado (espera).
  * - Acumulado negativo: o índice diz se mantém o valor (padrão) ou reduz.
@@ -206,7 +207,7 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T12:00:00.000Z`) - Date.parse(`${a}T12:00:00.000Z`)) / DAY_MS);
 }
 
-/** k-ésima data-base (k ≥ 1) a partir do início da vigência. */
+/** k-ésima data-base (k ≥ 1) a partir da data que conta o reajuste (assinatura, ou início da vigência). */
 export function anniversaryOf(startKey: string, k: number): string {
   return addMonthsClamped(startKey, 12 * k);
 }
