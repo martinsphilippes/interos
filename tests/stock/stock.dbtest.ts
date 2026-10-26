@@ -20,6 +20,7 @@ import {
   registerExit,
   registerReturn,
   releaseContractReservations,
+  releaseReservation,
   reserveByContractNumber,
   reserveForContract,
   saveStockItem,
@@ -177,6 +178,19 @@ describe("estoque", () => {
     // DVR inteiro entregue: reserva atendida.
     await registerExit({ itemId: dvr, quantity: 1, reservationId: reservationDocId(CONTRACT_ID, dvr) }, ACTOR);
     expect(await reservation(dvr)).toMatchObject({ status: "atendida", delivered: 1, reserved: 0 });
+  });
+
+  it("liberar com o contrato valendo: o separado volta, o entregue fica com o cliente; dá para reservar de novo", async () => {
+    // Roteador: 2 separadas, nada entregue → liberar e reservar de novo pelo contrato.
+    await releaseReservation(reservationDocId(CONTRACT_ID, router), "Urgência de outro contrato", ACTOR);
+    expect(await reservation(router)).toMatchObject({ status: "cancelada", reserved: 0 });
+    expect((await item(router)).reserved).toBe(0);
+    const again = await reserveByContractNumber(`CT-${RUN}`, ACTOR);
+    // Sob demanda não reserva sozinho (vai para compra); havendo estoque, "Separar" pega do disponível.
+    expect(again.created).toEqual([expect.objectContaining({ itemId: router, reserved: 0, missing: 2 })]);
+    expect(await fillReservation(reservationDocId(CONTRACT_ID, router), ACTOR)).toBe(2);
+    expect(await reservation(router)).toMatchObject({ status: "ativa", reserved: 2 });
+    expect((await item(router)).reserved).toBe(2);
   });
 
   it("cancelamento do contrato: o separado volta ao disponível; o entregue vira devolução pendente", async () => {

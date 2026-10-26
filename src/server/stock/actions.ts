@@ -8,7 +8,7 @@ import { z } from "zod";
 import { can, failAction, requirePermission } from "@/server/auth/session";
 import type { ActionResult, CurrentUser, UserRef } from "@/domain/types";
 import { DEPARTMENT_KEYS } from "@/domain/constants";
-import { STOCK_ORIGINS, STOCK_SERIAL_STATUSES } from "@/domain/stock";
+import { STOCK_ORIGINS, STOCK_SERIAL_STATUSES, parseMoneyInput } from "@/domain/stock";
 import {
   adjustStock,
   fillReservation,
@@ -50,10 +50,8 @@ const serials = z.array(z.string().trim().max(120, "Número de série muito long
 const money = z
   .union([z.number(), z.string()])
   .transform((v, ctx) => {
-    // "1.234,56" e "1234,56" (vírgula decimal) ou "1234.56" (ponto decimal).
-    const t = String(v).trim();
-    const n = typeof v === "number" ? v : Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t);
-    if (String(v).trim() === "" || !Number.isFinite(n) || n < 0) {
+    const n = parseMoneyInput(v);
+    if (!Number.isFinite(n) || n < 0) {
       ctx.addIssue({ code: "custom", message: "Custo unitário inválido" });
       return z.NEVER;
     }

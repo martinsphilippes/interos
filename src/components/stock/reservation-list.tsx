@@ -184,7 +184,7 @@ export function StockReservationList({ rows, can }: { rows: StockReservationRow[
         open={releasing !== null}
         onOpenChange={(o) => !o && setReleasing(null)}
         title="Liberar esta reserva?"
-        description={releasing ? `${releasing.itemName} · contrato ${releasing.contractNumber}. O separado volta ao disponível; o que já saiu fica como devolução pendente.` : undefined}
+        description={releasing ? `${releasing.itemName} · contrato ${releasing.contractNumber}. O separado volta ao disponível; o que já foi entregue fica com o cliente. Dá para reservar de novo pelo número do contrato.` : undefined}
         placeholder="Ex.: cliente desistiu do equipamento, item trocado por outro modelo…"
         confirmLabel="Liberar reserva"
         destructive

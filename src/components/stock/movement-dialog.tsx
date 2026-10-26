@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { adjustStockAction, itemSerialsAction, registerEntryAction, registerExitAction, registerReturnAction } from "@/server/stock/actions";
-import { parseSerials } from "@/domain/stock";
+import { parseMoneyInput, parseSerials } from "@/domain/stock";
 import { formatCurrency } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -180,8 +180,8 @@ export function MovementDialog({ target, showCost, onClose }: { target: Movement
                     <Input id={`${id}-f`} value={supplier} onChange={(e) => setSupplier(e.target.value)} className="h-11 md:h-9" maxLength={120} />
                   </FormField>
                 </div>
-                {qty > 0 && Number(unitCost.replace(",", ".")) > 0 ? (
-                  <p className="text-xs text-muted">Total da entrada: {formatCurrency(qty * Number(unitCost.trim().includes(",") ? unitCost.replace(/\./g, "").replace(",", ".") : unitCost))}</p>
+                {qty > 0 && parseMoneyInput(unitCost) > 0 ? (
+                  <p className="text-xs text-muted">Total da entrada: {formatCurrency(qty * parseMoneyInput(unitCost))}</p>
                 ) : null}
               </>
             ) : null}

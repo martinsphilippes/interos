@@ -13,6 +13,7 @@ import {
   fillPendingReservations,
   isBelowMinimum,
   normalizeStockSettings,
+  parseMoneyInput,
   parseSerials,
   reservationMissing,
   reservationPendingReturn,
@@ -114,9 +115,25 @@ describe("números de série", () => {
     expect(parseSerials(" sn1 \nSN2, sn1;  ab  c ")).toEqual({ serials: ["SN1", "SN2", "AB C"], duplicates: ["SN1"] });
     expect(parseSerials(["x1", "X1"]).duplicates).toEqual(["X1"]);
   });
-  it("id do documento é por item e seguro para id", () => {
-    expect(serialDocId("item1", "ab/12 c")).toBe("item1__AB_12_C");
+  it("id do documento é por item, seguro para id e sem colisão entre séries diferentes", () => {
+    expect(serialDocId("item1", "ab-12")).toBe("item1__AB-12");
     expect(serialDocId("item1", "AB/12 C")).toBe(serialDocId("item1", "ab/12 c"));
+    const ids = ["SN.01", "SN 01", "SN_01", "SN01"].map((x) => serialDocId("i", x));
+    expect(new Set(ids).size).toBe(4);
+  });
+});
+
+describe("valor em reais", () => {
+  it("vírgula decimal, ponto de milhar e ponto decimal", () => {
+    expect(parseMoneyInput("1.234,56")).toBe(1234.56);
+    expect(parseMoneyInput("1234,5")).toBe(1234.5);
+    expect(parseMoneyInput("1.500")).toBe(1500);
+    expect(parseMoneyInput("12.50")).toBe(12.5);
+    expect(parseMoneyInput("R$ 2.000,00")).toBe(2000);
+    expect(parseMoneyInput("0")).toBe(0);
+    expect(Number.isNaN(parseMoneyInput("abc"))).toBe(true);
+    expect(Number.isNaN(parseMoneyInput("1,234.56"))).toBe(true);
+    expect(Number.isNaN(parseMoneyInput(""))).toBe(true);
   });
 });
 

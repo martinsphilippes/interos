@@ -251,10 +251,24 @@ export function parseSerials(raw: string | string[]): { serials: string[]; dupli
 
 /** Id do documento de um número de série: único por item. */
 export function serialDocId(itemId: string, serial: string): string {
-  const key = normalizeSerial(serial)
-    .replace(/[^A-Z0-9_-]/g, "_")
-    .slice(0, 120);
+  // Sem colisão: letras, dígitos e "-" ficam; qualquer outro caractere (inclusive "_") vira "_" + código hexadecimal.
+  const key = Array.from(normalizeSerial(serial))
+    .map((ch) => (/[A-Z0-9-]/.test(ch) ? ch : `_${ch.codePointAt(0)!.toString(16)}_`))
+    .join("");
   return `${itemId}__${key}`;
+}
+
+/**
+ * Valor em reais digitado: "1.234,56", "1234,56", "1.500" (ponto de milhar), "12.50" e "1234.5" (ponto decimal).
+ * Devolve NaN quando não é um número.
+ */
+export function parseMoneyInput(raw: string | number): number {
+  if (typeof raw === "number") return raw;
+  const t = raw.trim().replace(/^R\$\s*/i, "");
+  if (!t) return NaN;
+  if (t.includes(",")) return /^\d{1,3}(\.\d{3})*,\d*$|^\d+,\d*$/.test(t) ? Number(t.replace(/\./g, "").replace(",", ".")) : NaN;
+  if (/^\d{1,3}(\.\d{3})+$/.test(t)) return Number(t.replace(/\./g, ""));
+  return /^\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
 }
 
 /** Id determinístico da reserva de um item para um contrato (a mesma assinatura repetida não duplica). */

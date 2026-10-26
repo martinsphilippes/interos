@@ -514,7 +514,13 @@ export async function reserveForContract(contractId: string, actor: UserRef, opt
       // a reserva criada pela primeira.
       const item = await readItemTx(tx, itemId);
       const existing = await tx.get(resRef);
-      if (existing.exists) return null;
+      if (existing.exists) {
+        // Reserva liberada antes (botão Liberar) e sem nada com o cliente: o contrato continua assinado, então reserva de
+        // novo no mesmo documento. Com algo a devolver (ou ativa/atendida), não mexe.
+        const prev = existing.data() as unknown as StockReservation;
+        const outstanding = (prev.delivered || 0) - (prev.returned || 0);
+        if (prev.status !== "cancelada" || outstanding > 0) return null;
+      }
       const alloc = allocateReservation(item.origin, quantity, availableOf(item));
       const balance = alloc.reserve > 0 ? applyOrBusiness(item, { type: "reserva", quantity: alloc.reserve }) : { onHand: item.onHand, reserved: item.reserved, avgCost: item.avgCost };
       const reservation: Omit<StockReservation, "id"> = {
@@ -534,7 +540,7 @@ export async function reserveForContract(contractId: string, actor: UserRef, opt
         createdByName: actor.name,
         ...meta(now),
       };
-      tx.create(resRef, cleanPatch(reservation as unknown as Record<string, unknown>));
+      tx.set(resRef, cleanPatch(reservation as unknown as Record<string, unknown>));
       if (alloc.reserve > 0) {
         writeMovement(
           tx,
@@ -634,14 +640,30 @@ async function reservationItemId(reservationId: string): Promise<string> {
   return r.itemId;
 }
 
-async function releaseReservationTx(reservationId: string, itemId: string, reason: string, actor: UserRef, settings: StockSettings, now: string) {
+/**
+ * Libera uma reserva (trava item → reserva). Modo "manual" (botão Liberar, contrato valendo): o separado volta ao
+ * disponível; se algo já foi entregue, o cliente fica com isso e a reserva fecha como atendida (sem devolução). Modo
+ * "contrato" (contrato cancelado): ativa ou atendida vira cancelada e o que está com o cliente fica como devolução
+ * pendente. Devolve null quando não há o que liberar.
+ */
+async function releaseReservationTx(reservationId: string, itemId: string, reason: string, actor: UserRef, settings: StockSettings, now: string, mode: "manual" | "contrato") {
   return docdb.runTransaction(async (tx) => {
     const ref = col(COLLECTIONS.stockReservations).doc(reservationId);
     const { item, r } = await lockReservationTx(tx, reservationId, itemId);
-    if (r.status !== "ativa") return null;
-    const release = Math.min(r.reserved || 0, item.reserved || 0);
+    const releasable = r.status === "ativa" || (mode === "contrato" && r.status === "atendida");
+    if (!releasable) return null;
+    const release = r.status === "ativa" ? Math.min(r.reserved || 0, item.reserved || 0) : 0;
     const balance = release > 0 ? applyOrBusiness(item, { type: "liberacao", quantity: release }) : { onHand: item.onHand, reserved: item.reserved, avgCost: item.avgCost };
-    tx.update(ref, cleanPatch({ status: "cancelada", reserved: 0, cancelledAt: now, cancelReason: reason.slice(0, 500), updatedAt: now }));
+    const keepDelivered = mode === "manual" && (r.delivered || 0) > 0;
+    tx.update(
+      ref,
+      cleanPatch(
+        keepDelivered
+          ? { status: "atendida", reserved: 0, quantity: r.delivered, cancelReason: reason.slice(0, 500), updatedAt: now }
+          : { status: "cancelada", reserved: 0, cancelledAt: now, cancelReason: reason.slice(0, 500), updatedAt: now },
+      ),
+    );
+    let alert = false;
     if (release > 0) {
       writeMovement(
         tx,
@@ -664,19 +686,24 @@ async function releaseReservationTx(reservationId: string, itemId: string, reaso
         },
         now,
       );
-      const { patch } = balancePatch(item, balance, now, settings.notifyLowStock);
-      tx.update(itemRef(item.id), patch);
+      const bp = balancePatch(item, balance, now, settings.notifyLowStock);
+      alert = bp.alert;
+      tx.update(itemRef(item.id), bp.patch);
     }
-    return { r, item, release, pendingReturn: Math.max(0, (r.delivered || 0) - (r.returned || 0)) };
+    const pendingReturn = keepDelivered ? 0 : Math.max(0, (r.delivered || 0) - (r.returned || 0));
+    return { r, item, release, pendingReturn, keptDelivered: keepDelivered ? r.delivered : 0, balance, alert };
   });
 }
 
-/** Libera (cancela) uma reserva: o separado volta ao disponível. O que já saiu fica como devolução pendente. */
+/**
+ * Libera uma reserva com o contrato valendo (cliente desistiu do item, troca de modelo, urgência de outro contrato): o
+ * separado volta ao disponível; o que já foi entregue fica com o cliente. Dá para reservar de novo pelo contrato.
+ */
 export async function releaseReservation(reservationId: string, reason: string, actor: UserRef): Promise<void> {
   const text = reason.trim();
   if (text.length < 5) throw new BusinessError("Explique o motivo (mínimo 5 caracteres)");
   const settings = await getStockSettings();
-  const out = await releaseReservationTx(reservationId, await reservationItemId(reservationId), text, actor, settings, nowIso());
+  const out = await releaseReservationTx(reservationId, await reservationItemId(reservationId), text, actor, settings, nowIso(), "manual");
   if (!out) throw new BusinessError("Esta reserva não está ativa");
   await emitEvent({
     type: "stock.reservation_released",
@@ -684,44 +711,33 @@ export async function releaseReservation(reservationId: string, reason: string, 
     clientId: out.r.clientId,
     entity: { type: "contract", id: out.r.contractId },
     title: `Reserva de ${out.item.name} liberada · contrato ${out.r.contractNumber}`,
-    description: `${text}${out.release ? ` · ${out.release} volta(m) ao disponível` : ""}${out.pendingReturn ? ` · ${out.pendingReturn} com o cliente: devolução pendente` : ""}`,
+    description: `${text}${out.release ? ` · ${out.release} volta(m) ao disponível` : ""}${out.keptDelivered ? ` · ${out.keptDelivered} já entregue(s) ficam com o cliente` : ""}`,
     department: settings.responsibleDepartment,
-    payload: { reservationId, itemId: out.item.id, contractId: out.r.contractId, released: out.release, pendingReturn: out.pendingReturn, reason: text },
+    payload: { reservationId, itemId: out.item.id, contractId: out.r.contractId, released: out.release, keptDelivered: out.keptDelivered, reason: text },
   });
+  if (out.alert) await sendLowStockAlert(out.item, out.balance, settings, actor);
 }
 
-/** Handler de contract.cancelled: libera todas as reservas ativas do contrato. */
+/**
+ * Handler de contract.cancelled: cada reserva ativa ou atendida do contrato vira cancelada numa transação própria (a
+ * situação é lida travada): o separado volta ao disponível e o que está com o cliente fica como devolução pendente.
+ */
 export async function releaseContractReservations(contractId: string, reason: string, actor: UserRef): Promise<{ released: number; pendingReturn: number }> {
   const reservations = await list<StockReservation>(COLLECTIONS.stockReservations, { where: [["contractId", "==", contractId]] });
-  const active = reservations.filter((r) => r.status === "ativa");
-  // Já entregues (atendidas) também precisam voltar quando o contrato é cancelado.
-  const delivered = reservations.filter((r) => r.status === "atendida");
-  if (!active.length && !delivered.length) return { released: 0, pendingReturn: 0 };
+  const open = reservations.filter((r) => r.status === "ativa" || r.status === "atendida");
+  if (!open.length) return { released: 0, pendingReturn: 0 };
   const settings = await getStockSettings();
   const now = nowIso();
   let released = 0;
   let pendingReturn = 0;
   const lines: string[] = [];
-  for (const r of active) {
-    const out = await releaseReservationTx(r.id, r.itemId, reason, actor, settings, now);
+  for (const r of open) {
+    const out = await releaseReservationTx(r.id, r.itemId, reason, actor, settings, now, "contrato");
     if (!out) continue;
     released += out.release;
     pendingReturn += out.pendingReturn;
-    lines.push(`${out.item.name}: ${out.release} liberada(s)${out.pendingReturn ? `, ${out.pendingReturn} a devolver` : ""}`);
-  }
-  for (const r of delivered) {
-    const marked = await docdb.runTransaction(async (tx) => {
-      const ref = col(COLLECTIONS.stockReservations).doc(r.id);
-      const snap = await txGetOwn(tx, ref);
-      if (!snap || snap.get("status") !== "atendida") return 0;
-      tx.update(ref, cleanPatch({ status: "cancelada", cancelledAt: now, cancelReason: reason.slice(0, 500), updatedAt: now }));
-      const cur = snap.data() as unknown as StockReservation;
-      return Math.max(0, (cur.delivered || 0) - (cur.returned || 0));
-    });
-    if (marked > 0) {
-      pendingReturn += marked;
-      lines.push(`${r.itemName}: ${marked} a devolver`);
-    }
+    if (out.release || out.pendingReturn) lines.push(`${out.item.name}: ${out.release ? `${out.release} liberada(s)` : ""}${out.release && out.pendingReturn ? ", " : ""}${out.pendingReturn ? `${out.pendingReturn} a devolver` : ""}`);
+    if (out.alert) await sendLowStockAlert(out.item, out.balance, settings, actor);
   }
   if (!lines.length) return { released, pendingReturn };
   const first = reservations[0];
@@ -1015,9 +1031,9 @@ export async function registerReturn(input: ReturnInput, actor: UserRef): Promis
         tx.update(col(COLLECTIONS.stockReservations).doc(reservation.id), { delivered: (reservation.delivered || 0) - input.quantity, status: "ativa", updatedAt: now });
       }
     }
-    const { patch } = balancePatch(item, balance, now, settings.notifyLowStock);
+    const { patch, alert } = balancePatch(item, balance, now, settings.notifyLowStock);
     tx.update(itemRef(item.id), patch);
-    return { item, balance, movementId, reservation };
+    return { item, balance, movementId, reservation, alert };
   });
   await emitEvent({
     type: "stock.returned",
@@ -1029,6 +1045,7 @@ export async function registerReturn(input: ReturnInput, actor: UserRef): Promis
     department: settings.responsibleDepartment,
     payload: { itemId: out.item.id, movementId: out.movementId, quantity: input.quantity, serials, reservationId: out.reservation?.id ?? null, reason },
   });
+  if (out.alert) await sendLowStockAlert(out.item, out.balance, settings, actor);
   return { movementId: out.movementId, balance: out.balance };
 }
 

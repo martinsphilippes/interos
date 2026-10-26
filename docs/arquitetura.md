@@ -404,6 +404,10 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   entregue vira devolução pendente, aviso `stock_return_<contrato>`). Handler em `src/server/events/handlers/stock.ts`.
   Emite `stock.item_created|item_updated|entry|exit|returned|adjusted|reserved|reservation_released|low|settings_updated`
   (os de contrato vão para a timeline do cliente).
+- **Liberar com o contrato valendo** (botão Liberar): o separado volta ao disponível; o já entregue fica com o cliente
+  (reserva fecha como atendida). Reserva cancelada sem nada com o cliente pode ser refeita pelo contrato (mesmo id).
+- **Séries**: id do documento sem colisão (caracteres fora de `A-Z0-9-` viram `_<hex>_`). **Valor** digitado lido por
+  `parseMoneyInput` ("1.234,56", "1.500", "12.50").
 - **Aviso de mínimo**: quando o disponível fica abaixo do mínimo, um aviso ao gestor do departamento responsável (sem
   gestor: o departamento; sem ninguém: diretoria/admin); a marca `lowStockAlertAt` só limpa quando o disponível volta.
 - **Permissões** (tela `operacao.estoque`, item de menu depois de SLA; Administrativo, Financeiro, Implantação, gestores,
