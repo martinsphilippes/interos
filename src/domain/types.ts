@@ -7,6 +7,7 @@
  * - Datas são strings ISO. Valores monetários são números em reais.
  * - Nomes de coleção estão em `COLLECTIONS`; nunca use strings soltas.
  */
+import type { StockMovementType, StockOrigin, StockProductLink, StockSerialStatus } from "./stock";
 import type {
   ClientStatus,
   DepartmentKey,
@@ -147,6 +148,14 @@ export const COLLECTIONS = {
   invoices: "invoices",
   /** PDF e XML das notas fiscais, guardados no INTEROS (base64). */
   invoiceFiles: "invoice_files",
+  /** Itens de estoque (equipamentos): saldo em mãos, reservado, custo médio, origem e mínimo. */
+  stockItems: "stock_items",
+  /** Movimentações de estoque (entrada, reserva, liberação, saída, devolução, ajuste) — o histórico auditável. */
+  stockMovements: "stock_movements",
+  /** Números de série dos itens controlados por série: onde cada unidade está (estoque, cliente, baixada). */
+  stockSerials: "stock_serials",
+  /** Reservas de estoque por contrato (uma por item e contrato): pedida, separada, entregue e devolvida. */
+  stockReservations: "stock_reservations",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -2609,3 +2618,105 @@ export interface CurrentUser extends User {
   /** Permissões efetivas (catálogo + perfil + exceções + módulos ativos), resolvidas em getCurrentUser. */
   permissions: EffectivePermissions;
 }
+
+// ---------------------------------------------------------------------------
+// Estoque de equipamentos (fase 2 do circuito hardware; regras em src/domain/stock.ts)
+// ---------------------------------------------------------------------------
+
+export interface StockItem extends BaseEntity {
+  name: string;
+  /** Código interno (SKU). */
+  sku?: string;
+  manufacturer?: string;
+  model?: string;
+  /** Unidade de medida exibida (padrão "un"). */
+  unit: string;
+  /** Exige número de série em cada unidade (entrada, saída e devolução). */
+  serialControlled: boolean;
+  origin: StockOrigin;
+  /** Estoque mínimo: abaixo dele (disponível) o responsável é avisado. 0 = sem mínimo. */
+  minQuantity: number;
+  /** Produtos vendidos que usam este item (e quantas unidades por produto): a assinatura reserva por eles. */
+  products: StockProductLink[];
+  onHand: number;
+  reserved: number;
+  avgCost: number;
+  location?: string;
+  notes?: string;
+  active: boolean;
+  /** Aviso de mínimo já enviado (limpo quando o disponível volta ao mínimo). */
+  lowStockAlertAt?: string;
+  createdBy: string;
+}
+
+export interface StockMovement extends BaseEntity {
+  itemId: string;
+  itemName: string;
+  type: StockMovementType;
+  /** Unidades movimentadas (sempre positiva; no ajuste, o sinal está em `delta`). */
+  quantity: number;
+  /** Ajuste: + entrou, − saiu. */
+  delta?: number;
+  /** Custo unitário (entrada; nas saídas, o custo médio do momento). */
+  unitCost?: number;
+  onHandAfter: number;
+  reservedAfter: number;
+  avgCostAfter: number;
+  serials?: string[];
+  reservationId?: string;
+  contractId?: string;
+  contractNumber?: string;
+  clientId?: string;
+  clientName?: string;
+  /** Documento de referência (NF de compra, pedido, romaneio). */
+  document?: string;
+  supplier?: string;
+  reason?: string;
+  /** Movimento gerado pelo sistema (assinatura/cancelamento de contrato, entrada que preencheu reservas). */
+  automatic?: boolean;
+  createdBy: string;
+  createdByName?: string;
+}
+
+export interface StockSerial extends BaseEntity {
+  itemId: string;
+  itemName: string;
+  serial: string;
+  status: StockSerialStatus;
+  contractId?: string;
+  contractNumber?: string;
+  clientId?: string;
+  clientName?: string;
+  reservationId?: string;
+  unitCost?: number;
+  enteredAt: string;
+  deliveredAt?: string;
+  returnedAt?: string;
+  writtenOffAt?: string;
+  writeOffReason?: string;
+}
+
+export interface StockReservation extends BaseEntity {
+  itemId: string;
+  itemName: string;
+  contractId: string;
+  contractNumber: string;
+  clientId: string;
+  clientName: string;
+  origin: StockOrigin;
+  /** Pedida pelo contrato. */
+  quantity: number;
+  /** Separada do estoque (ainda não saiu). */
+  reserved: number;
+  /** Já saiu para o cliente. */
+  delivered: number;
+  /** Voltou depois do cancelamento. */
+  returned?: number;
+  status: "ativa" | "atendida" | "cancelada";
+  source: "contrato" | "manual";
+  cancelledAt?: string;
+  cancelReason?: string;
+  createdBy: string;
+  createdByName?: string;
+}
+

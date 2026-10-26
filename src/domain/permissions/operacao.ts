@@ -669,5 +669,86 @@ export const OPERACAO = {
         applyAt: ["src/app/(app)/sla/page.tsx#SlaPage (l.57)", "src/server/sla-report/queries.ts#getSlaOverview"],
       },
     },
+    {
+      key: "operacao.estoque",
+      module: "operacao",
+      label: "Estoque",
+      description: "Estoque de equipamentos: itens (fabricante, modelo, série, origem, mínimo e produtos que os usam), saldo em mãos/reservado/disponível, entradas com custo (custo médio), saídas e devoluções por número de série, ajustes com motivo, reservas por contrato (automáticas na assinatura, liberadas no cancelamento) e a configuração (departamento responsável e avisos).",
+      routes: ["/estoque"],
+      // Tela NOVA (estoque, fase 2): quem cuida do equipamento (Administrativo), o Financeiro (custo/venda) e a
+      // Implantação (o que entregar), além de gestores, diretoria e admin.
+      rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: ["administrativo", "financeiro", "implantacao"] }] },
+      nav: {
+        menu: "operacao",
+        href: "/estoque",
+        order: 5,
+        label: "Estoque",
+        icon: "Package",
+        wave: 2,
+      },
+      sections: [
+        {
+          key: "operacao.estoque.custos.ver",
+          label: "Custos do estoque (custo de entrada, custo médio e valor em estoque)",
+          // Onde: colunas de custo nas abas Itens e Movimentações e o card "Valor em estoque".
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria", "financeiro"] }, { department: ["administrativo", "financeiro"] }] },
+        },
+        {
+          key: "operacao.estoque.configuracao.ver",
+          tab: "configuracao",
+          label: "Configuração do estoque",
+          // Onde: /estoque?aba=configuracao (departamento responsável, reserva na assinatura, aviso de mínimo).
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: "administrativo" }] },
+        },
+      ],
+      actions: [
+        {
+          key: "operacao.estoque.itens.editar",
+          label: "Cadastrar e editar itens de estoque (origem, mínimo, série, produtos vinculados)",
+          verb: "editar",
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: "administrativo" }] },
+          guards: ["src/server/stock/actions.ts#saveStockItemAction"],
+        },
+        {
+          key: "operacao.estoque.entrada.registrar",
+          label: "Registrar entrada no estoque (com custo e números de série)",
+          verb: "criar",
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: "administrativo" }] },
+          guards: ["src/server/stock/actions.ts#registerEntryAction"],
+          sensitive: true,
+        },
+        {
+          key: "operacao.estoque.saida.registrar",
+          label: "Registrar saída e devolução de equipamento",
+          verb: "editar",
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: ["administrativo", "implantacao"] }] },
+          guards: ["src/server/stock/actions.ts#registerExitAction", "src/server/stock/actions.ts#registerReturnAction", "src/server/stock/actions.ts#itemSerialsAction"],
+        },
+        {
+          key: "operacao.estoque.reservas.gerenciar",
+          label: "Gerenciar reservas (separar, reservar pelo contrato, liberar)",
+          verb: "editar",
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: "administrativo" }] },
+          guards: ["src/server/stock/actions.ts#fillReservationAction", "src/server/stock/actions.ts#reserveContractAction", "src/server/stock/actions.ts#releaseReservationAction"],
+        },
+        {
+          key: "operacao.estoque.ajustar",
+          label: "Ajustar estoque (inventário, perda, avaria) com motivo",
+          verb: "editar",
+          rule: { any: [{ role: ["admin", "diretoria"] }, { managerOf: "administrativo" }] },
+          guards: ["src/server/stock/actions.ts#adjustStockAction"],
+          sensitive: true,
+        },
+        {
+          key: "operacao.estoque.configuracao.editar",
+          label: "Editar a configuração do estoque",
+          verb: "editar",
+          rule: { any: [{ role: ["admin", "diretoria"] }, { managerOf: "administrativo" }] },
+          guards: ["src/server/stock/actions.ts#saveStockSettingsAction"],
+          sensitive: true,
+        },
+      ],
+      scope: null,
+    },
   ],
 } as const satisfies ModuleDef;

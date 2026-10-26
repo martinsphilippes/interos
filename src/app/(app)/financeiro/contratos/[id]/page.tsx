@@ -45,6 +45,8 @@ import { PortalLinksCard } from "@/components/portal/portal-links-card";
 import { listPortalLinks } from "@/server/portal/service";
 import { listReadjustmentIndexOptions } from "@/server/finance-registry/indices";
 import { getContractReadjustmentView } from "@/server/finance/readjustments";
+import { listContractReservations } from "@/server/stock/queries";
+import { ContractStockCard } from "@/components/stock/contract-stock-card";
 
 type Params = Promise<{ id: string }>;
 
@@ -109,7 +111,12 @@ export default async function ContractPage({ params }: { params: Params }) {
       )
     : [];
   // Reajuste anual: índices do cadastro (campos de condições) e a situação/prévia do próximo reajuste.
-  const [indexOptions, readjustmentView] = await Promise.all([listReadjustmentIndexOptions(), sections.readjustView ? getContractReadjustmentView(raw.contract, raw.amendments, { hideValues: hidden }) : Promise.resolve(null)]);
+  // Equipamentos do contrato no estoque: só para quem vê a tela Estoque.
+  const [indexOptions, readjustmentView, stockRows] = await Promise.all([
+    listReadjustmentIndexOptions(),
+    sections.readjustView ? getContractReadjustmentView(raw.contract, raw.amendments, { hideValues: hidden }) : Promise.resolve(null),
+    can(user, "operacao.estoque.ver") ? listContractReservations(contract.id) : Promise.resolve([]),
+  ]);
 
   return (
     <FinanceAccessProvider value={caps}>
@@ -263,6 +270,7 @@ export default async function ContractPage({ params }: { params: Params }) {
                 canEditSignatureSettings={can(user, "financeiro.assinaturas.configuracao.editar")}
               />
             ) : null}
+            {stockRows.length ? <ContractStockCard rows={stockRows} /> : null}
             {sections.pendenciesView ? <PendencyCard contractId={contract.id} pendingReason={contract.pendingReason} isPending={contract.status === "pendencia"} closed={closed} /> : null}
             <BillingDataCard
               contractId={contract.id}

@@ -193,6 +193,16 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "invoice.waiver_removed": "Cobrança volta a exigir nota fiscal",
   "fiscal.settings_updated": "Configuração fiscal alterada",
   "fiscal.product_updated": "Perfil fiscal do produto alterado",
+  "stock.item_created": "Item de estoque cadastrado",
+  "stock.item_updated": "Item de estoque alterado",
+  "stock.entry": "Entrada no estoque",
+  "stock.exit": "Saída do estoque",
+  "stock.returned": "Devolução ao estoque",
+  "stock.adjusted": "Ajuste de estoque",
+  "stock.reserved": "Equipamento reservado para o contrato",
+  "stock.reservation_released": "Reserva de equipamento liberada",
+  "stock.low": "Estoque abaixo do mínimo",
+  "stock.settings_updated": "Configuração do estoque alterada",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -250,6 +260,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   readjustment_index: "Financeiro",
   invoice: "Financeiro",
   fiscal: "Financeiro",
+  stock: "Estoque",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",

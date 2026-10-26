@@ -20,6 +20,9 @@
  * financial.released reconciliam as comissões do contrato (motor idempotente em src/server/commissions/engine.ts),
  * antes do construtor de processos e das automações.
  *
+ * Estoque: contract.signed reserva os equipamentos do contrato; contract.cancelled libera (o que já saiu vira
+ * devolução pendente).
+ *
  * Ondas 4 e 5 — gestão, performance e automações:
  * - KPIs: eventos que mudam números invalidam o cache do motor de indicadores, emitem `kpi.updated` (1x/min) e
  *   verificam as metas pessoais (`goal.achieved`).
@@ -34,6 +37,7 @@ import { registerSalesHandlers } from "./sales";
 import { registerWorkflowHandlers } from "./workflow";
 import { registerMarketingHandlers } from "./marketing";
 import { registerFinanceHandlers } from "./finance";
+import { registerStockHandlers } from "./stock";
 import { registerImplementationHandlers } from "./implementation";
 import { registerCsHandlers } from "./cs";
 import { registerSupportHandlers } from "./support";
@@ -54,6 +58,7 @@ export function ensureHandlersRegistered(): void {
   registerWorkflowHandlers(registerHandler);
   registerMarketingHandlers(registerHandler);
   registerFinanceHandlers(registerHandler);
+  registerStockHandlers(registerHandler);
   registerImplementationHandlers(registerHandler);
   registerCsHandlers(registerHandler);
   registerSupportHandlers(registerHandler);

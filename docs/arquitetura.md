@@ -384,6 +384,38 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - Eventos: `invoice.issued|cancelled|sent|waived|waiver_removed`, `fiscal.settings_updated|product_updated`.
 - Coleções: `invoices`, `invoice_files` (migration `20261029000000_faturamento_notas.sql`).
 
+## Estoque de equipamentos (fase 2, `src/server/stock/*`, `/estoque`)
+
+- **Regras puras** em `src/domain/stock.ts`: `applyStockMove` (entrada/reserva/liberação/saída/devolução/ajuste; nada
+  fica negativo, saída sem reserva só usa o disponível, ajuste não desce abaixo do reservado), custo médio ponderado na
+  entrada (`averageCostAfterEntry`; devolução e ajuste não mexem nele), `allocateReservation` pela origem do item
+  (`estoque` | `estoque_ou_compra` | `sob_demanda`), `contractStockDemand` (linhas do contrato × itens vinculados ao
+  produto × unidades por produto), `fillPendingReservations` (entrada preenche as reservas com falta, mais antigas
+  primeiro), números de série normalizados (`parseSerials`, `serialDocId`).
+- **Coleções** (migration `20261030000000_estoque.sql`): `stock_items` (saldo `onHand`/`reserved`/`avgCost`, origem,
+  mínimo, `products` vinculados, `lowStockAlertAt`), `stock_movements` (cada movimento com o saldo depois — a trilha de
+  auditoria), `stock_serials` (id `<item>__<série>`; `em_estoque` | `entregue` | `baixado`, com contrato/cliente),
+  `stock_reservations` (id `rsv_<contrato>_<item>`: pedida, separada, entregue, devolvida; `ativa` | `atendida` |
+  `cancelada`). Configuração no setting `estoque` (departamento responsável, reserva na assinatura, aviso de mínimo).
+- **Transações**: toda movimentação lê item (+ reserva e séries) e grava saldo + movimento juntos
+  (`docdb.runTransaction`): duas saídas simultâneas do último disponível → só uma passa.
+- **Eventos**: `contract.signed` → `onContractSignedStock` (reserva idempotente pelo id determinístico; falta avisada ao
+  responsável, chave `stock_missing_<contrato>`); `contract.cancelled` → `releaseContractReservations` (separado volta;
+  entregue vira devolução pendente, aviso `stock_return_<contrato>`). Handler em `src/server/events/handlers/stock.ts`.
+  Emite `stock.item_created|item_updated|entry|exit|returned|adjusted|reserved|reservation_released|low|settings_updated`
+  (os de contrato vão para a timeline do cliente).
+- **Liberar com o contrato valendo** (botão Liberar): o separado volta ao disponível; o já entregue fica com o cliente
+  (reserva fecha como atendida). Reserva cancelada sem nada com o cliente pode ser refeita pelo contrato (mesmo id).
+- **Séries**: id do documento sem colisão (caracteres fora de `A-Z0-9-` viram `_<hex>_`). **Valor** digitado lido por
+  `parseMoneyInput` ("1.234,56", "1.500", "12.50").
+- **Aviso de mínimo**: quando o disponível fica abaixo do mínimo, um aviso ao gestor do departamento responsável (sem
+  gestor: o departamento; sem ninguém: diretoria/admin); a marca `lowStockAlertAt` só limpa quando o disponível volta.
+- **Permissões** (tela `operacao.estoque`, item de menu depois de SLA; Administrativo, Financeiro, Implantação, gestores,
+  diretoria/admin): seções `custos.ver` (custos e valor em estoque) e `configuracao.ver` (aba); ações `itens.editar`,
+  `entrada.registrar`, `saida.registrar` (saída, devolução; Administrativo e Implantação), `reservas.gerenciar`,
+  `ajustar` e `configuracao.editar` (diretoria/admin ou gestor do Administrativo). Cartão "Equipamentos" no contrato
+  para quem vê a tela Estoque.
+
 ## Cadastros financeiros (etapa CP/CR 1, `src/server/finance-registry/*`, `/financeiro/cadastros`)
 - **Coleções novas** (regra `if false`, só servidor): `financial_accounts` (conta financeira: nome, tipo
   corrente|poupanca|cartao|dinheiro|investimento|outro, `initialBalance`, `currency` "BRL", banco/agência/conta só
