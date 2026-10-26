@@ -12,11 +12,23 @@ import { numberToInput, parseNumber } from "./admin-model";
 import { SettingsSection } from "./settings-section";
 import { useSaveSetting } from "./use-save-setting";
 
-/** Pontos por evento e multiplicadores de equivalência entre funções (setting "gamificacao"). Os níveis são preservados. */
+/**
+ * Pontos por evento (padrão da empresa e, quando preciso, pontos próprios de cada departamento) e multiplicadores usados
+ * no ranking "todos normalizado". Os níveis valem para a empresa toda (ranking comparável entre áreas).
+ */
 export function SettingsGamification({ value, stored }: { value: GamificacaoConfig; stored: boolean }) {
   const { pending, error, setError, save } = useSaveSetting("gamificacao");
   const [points, setPoints] = React.useState<Record<string, string>>(() => Object.fromEntries(POINT_RULES.map((r) => [r.key, numberToInput(value.pontos[r.key] ?? 0)])));
+  // Pontos próprios por departamento: vazio = usa o padrão da empresa.
+  const [own, setOwn] = React.useState<Record<DepartmentKey, Record<string, string>>>(
+    () =>
+      Object.fromEntries(
+        DEPARTMENT_KEYS.map((d) => [d, Object.fromEntries(POINT_RULES.map((r) => [r.key, value.pontosPorDepartamento?.[d]?.[r.key] !== undefined ? numberToInput(value.pontosPorDepartamento[d]![r.key]) : ""]))]),
+      ) as Record<DepartmentKey, Record<string, string>>,
+  );
+  const [scope, setScope] = React.useState<DepartmentKey | "">("");
   const [mult, setMult] = React.useState<Record<DepartmentKey, string>>(() => Object.fromEntries(DEPARTMENT_KEYS.map((d) => [d, numberToInput(value.multiplicadores[d] ?? 1)])) as Record<DepartmentKey, string>);
+  const customCount = (d: DepartmentKey) => POINT_RULES.filter((r) => own[d][r.key].trim() !== "").length;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,34 +38,75 @@ export function SettingsGamification({ value, stored }: { value: GamificacaoConf
       if (!Number.isInteger(n) || n < 0) return setError(`Informe pontos inteiros em "${r.label}"`);
       pontos[r.key] = n;
     }
+    const pontosPorDepartamento: Partial<Record<DepartmentKey, Record<string, number>>> = {};
+    for (const d of DEPARTMENT_KEYS) {
+      const rules: Record<string, number> = {};
+      for (const r of POINT_RULES) {
+        const raw = own[d][r.key].trim();
+        if (!raw) continue;
+        const n = parseNumber(raw);
+        if (!Number.isInteger(n) || n < 0) return setError(`Informe pontos inteiros em "${r.label}" (${DEPARTMENT_LABELS[d]}) ou deixe vazio para usar o padrão`);
+        // Igual ao padrão não precisa ser guardado como exceção.
+        if (n !== pontos[r.key]) rules[r.key] = n;
+      }
+      if (Object.keys(rules).length > 0) pontosPorDepartamento[d] = rules;
+    }
     const multiplicadores = {} as Record<DepartmentKey, number>;
     for (const d of DEPARTMENT_KEYS) {
       const n = parseNumber(mult[d]);
       if (Number.isNaN(n) || n <= 0) return setError(`Informe um multiplicador válido para ${DEPARTMENT_LABELS[d]}`);
       multiplicadores[d] = n;
     }
-    save({ pontos, multiplicadores, niveis: value.niveis }, "Gamificação salva");
+    save({ pontos, multiplicadores, pontosPorDepartamento, niveis: value.niveis }, "Gamificação salva");
   };
 
   return (
     <SettingsSection
       title="Gamificação"
-      description="Pontos creditados a cada evento (idempotente por evento) e multiplicadores usados no ranking “todos normalizado” para comparar funções diferentes."
+      description="Pontos creditados a cada evento. O padrão vale para a empresa; escolha um departamento para dar pontos próprios a ele (vazio = usa o padrão). Os níveis valem para todos."
       stored={stored}
       pending={pending}
       error={error}
       onSubmit={submit}
     >
       <div className="flex flex-col gap-5">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {POINT_RULES.map((r) => (
-            <FormField key={r.key} label={r.label} htmlFor={`gp-${r.key}`} hint={r.who} required>
-              <Input id={`gp-${r.key}`} type="number" inputMode="numeric" min={0} step="1" value={points[r.key]} onChange={(e) => setPoints((s) => ({ ...s, [r.key]: e.target.value }))} required className="tabular-nums" />
-            </FormField>
-          ))}
+        <FormField label="Pontos de" htmlFor="gp-scope" hint={scope ? `Vazio = usa o padrão da empresa. ${DEPARTMENT_LABELS[scope]} tem ${customCount(scope)} regra(s) própria(s).` : "Padrão da empresa: vale para todos os departamentos sem pontos próprios."}>
+          <Select id="gp-scope" value={scope} onChange={(e) => setScope(e.target.value as DepartmentKey | "")} className="h-11 sm:max-w-[320px] md:h-9">
+            <option value="">Padrão da empresa</option>
+            {DEPARTMENT_KEYS.map((d) => (
+              <option key={d} value={d}>
+                {DEPARTMENT_LABELS[d]}
+                {customCount(d) ? ` · ${customCount(d)} próprio(s)` : ""}
+              </option>
+            ))}
+          </Select>
+        </FormField>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="gamification-points">
+          {POINT_RULES.map((r) =>
+            scope ? (
+              <FormField key={`${scope}-${r.key}`} label={r.label} htmlFor={`gp-${scope}-${r.key}`} hint={`${r.who} · padrão: ${points[r.key] || 0}`}>
+                <Input
+                  id={`gp-${scope}-${r.key}`}
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  step="1"
+                  placeholder={`padrão (${points[r.key] || 0})`}
+                  value={own[scope][r.key]}
+                  onChange={(e) => setOwn((s) => ({ ...s, [scope]: { ...s[scope], [r.key]: e.target.value } }))}
+                  className="tabular-nums"
+                />
+              </FormField>
+            ) : (
+              <FormField key={r.key} label={r.label} htmlFor={`gp-${r.key}`} hint={r.who} required>
+                <Input id={`gp-${r.key}`} type="number" inputMode="numeric" min={0} step="1" value={points[r.key]} onChange={(e) => setPoints((s) => ({ ...s, [r.key]: e.target.value }))} required className="tabular-nums" />
+              </FormField>
+            ),
+          )}
         </div>
         <div>
           <p className="label-caps mb-2">Multiplicadores por departamento</p>
+          <p className="mb-2 text-xs text-muted">Usados no ranking “todos normalizado” para comparar funções com volumes de eventos diferentes.</p>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             {DEPARTMENT_KEYS.map((d) => (
               <FormField key={d} label={DEPARTMENT_LABELS[d]} htmlFor={`gm-${d}`} required>
@@ -62,7 +115,7 @@ export function SettingsGamification({ value, stored }: { value: GamificacaoConf
             ))}
           </div>
         </div>
-        <p className="text-xs text-muted">Níveis: {value.niveis.map((n) => `${n.nome} (${n.minimo} pts)`).join(" · ")}.</p>
+        <p className="text-xs text-muted">Níveis (iguais para a empresa toda): {value.niveis.map((n) => `${n.nome} (${n.minimo} pts)`).join(" · ")}.</p>
       </div>
     </SettingsSection>
   );

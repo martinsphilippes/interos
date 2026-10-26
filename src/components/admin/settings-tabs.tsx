@@ -1,5 +1,7 @@
 "use client";
 
+import { GoalsShortcuts } from "@/components/kpis/goals-shortcuts";
+import type { ReferenceGoalRow } from "@/domain/reference-goals";
 import * as React from "react";
 import { Activity, Award, BadgeCheck, BellRing, CalendarOff, Clock, Gauge, HandCoins, HeartPulse, ShieldCheck, Target, Timer, TrendingUp } from "lucide-react";
 import type { SlaRule } from "@/domain/types";
@@ -61,6 +63,8 @@ export interface SettingsTabsProps {
   reguaPreview: ReguaPreview | null;
   /** O que o perfil vê e edita (A12), calculado no servidor. */
   access: SettingsAccess;
+  /** Metas de referência por departamento, já com a meta do indicador correspondente. */
+  referenceGoals?: ReferenceGoalRow[];
 }
 
 /** Seção somente leitura quando o perfil não tem a chave de edição daquela configuração. */
@@ -82,7 +86,7 @@ function ReadOnlyBlock({ readOnly, children }: { readOnly: boolean; children: Re
  * Abas das configurações (?aba=...). Cada aba é um formulário independente que salva a própria chave. Só aparecem
  * as abas e seções que o perfil pode ver; sem a chave de edição a seção fica somente leitura.
  */
-export function SettingsTabs({ tab, values, stored, slaRules, originKeys, interestKeys, operationHealth, performanceIndex, kpiOptions, reguaPreview, access }: SettingsTabsProps) {
+export function SettingsTabs({ tab, values, stored, slaRules, originKeys, interestKeys, operationHealth, performanceIndex, kpiOptions, reguaPreview, access, referenceGoals }: SettingsTabsProps) {
   const { setLocal } = useAdminUrl();
   const tabs = visibleSettingsTabs(access);
   const initial = tabs.includes(tab) ? tab : (tabs[0] ?? tab);
@@ -125,7 +129,7 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
       {sees("metas_referencia") ? (
         <TabsContent value="metas">
           <Guard editable={edits("metas_referencia")}>
-            <SettingsGoals key={JSON.stringify(values.metas_referencia)} value={values.metas_referencia!} stored={has("metas_referencia")} />
+            <SettingsGoals key={JSON.stringify(referenceGoals ?? values.metas_referencia)} value={values.metas_referencia!} stored={has("metas_referencia")} rows={referenceGoals} />
           </Guard>
         </TabsContent>
       ) : null}
@@ -255,6 +259,7 @@ export function SettingsTabs({ tab, values, stored, slaRules, originKeys, intere
       ) : null}
       {access.sla.visible ? (
         <TabsContent value="sla">
+          <GoalsShortcuts current="/admin/configuracoes?aba=sla" />
           <SettingsSlaRules rules={slaRules} canEdit={access.sla.edit} canDelete={access.sla.delete} />
         </TabsContent>
       ) : null}

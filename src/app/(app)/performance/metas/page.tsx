@@ -5,6 +5,7 @@ import { currentMonthKey, getGoalsBoard, listRecentMonths, monthPeriod, parsePer
 import { formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
+import { GoalsShortcuts } from "@/components/kpis/goals-shortcuts";
 import { StatCard } from "@/components/ui/stat-card";
 import { GoalsWorkspace } from "@/components/kpis/goals-workspace";
 import { PeriodSelect } from "@/components/kpis/period-select";
@@ -40,6 +41,7 @@ export default async function MetasPage({ searchParams }: { searchParams: Search
         breadcrumbs={[{ label: "Performance", href: "/performance" }, { label: "Metas" }]}
         actions={<PeriodSelect options={options} value={period.key} label="Competência" />}
       />
+      <GoalsShortcuts current="/performance/metas" />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Metas no mês" value={formatNumber(board.rows.length)} icon={<Goal />} tone="info" compact />

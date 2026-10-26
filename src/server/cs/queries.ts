@@ -3,8 +3,8 @@ import "server-only";
  * Leituras do módulo de Customer Success. Cada tela faz uma leitura em lote das coleções envolvidas
  * (filtradas por organização via `list()`, igualdade apenas) e agrega em memória, sem N+1.
  */
+import { getReferenceGoals } from "@/server/kpis/reference-goals";
 import { getById, getManyByIds, list } from "@/server/db";
-import { getSetting } from "@/server/admin/queries";
 import { dateKey } from "@/lib/format";
 import {
   COLLECTIONS,
@@ -1033,7 +1033,7 @@ export async function getChurnMetrics(user?: CurrentUser): Promise<ChurnMetrics>
     list<Product>(COLLECTIONS.products),
     list<LeadSource>(COLLECTIONS.leadSources),
     listActiveUsers(),
-    getSetting<{ churnMax?: number }>("metas_referencia", {}),
+    getReferenceGoals(),
     churnScopeFilter(user),
   ]);
   const clients = allows ? allClients.filter((c) => allows([c.ownerCsId])) : allClients;

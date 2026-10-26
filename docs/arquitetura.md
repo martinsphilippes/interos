@@ -331,6 +331,20 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   vencimento e série; relatório `contas_a_pagar` (competência, status derivado "vencido", CSV/XLSX/PDF) e card
   "Fluxo de caixa simplificado" (cobranças abertas/vencidas × títulos abertos por mês de vencimento, só dados reais).
 
+## Metas, indicadores e gamificação por departamento
+
+- **Metas de referência = meta do KPI** (`src/domain/reference-goals.ts`, `src/server/kpis/reference-goals.ts`): cada meta
+  de referência pertence a um departamento e corresponde a um KPI (CSAT, SLA de solução e reincidência → Suporte; churn →
+  CS; implantações no prazo e ativação em 7 dias → Implantação; crescimento de MRR → Financeiro; ticket médio → Vendas).
+  A meta mensal do KPI é a fonte única: `getReferenceGoals()` usa a meta do KPI quando ele existe e tem meta, senão o
+  setting `metas_referencia`; salvar a aba (`upsertSetting`) leva os valores aos KPIs (`syncReferenceGoalsToKpis`). Todos
+  os leitores (Gestor, Cockpit, CS, Recorrência, Suporte, relatórios, /sla, insights) usam `getReferenceGoals()`. A aba
+  mostra as metas com o departamento, filtro e de onde vem o valor.
+- **Gamificação**: `pontos` é o padrão da empresa; `pontosPorDepartamento` guarda só as regras que diferem para um
+  departamento (`pointsForRule`: próprio do departamento de quem recebe, senão o padrão). Níveis e ranking continuam da
+  empresa (multiplicadores por departamento para o ranking normalizado).
+- Atalhos (`GoalsShortcuts`) ligam Performance › Metas, Administração › Indicadores, Metas de referência e Regras de SLA.
+
 ## Faturamento — notas fiscais das cobranças (fase 1, `src/server/finance/invoices.ts`, `/financeiro/faturamento`)
 
 - **Hoje a nota é emitida fora** (emissor da prefeitura/SEFAZ/ERP) e **registrada no INTEROS**; a emissão automática por

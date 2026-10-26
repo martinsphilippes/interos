@@ -438,6 +438,10 @@ export type CsAtivacaoConfig = z.infer<typeof csAtivacaoSchema>;
 export const gamificacaoSchema = z.object({
   pontos: z.record(z.string().trim().min(1).max(40), z.number("Pontos inválidos").int("Use pontos inteiros").min(0, "Mínimo 0").max(1000, "Máximo 1000")),
   multiplicadores: z.record(z.enum(DEPARTMENT_KEYS), z.number("Multiplicador inválido").min(0.1, "Mínimo 0,1").max(10, "Máximo 10")),
+  /** Pontos próprios de um departamento (só as regras que diferem do padrão da empresa). */
+  pontosPorDepartamento: z
+    .partialRecord(z.enum(DEPARTMENT_KEYS), z.record(z.string().trim().min(1).max(40), z.number("Pontos inválidos").int("Use pontos inteiros").min(0, "Mínimo 0").max(1000, "Máximo 1000")))
+    .optional(),
   niveis: z.array(z.object({ nome: z.string().trim().min(1).max(40), minimo: z.number().min(0) })).min(1, "Informe ao menos um nível"),
 });
 export type GamificacaoConfig = z.infer<typeof gamificacaoSchema>;

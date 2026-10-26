@@ -19,7 +19,7 @@ import { COLLECTIONS, type Achievement, type DomainEvent, type GamificationPoint
 import { DEPARTMENT_KEYS, type DepartmentKey } from "@/domain/constants";
 import { getUserScorecard, monthPeriod } from "@/server/kpis/queries";
 import { localDayKey } from "@/server/kpis/period";
-import { ACHIEVEMENT_DEFS, DEFAULT_GAMIFICATION, POINT_RULES, type AchievementKey, type GamificationSettings } from "./schemas";
+import { ACHIEVEMENT_DEFS, DEFAULT_GAMIFICATION, POINT_RULES, pointsForRule, type AchievementKey, type GamificationSettings } from "./schemas";
 
 const SYSTEM_ACTOR: UserRef = { id: "system", name: "INTEROS (gamificação)" };
 const SETTING_KEY = "gamificacao";
@@ -35,7 +35,15 @@ function mergeSettings(value: Partial<GamificationSettings> | undefined): Gamifi
     if (typeof v === "number" && v > 0) multiplicadores[dep] = v;
   }
   const niveis = Array.isArray(value?.niveis) && value.niveis.length > 0 ? value.niveis.filter((n) => typeof n?.minimo === "number" && typeof n?.nome === "string") : DEFAULT_GAMIFICATION.niveis;
-  return { pontos: { ...DEFAULT_GAMIFICATION.pontos, ...(value?.pontos ?? {}) }, multiplicadores, niveis };
+  // Pontos próprios por departamento: só números inteiros ≥ 0 de departamentos conhecidos.
+  const pontosPorDepartamento: GamificationSettings["pontosPorDepartamento"] = {};
+  for (const dep of DEPARTMENT_KEYS) {
+    const own = value?.pontosPorDepartamento?.[dep];
+    if (!own || typeof own !== "object") continue;
+    const clean = Object.fromEntries(Object.entries(own).filter(([, n]) => typeof n === "number" && Number.isInteger(n) && n >= 0));
+    if (Object.keys(clean).length > 0) pontosPorDepartamento[dep] = clean;
+  }
+  return { pontos: { ...DEFAULT_GAMIFICATION.pontos, ...(value?.pontos ?? {}) }, multiplicadores, pontosPorDepartamento, niveis };
 }
 
 /** Setting "gamificacao" (pontos, multiplicadores por departamento e níveis). Cria com os padrões se não existir. */
@@ -115,7 +123,9 @@ export async function pointsForEvent(event: DomainEvent, settings?: Gamification
   const match = await ruleFor(event);
   if (!match) return null;
   const config = settings ?? (await getGamificationSettings());
-  const points = Number(config.pontos[match.ruleKey] ?? 0);
+  // Pontos do departamento de quem recebe (ou o padrão da empresa).
+  const user = await getById<User>(COLLECTIONS.users, match.userId);
+  const points = pointsForRule(config, match.ruleKey, user?.departmentId);
   if (!Number.isFinite(points) || points <= 0) return null;
   const rule = POINT_RULES.find((r) => r.key === match.ruleKey);
   const title = event.title.length > 140 ? `${event.title.slice(0, 137)}…` : event.title;

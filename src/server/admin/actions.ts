@@ -63,6 +63,7 @@ import {
   upsertSettingSchema,
   userIdSchema,
   zodMessage,
+  type MetasReferencia,
 } from "./schemas";
 
 /**
@@ -950,6 +951,13 @@ export async function upsertSetting(input: unknown): Promise<ActionResult<{ key:
       await replaceDoc<Settings>(COLLECTIONS.settings, existing[0], { value, description: existing[0].description ?? SETTING_DESCRIPTIONS[key] });
     } else {
       await create<Settings>(COLLECTIONS.settings, { key, value, description: SETTING_DESCRIPTIONS[key], createdBy: user.id }, `setting_${key.replace(/\./g, "_")}`);
+    }
+
+    // Metas de referência: a meta mensal do indicador de cada departamento é a fonte única (vai junto).
+    if (key === "metas_referencia") {
+      const { syncReferenceGoalsToKpis } = await import("@/server/kpis/reference-goals");
+      const synced = await syncReferenceGoalsToKpis(value as MetasReferencia);
+      if (synced.length > 0) revalidatePath("/admin/indicadores");
     }
 
     // Auditoria (D16): valor anterior → novo de cada campo alterado.
