@@ -22,7 +22,7 @@ export async function POST(request: Request) {
         .slice(0, max);
     const billingId = text("billingId", 80);
     if (!billingId) return Response.json({ ok: false, error: "Cobrança não informada." }, { status: 400 });
-    const billing = await assertBillingAccess(user, billingId);
+    const billing = await assertBillingAccess(user, billingId, "financeiro.faturamento");
     const kind = text("tipo", 10);
     if (kind !== "nfse" && kind !== "nfe") return Response.json({ ok: false, error: "Escolha o tipo da nota (NFS-e ou NF-e)." }, { status: 400 });
     const file = async (name: string, max: number) => {
@@ -50,7 +50,9 @@ export async function POST(request: Request) {
         );
       throw e;
     }
-    const amount = Number(text("valor", 20).replace(/\./g, "").replace(",", "."));
+    // "1.234,56" (vírgula decimal) ou "1234.56" (ponto decimal): ponto só é milhar quando há vírgula.
+    const raw = text("valor", 20).replace(/[R$\s]/g, "");
+    const amount = Number(raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw);
     const invoice = await registerInvoice(
       {
         billingId,

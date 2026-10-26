@@ -81,21 +81,21 @@ export function InvoiceList({ rows, can }: { rows: InvoiceListRow[]; can: Invoic
                   <p className="text-xs text-muted">emitida {formatDate(r.issuedAt)}</p>
                 </div>
                 <div className="flex flex-wrap gap-2 md:shrink-0 md:justify-end">
-                  {can.files && r.pdfFileId ? (
+                  {can.files && can.values && r.pdfFileId ? (
                     <Button asChild variant="outline" size="sm" className="h-10 md:h-8">
                       <a href={`/api/financeiro/notas/${r.id}/pdf`} target="_blank" rel="noreferrer">
                         <FileText /> PDF
                       </a>
                     </Button>
                   ) : null}
-                  {can.files && r.xmlFileId ? (
+                  {can.files && can.values && r.xmlFileId ? (
                     <Button asChild variant="outline" size="sm" className="h-10 md:h-8">
                       <a href={`/api/financeiro/notas/${r.id}/xml`}>
                         <Download /> XML
                       </a>
                     </Button>
                   ) : null}
-                  {!cancelled && can.send ? (
+                  {!cancelled && can.send && can.values ? (
                     <Button size="sm" variant={r.sentAt ? "ghost" : "primary"} className="h-10 md:h-8" onClick={() => setSending(r)}>
                       <Send /> {r.sentAt ? "Reenviar" : "Enviar ao cliente"}
                     </Button>
@@ -149,6 +149,11 @@ function SendInvoiceDialog({ row, onClose }: { row: InvoiceListRow; onClose: () 
   } | null>(null);
   const [text, setText] = React.useState("");
   const [channel, setChannel] = React.useState<"email" | "whatsapp" | "ambos">("email");
+  // onClose muda a cada render do pai: o efeito do rascunho só depende da nota.
+  const closeRef = React.useRef(onClose);
+  React.useEffect(() => {
+    closeRef.current = onClose;
+  });
 
   React.useEffect(() => {
     let alive = true;
@@ -156,6 +161,7 @@ function SendInvoiceDialog({ row, onClose }: { row: InvoiceListRow; onClose: () 
       if (!alive) return;
       if (!r.ok) {
         toast.error(r.error);
+        closeRef.current();
         return;
       }
       setDraft(r.data);

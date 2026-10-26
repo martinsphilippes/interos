@@ -1,4 +1,4 @@
-import { PermissionError, requireApiPermission } from "@/server/auth/session";
+import { can, PermissionError, requireApiPermission } from "@/server/auth/session";
 import { isUserFacingError } from "@/server/auth/errors";
 import { assertBillingAccess } from "@/server/finance/access";
 import { getInvoice, getInvoiceFile } from "@/server/finance/invoices";
@@ -7,12 +7,14 @@ import { getInvoice, getInvoiceFile } from "@/server/finance/invoices";
 export async function GET(request: Request, { params }: { params: Promise<{ id: string; arquivo: string }> }) {
   const user = await requireApiPermission("financeiro.faturamento.arquivos.baixar");
   if (user instanceof Response) return user;
+  // O documento traz o valor da nota: mesma regra de ver valores das telas.
+  if (!can(user, "financeiro.valores.ver")) return Response.json({ ok: false, error: "Baixar a nota exige ver os valores." }, { status: 403 });
   const { id, arquivo } = await params;
   if (arquivo !== "pdf" && arquivo !== "xml") return Response.json({ ok: false, error: "Arquivo inválido." }, { status: 404 });
   try {
     const invoice = await getInvoice(id);
     if (!invoice) return Response.json({ ok: false, error: "Nota não encontrada." }, { status: 404 });
-    await assertBillingAccess(user, invoice.billingId);
+    await assertBillingAccess(user, invoice.billingId, "financeiro.faturamento");
     const file = await getInvoiceFile(invoice, arquivo);
     if (!file)
       return Response.json(

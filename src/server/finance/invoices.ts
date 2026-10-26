@@ -61,6 +61,8 @@ import type { DataScope } from "@/server/auth/scope";
 
 export const INVOICE_PDF_MAX_BYTES = 3 * 1024 * 1024;
 export const INVOICE_XML_MAX_BYTES = 1024 * 1024;
+/** Horizonte da aba "Próximas" (dias). */
+export const UPCOMING_DAYS = 60;
 
 // ---------------------------------------------------------------------------
 // Configuração fiscal
@@ -203,7 +205,13 @@ export async function getInvoiceQueue(options: { scope?: DataScope; hideValues?:
   const settings = await getFiscalSettings(today);
   const swept = await listBillingsSwept();
   const billings = options.scope ? filterBillingsByContracts(swept, await visibleContractIds(options.scope)) : swept;
-  const relevant = billings.map((b) => ({ b, state: invoiceQueueState(b, settings, today) })).filter((x) => x.state !== "fora" && x.state !== "sem_nota");
+  // "Próximas" só até 60 dias à frente: as mensalidades do contrato inteiro já existem e encheriam a lista.
+  const horizon = new Date(`${today}T12:00:00Z`);
+  horizon.setUTCDate(horizon.getUTCDate() + UPCOMING_DAYS);
+  const until = horizon.toISOString().slice(0, 10);
+  const relevant = billings
+    .map((b) => ({ b, state: invoiceQueueState(b, settings, today) }))
+    .filter((x) => x.state !== "fora" && x.state !== "sem_nota" && !(x.state === "aguardando" && x.b.dueDate.slice(0, 10) > until));
   const [clients, contracts] = await Promise.all([
     getManyByIds<Client>(
       COLLECTIONS.clients,
@@ -419,6 +427,7 @@ export async function registerInvoice(input: RegisterInvoiceInput, actor: UserRe
   if (fromXml.number && invoiceNumberKey(fromXml.number) !== invoiceNumberKey(number)) throw new BusinessError(`O número informado é diferente do XML (nota ${fromXml.number})`);
   const amount = Math.round(Number(input.amount) * 100) / 100;
   if (!Number.isFinite(amount) || amount <= 0) throw new BusinessError("Informe o valor da nota");
+  if (fromXml.amount !== undefined && Math.abs(fromXml.amount - amount) >= 0.01) throw new BusinessError(`O valor informado é diferente do XML (${formatCurrency(fromXml.amount)})`);
 
   // Mesma nota não pode ser registrada duas vezes (mesmo tipo, série e número, ou mesma chave), salvo cancelada.
   const existing = await list<Invoice>(COLLECTIONS.invoices, {
@@ -692,6 +701,8 @@ export async function sendInvoice(
   const invoice = await getInvoice(invoiceId);
   if (!invoice) throw new BusinessError("Nota não encontrada");
   if (invoice.status === "cancelada") throw new BusinessError("Nota cancelada não é enviada ao cliente");
+  const billingNow = await getById<Billing>(COLLECTIONS.billing, invoice.billingId);
+  if (billingNow?.status === "cancelada") throw new BusinessError("A cobrança desta nota foi cancelada: cancele também a nota em vez de enviá-la");
   const draft = await invoiceMessageDraft(invoiceId);
   const ctx = await loadBillingMessageContext(invoice.billingId);
   const channels: ("email" | "whatsapp")[] = input.channel === "ambos" ? ["email", "whatsapp"] : [input.channel];
@@ -741,6 +752,10 @@ export async function sendInvoice(
     });
   }
   const ok = results.filter((r) => r.delivered || r.manual);
+  if (ok.length === 0) {
+    const why = results.map((r) => `${r.channel === "email" ? "e-mail" : "WhatsApp"}: ${r.error ?? (r.to ? "não enviado" : "cliente sem contato")}`).join("; ");
+    throw new BusinessError(`Nota não enviada (${why})`);
+  }
   if (ok.length > 0) {
     const now = nowIso();
     await update<Invoice>(COLLECTIONS.invoices, invoice.id, {

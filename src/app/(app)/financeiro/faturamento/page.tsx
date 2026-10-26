@@ -92,7 +92,7 @@ export default async function InvoicingPage({ searchParams }: { searchParams: Se
           href="/financeiro/faturamento?aba=a-faturar"
           compact
         />
-        <StatCard label="Próximas" value={queue.counts.aguardando} icon={<CalendarClock />} tone="info" href="/financeiro/faturamento?aba=proximas" compact />
+        <StatCard label="Próximas (60 dias)" value={queue.counts.aguardando} icon={<CalendarClock />} tone="info" href="/financeiro/faturamento?aba=proximas" compact />
         <StatCard
           label="Emitidas, não enviadas"
           value={queue.counts.emitida}

@@ -106,7 +106,7 @@ export function financeCapabilities(user: PermissionHolder): FinanceCapabilities
 // ---------------------------------------------------------------------------
 
 /** Telas do Financeiro com escopo por dono do contrato. */
-export type ContractScopeScreen = "financeiro.dashboard" | "financeiro.contratos" | "financeiro.assinaturas" | "financeiro.cobrancas" | "financeiro.contas-a-receber" | "financeiro.recorrencia";
+export type ContractScopeScreen = "financeiro.dashboard" | "financeiro.contratos" | "financeiro.assinaturas" | "financeiro.cobrancas" | "financeiro.faturamento" | "financeiro.contas-a-receber" | "financeiro.recorrencia";
 
 /** Mensagem de registro fora do escopo (sem revelar o que existe do outro lado). */
 export const OUT_OF_SCOPE_MESSAGE = "Acesso negado: este contrato está fora do seu escopo de acesso.";
@@ -190,11 +190,11 @@ export async function assertContractAccess(user: CurrentUser, contractId: string
 }
 
 /** Cobrança para uma action: escopo pelo contrato dela na tela Cobranças. */
-export async function assertBillingAccess(user: CurrentUser, billingId: string): Promise<Billing> {
+export async function assertBillingAccess(user: CurrentUser, billingId: string, screen: "financeiro.cobrancas" | "financeiro.faturamento" = "financeiro.cobrancas"): Promise<Billing> {
   const billing = await getById<Billing>(COLLECTIONS.billing, billingId);
   if (!billing) throw new BusinessError("Cobrança não encontrada");
   const contract = await getById<Contract>(COLLECTIONS.contracts, billing.contractId);
-  if (contract && !(await contractInScope(user, contract, "financeiro.cobrancas"))) throw new PermissionError(OUT_OF_SCOPE_MESSAGE, "financeiro.cobrancas.ver");
+  if (contract && !(await contractInScope(user, contract, screen))) throw new PermissionError(OUT_OF_SCOPE_MESSAGE, `${screen}.ver`);
   return billing;
 }
 

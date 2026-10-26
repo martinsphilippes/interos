@@ -156,6 +156,10 @@ describe("faturamento", () => {
     const nfe = await registerInvoice({ billingId: `${RUN}_hw`, kind: "nfe", number: "", issuedAt: todayKey(), amount: 900, xml: { fileName: "nfe.xml", content: Buffer.from(xml) } }, ACTOR);
     expect(nfe).toMatchObject({ number: "4567", series: "1", accessKey: key, xmlFileName: "nfe.xml" });
     await expect(registerInvoice({ billingId: `${RUN}_m2`, kind: "nfe", number: "1", issuedAt: todayKey(), accessKey: key.slice(0, 43) + ((Number(key[43]) + 1) % 10), amount: 1 }, ACTOR)).rejects.toThrow(/Chave de acesso inválida/);
+    // Valor diferente do XML é recusado.
+    const key2 = nfeKey(`3126${RUN.replace(/\D/g, "")}9`);
+    const xml2 = `<nfeProc><infNFe Id="NFe${key2}"><nNF>8888</nNF><vNF>500.00</vNF></infNFe></nfeProc>`;
+    await expect(registerInvoice({ billingId: `${RUN}_m2`, kind: "nfe", number: "", issuedAt: todayKey(), amount: 50000, xml: { fileName: "x.xml", content: Buffer.from(xml2) } }, ACTOR)).rejects.toThrow(/diferente do XML/);
   });
 
   it("concorrência: duas notas ao mesmo tempo na mesma cobrança → só uma entra (arquivos da outra apagados)", async () => {
@@ -183,6 +187,15 @@ describe("faturamento", () => {
     // O mesmo número volta a ser aceito (a anterior está cancelada).
     const again = await registerInvoice({ billingId: `${RUN}_m1`, kind: "nfse", number: "123", issuedAt: todayKey(), amount: 290, pdf: { fileName: "nota.pdf", content: PDF } }, ACTOR);
     expect(again.status).toBe("emitida");
+  });
+
+  it("cobrança cancelada sai do faturamento mesmo com nota", async () => {
+    await billing("cx", { dueDate: todayKey() });
+    await registerInvoice({ billingId: `${RUN}_cx`, kind: "nfse", number: "9901", issuedAt: todayKey(), amount: 290 }, ACTOR);
+    await docdb.sql()`update interos.billing set data = jsonb_set(data, '{status}', '"cancelada"') where id = ${`${RUN}_cx`}`;
+    expect((await getInvoiceQueue()).rows.find((r) => r.billingId === `${RUN}_cx`)).toBeUndefined();
+    const inv = (await list<Invoice>(COLLECTIONS.invoices, { where: [["billingId", "==", `${RUN}_cx`]] }))[0];
+    await expect(sendInvoice(inv.id, { channel: "email" }, ACTOR)).rejects.toThrow(/cobrança desta nota foi cancelada/);
   });
 
   it("dispensar e desfazer", async () => {

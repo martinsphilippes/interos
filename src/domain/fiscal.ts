@@ -92,10 +92,11 @@ export const DEFAULT_INVOICE_RULES: Record<BillingType, InvoiceRule> = {
 };
 export const DEFAULT_INVOICE_MESSAGE = "Olá, {cliente}! Segue a nota fiscal {nota} referente a {cobranca}, no valor de {valor}.\nVocê pode baixar a nota (PDF e XML) no portal: {linkPortal}";
 
-/** Primeiro dia do mês de `today` (AAAA-MM-01). */
-function monthStart(today: string): string {
-  return `${today.slice(0, 7)}-01`;
-}
+/**
+ * Início padrão do controle enquanto a configuração não é salva: data FIXA (a da entrada do faturamento no INTEROS),
+ * para a fila não mudar sozinha na virada do mês.
+ */
+export const DEFAULT_INVOICE_TRACKING_SINCE = "2026-10-01";
 
 function str(v: unknown, max = 60): string | undefined {
   if (typeof v !== "string") return undefined;
@@ -117,7 +118,8 @@ export function normalizeFiscalSettings(raw: unknown, today: string): FiscalSett
     InvoiceRule
   >;
   const lead = Number(v.leadDays);
-  const since = typeof v.since === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.since) ? v.since : monthStart(today);
+  void today;
+  const since = typeof v.since === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.since) ? v.since : DEFAULT_INVOICE_TRACKING_SINCE;
   return {
     enabled: typeof v.enabled === "boolean" ? v.enabled : true,
     regime: FISCAL_REGIMES.includes(v.regime as FiscalRegime) ? (v.regime as FiscalRegime) : undefined,
@@ -176,8 +178,9 @@ export function invoiceQueueState(
   settings: Pick<FiscalSettings, "enabled" | "rules" | "moment" | "leadDays" | "since">,
   today: string,
 ): InvoiceQueueState {
-  if (billing.invoiceId) return billing.invoiceSentAt ? "enviada" : "emitida";
+  // Cobrança cancelada sai do faturamento mesmo com nota (a nota continua na aba Notas, para cancelar).
   if (billing.status === "cancelada") return "fora";
+  if (billing.invoiceId) return billing.invoiceSentAt ? "enviada" : "emitida";
   if (billing.invoiceWaived) return "dispensada";
   if (!invoiceKindFor(billing, settings)) return "sem_nota";
   const due = billing.dueDate.slice(0, 10);
@@ -280,8 +283,9 @@ export function isValidAccessKey(digits: string): boolean {
 
 /** Número da nota só com dígitos e sem zeros à esquerda (para comparar "000123" com "123"). */
 export function invoiceNumberKey(number: string): string {
-  const digits = number.replace(/\D/g, "").replace(/^0+/, "");
-  return digits || number.trim().toUpperCase();
+  const t = number.trim().toUpperCase();
+  // Só número: compara sem zeros à esquerda ("000123" = "123"); com letras/sinais, compara o texto ("123-A" ≠ "123-B").
+  return /^\d+$/.test(t) ? t.replace(/^0+/, "") || "0" : t;
 }
 
 /** Texto do envio da nota, com as variáveis preenchidas ({linkPortal} fica para o envio preencher). */

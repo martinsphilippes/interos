@@ -276,15 +276,15 @@ function ProductFiscalDialog({ row, onClose }: { row: FiscalProductRow; onClose:
   const goods = form.nature === "equipamento" || row.hasHardware;
   const service = form.nature !== "equipamento" || row.hasSetup || row.hasMonthly;
   const save = async () => {
-    const ok = await run(
-      () =>
-        saveProductFiscalAction({
-          productId: row.id,
-          ...form,
-          issRate: form.issRate || undefined,
-        }),
-      `Perfil fiscal de ${row.name} salvo`,
-    );
+    // Só os campos visíveis: os escondidos pela natureza não vão para o cadastro.
+    const payload = {
+      productId: row.id,
+      nature: form.nature,
+      invoiceDescription: form.invoiceDescription,
+      ...(service ? { serviceCode: form.serviceCode, issRate: form.issRate || undefined } : {}),
+      ...(goods ? { ncm: form.ncm, cfop: form.cfop } : {}),
+    };
+    const ok = await run(() => saveProductFiscalAction(payload), `Perfil fiscal de ${row.name} salvo`);
     if (ok) onClose();
   };
   return (

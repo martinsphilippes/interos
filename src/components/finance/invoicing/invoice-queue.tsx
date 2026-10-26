@@ -219,8 +219,8 @@ function IssueDataPanel({ data, hidden }: { data: InvoiceIssueData; hidden: bool
       </div>
       {data.items.length > 0 ? (
         <div className="flex flex-col divide-y divide-border rounded-md border border-border bg-surface">
-          {data.items.map((i) => (
-            <div key={i.productId} className="flex flex-col gap-0.5 px-3 py-2 text-sm">
+          {data.items.map((i, idx) => (
+            <div key={`${i.productId}-${idx}`} className="flex flex-col gap-0.5 px-3 py-2 text-sm">
               <div className="flex items-start justify-between gap-2">
                 <p className="min-w-0 break-words font-medium">
                   {i.quantity}x {i.description}
@@ -287,7 +287,11 @@ function RegisterInvoiceDialog({ row, can, onClose }: { row: InvoiceQueueRow; ca
       const body = new FormData();
       body.set("billingId", row.billingId);
       body.set("tipo", kind);
-      for (const [k, v] of Object.entries(form)) body.set(k, v);
+      for (const [k, v] of Object.entries(form)) {
+        // Chave só na NF-e, código de verificação só na NFS-e (o campo do outro tipo fica escondido).
+        if ((k === "chave" && kind !== "nfe") || (k === "codigo" && kind !== "nfse")) continue;
+        body.set(k, v);
+      }
       if (pdf) body.set("pdf", pdf);
       if (xml) body.set("xml", xml);
       const res = await fetch("/api/financeiro/notas", {

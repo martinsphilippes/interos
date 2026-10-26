@@ -6,7 +6,7 @@
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { can, failAction, requirePermission } from "@/server/auth/session";
+import { can, failAction, PermissionError, requirePermission } from "@/server/auth/session";
 import { BusinessError } from "@/server/auth/error-classes";
 import type { ActionResult, CurrentUser, UserRef } from "@/domain/types";
 import { FISCAL_REGIMES, INVOICE_RULES, PRODUCT_FISCAL_NATURES } from "@/domain/fiscal";
@@ -50,7 +50,7 @@ const reason = z.string().trim().min(5, "Explique o motivo (mínimo 5 caracteres
 async function assertInvoiceAccess(user: CurrentUser, invoiceId: string) {
   const invoice = await getInvoice(invoiceId);
   if (!invoice) throw new BusinessError("Nota não encontrada");
-  await assertBillingAccess(user, invoice.billingId);
+  await assertBillingAccess(user, invoice.billingId, "financeiro.faturamento");
   return invoice;
 }
 
@@ -58,7 +58,7 @@ export async function invoiceIssueDataAction(input: unknown): Promise<ActionResu
   try {
     const user = await requirePermission("financeiro.faturamento.dados.consultar");
     const { billingId } = z.object({ billingId: id("Cobrança") }).parse(input);
-    await assertBillingAccess(user, billingId);
+    await assertBillingAccess(user, billingId, "financeiro.faturamento");
     const data = await getInvoiceIssueData(billingId);
     // Valores (itens e cobrança) só para quem vê valores.
     if (!can(user, "financeiro.valores.ver")) {
@@ -94,7 +94,7 @@ export async function waiveInvoiceAction(input: unknown): Promise<ActionResult> 
   try {
     const user = await requirePermission("financeiro.faturamento.dispensar");
     const data = z.object({ billingId: id("Cobrança"), reason }).parse(input);
-    const billing = await assertBillingAccess(user, data.billingId);
+    const billing = await assertBillingAccess(user, data.billingId, "financeiro.faturamento");
     await waiveBillingInvoice(billing.id, data.reason, actorOf(user));
     revalidateInvoicing(billing.clientId, billing.contractId);
     return { ok: true, data: undefined };
@@ -107,7 +107,7 @@ export async function restoreInvoiceAction(input: unknown): Promise<ActionResult
   try {
     const user = await requirePermission("financeiro.faturamento.dispensar");
     const data = z.object({ billingId: id("Cobrança") }).parse(input);
-    const billing = await assertBillingAccess(user, data.billingId);
+    const billing = await assertBillingAccess(user, data.billingId, "financeiro.faturamento");
     await restoreBillingInvoice(billing.id, actorOf(user));
     revalidateInvoicing(billing.clientId, billing.contractId);
     return { ok: true, data: undefined };
@@ -126,6 +126,7 @@ export async function invoiceMessageDraftAction(input: unknown): Promise<
 > {
   try {
     const user = await requirePermission("financeiro.faturamento.enviar");
+    if (!can(user, "financeiro.valores.ver")) throw new PermissionError("Enviar a nota exige ver os valores (a mensagem leva o valor da nota).", "financeiro.valores.ver");
     const data = z.object({ invoiceId: id("Nota") }).parse(input);
     await assertInvoiceAccess(user, data.invoiceId);
     return { ok: true, data: await invoiceMessageDraft(data.invoiceId) };
@@ -137,6 +138,7 @@ export async function invoiceMessageDraftAction(input: unknown): Promise<
 export async function sendInvoiceAction(input: unknown): Promise<ActionResult<{ results: InvoiceSendResult[]; contactName: string }>> {
   try {
     const user = await requirePermission("financeiro.faturamento.enviar");
+    if (!can(user, "financeiro.valores.ver")) throw new PermissionError("Enviar a nota exige ver os valores (a mensagem leva o valor da nota).", "financeiro.valores.ver");
     const data = z
       .object({
         invoiceId: id("Nota"),
@@ -205,7 +207,10 @@ const fiscalSettingsSchema = z.object({
     servico: z.enum(INVOICE_RULES),
   }),
   moment: z.enum(["vencimento", "pagamento"]),
-  leadDays: z.coerce.number().int("Dias inteiros").min(0, "Mínimo 0 dias").max(60, "Máximo 60 dias"),
+  leadDays: z
+    .union([z.number(), z.string().trim().min(1, "Informe os dias antes do vencimento")])
+    .transform((v) => Number(v))
+    .pipe(z.number({ message: "Dias inválidos" }).int("Dias inteiros").min(0, "Mínimo 0 dias").max(60, "Máximo 60 dias")),
   since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data de início inválida"),
   messageTemplate: optText(1000),
 });
