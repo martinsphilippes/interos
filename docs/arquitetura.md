@@ -331,6 +331,45 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   vencimento e série; relatório `contas_a_pagar` (competência, status derivado "vencido", CSV/XLSX/PDF) e card
   "Fluxo de caixa simplificado" (cobranças abertas/vencidas × títulos abertos por mês de vencimento, só dados reais).
 
+## Faturamento — notas fiscais das cobranças (fase 1, `src/server/finance/invoices.ts`, `/financeiro/faturamento`)
+
+- **Hoje a nota é emitida fora** (emissor da prefeitura/SEFAZ/ERP) e **registrada no INTEROS**; a emissão automática por
+  um emissor (Focus NFe, NFE.io…) é a fase seguinte e entra como provedor, sem mudar a fila.
+- **Configuração fiscal** (setting `fiscal`, `src/domain/fiscal.ts#normalizeFiscalSettings`): controle ligado/desligado,
+  regime, inscrições, CNAE, códigos padrão (serviço/ISS para NFS-e; NCM/CFOP para NF-e), **nota por tipo de cobrança**
+  (`rules`: adesão/mensalidade/hardware/serviço → `nfse` | `nfe` | `nenhuma`; padrão NFS-e para serviço/software e
+  NF-e para hardware), **momento** em que a cobrança entra na fila (`vencimento` com `leadDays` dias antes, ou
+  `pagamento`) e `since` (cobranças com vencimento anterior não entram — o passado não inunda a fila). Sem nada salvo,
+  valem os padrões e a tela avisa. **Perfil fiscal do produto** (`Product.fiscal`: natureza software/equipamento/serviço,
+  códigos e descrição na nota), editado na mesma aba e substituído inteiro (campo apagado some).
+- **Situação da cobrança** (`invoiceQueueState`, calculada na leitura): `a_faturar`, `aguardando`, `emitida`, `enviada`,
+  `dispensada`, `sem_nota`, `fora`. A cobrança guarda a nota vigente (`invoiceId`, `invoiceNumber`, `invoiceKind`,
+  `invoiceSentAt`) e a dispensa (`invoiceWaived`, com motivo).
+- **Dados para emitir** (`getInvoiceIssueData`): tomador (dados de faturamento mesclados cliente + venda), itens da
+  cobrança a partir dos itens do contrato com desconto (`invoiceItems`: valor do tipo da cobrança; proporcionais quando a
+  cobrança difere da soma — reajuste, parcela — e a soma bate com a cobrança), códigos do produto ou padrão, e as
+  pendências que travam a emissão. Botões de copiar na tela.
+- **Registrar** (`POST /api/financeiro/notas`, multipart — PDF até 3 MB, XML até 1 MB; chave
+  `financeiro.faturamento.registrar` + ver valores): número, série, emissão (não futura), chave (NF-e, 44 dígitos com DV)
+  ou código de verificação (NFS-e), valor, PDF/XML (conferidos: `%PDF-` e `<`). O XML da NF-e preenche número/série/chave
+  e é conferido contra o informado. Duplicidade (mesmo tipo+série+número sem zeros à esquerda, ou mesma chave) recusada,
+  salvo nota cancelada. A cobrança recebe a nota numa **transação** (duas notas ao mesmo tempo: só uma entra; os
+  arquivos da outra são apagados). Arquivos em `invoice_files` (base64), servidos por
+  `/api/financeiro/notas/[id]/[pdf|xml]` (escopo da cobrança).
+- **Cancelar** (motivo): a nota fica `cancelada` no histórico e a cobrança volta para "A faturar". **Dispensar**
+  (motivo) tira da fila; **desfazer** devolve.
+- **Enviar** (`sendInvoice`): e-mail/WhatsApp pelo `sendOrRecord` (sem canal conectado = envio manual registrado);
+  texto da configuração (`{cliente}`, `{nota}`, `{valor}`, `{cobranca}`, `{linkPortal}`); `{linkPortal}` cria link do
+  Portal do Cliente. Marca `sentAt` na nota e `invoiceSentAt` na cobrança.
+- **Portal do Cliente**: a cobrança com nota emitida mostra "Nota fiscal · NF-e nº…" com PDF/XML pela rota
+  `/portal/[token]/nota/[chave]/[pdf|xml]` (mesmo token, sem registrar acesso, só nota emitida da própria cobrança; a
+  chave posicional vem de `orderPortalBillings`, a mesma ordem da página).
+- **Permissões** (tela `financeiro.faturamento`, item de menu depois de Cobranças): seção `configuracao.ver`; ações
+  `registrar`, `enviar`, `cancelar`, `dispensar`, `dados.consultar`, `arquivos.baixar` e `configuracao.editar`
+  (diretoria/admin ou gestor do Financeiro). Escopo pelos donos do contrato (`assertBillingAccess`).
+- Eventos: `invoice.issued|cancelled|sent|waived|waiver_removed`, `fiscal.settings_updated|product_updated`.
+- Coleções: `invoices`, `invoice_files` (migration `20261029000000_faturamento_notas.sql`).
+
 ## Cadastros financeiros (etapa CP/CR 1, `src/server/finance-registry/*`, `/financeiro/cadastros`)
 - **Coleções novas** (regra `if false`, só servidor): `financial_accounts` (conta financeira: nome, tipo
   corrente|poupanca|cartao|dinheiro|investimento|outro, `initialBalance`, `currency` "BRL", banco/agência/conta só

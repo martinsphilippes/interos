@@ -152,6 +152,8 @@ const PREFIX_CATEGORY: Record<string, EventCategory> = {
   finance_category: "financeiro",
   finance_registry: "financeiro",
   readjustment_index: "financeiro",
+  invoice: "financeiro",
+  fiscal: "financeiro",
 };
 
 export function eventCategory(type: EventType | string): EventCategory {
@@ -256,6 +258,9 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "finance_category.bulk_updated": Tags,
   "finance_registry.imported": Download,
   "readjustment_index.created": TrendingUp,
+  "invoice.issued": FileText,
+  "invoice.cancelled": FileText,
+  "invoice.sent": FileText,
   "readjustment_index.updated": TrendingUp,
   "readjustment_index.archived": Archive,
   "readjustment_index.reactivated": ArchiveRestore,
@@ -316,6 +321,9 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "permissions.blocked": "danger",
   "permissions.updated": "brand",
   "billing.cancelled": "muted",
+  "invoice.issued": "success",
+  "invoice.cancelled": "muted",
+  "invoice.sent": "brand",
   "contract.pendency_resolved": "success",
   "contract.updated": "brand",
   "portal.link_created": "brand",

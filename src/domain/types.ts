@@ -143,6 +143,10 @@ export const COLLECTIONS = {
   signedFiles: "signed_files",
   /** Índices de reajuste (IPCA, IGP-M…): cadastro + variação mensal de cada mês (buscada no Banco Central/IPEA). */
   readjustmentIndices: "readjustment_indices",
+  /** Notas fiscais (NFS-e/NF-e) registradas para as cobranças: número, chave, envio e cancelamento. */
+  invoices: "invoices",
+  /** PDF e XML das notas fiscais, guardados no INTEROS (base64). */
+  invoiceFiles: "invoice_files",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -370,8 +374,29 @@ export interface Product extends BaseEntity {
   implementationTemplateId?: string;
   /** Prazo padrão de implantação em dias úteis. */
   implementationDays?: number;
+  /** Perfil fiscal (Financeiro › Faturamento › Configuração fiscal): códigos usados para emitir a nota. */
+  fiscal?: ProductFiscalProfile;
   active: boolean;
   order: number;
+}
+
+/** Natureza do que o produto entrega: decide que códigos da nota fazem sentido (serviço x mercadoria). */
+export type ProductFiscalNature = "software" | "equipamento" | "servico";
+
+export interface ProductFiscalProfile {
+  nature: ProductFiscalNature;
+  /** Código do serviço na lista da LC 116 / município (NFS-e), ex.: "1.05". */
+  serviceCode?: string;
+  /** Alíquota de ISS (%), quando diferente do padrão. */
+  issRate?: number;
+  /** NCM da mercadoria (NF-e), 8 dígitos. */
+  ncm?: string;
+  /** CFOP da venda (NF-e), ex.: "5102". */
+  cfop?: string;
+  /** Texto que vai na descrição do item da nota (se vazio, o nome do produto). */
+  invoiceDescription?: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1126,6 +1151,60 @@ export interface Billing extends BaseEntity {
   cancelledAt?: string;
   cancelledBy?: string;
   cancelReason?: string;
+  // Faturamento — nota fiscal da cobrança (a nota vigente; cancelada some daqui e a cobrança volta à fila).
+  invoiceId?: string;
+  invoiceNumber?: string;
+  invoiceKind?: InvoiceKind;
+  invoiceSentAt?: string;
+  /** Dispensada de nota (ex.: nota emitida fora do INTEROS antes do controle, cortesia): sai da fila. */
+  invoiceWaived?: { reason: string; at: string; by: string; byName?: string };
+}
+
+/** Tipo de nota: de serviço (municipal), de produto/mercadoria (estadual) ou nenhuma. */
+export type InvoiceKind = "nfse" | "nfe";
+
+/**
+ * Nota fiscal de uma cobrança. Hoje a nota é emitida fora (emissor da prefeitura/SEFAZ/ERP) e REGISTRADA aqui com
+ * número, chave e arquivos; o envio ao cliente e o controle (a faturar → emitida → enviada) ficam no INTEROS.
+ * Cancelada não some: fica no histórico e a cobrança volta a "a faturar".
+ */
+export interface Invoice extends BaseEntity {
+  clientId: string;
+  contractId: string;
+  billingId: string;
+  kind: InvoiceKind;
+  number: string;
+  series?: string;
+  /** Data de emissão (AAAA-MM-DD). */
+  issuedAt: string;
+  /** Chave de acesso da NF-e (44 dígitos). */
+  accessKey?: string;
+  /** Código de verificação da NFS-e. */
+  verificationCode?: string;
+  amount: number;
+  status: "emitida" | "cancelada";
+  pdfFileId?: string;
+  pdfFileName?: string;
+  xmlFileId?: string;
+  xmlFileName?: string;
+  notes?: string;
+  sentAt?: string;
+  sentBy?: string;
+  sentChannels?: ("email" | "whatsapp")[];
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+  createdBy: string;
+  createdByName?: string;
+}
+
+export interface InvoiceFile extends BaseEntity {
+  invoiceId: string;
+  kind: "pdf" | "xml";
+  fileName: string;
+  mimeType: string;
+  size: number;
+  contentBase64: string;
 }
 
 /**

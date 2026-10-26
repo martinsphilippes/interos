@@ -46,6 +46,17 @@ export function BoletoBadge({ billing, size = "sm" }: { billing: Pick<Billing, "
   );
 }
 
+/** Nota fiscal registrada para a cobrança (Faturamento): número e se já foi enviada ao cliente. */
+export function InvoiceBadge({ billing, size = "sm" }: { billing: Partial<Pick<Billing, "invoiceNumber" | "invoiceKind" | "invoiceSentAt">>; size?: "sm" | "md" }) {
+  if (!billing.invoiceNumber) return null;
+  const kind = billing.invoiceKind === "nfe" ? "NF-e" : "NFS-e";
+  return (
+    <Badge variant={billing.invoiceSentAt ? "success" : "info"} size={size} title={billing.invoiceSentAt ? "Nota enviada ao cliente" : "Nota emitida, ainda não enviada ao cliente"}>
+      {kind} {billing.invoiceNumber}
+    </Badge>
+  );
+}
+
 /** Registrar pagamento: data, valor, forma e comprovante (link). */
 export function PaymentDialog({ billing, open, onOpenChange }: { billing: BillingLite; open: boolean; onOpenChange: (open: boolean) => void }) {
   const id = React.useId();

@@ -115,6 +115,21 @@ Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada 
   (tarefa "Cobrar/negociar — ligação" ao Financeiro). Cada marco roda uma única vez por cobrança; contrato com
   pendência pausa a régua; o processo humano "cobrança inadimplente" continua para o escalonamento.
 
+## Faturamento: notas fiscais (fase 1)
+
+- Quem emite a nota é o Financeiro (ou o Hércules). A nota é emitida no emissor da prefeitura/SEFAZ e **registrada** no
+  INTEROS em **Financeiro › Faturamento**; a emissão automática vem depois.
+- Tudo é configurável na aba **Configuração fiscal** (o sistema não pergunta de novo): que nota cada tipo de cobrança
+  pede — NFS-e, NF-e ou nenhuma (padrão: software/serviço com NFS-e, hardware com NF-e) —, quando a cobrança entra na
+  fila «A faturar» (dias antes do vencimento ou depois do pagamento), regime e inscrições, códigos padrão e o perfil
+  fiscal de cada produto.
+- Fila «A faturar» → registrar a nota (número, chave, PDF/XML; os dados do tomador e dos itens já vêm prontos para
+  copiar) → enviar ao cliente (e-mail/WhatsApp; PDF/XML no Portal do Cliente). Nota errada: cancelar (a cobrança volta à
+  fila). Cobrança sem nota: dispensar com motivo.
+- Próximas fases (combinadas): estoque (estoque próprio e compra sob demanda, com reserva na venda), Compras sob o
+  Administrativo (aprovação opcional acima de um valor configurável), entrega por técnico ou transportadora liberada após
+  a nota e/ou o pagamento (configurável), e a emissão automática da nota.
+
 ## Aditivos, renovação e Contas a Pagar geral (etapa 5)
 - **Aditivo no mesmo contrato**: depois da assinatura, toda mudança de itens, condições, reajuste ou renovação entra
   como aditivo (rascunho → assinatura do cliente, quando exigida → aplicação pelo Financeiro). O contrato original

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { CalendarClock, ExternalLink, FileSignature, LinkIcon, MessageCircle, Receipt, ShieldCheck } from "lucide-react";
+import { CalendarClock, Download, ExternalLink, FileSignature, FileText, LinkIcon, MessageCircle, Receipt, ShieldCheck } from "lucide-react";
 import { loadPortalForToken, type PortalPageData } from "@/server/portal/service";
 import type { PortalBillingView, PortalContractView } from "@/server/portal/content";
 import { PORTAL_INVALID_MESSAGE } from "@/domain/portal";
@@ -75,7 +75,7 @@ function secondCopyHref(base: string, clientName: string, b: PortalBillingView):
   return `${base}?text=${encodeURIComponent(text)}`;
 }
 
-function BillingCard({ billing: b, clientName, secondCopyWhatsapp }: { billing: PortalBillingView; clientName: string; secondCopyWhatsapp: string | null }) {
+function BillingCard({ billing: b, clientName, secondCopyWhatsapp, token }: { billing: PortalBillingView; clientName: string; secondCopyWhatsapp: string | null; token: string }) {
   const open = b.status !== "paga";
   const hasPayment = Boolean(b.linhaDigitavel || b.pdfUrl || b.paymentUrl || b.pixCopiaECola);
   return (
@@ -126,6 +126,23 @@ function BillingCard({ billing: b, clientName, secondCopyWhatsapp }: { billing: 
             {b.pixCopiaECola}
           </p>
           <CopyButton value={b.pixCopiaECola} label="Copiar código PIX" testId="portal-copy-pix" className="h-11 w-full sm:w-auto md:h-9" />
+        </div>
+      ) : null}
+      {b.invoice ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-muted p-3" data-testid="portal-invoice">
+          <p className="text-xs font-medium text-muted">Nota fiscal · {b.invoice.label}</p>
+          <div className="flex flex-wrap gap-2">
+            {b.invoice.hasPdf ? (
+              <a href={`/portal/${encodeURIComponent(token)}/nota/${b.key}/pdf`} target="_blank" rel="noreferrer noopener" className={buttonVariants({ variant: "outline", className: "h-11 w-full sm:w-auto md:h-9" })}>
+                <FileText /> Abrir nota (PDF)
+              </a>
+            ) : null}
+            {b.invoice.hasXml ? (
+              <a href={`/portal/${encodeURIComponent(token)}/nota/${b.key}/xml`} className={buttonVariants({ variant: "outline", className: "h-11 w-full sm:w-auto md:h-9" })}>
+                <Download /> Baixar XML
+              </a>
+            ) : null}
+          </div>
         </div>
       ) : null}
       {open && (b.pdfUrl || b.paymentUrl) ? (
@@ -194,7 +211,7 @@ function ContractBlock({ contract: c, companyName }: { contract: PortalContractV
   );
 }
 
-function Portal({ data }: { data: PortalPageData }) {
+function Portal({ data, token }: { data: PortalPageData; token: string }) {
   const { content } = data;
   const pending = content.billings.filter((b) => b.status !== "paga");
   const paid = content.billings.filter((b) => b.status === "paga");
@@ -231,7 +248,7 @@ function Portal({ data }: { data: PortalPageData }) {
             {pending.length > 0 ? (
               <ul className="flex flex-col gap-3">
                 {pending.map((b) => (
-                  <BillingCard key={b.key} billing={b} clientName={content.clientName} secondCopyWhatsapp={data.secondCopyWhatsapp} />
+                  <BillingCard key={b.key} billing={b} clientName={content.clientName} secondCopyWhatsapp={data.secondCopyWhatsapp} token={token} />
                 ))}
               </ul>
             ) : (
@@ -242,7 +259,7 @@ function Portal({ data }: { data: PortalPageData }) {
                 <h3 className="mt-2 text-sm font-semibold text-muted">Pagas recentemente</h3>
                 <ul className="flex flex-col gap-3">
                   {paid.map((b) => (
-                    <BillingCard key={b.key} billing={b} clientName={content.clientName} secondCopyWhatsapp={data.secondCopyWhatsapp} />
+                    <BillingCard key={b.key} billing={b} clientName={content.clientName} secondCopyWhatsapp={data.secondCopyWhatsapp} token={token} />
                   ))}
                 </ul>
               </>
@@ -281,5 +298,5 @@ export default async function PortalPage({ params }: { params: Params }) {
     console.error("[portal] falha ao carregar o portal", error);
     data = null;
   }
-  return <Shell>{data ? <Portal data={data} /> : <Invalid />}</Shell>;
+  return <Shell>{data ? <Portal data={data} token={token} /> : <Invalid />}</Shell>;
 }

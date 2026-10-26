@@ -8,7 +8,7 @@
  * (as cobranças levam uma chave posicional opaca).
  */
 import { dateKey } from "@/lib/format";
-import type { Address, Billing, Client, Contract, ContractAmendment, ContractSignerEntry } from "@/domain/types";
+import type { Address, Billing, Client, Contract, ContractAmendment, ContractSignerEntry, Invoice } from "@/domain/types";
 import { buildContractSummary, type ContractSummaryData } from "@/components/finance/contract-summary";
 
 export const PORTAL_BILLING_TYPE_LABELS: Record<Billing["type"], string> = { setup: "Adesão", mensalidade: "Mensalidade", hardware: "Hardware", servico: "Serviço" };
@@ -36,6 +36,8 @@ export interface PortalBillingView {
   /** Link de pagamento do provedor (quando existe e não há PDF). */
   paymentUrl?: string;
   pixCopiaECola?: string;
+  /** Nota fiscal emitida da cobrança (PDF/XML baixados pela rota do portal com a mesma chave posicional). */
+  invoice?: { label: string; hasPdf: boolean; hasXml: boolean };
 }
 
 /** Dados do documento do contrato assinado, sem campos internos (ids, vendedor, observações, evidências, e-mails). */
@@ -82,6 +84,8 @@ export interface PortalContentInput {
   sentAtByContract?: Record<string, string | undefined>;
   /** Hoje (AAAA-MM-DD, São Paulo). */
   today: string;
+  /** Notas fiscais do cliente (só as emitidas da cobrança aparecem). */
+  invoices?: Invoice[];
 }
 
 /** Documento gerado e assinado por todos os signatários. */
@@ -185,7 +189,13 @@ function clientSafeAmendment(a: ContractAmendment): ContractAmendment {
   return { number: a.number, kind: a.kind, status: a.status, effectiveFrom: a.effectiveFrom, appliedAt: a.appliedAt, appliedVersion: a.appliedVersion } as ContractAmendment;
 }
 
-function billingView(b: Billing, status: PortalBillingStatus, contractNumber: string, key: string): PortalBillingView {
+function invoiceView(b: Billing, invoices: Map<string, Invoice>): PortalBillingView["invoice"] {
+  const inv = b.invoiceId ? invoices.get(b.invoiceId) : undefined;
+  if (!inv || inv.status !== "emitida" || inv.billingId !== b.id) return undefined;
+  return { label: `${inv.kind === "nfe" ? "NF-e" : "NFS-e"} nº ${inv.number}${inv.series ? `/${inv.series}` : ""}`, hasPdf: Boolean(inv.pdfFileId), hasXml: Boolean(inv.xmlFileId) };
+}
+
+function billingView(b: Billing, status: PortalBillingStatus, contractNumber: string, key: string, invoices: Map<string, Invoice> = new Map()): PortalBillingView {
   const open = status !== "paga";
   const linha = open ? b.boleto?.linhaDigitavel?.trim() || undefined : undefined;
   const pdf = open ? b.boleto?.pdfUrl?.trim() || undefined : undefined;
@@ -205,7 +215,25 @@ function billingView(b: Billing, status: PortalBillingStatus, contractNumber: st
     pdfUrl: pdf,
     paymentUrl: open && !pdf ? b.paymentUrl?.trim() || undefined : undefined,
     pixCopiaECola: open ? b.pix?.copiaECola?.trim() || undefined : undefined,
+    invoice: invoiceView(b, invoices),
   };
+}
+
+/**
+ * Cobranças que o portal mostra, na ordem das chaves posicionais (b1, b2…): em aberto/vencidas por vencimento e as
+ * pagas mais recentes. Única fonte da ordem — a página e a rota de download da nota usam a mesma.
+ */
+export function orderPortalBillings(billings: readonly Billing[], clientId: string, today: string): { b: Billing; status: PortalBillingStatus; key: string }[] {
+  const live = billings
+    .filter((b) => b.clientId === clientId)
+    .map((b) => ({ b, status: portalBillingStatus(b, today) }))
+    .filter((x): x is { b: Billing; status: PortalBillingStatus } => x.status !== null);
+  const pending = live.filter((x) => x.status !== "paga").sort((a, b) => a.b.dueDate.localeCompare(b.b.dueDate) || (a.b.installment ?? 0) - (b.b.installment ?? 0));
+  const paid = live
+    .filter((x) => x.status === "paga")
+    .sort((a, b) => (b.b.paidAt ?? b.b.dueDate).localeCompare(a.b.paidAt ?? a.b.dueDate))
+    .slice(0, PORTAL_PAID_LIMIT);
+  return [...pending, ...paid].map((x, i) => ({ ...x, key: `b${i + 1}` }));
 }
 
 /** Conteúdo do portal (somente leitura) do cliente dono do link. */
@@ -245,16 +273,8 @@ export function buildPortalContent(input: PortalContentInput): PortalContent {
 
   // Cobranças do cliente (de qualquer contrato não cancelado), sem as canceladas: em aberto/vencidas todas,
   // pagas só as mais recentes.
-  const live = input.billings
-    .filter((b) => b.clientId === client.id)
-    .map((b) => ({ b, status: portalBillingStatus(b, today) }))
-    .filter((x): x is { b: Billing; status: PortalBillingStatus } => x.status !== null);
-  const pending = live.filter((x) => x.status !== "paga").sort((a, b) => a.b.dueDate.localeCompare(b.b.dueDate) || (a.b.installment ?? 0) - (b.b.installment ?? 0));
-  const paid = live
-    .filter((x) => x.status === "paga")
-    .sort((a, b) => (b.b.paidAt ?? b.b.dueDate).localeCompare(a.b.paidAt ?? a.b.dueDate))
-    .slice(0, PORTAL_PAID_LIMIT);
-  const billings = [...pending, ...paid].map((x, i) => billingView(x.b, x.status, numberOf.get(x.b.contractId) ?? "", `b${i + 1}`));
+  const invoices = new Map((input.invoices ?? []).filter((i) => i.clientId === client.id).map((i) => [i.id, i]));
+  const billings = orderPortalBillings(input.billings, client.id, today).map((x) => billingView(x.b, x.status, numberOf.get(x.b.contractId) ?? "", x.key, invoices));
 
   return {
     clientName: client.tradeName,

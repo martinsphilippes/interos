@@ -186,6 +186,13 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "readjustment_index.values_updated": "Índice de reajuste atualizado (mês novo publicado)",
   "contract.readjusted": "Contrato reajustado (reajuste anual)",
   "contract.readjustment_skipped": "Reajuste anual sem aumento ou dispensado",
+  "invoice.issued": "Nota fiscal registrada",
+  "invoice.cancelled": "Nota fiscal cancelada",
+  "invoice.sent": "Nota fiscal enviada ao cliente",
+  "invoice.waived": "Cobrança dispensada de nota fiscal",
+  "invoice.waiver_removed": "Cobrança volta a exigir nota fiscal",
+  "fiscal.settings_updated": "Configuração fiscal alterada",
+  "fiscal.product_updated": "Perfil fiscal do produto alterado",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -241,6 +248,8 @@ const DOMAIN_LABELS: Record<string, string> = {
   finance_category: "Financeiro",
   finance_registry: "Financeiro",
   readjustment_index: "Financeiro",
+  invoice: "Financeiro",
+  fiscal: "Financeiro",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",
