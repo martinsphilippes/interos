@@ -130,6 +130,24 @@ Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada 
   Administrativo (aprovação opcional acima de um valor configurável), entrega por técnico ou transportadora liberada após
   a nota e/ou o pagamento (configurável), e a emissão automática da nota.
 
+## Estoque de equipamentos (fase 2)
+
+- Fica em **Operação › Estoque**, sob responsabilidade do **Administrativo** (configurável na aba Configuração); o
+  gestor do departamento responsável recebe os avisos.
+- Cada **item** tem fabricante, modelo, se exige **número de série**, **origem** e **estoque mínimo**, e é vinculado aos
+  **produtos** que o usam (ex.: Kit CFTV = 4 câmeras + 1 DVR). Origem: **estoque próprio** (reserva o que há e aponta a
+  falta), **estoque e, se faltar, compra**, ou **sob demanda** (compra para cada venda).
+- **Contrato assinado por todos** → os equipamentos são **reservados** automaticamente; o que faltar é avisado (vira
+  pedido de compra na fase 3). **Entrada** com custo recalcula o **custo médio** e separa para as reservas que esperavam.
+- **Saída** para o contrato (por número de série: o sistema sabe com qual cliente cada unidade está), **devolução** e
+  **ajuste** com motivo. **Contrato cancelado** → o separado volta ao disponível e o que já saiu vira **devolução
+  pendente**.
+- Regras fixas: disponível = em estoque − reservado; **nunca negativo**; ninguém usa a unidade reservada para outro
+  contrato; tudo fica no histórico (quem, quando, quanto e o saldo depois).
+- Próximas fases: **Compras** (pedido a partir da falta e do mínimo; aprovação opcional acima de um valor configurável;
+  recebimento dá entrada no estoque), **Entrega** (técnico ou transportadora; liberada após a nota e/ou o pagamento,
+  configurável) e a emissão automática da nota.
+
 ## Aditivos, renovação e Contas a Pagar geral (etapa 5)
 - **Aditivo no mesmo contrato**: depois da assinatura, toda mudança de itens, condições, reajuste ou renovação entra
   como aditivo (rascunho → assinatura do cliente, quando exigida → aplicação pelo Financeiro). O contrato original

@@ -488,6 +488,17 @@ export const EVENT_TYPES = [
   "invoice.waiver_removed",
   "fiscal.settings_updated",
   "fiscal.product_updated",
+  // estoque de equipamentos
+  "stock.item_created",
+  "stock.item_updated",
+  "stock.entry",
+  "stock.exit",
+  "stock.returned",
+  "stock.adjusted",
+  "stock.reserved",
+  "stock.reservation_released",
+  "stock.low",
+  "stock.settings_updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

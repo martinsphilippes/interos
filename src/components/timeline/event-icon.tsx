@@ -154,6 +154,7 @@ const PREFIX_CATEGORY: Record<string, EventCategory> = {
   readjustment_index: "financeiro",
   invoice: "financeiro",
   fiscal: "financeiro",
+  stock: "implantacao",
 };
 
 export function eventCategory(type: EventType | string): EventCategory {
@@ -261,6 +262,11 @@ const TYPE_ICON: Partial<Record<EventType, LucideIcon>> = {
   "invoice.issued": FileText,
   "invoice.cancelled": FileText,
   "invoice.sent": FileText,
+  "stock.entry": Package,
+  "stock.exit": Package,
+  "stock.returned": Package,
+  "stock.reserved": Package,
+  "stock.reservation_released": Package,
   "readjustment_index.updated": TrendingUp,
   "readjustment_index.archived": Archive,
   "readjustment_index.reactivated": ArchiveRestore,
@@ -324,6 +330,12 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "invoice.issued": "success",
   "invoice.cancelled": "muted",
   "invoice.sent": "brand",
+  "stock.entry": "success",
+  "stock.exit": "brand",
+  "stock.returned": "brand",
+  "stock.reserved": "brand",
+  "stock.reservation_released": "muted",
+  "stock.low": "warning",
   "contract.pendency_resolved": "success",
   "contract.updated": "brand",
   "portal.link_created": "brand",

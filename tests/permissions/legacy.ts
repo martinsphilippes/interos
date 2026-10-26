@@ -35,10 +35,20 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "financeiro.faturamento.dados.consultar",
   "financeiro.faturamento.arquivos.baixar",
   "financeiro.faturamento.configuracao.editar",
+  // Estoque de equipamentos: tela nova de Operação (item novo no menu, depois de SLA).
+  "operacao.estoque.ver",
+  "operacao.estoque.custos.ver",
+  "operacao.estoque.configuracao.ver",
+  "operacao.estoque.itens.editar",
+  "operacao.estoque.entrada.registrar",
+  "operacao.estoque.saida.registrar",
+  "operacao.estoque.reservas.gerenciar",
+  "operacao.estoque.ajustar",
+  "operacao.estoque.configuracao.editar",
 ];
 
 /** Rotas de telas novas em módulos antigos (itens de menu criados depois do T0). */
-export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento"];
+export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento", "/estoque"];
 
 /** A chave (ou tela) pertence a um módulo criado depois do T0 (ou é uma chave nova)? */
 export function isAfterT0Key(key: string): boolean {
