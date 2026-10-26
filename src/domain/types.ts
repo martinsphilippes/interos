@@ -558,7 +558,7 @@ export interface OpportunityClosing {
 }
 
 /**
- * Reajuste anual do contrato (na data-base = aniversário da vigência): nenhum, percentual fixo ou índice do cadastro
+ * Reajuste anual do contrato (na data-base = aniversário da assinatura do contrato): nenhum, percentual fixo ou índice do cadastro
  * «Índices de reajuste» (acumulado de 12 meses buscado no Banco Central/IPEA).
  */
 export interface ContractReadjustment {

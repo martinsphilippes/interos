@@ -163,9 +163,14 @@ export interface CreateAmendmentOptions {
  * Data-base que a renovação decide: a mais recente ainda não decidida que cai do fim atual da vigência (inclusive) até
  * o mês da vigência da renovação. Data-base dentro da vigência atual é do aditivo de reajuste próprio (varredura
  * `reajustes_contratos`), vigente nela. Contrato antigo sem início registrado: a própria renovação é a data-base.
+ * Como a data-base conta da assinatura (que costuma vir dias antes da liberação, onde começa a vigência), vale também a
+ * data-base ainda não decidida dos últimos 60 dias da vigência atual (`RENEWAL_ANNIVERSARY_WINDOW_DAYS`).
  * Contrato com regra decide as datas-base na ordem: uma anterior ainda pendente (desde o acompanhamento) segura a da
  * renovação (`blockedBy`), que fica para a rotina depois dela.
  */
+/** A renovação decide também a data-base que cai nestes últimos dias da vigência atual (assinatura antes da liberação). */
+const RENEWAL_ANNIVERSARY_WINDOW_DAYS = 60;
+
 function renewalAnniversary(contract: Contract, covered: readonly string[], effectiveFrom: string, explicit: boolean): { anniversary: string | null; blockedBy?: string; waiting?: string } {
   const baseDate = readjustmentBaseDate(contract);
   if (!baseDate) return { anniversary: covered.some((c) => c.slice(0, 7) === effectiveFrom.slice(0, 7)) ? null : effectiveFrom };
@@ -173,7 +178,7 @@ function renewalAnniversary(contract: Contract, covered: readonly string[], effe
   const base = { startDate: baseDate, covered, today: monthEnd, gaps: contract.readjustmentGaps };
   // Os períodos sem regra valem para a regra do contrato; a escolha do CS na renovação vale para a data-base dela.
   const own = readjustmentSchedule(explicit ? { ...base, gaps: undefined } : base).due;
-  if (!own || (contract.endDate && own.anniversary < dateKey(contract.endDate))) return { anniversary: null };
+  if (!own || (contract.endDate && own.anniversary < addDaysKey(dateKey(contract.endDate), -RENEWAL_ANNIVERSARY_WINDOW_DAYS))) return { anniversary: null };
   // Contrato com regra (ou que já teve: períodos sem regra registrados) decide na ordem.
   if (hasReadjustmentRule(contract) || (contract.readjustmentGaps?.length ?? 0) > 0) {
     const first = readjustmentSchedule({ ...base, floor: readjustmentFloor(contract) }).due;

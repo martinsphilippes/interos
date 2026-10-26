@@ -90,7 +90,7 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   reajustes_contratos: {
     label: "Reajuste anual dos contratos",
     description:
-      "Financeiro: na data-base (aniversário da vigência) de cada contrato liberado com reajuste, aplica o percentual fixo ou o acumulado de 12 meses do índice por aditivo de reajuste (cobranças em aberto refeitas). Índice ainda não publicado: espera até 45 dias; depois disso, tarefa ao Financeiro. Prévia ao Financeiro e ao CS 30 dias antes. A data-base que coincide com o fim da vigência fica com a renovação.",
+      "Financeiro: na data-base (aniversário da assinatura; sem assinatura registrada, do início da vigência) de cada contrato liberado com reajuste, aplica o percentual fixo ou o acumulado de 12 meses do índice por aditivo de reajuste (cobranças em aberto refeitas). Índice ainda não publicado: espera até 45 dias; depois disso, tarefa ao Financeiro. Prévia ao Financeiro e ao CS 30 dias antes. A data-base que coincide com o fim da vigência fica com a renovação.",
     schedule: "diaria",
   },
   saude_clientes: { label: "Saúde dos clientes", description: "Serviço de CS: recalcula o health score de toda a carteira.", schedule: "diaria" },

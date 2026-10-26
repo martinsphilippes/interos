@@ -1,6 +1,6 @@
 /**
  * Reajuste anual dos contratos — regras PURAS (sem banco e sem React): índices padrão e suas fontes, competências
- * (AAAA-MM), acumulado de 12 meses, datas-base (aniversário da vigência) e o cálculo do reajuste de uma data-base.
+ * (AAAA-MM), acumulado de 12 meses, datas-base (aniversário da assinatura) e o cálculo do reajuste de uma data-base.
  * Usado pelo cadastro de índices (src/server/finance-registry/indices.ts), pelo reajuste automático
  * (src/server/finance/readjustments.ts), pelos aditivos e pelas telas.
  *

@@ -6,13 +6,24 @@ import type { Contract } from "@/domain/types";
  * assinaram); contrato sem assinatura registrada no sistema (antigo, ou liberado sem assinatura), o início da vigência.
  * As datas-base são os aniversários dela (+12, 24, 36… meses).
  */
-export function readjustmentBaseDate(contract: Pick<Contract, "signedAt" | "startDate">): string | null {
-  const value = contract.signedAt || contract.startDate;
+export function readjustmentBaseDate(contract: Pick<Contract, "signedAt" | "startDate" | "signers">): string | null {
+  const value = signatureDate(contract) || contract.startDate;
   return value ? dateKey(value) : null;
 }
 
+/**
+ * Dia da assinatura: o do contrato ou, quando ele não foi gravado (liberado com exceção e assinado depois), a última
+ * assinatura dos signatários — desde que todos tenham assinado.
+ */
+function signatureDate(contract: Pick<Contract, "signedAt" | "signers">): string | undefined {
+  if (contract.signedAt) return contract.signedAt;
+  const signers = contract.signers ?? [];
+  if (signers.length === 0 || !signers.every((s) => s.status === "assinado" && s.signedAt)) return undefined;
+  return signers.map((s) => s.signedAt!).sort().pop();
+}
+
 /** De onde vem a data-base, para a tela: "assinatura" ou "início da vigência". */
-export function readjustmentBaseLabel(contract: Pick<Contract, "signedAt" | "startDate">): "assinatura" | "início da vigência" | null {
-  if (contract.signedAt) return "assinatura";
+export function readjustmentBaseLabel(contract: Pick<Contract, "signedAt" | "startDate" | "signers">): "assinatura" | "início da vigência" | null {
+  if (signatureDate(contract)) return "assinatura";
   return contract.startDate ? "início da vigência" : null;
 }

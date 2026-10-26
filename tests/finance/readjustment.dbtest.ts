@@ -598,6 +598,19 @@ describe("data-base conta da assinatura", () => {
     expect((await getById<Contract>(COLLECTIONS.contracts, c.id))!.monthlyTotal).toBe(1050);
   });
 
+  it("assinado antes da liberação: a renovação do CS decide a data-base que cai pouco antes do fim da vigência", async () => {
+    const signed = addMonthsClamped(daysFrom(TODAY, 15), -12);
+    const anniversary = anniversaryOf(signed, 1);
+    const released = daysFrom(signed, 10);
+    const end = addMonthsClamped(released, 12);
+    const c = await contract("sg3", { termMonths: 12, signedAt: iso(signed), startDate: iso(released), endDate: iso(end), readjustment: { type: "percentual", percent: 5 } });
+    const waived = await createAmendment({ contractId: c.id, effectiveFrom: end, reason: "Renovação sem reajuste", requiresSignature: false, renewal: { months: 12, readjustment: { type: "nenhum" } } }, ACTOR, { source: "renovacao_cs" });
+    expect(waived.readjust).toMatchObject({ anniversary, waived: true });
+    const d = await contract("sg4", { termMonths: 12, signedAt: iso(signed), startDate: iso(released), endDate: iso(end), readjustment: { type: "percentual", percent: 5 } });
+    const conforme = await createAmendment({ contractId: d.id, effectiveFrom: end, reason: "Renovação conforme o contrato", requiresSignature: false, renewal: { months: 12 } }, ACTOR, { source: "renovacao_cs" });
+    expect(conforme.readjust).toMatchObject({ anniversary, percent: 5 });
+  });
+
   it("contrato sem assinatura registrada conta do início da vigência", async () => {
     const { start } = baseFrom(40);
     const c = await contract("sg2", { startDate: iso(start), endDate: iso(addMonthsClamped(start, 24)), readjustment: { type: "percentual", percent: 5 } });

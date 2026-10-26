@@ -117,7 +117,7 @@ export function contractReadjustmentState(contract: Contract, ctx: ReadjustmentC
   const none = { canApply: false, canSkip: false, due: false };
   if (!hasReadjustmentRule(contract)) return { ...none, status: "sem_regra", message: contract.readjustment?.type === "indice" ? "Escolha o índice do reajuste nas condições do contrato" : "Contrato sem reajuste anual" };
   const baseDate = readjustmentBaseDate(contract);
-  if (!baseDate) return { ...none, status: "sem_vigencia", message: "O primeiro reajuste é 12 meses depois da assinatura do contrato" };
+  if (!baseDate || contract.status !== "liberado") return { ...none, status: "sem_vigencia", message: "O primeiro reajuste é 12 meses depois da assinatura do contrato e entra com o contrato liberado" };
   const covered = coveredAnniversaries(contract, ctx.amendments);
   const lead = readjustmentLeadDays(contract);
   const horizon = addDaysKey(ctx.today, lead);
