@@ -112,12 +112,12 @@ export function RenewalActions({ renewalId, status, tradeName, contractNumber, d
               <div className="grid gap-3 sm:grid-cols-2" data-testid="renewal-readjustment">
                 <FormField label="Reajuste" htmlFor={`${id}-rj`} hint={
                     readjustmentType === "contrato"
-                      ? "O reajuste anual do contrato entra se a renovação cai no aniversário da vigência"
+                      ? "O reajuste anual do contrato entra se a renovação cai no aniversário da assinatura"
                       : readjustmentType === "nenhum"
                         ? "Sem aumento nesta data-base (fica registrado; a regra do contrato continua)"
                         : readjustmentType === "indice"
                           ? "Só nesta data-base: acumulado de 12 meses do índice (precisa estar publicado)"
-                          : "Só nesta data-base (a renovação precisa cair no aniversário da vigência)"
+                          : "Só nesta data-base (a renovação precisa cair no aniversário da assinatura)"
                   }>
                   <Select id={`${id}-rj`} value={readjustmentType} onChange={(e) => setReadjustmentType(e.target.value as RenewalReadjustmentChoice)} options={READJUSTMENT_CHOICES} />
                 </FormField>

@@ -44,8 +44,9 @@ export interface ContractReadjustmentCardProps {
   contractId: string;
   /** "IPCA · Banco Central · série 433" / "5% ao ano". */
   rule: string;
-  /** Início da vigência (AAAA-MM-DD): a data-base é o aniversário. */
-  startDate?: string;
+  /** Data que conta o reajuste (AAAA-MM-DD; a data-base é o aniversário) e de onde ela vem. */
+  baseDate?: string;
+  baseLabel?: "assinatura" | "início da vigência";
   state: ContractReadjustmentState;
   log: ContractReadjustmentLogEntry[];
   /** Sem «ver valores do contrato»: mensalidades ocultas. */
@@ -58,7 +59,7 @@ export interface ContractReadjustmentCardProps {
  * Reajuste anual do contrato: regra, data-base, prévia (sempre com o último índice publicado), situação e ações
  * (aplicar agora / não reajustar) e o histórico das datas-base decididas. As actions revalidam permissão e escopo.
  */
-export function ContractReadjustmentCard({ contractId, rule, startDate, state, log, hideValues, indexHref }: ContractReadjustmentCardProps) {
+export function ContractReadjustmentCard({ contractId, rule, baseDate, baseLabel, state, log, hideValues, indexHref }: ContractReadjustmentCardProps) {
   const access = useFinanceAccess();
   const { pending, run } = useFinanceAction();
   const [applying, setApplying] = React.useState(false);
@@ -89,7 +90,7 @@ export function ContractReadjustmentCard({ contractId, rule, startDate, state, l
                 </ScreenLink>
               </CanSee>
             ) : null}
-            {startDate ? ` · data-base: ${day(startDate).slice(0, 5)} (aniversário do início da vigência)` : ""}
+            {baseDate ? ` · data-base: ${day(baseDate).slice(0, 5)} (aniversário da ${baseLabel ?? "assinatura"}, ${day(baseDate)})` : ""}
           </CardDescription>
         </div>
         <Badge variant={status.variant}>{status.label}</Badge>

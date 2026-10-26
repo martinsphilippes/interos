@@ -1,6 +1,7 @@
 import "server-only";
 /**
- * Reajuste anual dos contratos (data-base = aniversário do início da vigência), com o índice do cadastro «Índices de
+ * Reajuste anual dos contratos (data-base = aniversário da assinatura do contrato; sem assinatura registrada, do início
+ * da vigência — `readjustmentBaseDate`), com o índice do cadastro «Índices de
  * reajuste» ou o percentual fixo do contrato. Regras puras em src/domain/readjustment.ts.
  *
  * - Varredura diária `reajustes_contratos` (`runContractReadjustments`): para cada contrato liberado com regra de
@@ -46,6 +47,7 @@ import {
 import { COLLECTIONS, type AmendmentReadjust, type Client, type Contract, type ContractAmendment, type ContractReadjustmentLogEntry, type ReadjustmentIndex, type ReadjustmentQuote, type Task, type UserRef } from "@/domain/types";
 import { getReadjustmentIndexMap } from "@/server/finance-registry/indices";
 import { redactReadjustmentLog } from "./redact";
+import { readjustmentBaseDate, readjustmentBaseLabel } from "./readjustment-base";
 import { applyAmendment, cancelAmendment, createAmendment, readjustItems } from "./amendments";
 import { dueIso, SYSTEM_ACTOR, todayKey } from "./billing";
 
@@ -114,11 +116,12 @@ export interface ReadjustmentContext {
 export function contractReadjustmentState(contract: Contract, ctx: ReadjustmentContext): ContractReadjustmentState {
   const none = { canApply: false, canSkip: false, due: false };
   if (!hasReadjustmentRule(contract)) return { ...none, status: "sem_regra", message: contract.readjustment?.type === "indice" ? "Escolha o índice do reajuste nas condições do contrato" : "Contrato sem reajuste anual" };
-  if (!contract.startDate) return { ...none, status: "sem_vigencia", message: "O primeiro reajuste é 12 meses depois do início da vigência (na liberação do contrato)" };
+  const baseDate = readjustmentBaseDate(contract);
+  if (!baseDate || contract.status !== "liberado") return { ...none, status: "sem_vigencia", message: "O primeiro reajuste é 12 meses depois da assinatura do contrato e entra com o contrato liberado" };
   const covered = coveredAnniversaries(contract, ctx.amendments);
   const lead = readjustmentLeadDays(contract);
   const horizon = addDaysKey(ctx.today, lead);
-  const sched = readjustmentSchedule({ startDate: dateKey(contract.startDate), covered, today: horizon, floor: readjustmentFloor(contract), gaps: contract.readjustmentGaps });
+  const sched = readjustmentSchedule({ startDate: baseDate, covered, today: horizon, floor: readjustmentFloor(contract), gaps: contract.readjustmentGaps });
   const anniversary = sched.due?.anniversary ?? sched.next?.anniversary;
   if (!anniversary) return { ...none, status: "sem_regra", message: "Sem data-base pela frente" };
   const days = daysBetween(anniversary, ctx.today);
@@ -292,7 +295,9 @@ async function loadContext(contractId: string): Promise<{ contract: Contract; ct
 export interface ContractReadjustmentView {
   /** "IPCA · Banco Central · série 433" / "5,00% ao ano (percentual fixo)". */
   rule: string;
-  startDate?: string;
+  /** Data que conta o reajuste (AAAA-MM-DD) e de onde ela vem. */
+  baseDate?: string;
+  baseLabel?: "assinatura" | "início da vigência";
   indexId?: string;
   state: ContractReadjustmentState;
   log: ContractReadjustmentLogEntry[];
@@ -313,7 +318,8 @@ export async function getContractReadjustmentView(contract: Contract, amendments
   const hide = options.hideValues;
   return {
     rule,
-    startDate: contract.startDate ? dateKey(contract.startDate) : undefined,
+    baseDate: readjustmentBaseDate(contract) ?? undefined,
+    baseLabel: readjustmentBaseLabel(contract) ?? undefined,
     indexId: index?.id,
     state: hide ? { ...state, monthlyBefore: undefined, monthlyAfter: undefined } : state,
     log: hide ? redactReadjustmentLog(log) : log,
@@ -454,7 +460,7 @@ async function sendReadjustmentPreview(c: Contract, state: ContractReadjustmentS
 
 export async function runContractReadjustments(now: Date = new Date(), options: ContractReadjustmentRunOptions = {}): Promise<ContractReadjustmentRunResult> {
   const today = dateKey(now);
-  const contracts = (await list<Contract>(COLLECTIONS.contracts, { where: [["status", "==", "liberado"]] })).filter((c) => hasReadjustmentRule(c) && c.startDate && (!options.clientId || c.clientId === options.clientId));
+  const contracts = (await list<Contract>(COLLECTIONS.contracts, { where: [["status", "==", "liberado"]] })).filter((c) => hasReadjustmentRule(c) && readjustmentBaseDate(c) && (!options.clientId || c.clientId === options.clientId));
   const result: ContractReadjustmentRunResult = { contracts: contracts.length, applied: 0, held: 0, waiting: 0, notices: 0, lateTasks: 0, deferred: 0, errors: [], appliedContractIds: [] };
   const deadline = Math.min(Date.now() + RUN_BUDGET_MS, options.deadline ?? Number.POSITIVE_INFINITY);
   if (contracts.length === 0) return result;

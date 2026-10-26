@@ -129,7 +129,8 @@ Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada 
   cadastrado pelo Financeiro) e antecedência do aviso (padrão 30 dias). Renovar (pelo CS ou automaticamente) soma o
   novo prazo ao fim da vigência, preserva o prazo original e gera as mensalidades do novo período. Contrato vencido
   sem renovação fica marcado "Vencido" e sai do MRR (nada é apagado).
-- **Reajuste anual**: acontece no aniversário do início da vigência (data-base), também dentro de contratos de 24 ou
+- **Reajuste anual**: acontece no aniversário da assinatura do contrato (data-base; contrato antigo sem assinatura
+  registrada no sistema conta do início da vigência), também dentro de contratos de 24 ou
   36 meses. Com índice, vale o acumulado dos 12 meses anteriores, buscado sozinho todo dia no Banco Central (IPCA,
   IGP-M, INPC, IGP-DI e séries cadastradas) ou na planilha do IPEA (ICTI); cada mês novo atualiza na hora a prévia de
   todos os contratos que usam o índice. Na data-base o INTEROS aplica sozinho (aditivo de reajuste, sem assinatura,

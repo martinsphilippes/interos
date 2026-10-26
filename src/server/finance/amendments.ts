@@ -33,6 +33,7 @@ import {
 import { COLLECTIONS, type AmendmentReadjust, type Billing, type Client, type Contract, type ContractAmendment, type ContractReadjustment, type ContractReadjustmentLogEntry, type ContractSignerEntry, type ContractSnapshot, type Document, type ItemSince, type Product, type ProposalItem, type UserRef } from "@/domain/types";
 import { addCompetence, addDaysKey, addMonthsClamped, coveredAnniversaries, formatPct, hasReadjustmentRule, inReadjustmentGap, MAX_AUTO_PERCENT, nextReadjustmentGaps, quoteReadjustment, READJUSTMENT_NOTICE_DAYS, readjustmentFloor, readjustmentSchedule, sameReadjustmentRule } from "@/domain/readjustment";
 import { BusinessError } from "@/server/auth/error-classes";
+import { readjustmentBaseDate } from "./readjustment-base";
 import { getReadjustmentIndexMap, normalizeReadjustment } from "@/server/finance-registry/indices";
 import { billingDocId, dayInMonth, dueIso, lastRecurringBilling, recurringStep, round2, todayKey } from "./billing";
 import type { AmendmentInput, AmendmentSignatureInput } from "./schemas";
@@ -162,16 +163,22 @@ export interface CreateAmendmentOptions {
  * Data-base que a renovação decide: a mais recente ainda não decidida que cai do fim atual da vigência (inclusive) até
  * o mês da vigência da renovação. Data-base dentro da vigência atual é do aditivo de reajuste próprio (varredura
  * `reajustes_contratos`), vigente nela. Contrato antigo sem início registrado: a própria renovação é a data-base.
+ * Como a data-base conta da assinatura (que costuma vir dias antes da liberação, onde começa a vigência), vale também a
+ * data-base ainda não decidida dos últimos 60 dias da vigência atual (`RENEWAL_ANNIVERSARY_WINDOW_DAYS`).
  * Contrato com regra decide as datas-base na ordem: uma anterior ainda pendente (desde o acompanhamento) segura a da
  * renovação (`blockedBy`), que fica para a rotina depois dela.
  */
+/** A renovação decide também a data-base que cai nestes últimos dias da vigência atual (assinatura antes da liberação). */
+const RENEWAL_ANNIVERSARY_WINDOW_DAYS = 60;
+
 function renewalAnniversary(contract: Contract, covered: readonly string[], effectiveFrom: string, explicit: boolean): { anniversary: string | null; blockedBy?: string; waiting?: string } {
-  if (!contract.startDate) return { anniversary: covered.some((c) => c.slice(0, 7) === effectiveFrom.slice(0, 7)) ? null : effectiveFrom };
+  const baseDate = readjustmentBaseDate(contract);
+  if (!baseDate) return { anniversary: covered.some((c) => c.slice(0, 7) === effectiveFrom.slice(0, 7)) ? null : effectiveFrom };
   const monthEnd = addMonthsClamped(`${effectiveFrom.slice(0, 7)}-31`, 0);
-  const base = { startDate: dateKey(contract.startDate), covered, today: monthEnd, gaps: contract.readjustmentGaps };
+  const base = { startDate: baseDate, covered, today: monthEnd, gaps: contract.readjustmentGaps };
   // Os períodos sem regra valem para a regra do contrato; a escolha do CS na renovação vale para a data-base dela.
   const own = readjustmentSchedule(explicit ? { ...base, gaps: undefined } : base).due;
-  if (!own || (contract.endDate && own.anniversary < dateKey(contract.endDate))) return { anniversary: null };
+  if (!own || (contract.endDate && own.anniversary < addDaysKey(dateKey(contract.endDate), -RENEWAL_ANNIVERSARY_WINDOW_DAYS))) return { anniversary: null };
   // Contrato com regra (ou que já teve: períodos sem regra registrados) decide na ordem.
   if (hasReadjustmentRule(contract) || (contract.readjustmentGaps?.length ?? 0) > 0) {
     const first = readjustmentSchedule({ ...base, floor: readjustmentFloor(contract) }).due;
@@ -239,7 +246,7 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
             pendingIndex = rule.index;
             pendingIndexName = index?.name ?? rule.indexName;
           }
-        } else if (contract.startDate && q.quote.type === "indice" && todayKey() < opens && (q.quote.to ?? "") < target) {
+        } else if (readjustmentBaseDate(contract) && q.quote.type === "indice" && todayKey() < opens && (q.quote.to ?? "") < target) {
           // Renovação antes de o reajuste entrar e o mês anterior à data-base ainda não saiu: a cotação de hoje é de
           // um período errado — a rotina aplica na data-base com o acumulado certo.
           pendingIndex = rule.index;
@@ -259,7 +266,7 @@ export async function createAmendment(input: AmendmentInput, actor: UserRef, opt
       }
       readjustNote = `o reajuste da data-base ${formatDate(dueIso(waiting))} espera a decisão da data-base ${formatDate(dueIso(blockedBy))} (Financeiro)`;
     } else if (explicit && (explicit.type !== "nenhum" || contractHasRule)) {
-      throw new BusinessError("A renovação não cai numa data-base do contrato: o reajuste anual entra no aniversário do início da vigência. Renove «Conforme o contrato»; para mudar a regra do reajuste, o Financeiro faz um aditivo de condições.");
+      throw new BusinessError("A renovação não cai numa data-base do contrato: o reajuste anual entra no aniversário da assinatura do contrato. Renove «Conforme o contrato»; para mudar a regra do reajuste, o Financeiro faz um aditivo de condições.");
     }
   }
   const before = contractSnapshot(contract);

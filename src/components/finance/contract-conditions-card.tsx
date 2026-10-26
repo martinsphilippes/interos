@@ -125,7 +125,7 @@ export function ConditionsFields({ id, form, onChange, hasPaymentMethod, renewal
           <FormField label="Antecedência (dias)" htmlFor={`${id}-nd`} hint="Dias antes do fim da vigência para renovar">
             <Input id={`${id}-nd`} inputMode="numeric" value={form.noticeDays} onChange={(e) => set({ noticeDays: e.target.value })} className="h-11 md:h-9" />
           </FormField>
-          <FormField label="Reajuste anual" htmlFor={`${id}-rj`} hint="Aplicado no aniversário do contrato. Índice: acumulado de 12 meses buscado sozinho (Financeiro › Cadastros › Índices)">
+          <FormField label="Reajuste anual" htmlFor={`${id}-rj`} hint="Aplicado todo ano no aniversário da assinatura do contrato. Índice: acumulado de 12 meses buscado sozinho (Financeiro › Cadastros › Índices)">
             <Select id={`${id}-rj`} value={form.readjustmentType} onChange={(e) => set({ readjustmentType: e.target.value as ContractReadjustment["type"] })} options={(Object.keys(READJUSTMENT_TYPE_LABELS) as ContractReadjustment["type"][]).map((t) => ({ value: t, label: READJUSTMENT_TYPE_LABELS[t] }))} />
           </FormField>
           {form.readjustmentType === "percentual" ? (
