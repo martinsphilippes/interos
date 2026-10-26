@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { docdb } from "@/server/docdb";
 import { create, getById, list } from "@/server/db";
-import { COLLECTIONS, type Client, type Contract, type Product, type StockItem, type StockMovement, type StockReservation, type StockSerial } from "@/domain/types";
+import { COLLECTIONS, type Client, type DomainEvent, type Contract, type Product, type StockItem, type StockMovement, type StockReservation, type StockSerial } from "@/domain/types";
 import { STOCK_SETTING_KEY, reservationDocId, serialDocId } from "@/domain/stock";
 import {
   adjustStock,
@@ -152,8 +152,10 @@ describe("estoque", () => {
     const again = await reserveForContract(CONTRACT_ID, ACTOR);
     expect(again).toMatchObject({ created: [], skipped: 3 });
     await expect(reserveByContractNumber(`CT-${RUN}`, ACTOR)).rejects.toThrow(/já estão reservados/);
-    const notes = await list(COLLECTIONS.notifications, { where: [["entityId", "==", CONTRACT_ID]] });
-    expect(notes.length).toBeGreaterThan(0);
+    // Auditoria: a reserva fica registrada como evento do contrato, com a falta (o aviso vai a quem responde pelo estoque).
+    const events = await list<DomainEvent>(COLLECTIONS.events, { where: [["entityId", "==", CONTRACT_ID], ["type", "==", "stock.reserved"]] });
+    expect(events.length).toBe(1);
+    expect(events[0].description).toContain("comprar");
   });
 
   it("entrada preenche a reserva que aguardava compra (sob demanda)", async () => {
