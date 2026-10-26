@@ -665,6 +665,18 @@ módulo e `script-imports.test.ts` (serviços usados pelo seed/scripts não pode
   vai aceitar) valida tudo ANTES de gravar (e-mail ainda não signatário, papel, nome para a Clicksign) e só então cria
   o contato (`src/server/clients/contacts.ts#createContact`, o mesmo caminho da action de Clientes) e o adiciona.
   `addSigner` também barra nome sem sobrenome/com números quando a Clicksign está configurada.
+- **Signatário ligado ao contato** (`src/domain/contract-signers.ts`): o signatário que veio de um contato do cliente
+  guarda `contactId` (contato do fechamento/principal na criação, `addSignerFrom` contato, `addContactAsSigner`).
+  Editar o contato (`clients/actions#updateContact`) chama `syncContractSignersFromContact`: contratos do cliente ainda
+  não enviados (sem envelope, não cancelados/liberados/assinados) passam a ter o nome e o e-mail novos — pelo vínculo
+  ou, em signatário antigo sem vínculo, pelo e-mail antigo; quem já assinou e quem assina pela Intercert não mudam.
+  «Corrigir» no signatário (`editSignerAction`, chave de assinatura; gravar no contato exige também
+  `operacao.clientes.contatos.editar` + cliente no escopo) troca nome/e-mail/papel e, marcado por padrão, atualiza o
+  contato (ou o cadastra), levando a correção aos outros contratos não enviados; e-mail de OUTRO contato é recusado.
+  Contrato refeito da mesma venda (`ensureContractForOpportunity` com contrato cancelado da oportunidade) reaproveita os
+  signatários do último cancelado (`reuseSigners`: pendentes, sem evidência, com os dados atuais do contato), em vez
+  de voltar ao contato do fechamento. Avisos no cartão e confirmação antes de enviar (`signerWarnings`): nome com cara
+  de teste ("TESTE", "Fulano"…) e alguém da equipe Intercert assinando como contratante.
 - **Configuração** (settings `assinatura_eletronica`): quem assina pela Intercert (padrão: usuário ativo chamado
   Hércules, trocável; com usuário escolhido, nome/e-mail seguem o cadastro) e a autenticação padrão (`email` = código por
   e-mail; também `whatsapp`, `sms`, `icp_brasil`). O signatário entra com `party: "contratada"` na criação do contrato e

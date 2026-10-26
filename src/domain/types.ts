@@ -756,6 +756,8 @@ export interface ContractSignerEntry {
   registeredAt?: string;
   /** "contratada": quem assina pela Intercert (configuração em Financeiro › Assinaturas). Ausente = contratante. */
   party?: "contratante" | "contratada";
+  /** Contato do cliente que é este signatário: editar o contato atualiza o signatário enquanto o contrato não foi enviado. */
+  contactId?: string;
   /** Id do signatário no provedor de assinatura (Clicksign), para lembretes e para reconhecer o aviso de assinatura. */
   providerSignerId?: string;
   /** Recusa gravada e ainda sem nota/aviso registrados (refeito na reentrega do aviso da Clicksign). */

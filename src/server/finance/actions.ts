@@ -31,6 +31,7 @@ import {
   registerPendency,
   releaseContract,
   removeSigner,
+  editSigner,
   resolvePendency,
   reversePayment,
   sendBillingMessage,
@@ -70,6 +71,7 @@ import {
   representativeDocumentSchema,
   signerPickSchema,
   signerRefSchema,
+  signerEditSchema,
   skipReadjustmentSchema,
   updateConditionsSchema,
   updateItemsSchema,
@@ -222,6 +224,28 @@ export async function setRepresentativeDocumentAction(input: unknown): Promise<A
     return { ok: true, data: result };
   } catch (error) {
     return fail(error, "Não foi possível salvar o CPF");
+  }
+}
+
+/**
+ * Corrige nome/e-mail/papel de quem assina. Gravar também no contato do cliente exige as mesmas chaves de cadastrar
+ * contato pelo contrato (editar contatos e ver o cliente no escopo de Clientes 360º).
+ */
+export async function editSignerAction(input: unknown): Promise<ActionResult<{ contactCreated: boolean; otherContracts: number }>> {
+  try {
+    const user = await requirePermission("financeiro.contratos.assinatura.editar");
+    const data = signerEditSchema.parse(input);
+    const contract = await assertContractAccess(user, data.contractId);
+    if (data.updateContact) {
+      if (!can(user, "operacao.clientes.contatos.editar")) throw new PermissionError();
+      const client = await getById<Client>(COLLECTIONS.clients, contract.clientId);
+      if (!client || !(await canSeeClient(user, client))) throw new PermissionError();
+    }
+    const result = await editSigner(data, actorOf(user), user.departmentId);
+    revalidateFinance(contract.clientId, data.contractId);
+    return { ok: true, data: { contactCreated: result.contactCreated, otherContracts: result.otherContracts } };
+  } catch (error) {
+    return fail(error, "Não foi possível corrigir o signatário");
   }
 }
 

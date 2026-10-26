@@ -98,9 +98,9 @@ describe("repositório real", () => {
   // (com permissão), webhooks da Meta (GET/POST) e do Telegram e as 3 do chat do site (isentas: assinatura/token).
   // Troca de versão: + rota pública /api/versao (isenta: só o id do deploy, sem dados).
   // Reajuste anual: + 4 actions do cadastro de índices (salvar, desativar, lançar mês, atualizar agora) e 2 do contrato
-  // (aplicar e dispensar o reajuste).
-  it("inventário: 101 páginas (10 isentas), 320 funções 'use server' (3 isentas), 32 handlers de API (23 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 320, serverFunctionsExempt: 3, apiHandlers: 32, apiExempt: 23 });
+  // (aplicar e dispensar o reajuste). Corrigir signatário: + 1 action.
+  it("inventário: 101 páginas (10 isentas), 321 funções 'use server' (3 isentas), 32 handlers de API (23 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 101, pagesExempt: 10, serverFunctions: 321, serverFunctionsExempt: 3, apiHandlers: 32, apiExempt: 23 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

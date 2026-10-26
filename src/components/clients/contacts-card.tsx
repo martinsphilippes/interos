@@ -51,7 +51,8 @@ function ContactDialog({ clientId, contact, open, onOpenChange, firstContact }: 
         toast.error(result.error);
         return;
       }
-      toast.success(contact ? "Contato atualizado" : "Contato adicionado");
+      const synced = result.data && "contractsUpdated" in result.data ? Number(result.data.contractsUpdated ?? 0) : 0;
+      toast.success(contact ? (synced > 0 ? `Contato atualizado · signatário atualizado em ${synced} contrato(s) ainda não enviado(s)` : "Contato atualizado") : "Contato adicionado");
       onOpenChange(false);
       router.refresh();
     });

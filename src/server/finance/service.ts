@@ -26,6 +26,7 @@ import { proposalTotals } from "@/components/sales/model";
 import { companySignerEntry, documentTemplateSnapshot, getSignatureSettings, templateForContract, withCompanySigner } from "./contract-templates";
 import { clicksignSignerNameProblem, isSignerEmail, resolveRepresentativeDocument, samePersonName, type TemplateDataGap } from "@/domain/contract-templates";
 import { isValidCpf } from "@/domain/documents";
+import { reuseSigners, signerContact, syncSignersFromContact } from "@/domain/contract-signers";
 import { createContact } from "@/server/clients/contacts";
 import type { DepartmentKey } from "@/domain/constants";
 import { activeSignatureProvider, cancelPreviousClicksignDocument, clicksignSignatureProvider } from "./signature-clicksign";
@@ -226,7 +227,8 @@ export async function getGateSettings(): Promise<FinanceGateSettings> {
 export async function ensureContractForOpportunity(opportunityId: string, actor: UserRef): Promise<Contract | null> {
   const opp = await getById<Opportunity>(COLLECTIONS.opportunities, opportunityId);
   if (!opp || opp.stage !== "ganho") return null;
-  const existing = (await list<Contract>(COLLECTIONS.contracts, { where: [["opportunityId", "==", opp.id]] })).find((c) => c.status !== "cancelado");
+  const ofOpportunity = await list<Contract>(COLLECTIONS.contracts, { where: [["opportunityId", "==", opp.id]] });
+  const existing = ofOpportunity.find((c) => c.status !== "cancelado");
   if (existing) return existing;
 
   const client = await loadClient(opp.clientId);
@@ -245,6 +247,15 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
   // Só vira signatário um e-mail que a assinatura aceita; sem nenhum, o contrato nasce sem signatário do cliente.
   const signerEmail = [primary?.email, opp.billingData?.email, client.email].find((e): e is string => Boolean(e && isSignerEmail(e)));
   const companySigner = companySignerEntry(await getSignatureSettings());
+  // Contrato refeito da mesma venda: quem assina é quem foi acertado no último contrato cancelado (com os dados atuais
+  // dos contatos), não de novo o contato do fechamento — senão a correção feita no contrato anterior se perde.
+  const previous = ofOpportunity
+    .filter((c) => c.status === "cancelado" && c.signers.length > 0)
+    .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0];
+  const reused = previous ? reuseSigners(previous.signers, contacts) : [];
+  const primarySigner: ContractSignerEntry[] = signerEmail
+    ? [{ name: primary?.name ?? opp.billingData?.legalName ?? client.legalName, email: signerEmail.trim().toLowerCase(), role: "Contratante", status: "pendente", ...(primary && primary.email && signerEmail === primary.email ? { contactId: primary.id } : {}) }]
+    : [];
   const contract = await create<Contract>(COLLECTIONS.contracts, {
     clientId: client.id,
     opportunityId: opp.id,
@@ -261,7 +272,7 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
     firstDueDate: closing?.firstDueDate,
     recurrence: closing?.recurrence ?? DEFAULT_CLOSING.recurrence,
     termMonths: closing?.termMonths ?? DEFAULT_CLOSING.termMonths,
-    signers: withCompanySigner(signerEmail ? [{ name: primary?.name ?? opp.billingData?.legalName ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [], companySigner),
+    signers: withCompanySigner(reused.length > 0 ? reused : primarySigner, companySigner),
     paymentCondition: opp.billingData?.paymentCondition,
     financialStatus: "pendente",
     ownerId: financeManager?.id,
@@ -295,6 +306,7 @@ export async function ensureContractForOpportunity(opportunityId: string, actor:
       closing ? `vencimento dia ${contract.billingDay}` : null,
       contract.paymentMethod ? SALE_PAYMENT_METHOD_LABELS[contract.paymentMethod] : null,
       closing ? "condições herdadas da venda" : null,
+      reused.length > 0 && previous ? `signatários do contrato anterior ${previous.number}` : null,
     ]
       .filter(Boolean)
       .join(" · "),
@@ -417,7 +429,12 @@ export async function createManualContract(input: { clientId: string; recurrence
     billingDay: input.billingDay,
     recurrence: input.recurrence,
     termMonths: input.termMonths,
-    signers: withCompanySigner(signerEmail ? [{ name: primary?.name ?? client.legalName, email: signerEmail, role: "Contratante", status: "pendente" }] : [], companySigner),
+    signers: withCompanySigner(
+      signerEmail
+        ? [{ name: primary?.name ?? client.legalName, email: signerEmail.trim().toLowerCase(), role: "Contratante", status: "pendente", ...(primary && primary.email && signerEmail === primary.email ? { contactId: primary.id } : {}) }]
+        : [],
+      companySigner,
+    ),
     financialStatus: "pendente",
     ownerId: financeManager?.id ?? actor.id,
     documentIds: [],
@@ -668,7 +685,7 @@ function signerView(signers: Contract["signers"]): { name: string; email: string
   return signers.map((s) => ({ name: s.name, email: s.email, role: s.role }));
 }
 
-export async function addSigner(input: { contractId: string; name: string; email: string; role: string }, actor: UserRef): Promise<void> {
+export async function addSigner(input: { contractId: string; name: string; email: string; role: string; contactId?: string }, actor: UserRef): Promise<void> {
   const contract = await loadContract(input.contractId);
   assertEditable(contract);
   const email = input.email.trim().toLowerCase();
@@ -678,7 +695,7 @@ export async function addSigner(input: { contractId: string; name: string; email
     const problem = clicksignSignerNameProblem(input.name);
     if (problem) throw new Error(`Signatário «${input.name.trim()}»: ${problem}`);
   }
-  const signers = [...contract.signers, { name: input.name.trim(), email, role: input.role.trim(), status: "pendente" as const }];
+  const signers = [...contract.signers, { name: input.name.trim(), email, role: input.role.trim(), status: "pendente" as const, ...(input.contactId ? { contactId: input.contactId } : {}) }];
   await update<Contract>(COLLECTIONS.contracts, contract.id, { signers });
   await emitEvent({
     type: "contract.updated",
@@ -700,12 +717,12 @@ export async function addSigner(input: { contractId: string; name: string; email
 export async function addSignerFrom(input: { contractId: string; source: "contact" | "user"; id: string; role: string }, actor: UserRef): Promise<void> {
   const contract = await loadContract(input.contractId);
   assertEditable(contract);
-  let person: { name: string; email: string };
+  let person: { name: string; email: string; contactId?: string };
   if (input.source === "contact") {
     const contact = await getById<Contact>(COLLECTIONS.contacts, input.id);
     if (!contact || contact.clientId !== contract.clientId) throw new Error("Contato não encontrado neste cliente");
     if (!contact.email) throw new Error(`${contact.name} não tem e-mail cadastrado: informe o e-mail na ficha do cliente`);
-    person = { name: contact.name, email: contact.email };
+    person = { name: contact.name, email: contact.email, contactId: contact.id };
   } else {
     const user = await getById<User>(COLLECTIONS.users, input.id);
     if (!user || user.active === false || !user.email) throw new Error("Usuário não encontrado ou inativo");
@@ -716,7 +733,7 @@ export async function addSignerFrom(input: { contractId: string; source: "contac
   if (!isSignerEmail(person.email)) {
     throw new Error(`${person.name} tem e-mail inválido para assinatura (${person.email.trim()}): corrija na ficha do ${input.source === "contact" ? "cliente" : "usuário"}`);
   }
-  await addSigner({ contractId: contract.id, name: person.name, email: person.email, role: input.role }, actor);
+  await addSigner({ contractId: contract.id, name: person.name, email: person.email, role: input.role, contactId: person.contactId }, actor);
 }
 
 /**
@@ -737,8 +754,120 @@ export async function addContactAsSigner(
     if (problem) throw new Error(`Signatário «${input.name.trim()}»: ${problem}`);
   }
   const contact = await createContact({ clientId: contract.clientId, name: input.name, email, role: input.position, phone: input.phone, document: input.document }, actor, department);
-  await addSigner({ contractId: contract.id, name: contact.name, email, role: input.role }, actor);
+  await addSigner({ contractId: contract.id, name: contact.name, email, role: input.role, contactId: contact.id }, actor);
   return { contactId: contact.id };
+}
+
+/**
+ * Corrige nome, e-mail e papel de quem assina (ainda não assinou). `updateContact`: grava a correção também no contato
+ * do cliente que é essa pessoa — ou cadastra o contato, se ela ainda não é — e leva a mesma correção aos outros
+ * contratos do cliente ainda não enviados. Quem assina pela Intercert é trocado na configuração de Assinaturas.
+ * Quem chama confere a permissão de editar contatos quando `updateContact` é true.
+ */
+export async function editSigner(
+  input: { contractId: string; email: string; name: string; newEmail: string; role: string; updateContact: boolean },
+  actor: UserRef,
+  department?: DepartmentKey,
+): Promise<{ contactId?: string; contactCreated: boolean; otherContracts: number }> {
+  const contract = await loadContract(input.contractId);
+  assertEditable(contract);
+  const signer = contract.signers.find((s) => s.email.toLowerCase() === input.email.trim().toLowerCase());
+  if (!signer) throw new Error("Signatário não encontrado");
+  if (signer.status === "assinado") throw new Error("Quem já assinou não pode ser alterado");
+  if (signer.party === "contratada") throw new Error("Quem assina pela Intercert é definido em Financeiro › Assinaturas › Configuração");
+  const name = input.name.trim();
+  const email = input.newEmail.trim().toLowerCase();
+  const role = input.role.trim();
+  if (!isSignerEmail(email)) throw new Error("E-mail inválido para assinatura");
+  if (contract.signers.some((s) => s !== signer && s.email.toLowerCase() === email)) throw new Error("Este e-mail já é signatário do contrato");
+  if (clicksignConfigured()) {
+    const problem = clicksignSignerNameProblem(name);
+    if (problem) throw new Error(`Signatário «${name}»: ${problem}`);
+  }
+  const contacts = await list<Contact>(COLLECTIONS.contacts, { where: [["clientId", "==", contract.clientId]] });
+  let contact = signerContact(signer, contacts);
+  let contactCreated = false;
+  let otherContracts = 0;
+  if (input.updateContact) {
+    // O e-mail novo não pode ser de OUTRO contato do cliente: seriam duas pessoas com o mesmo e-mail.
+    const owner = contacts.find((c) => c.id !== contact?.id && (c.email ?? "").trim().toLowerCase() === email);
+    if (owner) throw new Error(`${email} já é o e-mail do contato ${owner.name}: escolha esse contato como signatário`);
+    if (contact) {
+      const before = contact;
+      if (before.name !== name || (before.email ?? "").trim().toLowerCase() !== email) {
+        await update<Contact>(COLLECTIONS.contacts, before.id, { name, email });
+        await emitEvent({
+          type: "client.updated",
+          actor,
+          clientId: contract.clientId,
+          entity: { type: "contact", id: before.id },
+          title: `Contato atualizado pelo contrato ${contract.number}: ${name}`,
+          description: `${before.name} · ${before.email ?? "sem e-mail"} → ${name} · ${email}`,
+          department,
+          payload: { contactId: before.id, contractId: contract.id, changes: { name: { from: before.name, to: name }, email: { from: before.email ?? null, to: email } } },
+        });
+        contact = { ...before, name, email };
+        otherContracts = await syncContractSignersFromContact(contact, before.email, actor, { exceptContractId: contract.id });
+      }
+    } else {
+      contact = await createContact({ clientId: contract.clientId, name, email }, actor, department);
+      contactCreated = true;
+    }
+  }
+  const linked = contact && (contact.email ?? "").trim().toLowerCase() === email ? contact.id : undefined;
+  const signers = contract.signers.map((s) => {
+    if (s !== signer) return s;
+    const { providerSignerId, contactId: _old, ...rest } = s;
+    void _old;
+    return { ...rest, name, email, role, ...(linked ? { contactId: linked } : {}), ...(providerSignerId && s.email.toLowerCase() === email ? { providerSignerId } : {}) };
+  });
+  await update<Contract>(COLLECTIONS.contracts, contract.id, { signers });
+  await emitEvent({
+    type: "contract.updated",
+    actor,
+    clientId: contract.clientId,
+    entity: { type: "contract", id: contract.id },
+    title: `Signatário corrigido no contrato ${contract.number}`,
+    description: `${signer.name} · ${signer.email} → ${name} · ${email} (${role})${input.updateContact ? (contactCreated ? " · cadastrado como contato do cliente" : " · contato do cliente atualizado") : ""}`,
+    department: "financeiro",
+    payload: { contractId: contract.id, kind: "signatarios", email, changes: { signers: { from: signerView(contract.signers), to: signerView(signers) } } },
+    timeline: false,
+  });
+  return { contactId: linked, contactCreated, otherContracts };
+}
+
+/**
+ * Contato do cliente editado: os contratos do cliente ainda não enviados para assinatura passam a ter o nome e o
+ * e-mail novos em quem é esse contato. Contrato já enviado fica como está (mudar quem assina exige reenviar).
+ * Devolve quantos contratos mudaram.
+ */
+export async function syncContractSignersFromContact(
+  contact: Pick<Contact, "id" | "clientId" | "name" | "email">,
+  previousEmail: string | undefined,
+  actor: UserRef,
+  opts: { exceptContractId?: string } = {},
+): Promise<number> {
+  const contracts = await list<Contract>(COLLECTIONS.contracts, { where: [["clientId", "==", contact.clientId]] });
+  let count = 0;
+  for (const c of contracts) {
+    if (c.id === opts.exceptContractId || c.status === "cancelado" || c.status === "liberado" || c.signatureEnvelopeId || isSignedContract(c)) continue;
+    const { signers, changed } = syncSignersFromContact(c.signers, contact, previousEmail);
+    if (changed.length === 0) continue;
+    await update<Contract>(COLLECTIONS.contracts, c.id, { signers });
+    count++;
+    await emitEvent({
+      type: "contract.updated",
+      actor,
+      clientId: c.clientId,
+      entity: { type: "contract", id: c.id },
+      title: `Signatário do contrato ${c.number} atualizado pelo cadastro do contato`,
+      description: changed.map((x) => `${x.from.name} · ${x.from.email} → ${x.to.name} · ${x.to.email}`).join("; "),
+      department: "financeiro",
+      payload: { contractId: c.id, kind: "signatarios", contactId: contact.id, changes: { signers: { from: signerView(c.signers), to: signerView(signers) } } },
+      timeline: false,
+    });
+  }
+  return count;
 }
 
 /**
