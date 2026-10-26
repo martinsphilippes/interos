@@ -220,7 +220,16 @@ export interface GamificationSettings {
   pontos: Record<string, number>;
   /** Multiplicador por departamento para comparar pessoas de funções diferentes ("todos normalizado"). */
   multiplicadores: Record<DepartmentKey, number>;
+  /** Pontos próprios de um departamento: só as regras que diferem do padrão da empresa (`pontos`). */
+  pontosPorDepartamento: Partial<Record<DepartmentKey, Record<string, number>>>;
   niveis: GamificationLevel[];
+}
+
+/** Pontos de uma regra para quem é do departamento: o valor próprio do departamento, senão o padrão da empresa. */
+export function pointsForRule(settings: Pick<GamificationSettings, "pontos" | "pontosPorDepartamento">, ruleKey: string, department?: DepartmentKey | null): number {
+  const own = department ? settings.pontosPorDepartamento?.[department]?.[ruleKey] : undefined;
+  const value = typeof own === "number" ? own : settings.pontos[ruleKey];
+  return Number(value ?? 0);
 }
 
 export interface PointRule {
@@ -261,6 +270,7 @@ export const DEFAULT_GAMIFICATION: GamificationSettings = {
   // Equivalência entre funções: quem pontua em eventos grandes e raros (venda +50) ou em alto volume
   // (chamados +10) tem o total reduzido; funções com poucos eventos pontuáveis, ampliado. Ajustável no setting.
   multiplicadores: { marketing: 1, vendas: 0.6, financeiro: 1.5, implantacao: 1, cs: 1.2, suporte: 0.8, administrativo: 1.5, diretoria: 1 },
+  pontosPorDepartamento: {},
   niveis: [
     { nome: "Bronze", minimo: 0 },
     { nome: "Prata", minimo: 500 },

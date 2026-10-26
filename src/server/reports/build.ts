@@ -5,8 +5,8 @@ import "server-only";
  * estado não é reconstruível no passado) e registros pelo DataBundle do motor (mesma carga e cache).
  * Nada de fórmula de indicador é refeito aqui; os volumes operacionais são contagens simples.
  */
+import { getReferenceGoals } from "@/server/kpis/reference-goals";
 import { list } from "@/server/db";
-import { getSetting } from "@/server/admin/queries";
 import { computeKpis, statusFor, type KpiResult } from "@/server/kpis/engine";
 import { loadDataBundle, type DataBundle } from "@/server/kpis/formulas";
 import { getCompanyScorecard } from "@/server/kpis/queries";
@@ -373,7 +373,7 @@ async function buildCs(input: DepartmentalInput): Promise<ReportRow[]> {
 
 async function buildSupport(input: DepartmentalInput): Promise<ReportRow[]> {
   const keys = ["chamados_abertos", "chamados_resolvidos", "backlog_suporte", "sla_resposta", "sla_solucao", "tempo_medio_resposta_min", "tempo_medio_solucao_h", "reincidencia", "csat"];
-  const [{ data, snapshots }, goals] = await Promise.all([loadMonthKpis(input.months, keys, input.scope, input.scopeId), getSetting<{ csat?: number }>("metas_referencia", { csat: 8.5 })]);
+  const [{ data, snapshots }, goals] = await Promise.all([loadMonthKpis(input.months, keys, input.scope, input.scopeId), getReferenceGoals()]);
   const csatTarget = typeof goals.csat === "number" ? goals.csat : 8.5;
   return data.map((m) => {
     const sla = m.results.get("sla_solucao")?.value ?? null;

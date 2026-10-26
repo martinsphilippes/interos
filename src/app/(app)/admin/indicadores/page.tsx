@@ -6,6 +6,7 @@ import { currentMonthKey, getKpiAdminData, listRecentMonths, monthPeriod } from 
 import { formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
+import { GoalsShortcuts } from "@/components/kpis/goals-shortcuts";
 import { StatCard } from "@/components/ui/stat-card";
 import { KpiAdminWorkspace } from "@/components/kpis/kpi-admin-workspace";
 
@@ -33,6 +34,7 @@ export default async function AdminIndicadoresPage() {
         description="Definições dos KPIs calculados pelo motor: cada indicador aponta para uma fórmula do registro e tem meta, sentido, faixa de atenção e peso."
         breadcrumbs={[{ label: "Administração", href: "/admin" }, { label: "Indicadores" }]}
       />
+      <GoalsShortcuts current="/admin/indicadores" />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Indicadores ativos" value={formatNumber(active.length)} icon={<Activity />} tone="info" hint={`${formatNumber(data.rows.length)} cadastrados`} compact />

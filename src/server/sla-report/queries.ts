@@ -13,9 +13,9 @@ import "server-only";
  * - Tempo médio de 1ª resposta: SLAs com prazo de resposta respondidos no período; de resolução: concluídas no
  *   período (horas corridas entre o início do SLA e a conclusão).
  */
+import { getReferenceGoals } from "@/server/kpis/reference-goals";
 import { getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
-import { getSetting } from "@/server/admin/queries";
 import { loadKpiDocs } from "@/server/kpis/engine";
 import { inPeriod, isCurrentPeriod, type Period } from "@/server/kpis/period";
 import {
@@ -332,7 +332,7 @@ const STATE_ORDER: Record<SlaItem["bucket"], number> = { violado: 0, risco: 1, d
 /** Tudo da tela /sla: indicadores, críticos, listas, agrupamentos e opções dos filtros. */
 export async function getSlaOverview(period: Period, filters: SlaFilters): Promise<SlaOverview> {
   const now = new Date();
-  const [{ data, items }, refs, kpiDocs] = await Promise.all([loadItems(period, now), getSetting<{ slaSuporte?: number }>("metas_referencia", { slaSuporte: 0.9 }), loadKpiDocs()]);
+  const [{ data, items }, refs, kpiDocs] = await Promise.all([loadItems(period, now), getReferenceGoals(), loadKpiDocs()]);
   const filtered = items.filter((i) => matches(i, filters));
   const summary = summarize(filtered, period, data, now);
   const critical = filtered.filter((i) => i.active && i.bucket !== "dentro").sort((a, b) => STATE_ORDER[a.bucket] - STATE_ORDER[b.bucket] || a.remainingMs - b.remainingMs);

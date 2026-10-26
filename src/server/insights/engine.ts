@@ -6,8 +6,8 @@ import "server-only";
  *
  * Os insights não são gravados nem emitem evento: são calculados na leitura e apenas exibidos.
  */
+import { getReferenceGoals } from "@/server/kpis/reference-goals";
 import { list } from "@/server/db";
-import { getSetting } from "@/server/admin/queries";
 import { computeSlaState } from "@/server/sla";
 import { computeKpis } from "@/server/kpis/engine";
 import { loadDataBundle } from "@/server/kpis/formulas";
@@ -32,7 +32,7 @@ async function buildContext(period: Period): Promise<InsightContext> {
   const [results, bundle, goals] = await Promise.all([
     computeKpis(INSIGHT_KPI_KEYS, period, "empresa", undefined, { withSources: false }),
     loadDataBundle(period),
-    getSetting<{ reincidenciaMax?: number }>("metas_referencia", { reincidenciaMax: 0.1 }),
+    getReferenceGoals(),
   ]);
   const now = new Date(bundle.now);
 

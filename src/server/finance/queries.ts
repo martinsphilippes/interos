@@ -1,4 +1,5 @@
 import "server-only";
+import { getReferenceGoals } from "@/server/kpis/reference-goals";
 import { cache } from "react";
 /**
  * Leituras do módulo Financeiro. Filtram por organização via `list()` (igualdade apenas) e agregam em
@@ -863,7 +864,7 @@ export async function getRecurrenceMetrics(options: FinanceReadOptions = {}): Pr
   const [allContracts, allChurn, goals] = await Promise.all([
     list<Contract>(COLLECTIONS.contracts),
     list<ChurnRecord>(COLLECTIONS.churnRecords),
-    list<{ id: string; organizationId: string; createdAt: string; updatedAt: string; key: string; value: { mrrCrescimento?: number } }>(COLLECTIONS.settings, { where: [["key", "==", "metas_referencia"]] }),
+    getReferenceGoals(),
   ]);
   // Escopo (A7): contratos pelos donos; churn pelos clientes dos contratos visíveis.
   const contracts = await scoped(allContracts, options.scope);
@@ -918,7 +919,7 @@ export async function getRecurrenceMetrics(options: FinanceReadOptions = {}): Pr
     .map((c) => ({ contractId: c.id, number: c.number, clientId: c.clientId, clientName: names.get(c.clientId) ?? c.clientId, endDate: c.endDate!, daysLeft: daysBetween(today, dateKey(c.endDate!)), monthlyTotal: c.monthlyTotal }))
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
 
-  const target = goals[0]?.value?.mrrCrescimento;
+  const target = goals.mrrCrescimento;
   const metrics: RecurrenceMetrics = {
     mrr: active.reduce((s, c) => s + c.monthlyTotal, 0),
     activeContracts: active.length,

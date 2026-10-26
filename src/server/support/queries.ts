@@ -3,6 +3,7 @@ import "server-only";
  * Leituras do Suporte (Central, chamados, SLA, CSAT, base de conhecimento, ficha 360º).
  * Todas usam `list()` com igualdade e agregam em memória; nomes de clientes/usuários são resolvidos em lote.
  */
+import { getReferenceGoals } from "@/server/kpis/reference-goals";
 import { getById, getManyByIds, list } from "@/server/db";
 import { computeSlaState } from "@/server/sla";
 import { listSlaRules } from "@/server/admin/queries";
@@ -19,7 +20,6 @@ import {
   type Kpi,
   type Opportunity,
   type Product,
-  type Settings,
   type SlaInstance,
   type SlaRule,
   type SlaView,
@@ -363,13 +363,13 @@ interface Targets {
 }
 
 async function getTargets(): Promise<Targets> {
-  const [settings, kpis] = await Promise.all([list<Settings>(COLLECTIONS.settings, { where: [["key", "==", "metas_referencia"]] }), list<Kpi>(COLLECTIONS.kpis, { where: [["department", "==", "suporte"]] })]);
-  const refs = (settings[0]?.value ?? {}) as { csat?: number; reincidenciaMax?: number; slaSuporte?: number };
+  // Metas de referência efetivas (a meta do KPI, quando existe, é a fonte única).
+  const [refs, kpis] = await Promise.all([getReferenceGoals(), list<Kpi>(COLLECTIONS.kpis, { where: [["department", "==", "suporte"]] })]);
   const kpi = (key: string) => kpis.find((k) => k.key === key)?.target;
   return {
-    csat: Number(refs.csat ?? kpi("csat") ?? 8.5),
-    reopenMax: Number(refs.reincidenciaMax ?? kpi("reincidencia") ?? 0.1),
-    slaResolution: Number(kpi("sla_solucao") ?? refs.slaSuporte ?? 0.9),
+    csat: Number(refs.csat ?? 8.5),
+    reopenMax: Number(refs.reincidenciaMax ?? 0.1),
+    slaResolution: Number(refs.slaSuporte ?? 0.9),
     slaResponse: Number(kpi("sla_resposta") ?? 0.95),
   };
 }

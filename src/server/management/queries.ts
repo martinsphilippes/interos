@@ -8,6 +8,7 @@ import "server-only";
  * lidos das coleções com filtros de igualdade e agregados em memória. O cockpit usa o DataBundle do motor
  * (carga única e cache por período) para os volumes que não são indicadores.
  */
+import { getReferenceGoals } from "@/server/kpis/reference-goals";
 import { cache } from "react";
 import { getById, list } from "@/server/db";
 import { can } from "@/server/auth/permissions";
@@ -22,7 +23,6 @@ import { inPeriod, isCurrentPeriod, localDayKey, periodReference, previousPeriod
 import { formatKpiValue, kpiHref, type KpiStatus, type KpiUnit } from "@/server/kpis/schemas";
 import { computeOperationHealth, getPerformanceIndexConfig, goalsAttainment, indexFromScorecard, type OperationHealth } from "@/server/kpis/operation-health";
 import { getSlaSummary } from "@/server/sla-report/queries";
-import { getSetting } from "@/server/admin/queries";
 import { slaHref as slaPageHref } from "@/server/sla-report/schemas";
 import { isOpenStatus, processHrefFor, PROCESS_TYPE_LABELS } from "@/components/tasks/task-model";
 import {
@@ -592,7 +592,7 @@ export async function getManagerDashboard(user: CurrentUser, options: { departam
     getPerformanceIndexConfig(),
     list<ImplementationProject>(COLLECTIONS.implementationProjects),
     backlogDeps.length > 0 ? computeKpiBatch(backlogDeps.map((d) => ({ keys: backlogKeys(d), scope: "departamento" as const, scopeId: d })), period, { withTrend: false, withSources: false }) : Promise.resolve([] as KpiResult[][]),
-    getSetting<{ slaSuporte?: number }>("metas_referencia", { slaSuporte: 0.9 }),
+    getReferenceGoals(),
   ]);
 
   const now = new Date();
