@@ -102,9 +102,9 @@ describe("repositório real", () => {
   // 8 actions (dados, cancelar, dispensar/desfazer, mensagem/enviar, configuração fiscal e perfil do produto) e 2 rotas
   // (registrar a nota com PDF/XML e baixar o arquivo). Estoque: + página /estoque e 10 actions (item, entrada, saída,
   // devolução, séries do item, ajuste, separar, reservar pelo contrato, liberar e configuração). Compras: + página
-  // /compras e 8 actions (criar, editar, enviar, cancelar, aprovar, devolver, receber e configuração).
-  it("inventário: 104 páginas (10 isentas), 347 funções 'use server' (3 isentas), 34 handlers de API (23 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 104, pagesExempt: 10, serverFunctions: 347, serverFunctionsExempt: 3, apiHandlers: 34, apiExempt: 23 });
+  // /compras e 9 actions (criar, editar, enviar, cancelar, aprovar, devolver, receber, refazer o título e configuração).
+  it("inventário: 104 páginas (10 isentas), 348 funções 'use server' (3 isentas), 34 handlers de API (23 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 104, pagesExempt: 10, serverFunctions: 348, serverFunctionsExempt: 3, apiHandlers: 34, apiExempt: 23 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

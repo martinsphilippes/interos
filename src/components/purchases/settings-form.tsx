@@ -58,6 +58,11 @@ export function PurchaseSettingsForm({ settings, categories, canEdit }: { settin
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="Categoria do título a pagar" htmlFor={`${id}-c`} hint="Contas a Pagar › categorias">
               <Select id={`${id}-c`} value={form.payableCategory} onChange={(e) => setForm((f) => ({ ...f, payableCategory: e.target.value }))} disabled={!canEdit} className="h-11 md:h-9">
+                {categories.some((c) => c.value === form.payableCategory) ? null : (
+                  <option value={form.payableCategory} disabled>
+                    {form.payableCategory} (não existe mais em Contas a pagar: escolha outra)
+                  </option>
+                )}
                 {categories.map((c) => (
                   <option key={c.value} value={c.value}>
                     {c.label}

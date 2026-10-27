@@ -20,9 +20,13 @@ import type { PurchasableItem, PurchaseCan, SupplierOption } from "./model";
  */
 export function NeedsList({ rows, items, suppliers, can, paymentDays }: { rows: PurchaseNeedRow[]; items: PurchasableItem[]; suppliers: SupplierOption[]; can: PurchaseCan; paymentDays: number }) {
   const needed = rows.filter((r) => r.suggested > 0);
-  const [picked, setPicked] = React.useState<Record<string, string>>(() => Object.fromEntries(needed.map((r) => [r.itemId, String(r.suggested)])));
+  // Marcado por padrão (com a quantidade sugerida); o usuário desmarca ou muda a quantidade. Linhas novas depois de
+  // recarregar entram marcadas.
+  const [excluded, setExcluded] = React.useState<Set<string>>(new Set());
+  const [qty, setQty] = React.useState<Record<string, string>>({});
   const [draft, setDraft] = React.useState<OrderDraft | null>(null);
-  const chosen = needed.filter((r) => picked[r.itemId] !== undefined && Number(picked[r.itemId]) > 0);
+  const qtyOf = (r: PurchaseNeedRow) => qty[r.itemId] ?? String(r.suggested);
+  const chosen = needed.filter((r) => !excluded.has(r.itemId) && Number(qtyOf(r)) > 0);
 
   if (!needed.length) {
     return (
@@ -59,7 +63,7 @@ export function NeedsList({ rows, items, suppliers, can, paymentDays }: { rows: 
               disabled={!chosen.length}
               onClick={() =>
                 setDraft({
-                  lines: chosen.map((r) => ({ itemId: r.itemId, quantity: Number(picked[r.itemId]), unitCost: r.avgCost })),
+                  lines: chosen.map((r) => ({ itemId: r.itemId, quantity: Number(qtyOf(r)), unitCost: r.avgCost })),
                   paymentDays,
                   installments: 1,
                 })
@@ -74,7 +78,7 @@ export function NeedsList({ rows, items, suppliers, can, paymentDays }: { rows: 
       <Card className="min-w-0 overflow-hidden">
         <ul className="flex flex-col divide-y divide-border" data-testid="purchase-needs">
           {needed.map((r) => {
-            const on = picked[r.itemId] !== undefined;
+            const on = !excluded.has(r.itemId);
             return (
               <li key={r.itemId} className="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:gap-4">
                 {can.edit ? (
@@ -82,10 +86,10 @@ export function NeedsList({ rows, items, suppliers, can, paymentDays }: { rows: 
                     checked={on}
                     aria-label={`Incluir ${r.name}`}
                     onCheckedChange={(v) =>
-                      setPicked((cur) => {
-                        const next = { ...cur };
-                        if (v) next[r.itemId] = String(r.suggested);
-                        else delete next[r.itemId];
+                      setExcluded((cur) => {
+                        const next = new Set(cur);
+                        if (v) next.delete(r.itemId);
+                        else next.add(r.itemId);
                         return next;
                       })
                     }
@@ -118,9 +122,9 @@ export function NeedsList({ rows, items, suppliers, can, paymentDays }: { rows: 
                     <Input
                       aria-label={`Quantidade de ${r.name}`}
                       inputMode="numeric"
-                      value={picked[r.itemId] ?? String(r.suggested)}
+                      value={qtyOf(r)}
                       disabled={!on}
-                      onChange={(e) => setPicked((cur) => ({ ...cur, [r.itemId]: e.target.value.replace(/\D/g, "") }))}
+                      onChange={(e) => setQty((cur) => ({ ...cur, [r.itemId]: e.target.value.replace(/\D/g, "") }))}
                       className="h-11 w-[90px] tabular-nums md:h-9"
                     />
                   ) : (

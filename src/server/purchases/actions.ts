@@ -4,7 +4,7 @@
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { failAction, requirePermission } from "@/server/auth/session";
+import { can, failAction, requirePermission } from "@/server/auth/session";
 import type { ActionResult, CurrentUser, UserRef } from "@/domain/types";
 import type { PurchaseStatus } from "@/domain/purchases";
 import { parseMoneyInput } from "@/domain/stock";
@@ -14,6 +14,7 @@ import {
   createPurchaseOrder,
   receivePurchaseOrder,
   rejectPurchaseOrder,
+  retryReceiptPayable,
   savePurchaseSettings,
   submitPurchaseOrder,
   updatePurchaseOrder,
@@ -159,7 +160,8 @@ export async function receivePurchaseOrderAction(input: unknown): Promise<Action
       })
       .parse(input);
     const { orderId, ...rest } = data;
-    const result = await receivePurchaseOrder(orderId, rest, actorOf(user));
+    // Custo acima do aprovado no pedido só por quem aprova compras.
+    const result = await receivePurchaseOrder(orderId, rest, actorOf(user), { canRaiseCost: can(user, "operacao.compras.aprovar") });
     revalidatePurchases();
     return { ok: true, data: result };
   } catch (error) {
@@ -183,5 +185,17 @@ export async function savePurchaseSettingsAction(input: unknown): Promise<Action
     return { ok: true, data: undefined };
   } catch (error) {
     return fail(error, "Não foi possível salvar a configuração de compras");
+  }
+}
+
+export async function retryReceiptPayableAction(input: unknown): Promise<ActionResult<{ payableCode: string }>> {
+  try {
+    const user = await requirePermission("operacao.compras.receber");
+    const { receiptId } = z.object({ receiptId: id("Recebimento") }).parse(input);
+    const payableCode = await retryReceiptPayable(receiptId, actorOf(user));
+    revalidatePurchases();
+    return { ok: true, data: { payableCode } };
+  } catch (error) {
+    return fail(error, "Não foi possível criar o título");
   }
 }

@@ -85,6 +85,11 @@ export function OrderDialog({ draft, items, suppliers, onClose }: { draft: Order
                       {s.name}
                     </option>
                   ))}
+                  {draft.supplierId && !suppliers.some((s) => s.id === draft.supplierId) ? (
+                    <option value={draft.supplierId} disabled>
+                      {draft.supplierName} (inativo: escolha outro)
+                    </option>
+                  ) : null}
                 </Select>
               </FormField>
               {!supplierId ? (
@@ -106,7 +111,7 @@ export function OrderDialog({ draft, items, suppliers, onClose }: { draft: Order
                         value={l.itemId}
                         onChange={(e) => {
                           const next = byId.get(e.target.value);
-                          setLines((cur) => cur.map((x, j) => (j === i ? { ...x, itemId: e.target.value, unitCost: x.unitCost || money(next?.avgCost ?? 0) } : x)));
+                          setLines((cur) => cur.map((x, j) => (j === i ? { ...x, itemId: e.target.value, unitCost: money(next?.avgCost ?? 0) } : x)));
                         }}
                         className="h-11 md:h-9"
                       >

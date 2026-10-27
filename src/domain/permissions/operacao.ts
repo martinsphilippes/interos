@@ -794,6 +794,7 @@ export const OPERACAO = {
           verb: "aprovar",
           rule: { any: [{ role: ["admin", "diretoria"] }, { managerOf: "administrativo" }] },
           guards: ["src/server/purchases/actions.ts#approvePurchaseOrderAction", "src/server/purchases/actions.ts#rejectPurchaseOrderAction"],
+          checkedIn: ["src/server/purchases/actions.ts#receivePurchaseOrderAction?custo recebido acima do custo do pedido"],
           sensitive: true,
         },
         {
@@ -801,7 +802,7 @@ export const OPERACAO = {
           label: "Receber compra (entrada no estoque e título a pagar)",
           verb: "editar",
           rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: "administrativo" }] },
-          guards: ["src/server/purchases/actions.ts#receivePurchaseOrderAction"],
+          guards: ["src/server/purchases/actions.ts#receivePurchaseOrderAction", "src/server/purchases/actions.ts#retryReceiptPayableAction"],
           sensitive: true,
         },
         {

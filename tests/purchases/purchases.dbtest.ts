@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { docdb } from "@/server/docdb";
 import { create, getById, list } from "@/server/db";
-import { COLLECTIONS, type Client, type Contract, type Payable, type Product, type PurchaseOrder, type StockItem, type StockReservation } from "@/domain/types";
+import { COLLECTIONS, type Client, type Contract, type Payable, type Product, type PurchaseOrder, type StockItem, type StockReservation, type Supplier } from "@/domain/types";
 import { PURCHASE_SETTING_KEY } from "@/domain/purchases";
 import { STOCK_SETTING_KEY, reservationDocId } from "@/domain/stock";
 import { reserveForContract, saveStockItem } from "@/server/stock/service";
@@ -22,8 +22,10 @@ import {
   listPurchaseNeeds,
   receivePurchaseOrder,
   rejectPurchaseOrder,
+  retryReceiptPayable,
   savePurchaseSettings,
   submitPurchaseOrder,
+  updatePurchaseOrder,
 } from "@/server/purchases/service";
 
 const RUN = `p${Date.now().toString(36)}`;
@@ -142,7 +144,8 @@ describe("compras", () => {
 
   it("o resto chega: pedido recebido; não recebe mais", async () => {
     const id = orderIds[0];
-    const r = await receivePurchaseOrder(id, { lines: [{ itemId, quantity: 1, serials: ["A3"], unitCost: 1300 }] }, ACTOR);
+    await expect(receivePurchaseOrder(id, { lines: [{ itemId, quantity: 1, serials: ["A3"], unitCost: 1300 }] }, ACTOR)).rejects.toThrow(/acima do pedido/);
+    const r = await receivePurchaseOrder(id, { lines: [{ itemId, quantity: 1, serials: ["A3"], unitCost: 1300 }] }, ACTOR, { canRaiseCost: true });
     expect(r.status).toBe("recebido");
     expect((await getById<StockItem>(COLLECTIONS.stockItems, itemId))?.avgCost).toBe(1100);
     await expect(receivePurchaseOrder(id, { lines: [{ itemId, quantity: 1, serials: ["A4"] }] }, ACTOR)).rejects.toThrow(/não está aguardando recebimento/);
@@ -167,6 +170,22 @@ describe("compras", () => {
     expect((await order(small.id)).status).toBe("cancelado");
   });
 
+  it("editar o rascunho troca fornecedor cadastrado por digitado e apaga previsão; custo zero não envia", async () => {
+    const supplier = await create<Supplier>(COLLECTIONS.suppliers, { name: `Fornecedor ${RUN}`, active: true } as never, `${RUN}_sup`);
+    const o = await createPurchaseOrder({ supplierId: supplier.id, lines: [{ itemId, quantity: 1, unitCost: 0 }], expectedAt: "2026-12-01", notes: "obs" }, ACTOR);
+    orderIds.push(o.id);
+    expect(o).toMatchObject({ supplierId: supplier.id, supplierName: `Fornecedor ${RUN}` });
+    await expect(submitPurchaseOrder(o.id, ACTOR)).rejects.toThrow(/Informe o custo/);
+    await updatePurchaseOrder(o.id, { supplierName: `Outro ${RUN}`, lines: [{ itemId, quantity: 1, unitCost: 10 }] }, ACTOR);
+    const after = await order(o.id);
+    expect(after.supplierId).toBeUndefined();
+    expect(after.expectedAt).toBeUndefined();
+    expect(after.notes).toBeUndefined();
+    expect(after.supplierName).toBe(`Outro ${RUN}`);
+    await cancelPurchaseOrder(o.id, "Limpeza do teste", ACTOR);
+    await docdb.sql()`delete from interos.suppliers where id = ${supplier.id}`;
+  });
+
   it("dois recebimentos ao mesmo tempo não passam do pedido", async () => {
     const id = orderIds[2];
     const results = await Promise.allSettled([
@@ -175,5 +194,26 @@ describe("compras", () => {
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect((await order(id)).lines[0].received).toBe(2);
+  });
+
+  it("título que falhou pode ser refeito, uma única vez", async () => {
+    const o = await createPurchaseOrder({ supplierName: `Distribuidora ${RUN}`, lines: [{ itemId, quantity: 1, unitCost: 1400 }] }, ACTOR);
+    orderIds.push(o.id);
+    expect(await submitPurchaseOrder(o.id, ACTOR)).toBe("aprovado");
+    const id = o.id;
+    await expect(receivePurchaseOrder(id, { lines: [{ itemId, quantity: 1, unitCost: 9999, serials: ["E1"] }] }, ACTOR)).rejects.toThrow(/acima do pedido/);
+    // Categoria removida de Contas a Pagar: o estoque entra, o título falha e fica para refazer.
+    await docdb.sql()`update interos.settings set data = jsonb_set(data, '{value,payableCategory}', '"categoria_inexistente"') where data->>'key' = ${PURCHASE_SETTING_KEY}`;
+    const r = await receivePurchaseOrder(id, { lines: [{ itemId, quantity: 1, unitCost: 1600, serials: ["E1"] }] }, ACTOR, { canRaiseCost: true });
+    expect(r.payableError).toMatch(/categoria_inexistente/);
+    expect(r.posted).toBe(1);
+    await expect(retryReceiptPayable(r.receiptId, ACTOR)).rejects.toThrow(/Título não criado/);
+    await docdb.sql()`update interos.settings set data = jsonb_set(data, '{value,payableCategory}', '"fornecedor"') where data->>'key' = ${PURCHASE_SETTING_KEY}`;
+    const code = await retryReceiptPayable(r.receiptId, ACTOR);
+    expect(code).toMatch(/^PAG-/);
+    // Refazer de novo não cria outro título.
+    await expect(retryReceiptPayable(r.receiptId, ACTOR)).resolves.toBe(code);
+    const payables = await list<Payable>(COLLECTIONS.payables, { where: [["createdBy", "==", ACTOR.id]] });
+    expect(payables.filter((p) => p.amount === 1600)).toHaveLength(1);
   });
 });

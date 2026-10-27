@@ -111,7 +111,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Se
 
       {tab === "necessidades" ? <NeedsList rows={needs} items={items} suppliers={supplierOptions} can={caps} paymentDays={settings.paymentDays} /> : null}
       {tab === "pedidos" ? <OrderList orders={orders} items={items} suppliers={supplierOptions} can={caps} focusId={focusOrder} /> : null}
-      {tab === "recebimentos" ? <ReceiptList rows={receipts} /> : null}
+      {tab === "recebimentos" ? <ReceiptList rows={receipts} canRetry={caps.receive} /> : null}
       {tab === "configuracao" && payables ? <PurchaseSettingsForm settings={settings} categories={payables.categoriasComRotulo} canEdit={caps.configEdit} /> : null}
     </PageContainer>
   );

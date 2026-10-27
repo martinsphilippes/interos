@@ -449,39 +449,44 @@ export async function registerEntry(input: EntryInput, actor: UserRef): Promise<
     return { item, balance, movementId, filled, alert };
   });
 
-  await emitEvent({
-    type: "stock.entry",
-    actor,
-    entity: { type: "stock_item", id: result.item.id },
-    title: `Entrada de ${input.quantity} ${result.item.unit} · ${result.item.name}`,
-    description: [
-      `custo ${formatCurrency(unitCost)} cada`,
-      `custo médio ${formatCurrency(result.balance.avgCost)}`,
-      input.document ? `doc. ${input.document.trim()}` : null,
-      input.supplier ? `fornecedor ${input.supplier.trim()}` : null,
-      result.filled.length ? `separado para ${result.filled.map((f) => `${f.contractNumber} (${f.add})`).join(", ")}` : null,
-    ]
-      .filter(Boolean)
-      .join(" · "),
-    department: settings.responsibleDepartment,
-    payload: { itemId: result.item.id, movementId: result.movementId, quantity: input.quantity, unitCost, serials, balance: result.balance, filled: result.filled },
-    timeline: false,
-  });
-  for (const f of result.filled) {
-    const r = await getById<StockReservation>(COLLECTIONS.stockReservations, f.reservationId);
-    if (!r) continue;
+  // A entrada já foi gravada: avisos e eventos depois dela não podem fazer quem chamou achar que ela falhou.
+  try {
     await emitEvent({
-      type: "stock.reserved",
+      type: "stock.entry",
       actor,
-      clientId: r.clientId,
-      entity: { type: "contract", id: r.contractId },
-      title: `${f.add} ${result.item.unit} de ${result.item.name} separado(s) para o contrato ${r.contractNumber}`,
-      description: reservationMissing(r) > 0 ? `Ainda faltam ${reservationMissing(r)}` : "Reserva completa: pronto para a entrega",
+      entity: { type: "stock_item", id: result.item.id },
+      title: `Entrada de ${input.quantity} ${result.item.unit} · ${result.item.name}`,
+      description: [
+        `custo ${formatCurrency(unitCost)} cada`,
+        `custo médio ${formatCurrency(result.balance.avgCost)}`,
+        input.document ? `doc. ${input.document.trim()}` : null,
+        input.supplier ? `fornecedor ${input.supplier.trim()}` : null,
+        result.filled.length ? `separado para ${result.filled.map((f) => `${f.contractNumber} (${f.add})`).join(", ")}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
       department: settings.responsibleDepartment,
-      payload: { itemId: result.item.id, reservationId: r.id, contractId: r.contractId, quantity: f.add, automatic: true },
+      payload: { itemId: result.item.id, movementId: result.movementId, quantity: input.quantity, unitCost, serials, balance: result.balance, filled: result.filled },
+      timeline: false,
     });
+    for (const f of result.filled) {
+      const r = await getById<StockReservation>(COLLECTIONS.stockReservations, f.reservationId);
+      if (!r) continue;
+      await emitEvent({
+        type: "stock.reserved",
+        actor,
+        clientId: r.clientId,
+        entity: { type: "contract", id: r.contractId },
+        title: `${f.add} ${result.item.unit} de ${result.item.name} separado(s) para o contrato ${r.contractNumber}`,
+        description: reservationMissing(r) > 0 ? `Ainda faltam ${reservationMissing(r)}` : "Reserva completa: pronto para a entrega",
+        department: settings.responsibleDepartment,
+        payload: { itemId: result.item.id, reservationId: r.id, contractId: r.contractId, quantity: f.add, automatic: true },
+      });
+    }
+    if (result.alert) await sendLowStockAlert(result.item, result.balance, settings, actor);
+  } catch (error) {
+    console.error("[estoque] entrada gravada, mas os avisos/eventos falharam", error);
   }
-  if (result.alert) await sendLowStockAlert(result.item, result.balance, settings, actor);
   return { movementId: result.movementId, balance: result.balance, filled: result.filled };
 }
 

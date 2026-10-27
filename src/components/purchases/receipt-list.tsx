@@ -5,9 +5,10 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { RetryPayableButton } from "./retry-payable-button";
 
 /** Recebimentos: o que entrou no estoque e o título criado em Contas a Pagar. */
-export function ReceiptList({ rows }: { rows: PurchaseReceipt[] }) {
+export function ReceiptList({ rows, canRetry }: { rows: PurchaseReceipt[]; canRetry: boolean }) {
   if (!rows.length) {
     return (
       <Card>
@@ -54,6 +55,8 @@ export function ReceiptList({ rows }: { rows: PurchaseReceipt[] }) {
                 <Link href="/financeiro/contas-a-pagar" className="text-xs text-brand-fg hover:underline">
                   Título {r.payableCode}
                 </Link>
+              ) : r.payableError && canRetry && r.lines.some((l) => l.movementId) ? (
+                <RetryPayableButton receiptId={r.id} />
               ) : null}
             </div>
           </li>

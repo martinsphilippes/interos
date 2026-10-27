@@ -18,7 +18,7 @@ import { docdb } from "@/server/docdb";
 import { col, getById, getManyByIds, list, newId, nextNumber, nowIso, ORG_ID, txGetOwn } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { writeSetting } from "@/server/conversations/ops-settings";
-import { cleanPatch } from "@/server/commissions/store";
+import { cleanPatch, deleteField } from "@/server/commissions/store";
 import { notify } from "@/server/notifications";
 import { getDepartmentManager } from "@/server/workflow/service";
 import { createManualPayable, getPayablesSettings } from "@/server/commissions/payables";
@@ -244,7 +244,18 @@ export async function updatePurchaseOrder(id: string, input: PurchaseOrderInput,
   const before = await docdb.runTransaction(async (tx) => {
     const order = await lockOrder(tx, id);
     if (order.status !== "rascunho") throw new BusinessError("Só dá para editar o pedido em rascunho");
-    tx.update(col(COLLECTIONS.purchaseOrders).doc(id), cleanPatch({ ...data, history: [...order.history, historyOf(actor, "Pedido alterado", {}, now)], updatedAt: now }));
+    tx.update(
+      col(COLLECTIONS.purchaseOrders).doc(id),
+      cleanPatch({
+        ...data,
+        // Campo apagado na tela some do pedido (fornecedor digitado no lugar do cadastrado, previsão, observação).
+        supplierId: data.supplierId ?? deleteField(),
+        expectedAt: data.expectedAt ?? deleteField(),
+        notes: data.notes ?? deleteField(),
+        history: [...order.history, historyOf(actor, "Pedido alterado", {}, now)],
+        updatedAt: now,
+      }),
+    );
     return order;
   });
   await emitEvent({
@@ -276,6 +287,8 @@ export async function submitPurchaseOrder(id: string, actor: UserRef): Promise<P
   const out = await docdb.runTransaction(async (tx) => {
     const order = await lockOrder(tx, id);
     if (order.status !== "rascunho") throw new BusinessError("Este pedido já foi enviado");
+    const noCost = order.lines.filter((l) => !(l.unitCost > 0));
+    if (noCost.length) throw new BusinessError(`Informe o custo de ${noCost.map((l) => l.itemName).join(", ")} antes de enviar`);
     const required = needsApproval(settings, order.total);
     const to: PurchaseStatus = required ? "aguardando_aprovacao" : "aprovado";
     tx.update(
@@ -430,13 +443,12 @@ export interface ReceiveResult {
   status: PurchaseStatus;
 }
 
-export async function receivePurchaseOrder(id: string, input: ReceiveInput, actor: UserRef): Promise<ReceiveResult> {
+export async function receivePurchaseOrder(id: string, input: ReceiveInput, actor: UserRef, options: { canRaiseCost?: boolean } = {}): Promise<ReceiveResult> {
   const lines = input.lines.filter((l) => (Number(l.quantity) || 0) > 0);
   if (!lines.length) throw new BusinessError("Informe a quantidade recebida de ao menos um item");
   const receivedAt = input.receivedAt && /^\d{4}-\d{2}-\d{2}$/.test(input.receivedAt) ? input.receivedAt : dateKey(new Date());
   if (receivedAt > dateKey(new Date())) throw new BusinessError("A data de recebimento não pode ser futura");
   const document = input.document?.trim().slice(0, 80) || undefined;
-  const settings = await getPurchaseSettings();
   const current = await getPurchaseOrder(id);
   if (!current) throw new BusinessError("Pedido não encontrado");
   if (current.status !== "aprovado" && current.status !== "parcial") {
@@ -461,6 +473,10 @@ export async function receivePurchaseOrder(id: string, input: ReceiveInput, acto
     if (!item.serialControlled && serials.length) throw new BusinessError(`${item.name} não é controlado por número de série`);
     const unitCost = l.unitCost === undefined ? line.unitCost : Math.round(Number(l.unitCost) * 100) / 100;
     if (!(unitCost >= 0)) throw new BusinessError(`Custo inválido em ${line.itemName}`);
+    // Custo acima do aprovado no pedido: só quem aprova compras (senão o título sairia maior que o aprovado).
+    if (unitCost > line.unitCost && !options.canRaiseCost) {
+      throw new BusinessError(`${line.itemName}: custo ${formatCurrency(unitCost)} acima do pedido (${formatCurrency(line.unitCost)}). Peça a quem aprova compras para registrar este recebimento.`);
+    }
     prepared.push({ itemId: line.itemId, itemName: line.itemName, quantity, unitCost, serials: serials.length ? serials : undefined });
   }
   const serialIds = prepared.flatMap((p) => (p.serials ?? []).map((s) => serialDocId(p.itemId, s)));
@@ -525,7 +541,11 @@ export async function receivePurchaseOrder(id: string, input: ReceiveInput, acto
         return bad ? { ...l, received: Math.max(0, (l.received || 0) - bad.quantity) } : l;
       });
       const to = o.status === "cancelado" ? o.status : statusAfterReceipt(next);
-      tx.update(col(COLLECTIONS.purchaseOrders).doc(id), cleanPatch({ lines: next, status: to, updatedAt: nowIso() }));
+      const note = `Entrada no estoque falhou: ${prepared
+        .filter((p) => p.error)
+        .map((p) => `${p.quantity} × ${p.itemName} volta(m) a receber (${p.error})`)
+        .join("; ")}`;
+      tx.update(col(COLLECTIONS.purchaseOrders).doc(id), cleanPatch({ lines: next, status: to, history: [...o.history, historyOf(actor, note, { from: o.status, to })], updatedAt: nowIso() }));
       return to;
     });
   } else {
@@ -535,35 +555,13 @@ export async function receivePurchaseOrder(id: string, input: ReceiveInput, acto
   // 3) Título em Contas a Pagar pelo que entrou.
   const posted = prepared.filter((p) => p.movementId);
   const amount = orderTotal(posted);
-  let payableId: string | undefined;
-  let payableCode: string | undefined;
-  let payableError: string | undefined;
-  if (amount > 0) {
-    try {
-      const payable = await createManualPayable(
-        {
-          creditorType: "fornecedor",
-          supplierId: order.supplierId,
-          creditorName: order.supplierId ? undefined : order.supplierName,
-          category: settings.payableCategory,
-          description: `Compra ${order.number}${document ? ` · NF ${document}` : ""} · ${posted.map((p) => `${p.quantity} × ${p.itemName}`).join(", ")}`.slice(0, 300),
-          amount,
-          competence: receivedAt.slice(0, 7),
-          dueDate: payableDueDate(receivedAt, order.paymentDays),
-          installments: order.installments,
-          notes: `Gerado pelo recebimento do pedido de compra ${order.number}.`,
-        },
-        actor,
-      );
-      payableId = payable.id;
-      payableCode = payable.code;
-    } catch (error) {
-      payableError = error instanceof Error ? error.message : "Falha ao criar o título";
-    }
-  }
   await col(COLLECTIONS.purchaseReceipts)
     .doc(receiptId)
-    .update(cleanPatch({ lines: prepared, amount, status: failed.length || payableError ? "com_erro" : "concluido", payableId, payableCode, payableError, updatedAt: nowIso() }));
+    .update(cleanPatch({ lines: prepared, amount, status: failed.length ? "com_erro" : "processando", updatedAt: nowIso() }));
+  const pay = amount > 0 ? await createReceiptPayable(receiptId, actor) : { status: failed.length ? ("com_erro" as const) : ("concluido" as const) };
+  if (amount <= 0) await col(COLLECTIONS.purchaseReceipts).doc(receiptId).update({ status: pay.status, updatedAt: nowIso() });
+  const payableCode = "payableCode" in pay ? pay.payableCode : undefined;
+  const payableError = "payableError" in pay ? pay.payableError : undefined;
 
   const event = await emitEvent({
     type: "purchase.received",
@@ -580,7 +578,7 @@ export async function receivePurchaseOrder(id: string, input: ReceiveInput, acto
       .filter(Boolean)
       .join(" · "),
     department: "administrativo",
-    payload: { orderId: id, receiptId, amount, payableId: payableId ?? null, failed, changes: { status: { from: order.status, to: status } } },
+    payload: { orderId: id, receiptId, amount, payableCode: payableCode ?? null, failed, changes: { status: { from: order.status, to: status } } },
     timeline: false,
   });
   if (payableCode) {
@@ -598,6 +596,79 @@ export async function receivePurchaseOrder(id: string, input: ReceiveInput, acto
     }
   }
   return { receiptId, posted: posted.length, failed, payableCode, payableError, status };
+}
+
+/**
+ * Cria o título do recebimento uma única vez: marca o recebimento numa transação (reserva por 5 minutos) antes de criar
+ * e grava o título depois. Recebimento com título já criado não cria outro; falha fica em `payableError` para refazer.
+ */
+async function createReceiptPayable(receiptId: string, actor: UserRef): Promise<{ status: PurchaseReceipt["status"]; payableCode?: string; payableError?: string }> {
+  const settings = await getPurchaseSettings();
+  const claimed = await docdb.runTransaction(async (tx) => {
+    const snap = await txGetOwn(tx, col(COLLECTIONS.purchaseReceipts).doc(receiptId));
+    if (!snap) throw new BusinessError("Recebimento não encontrado");
+    const r = { ...(snap.data() as Omit<PurchaseReceipt, "id">), id: receiptId } as PurchaseReceipt;
+    if (r.payableId) return { r, already: true as const };
+    const claimAt = (snap.get("payableClaimAt") as string | undefined) ?? "";
+    if (claimAt && Date.now() - Date.parse(claimAt) < 5 * 60_000) throw new BusinessError("O título deste recebimento está sendo criado agora: aguarde e recarregue");
+    tx.update(col(COLLECTIONS.purchaseReceipts).doc(receiptId), { payableClaimAt: nowIso(), updatedAt: nowIso() });
+    return { r, already: false as const };
+  });
+  const r = claimed.r;
+  if (claimed.already) return { status: r.status, payableCode: r.payableCode };
+  const order = await getPurchaseOrder(r.orderId);
+  if (!order) throw new BusinessError("Pedido não encontrado");
+  const posted = r.lines.filter((l) => l.movementId);
+  const amount = orderTotal(posted);
+  const lineFailed = r.lines.some((l) => l.error);
+  try {
+    if (amount <= 0) throw new BusinessError("Nada entrou no estoque neste recebimento");
+    const payable = await createManualPayable(
+      {
+        creditorType: "fornecedor",
+        supplierId: order.supplierId,
+        creditorName: order.supplierId ? undefined : order.supplierName,
+        category: settings.payableCategory,
+        description: `Compra ${order.number}${r.document ? ` · NF ${r.document}` : ""} · ${posted.map((p) => `${p.quantity} × ${p.itemName}`).join(", ")}`.slice(0, 300),
+        amount,
+        competence: r.receivedAt.slice(0, 7),
+        dueDate: payableDueDate(r.receivedAt, order.paymentDays),
+        installments: order.installments,
+        notes: `Gerado pelo recebimento do pedido de compra ${order.number}.`,
+      },
+      actor,
+    );
+    const status = lineFailed ? "com_erro" : "concluido";
+    await col(COLLECTIONS.purchaseReceipts)
+      .doc(receiptId)
+      .update(cleanPatch({ payableId: payable.id, payableCode: payable.code, payableError: deleteField(), payableClaimAt: deleteField(), status, updatedAt: nowIso() }));
+    return { status, payableCode: payable.code };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Falha ao criar o título";
+    await col(COLLECTIONS.purchaseReceipts)
+      .doc(receiptId)
+      .update(cleanPatch({ payableError: message, payableClaimAt: deleteField(), status: "com_erro", updatedAt: nowIso() }));
+    return { status: "com_erro", payableError: message };
+  }
+}
+
+/** Refazer o título de um recebimento que falhou (ex.: fornecedor inativo ou categoria removida, já corrigidos). */
+export async function retryReceiptPayable(receiptId: string, actor: UserRef): Promise<string> {
+  const out = await createReceiptPayable(receiptId, actor);
+  if (out.payableError) throw new BusinessError(`Título não criado: ${out.payableError}`);
+  if (!out.payableCode) throw new BusinessError("Este recebimento não tem título a criar");
+  const r = await getById<PurchaseReceipt>(COLLECTIONS.purchaseReceipts, receiptId);
+  await emitEvent({
+    type: "purchase.received",
+    actor,
+    entity: { type: "purchase_order", id: r?.orderId ?? receiptId },
+    title: `Título ${out.payableCode} criado para o recebimento da compra ${r?.orderNumber ?? ""}`.trim(),
+    description: "Título refeito depois de uma falha",
+    department: "administrativo",
+    payload: { receiptId, payableCode: out.payableCode, retry: true },
+    timeline: false,
+  });
+  return out.payableCode;
 }
 
 // ---------------------------------------------------------------------------
