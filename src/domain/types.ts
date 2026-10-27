@@ -8,6 +8,7 @@
  * - Nomes de coleção estão em `COLLECTIONS`; nunca use strings soltas.
  */
 import type { StockMovementType, StockOrigin, StockProductLink, StockSerialStatus } from "./stock";
+import type { PurchaseLine, PurchaseStatus } from "./purchases";
 import type {
   ClientStatus,
   DepartmentKey,
@@ -156,6 +157,10 @@ export const COLLECTIONS = {
   stockSerials: "stock_serials",
   /** Reservas de estoque por contrato (uma por item e contrato): pedida, separada, entregue e devolvida. */
   stockReservations: "stock_reservations",
+  /** Pedidos de compra (itens de estoque, fornecedor, aprovação e o recebido de cada linha). */
+  purchaseOrders: "purchase_orders",
+  /** Recebimentos dos pedidos de compra (cada um dá entrada no estoque e gera o título em Contas a Pagar). */
+  purchaseReceipts: "purchase_receipts",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -2672,6 +2677,9 @@ export interface StockMovement extends BaseEntity {
   document?: string;
   supplier?: string;
   reason?: string;
+  /** Entrada vinda do recebimento de um pedido de compra. */
+  purchaseOrderId?: string;
+  purchaseOrderNumber?: string;
   /** Movimento gerado pelo sistema (assinatura/cancelamento de contrato, entrada que preencheu reservas). */
   automatic?: boolean;
   createdBy: string;
@@ -2716,6 +2724,75 @@ export interface StockReservation extends BaseEntity {
   source: "contrato" | "manual";
   cancelledAt?: string;
   cancelReason?: string;
+  createdBy: string;
+  createdByName?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Compras (fase 3 do circuito hardware; regras em src/domain/purchases.ts)
+// ---------------------------------------------------------------------------
+
+export interface PurchaseHistoryEntry {
+  at: string;
+  by: string;
+  byName?: string;
+  action: string;
+  from?: PurchaseStatus;
+  to?: PurchaseStatus;
+  reason?: string;
+}
+
+export interface PurchaseOrder extends BaseEntity {
+  /** PC-AAAA-NNNN. */
+  number: string;
+  supplierId?: string;
+  supplierName: string;
+  status: PurchaseStatus;
+  lines: PurchaseLine[];
+  total: number;
+  /** Previsão de chegada (AAAA-MM-DD). */
+  expectedAt?: string;
+  /** Prazo de pagamento (dias depois do recebimento) e parcelas do título. */
+  paymentDays: number;
+  installments: number;
+  notes?: string;
+  /** O pedido exigiu aprovação (valor acima do limite configurado quando foi enviado). */
+  approvalRequired?: boolean;
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  rejectedReason?: string;
+  cancelledAt?: string;
+  cancelReason?: string;
+  history: PurchaseHistoryEntry[];
+  createdBy: string;
+  createdByName?: string;
+}
+
+export interface PurchaseReceiptLine {
+  itemId: string;
+  itemName: string;
+  quantity: number;
+  unitCost: number;
+  serials?: string[];
+  /** Entrada feita no estoque (movimento). */
+  movementId?: string;
+  error?: string;
+}
+
+export interface PurchaseReceipt extends BaseEntity {
+  orderId: string;
+  orderNumber: string;
+  supplierName: string;
+  receivedAt: string;
+  /** NF do fornecedor. */
+  document?: string;
+  lines: PurchaseReceiptLine[];
+  amount: number;
+  status: "processando" | "concluido" | "com_erro";
+  payableId?: string;
+  payableCode?: string;
+  payableError?: string;
   createdBy: string;
   createdByName?: string;
 }

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { ScreenLink } from "@/components/auth/access-provider";
 import { ArrowUpFromLine, ClipboardList, PackageCheck, PackagePlus, Undo2, XCircle } from "lucide-react";
 import type { StockReservationRow } from "@/server/stock/queries";
 import { fillReservationAction, releaseReservationAction, reserveContractAction } from "@/server/stock/actions";
@@ -109,9 +110,11 @@ export function StockReservationList({ rows, can }: { rows: StockReservationRow[
                         {RESERVATION_STATE_LABELS[r.state]}
                       </Badge>
                       {r.missing > 0 ? (
-                        <Badge variant={r.origin === "estoque" ? "warning" : "info"} size="sm" title={STOCK_ORIGIN_LABELS[r.origin]}>
-                          {r.origin === "estoque" ? `Falta ${r.missing}` : `Comprar ${r.missing}`}
-                        </Badge>
+                        <ScreenLink href="/compras?aba=necessidades" title={`${STOCK_ORIGIN_LABELS[r.origin]} · abrir em Compras`}>
+                          <Badge variant={r.origin === "estoque" ? "warning" : "info"} size="sm">
+                            {r.origin === "estoque" ? `Falta ${r.missing}` : `Comprar ${r.missing}`}
+                          </Badge>
+                        </ScreenLink>
                       ) : null}
                     </p>
                     <p className="mt-0.5 break-words text-xs text-muted">

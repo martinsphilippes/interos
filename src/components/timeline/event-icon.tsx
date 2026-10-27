@@ -155,6 +155,7 @@ const PREFIX_CATEGORY: Record<string, EventCategory> = {
   invoice: "financeiro",
   fiscal: "financeiro",
   stock: "implantacao",
+  purchase: "financeiro",
 };
 
 export function eventCategory(type: EventType | string): EventCategory {
@@ -336,6 +337,10 @@ const TYPE_TONE: Partial<Record<EventType, EventTone>> = {
   "stock.reserved": "brand",
   "stock.reservation_released": "muted",
   "stock.low": "warning",
+  "purchase.order_approved": "success",
+  "purchase.order_rejected": "warning",
+  "purchase.order_cancelled": "muted",
+  "purchase.received": "success",
   "contract.pendency_resolved": "success",
   "contract.updated": "brand",
   "portal.link_created": "brand",

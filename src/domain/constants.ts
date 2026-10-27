@@ -499,6 +499,15 @@ export const EVENT_TYPES = [
   "stock.reservation_released",
   "stock.low",
   "stock.settings_updated",
+  // compras
+  "purchase.order_created",
+  "purchase.order_updated",
+  "purchase.order_submitted",
+  "purchase.order_approved",
+  "purchase.order_rejected",
+  "purchase.order_cancelled",
+  "purchase.received",
+  "purchase.settings_updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

@@ -203,6 +203,14 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "stock.reservation_released": "Reserva de equipamento liberada",
   "stock.low": "Estoque abaixo do mínimo",
   "stock.settings_updated": "Configuração do estoque alterada",
+  "purchase.order_created": "Pedido de compra criado",
+  "purchase.order_updated": "Pedido de compra alterado",
+  "purchase.order_submitted": "Pedido de compra enviado para aprovação",
+  "purchase.order_approved": "Pedido de compra aprovado",
+  "purchase.order_rejected": "Pedido de compra devolvido (não aprovado)",
+  "purchase.order_cancelled": "Pedido de compra cancelado",
+  "purchase.received": "Compra recebida (entrada no estoque e título a pagar)",
+  "purchase.settings_updated": "Configuração de compras alterada",
 };
 
 const DOMAIN_LABELS: Record<string, string> = {
@@ -261,6 +269,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   invoice: "Financeiro",
   fiscal: "Financeiro",
   stock: "Estoque",
+  purchase: "Compras",
   bonus: "Performance",
   gamification: "Performance",
   achievement: "Performance",
