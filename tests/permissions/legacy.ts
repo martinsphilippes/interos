@@ -45,10 +45,17 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "operacao.estoque.reservas.gerenciar",
   "operacao.estoque.ajustar",
   "operacao.estoque.configuracao.editar",
+  // Compras: tela nova de Operação (item novo no menu, depois de Estoque).
+  "operacao.compras.ver",
+  "operacao.compras.configuracao.ver",
+  "operacao.compras.pedidos.editar",
+  "operacao.compras.aprovar",
+  "operacao.compras.receber",
+  "operacao.compras.configuracao.editar",
 ];
 
 /** Rotas de telas novas em módulos antigos (itens de menu criados depois do T0). */
-export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento", "/estoque"];
+export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento", "/estoque", "/compras"];
 
 /** A chave (ou tela) pertence a um módulo criado depois do T0 (ou é uma chave nova)? */
 export function isAfterT0Key(key: string): boolean {

@@ -353,6 +353,9 @@ export interface EntryInput {
   document?: string;
   supplier?: string;
   notes?: string;
+  /** Entrada vinda do recebimento de um pedido de compra. */
+  purchaseOrderId?: string;
+  purchaseOrderNumber?: string;
 }
 
 export interface EntryResult {
@@ -397,6 +400,8 @@ export async function registerEntry(input: EntryInput, actor: UserRef): Promise<
         document: trimOrUndef(input.document, 80),
         supplier: trimOrUndef(input.supplier, 120),
         reason: trimOrUndef(input.notes, 500),
+        purchaseOrderId: input.purchaseOrderId,
+        purchaseOrderNumber: input.purchaseOrderNumber,
         createdBy: actor.id,
         createdByName: actor.name,
       },

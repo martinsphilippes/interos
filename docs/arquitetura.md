@@ -416,6 +416,26 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   `ajustar` e `configuracao.editar` (diretoria/admin ou gestor do Administrativo). Cartão "Equipamentos" no contrato
   para quem vê a tela Estoque.
 
+## Compras (fase 3, `src/server/purchases/*`, `/compras`)
+
+- **Regras puras** em `src/domain/purchases.ts`: `purchaseNeed` (sugerido = falta das reservas + mínimo − disponível −
+  já pedido em pedidos abertos), `needsApproval` (ligada e total ACIMA do limite), `statusAfterReceipt`, `orderTotal`,
+  `payableDueDate`.
+- **Coleções** (migration `20261031000000_compras.sql`): `purchase_orders` (PC-AAAA-NNNN pelo contador transacional;
+  `rascunho → aguardando_aprovacao → aprovado → parcial → recebido`, `cancelado`; devolvido volta a rascunho com
+  `rejectedReason`; linhas com `received`; histórico) e `purchase_receipts` (linhas recebidas com séries e o movimento de
+  estoque, NF, título gerado ou erro). Configuração no setting `compras` (aprovação, limite, categoria e prazo do título).
+- **Recebimento** (`receivePurchaseOrder`): pré-valida (situação, quantidade restante, séries obrigatórias/repetidas/já
+  cadastradas); reserva as quantidades no pedido numa transação (dois recebimentos simultâneos não passam do pedido);
+  `registerEntry` por linha (com `purchaseOrderId` no movimento; preenche reservas que esperavam); linha que falha volta
+  a "a receber"; título via `createManualPayable` (fornecedor, categoria do setting, vencimento = recebimento + prazo,
+  parcelas do pedido); aviso ao gestor do Financeiro. Erro no título fica no recebimento (`payableError`).
+- **Permissões** (tela `operacao.compras`, menu depois de Estoque; Administrativo, Financeiro, gestores, diretoria/admin):
+  seção `configuracao.ver`; ações `pedidos.editar`, `aprovar` e `configuracao.editar` (diretoria/admin ou gestor do
+  Administrativo), `receber`.
+- Eventos: `purchase.order_created|updated|submitted|approved|rejected|cancelled`, `purchase.received`,
+  `purchase.settings_updated`.
+
 ## Cadastros financeiros (etapa CP/CR 1, `src/server/finance-registry/*`, `/financeiro/cadastros`)
 - **Coleções novas** (regra `if false`, só servidor): `financial_accounts` (conta financeira: nome, tipo
   corrente|poupanca|cartao|dinheiro|investimento|outro, `initialBalance`, `currency` "BRL", banco/agência/conta só

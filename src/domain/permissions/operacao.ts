@@ -750,5 +750,70 @@ export const OPERACAO = {
       ],
       scope: null,
     },
+    {
+      key: "operacao.compras",
+      module: "operacao",
+      label: "Compras",
+      description: "Compras de equipamentos: necessidades (falta das reservas de contratos + estoque mínimo − já pedido), pedidos de compra com fornecedor, aprovação opcional acima de um valor configurável (diretoria ou gestor do Administrativo), recebimento que dá entrada no estoque e cria o título em Contas a Pagar, e a configuração.",
+      routes: ["/compras"],
+      // Tela NOVA (compras, fase 3): Administrativo (responsável), Financeiro (título gerado), gestores, diretoria e admin.
+      rule: { any: [{ manager: true }, { role: ["admin", "diretoria", "financeiro"] }, { department: ["administrativo", "financeiro"] }] },
+      nav: {
+        menu: "operacao",
+        href: "/compras",
+        order: 6,
+        label: "Compras",
+        icon: "ShoppingCart",
+        wave: 2,
+      },
+      sections: [
+        {
+          key: "operacao.compras.configuracao.ver",
+          tab: "configuracao",
+          label: "Configuração de compras",
+          // Onde: /compras?aba=configuracao (aprovação acima de um valor, categoria e prazo do título).
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: "administrativo" }] },
+        },
+      ],
+      actions: [
+        {
+          key: "operacao.compras.pedidos.editar",
+          label: "Criar, editar, enviar e cancelar pedidos de compra",
+          verb: "editar",
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: "administrativo" }] },
+          guards: [
+            "src/server/purchases/actions.ts#createPurchaseOrderAction",
+            "src/server/purchases/actions.ts#updatePurchaseOrderAction",
+            "src/server/purchases/actions.ts#submitPurchaseOrderAction",
+            "src/server/purchases/actions.ts#cancelPurchaseOrderAction",
+          ],
+        },
+        {
+          key: "operacao.compras.aprovar",
+          label: "Aprovar ou devolver pedidos de compra acima do limite",
+          verb: "aprovar",
+          rule: { any: [{ role: ["admin", "diretoria"] }, { managerOf: "administrativo" }] },
+          guards: ["src/server/purchases/actions.ts#approvePurchaseOrderAction", "src/server/purchases/actions.ts#rejectPurchaseOrderAction"],
+          sensitive: true,
+        },
+        {
+          key: "operacao.compras.receber",
+          label: "Receber compra (entrada no estoque e título a pagar)",
+          verb: "editar",
+          rule: { any: [{ manager: true }, { role: ["admin", "diretoria"] }, { department: "administrativo" }] },
+          guards: ["src/server/purchases/actions.ts#receivePurchaseOrderAction"],
+          sensitive: true,
+        },
+        {
+          key: "operacao.compras.configuracao.editar",
+          label: "Editar a configuração de compras (aprovação, categoria e prazo)",
+          verb: "editar",
+          rule: { any: [{ role: ["admin", "diretoria"] }, { managerOf: "administrativo" }] },
+          guards: ["src/server/purchases/actions.ts#savePurchaseSettingsAction"],
+          sensitive: true,
+        },
+      ],
+      scope: null,
+    },
   ],
 } as const satisfies ModuleDef;

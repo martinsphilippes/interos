@@ -148,6 +148,19 @@ Regras do motor (parametrizáveis em Financeiro › Comissões › Regras; nada 
   recebimento dá entrada no estoque), **Entrega** (técnico ou transportadora; liberada após a nota e/ou o pagamento,
   configurável) e a emissão automática da nota.
 
+## Compras (fase 3)
+
+- Fica em **Operação › Compras**, sob o **Administrativo**. A aba **Necessidades** mostra, por equipamento, o que comprar:
+  a falta dos contratos assinados + o estoque mínimo, menos o disponível e o que já foi pedido. Marque, ajuste e gere o
+  pedido para um fornecedor (do cadastro de Contas a Pagar ou digitado).
+- **Aprovação**: desligada por padrão. Ligada, pedido **acima** do valor configurado espera a **diretoria ou o gestor do
+  Administrativo** (aprovar ou devolver com motivo); até o valor segue direto.
+- **Recebimento** (pode ser parcial, com números de série e a NF do fornecedor): entra no estoque (custo médio), separa
+  para os contratos que esperavam e **cria o título em Contas a Pagar automaticamente** (categoria e prazo da
+  configuração; parcelas do pedido). O Financeiro é avisado.
+- Próximas fases: **Entrega** (técnico ou transportadora; liberada após a nota e/ou o pagamento, configurável) e a
+  emissão automática da nota.
+
 ## Aditivos, renovação e Contas a Pagar geral (etapa 5)
 - **Aditivo no mesmo contrato**: depois da assinatura, toda mudança de itens, condições, reajuste ou renovação entra
   como aditivo (rascunho → assinatura do cliente, quando exigida → aplicação pelo Financeiro). O contrato original
