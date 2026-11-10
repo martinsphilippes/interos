@@ -95,7 +95,7 @@ export interface MeuDiaStats {
   unreadNotifications: number;
 }
 
-export type AgendaKind = "tarefa" | "visita" | "treinamento" | "checkpoint";
+export type AgendaKind = "tarefa" | "visita" | "treinamento" | "checkpoint" | "followup";
 export interface AgendaItem {
   id: string;
   kind: AgendaKind;
@@ -106,7 +106,32 @@ export interface AgendaItem {
   clientName?: string;
   href: string;
   done: boolean;
+  /** Horário já passou e não foi feito (só no dia de hoje). */
+  overdue?: boolean;
   assigneeName?: string;
+}
+
+/** Um dia da agenda do Meu Dia (hoje e os 6 seguintes), com os compromissos em ordem de horário. */
+export interface AgendaDay {
+  /** AAAA-MM-DD (America/Sao_Paulo). */
+  key: string;
+  /** "Hoje", "Amanhã", "Qua 12". */
+  label: string;
+  /** Aba do dia: "Hoje", "Ter", "Qua"… */
+  tabLabel: string;
+  /** Dia do mês (12). */
+  dayNumber: number;
+  /** "quarta-feira, 12 de novembro" (título do dia aberto). */
+  longLabel: string;
+  /** Compromissos do dia (pode passar de `items.length` quando o dia passa do limite enviado à tela). */
+  total: number;
+  items: AgendaItem[];
+}
+
+/** Atalho do painel para a agenda inteira: a de Vendas para quem vende (ou lidera vendedores), senão o calendário de tarefas. */
+export interface AgendaLink {
+  href: string;
+  label: string;
 }
 
 export interface FollowupItem {
@@ -274,7 +299,7 @@ export interface MeuDiaSections {
   clientesAtencao: boolean;
   metas: boolean;
   notificacoes: boolean;
-  /** Visitas na agenda (vem de Vendas › Visitas). */
+  /** Visitas na agenda do Meu Dia (vêm de Vendas › Visitas). */
   visitas: boolean;
   /** Cards do cabeçalho que levam a outras telas (só aparecem para quem abre a tela de destino). */
   tarefas: boolean;
@@ -292,9 +317,10 @@ export interface MeuDiaData {
   summaryLine: string;
   stats: MeuDiaStats;
   priorities: PriorityItem[];
-  agenda: AgendaItem[];
-  /** Visitas agendadas nos próximos 7 dias (depois de hoje). */
-  upcomingVisits: AgendaItem[];
+  /** Agenda de hoje e dos 6 dias seguintes (seção inicio.meu-dia.agenda.ver; vazia sem a seção). */
+  agendaDays: AgendaDay[];
+  /** Atalho "Agenda completa" (ausente quando o usuário não abre nenhuma das telas). */
+  agendaLink?: AgendaLink;
   followups: FollowupItem[];
   steps: StepItem[];
   attentionClients: AttentionClient[];

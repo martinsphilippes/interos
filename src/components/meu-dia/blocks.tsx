@@ -4,7 +4,7 @@
  */
 import Link from "next/link";
 import { ScreenLink } from "@/components/auth/access-provider";
-import { Check, FileSignature, MessageSquareReply, Ticket } from "lucide-react";
+import { FileSignature, MessageSquareReply, Ticket } from "lucide-react";
 import type { FinanceDigest, FinanceItem } from "./model";
 import { WORKFLOW_STEP_STATUS_LABELS, type WorkflowStepStatus } from "@/domain/constants";
 import { Avatar } from "@/components/ui/avatar";
@@ -14,79 +14,13 @@ import { SlaBadge } from "@/components/ui/sla-badge";
 import { StatusDot, type StatusTone } from "@/components/ui/status-dot";
 import { NotificationsList } from "@/components/notifications/notifications-list";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
-import { AgendaIcon, KindIcon } from "./kind-icon";
+import { KindIcon } from "./kind-icon";
 import { CollapsibleBlock } from "./collapsible-block";
-import type { AgendaItem, AttentionClient, AwaitingItem, FollowupItem, GoalItem, NotificationItem, PendingContractItem, StepItem, TeamMember } from "./model";
+import type { AttentionClient, AwaitingItem, FollowupItem, GoalItem, NotificationItem, PendingContractItem, StepItem, TeamMember } from "./model";
 import { cn } from "@/lib/utils";
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="rounded-md bg-surface-muted px-3 py-4 text-center text-sm text-muted">{children}</p>;
-}
-
-function ClientLink({ id, name, className }: { id?: string; name?: string; className?: string }) {
-  if (!name) return null;
-  if (!id) return <span className={cn("truncate text-xs text-muted", className)}>{name}</span>;
-  return (
-    <Link href={`/clientes/${id}`} className={cn("truncate text-xs text-muted hover:text-foreground hover:underline", className)}>
-      {name}
-    </Link>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-export function AgendaBlock({ items, upcomingVisits = [] }: { items: AgendaItem[]; upcomingVisits?: AgendaItem[] }) {
-  return (
-    <CollapsibleBlock title="Agenda de hoje" count={items.length} action={<ScreenLink href="/tarefas?view=calendario" className="font-medium text-brand hover:underline">Calendário</ScreenLink>}>
-      {items.length === 0 ? (
-        <Empty>Nada agendado para hoje.</Empty>
-      ) : (
-        <ul className="flex flex-col divide-y divide-border">
-          {items.map((a) => (
-            <li key={a.id} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
-              <span className={cn("w-11 shrink-0 pt-0.5 text-sm font-semibold tabular-nums", a.done ? "text-muted line-through" : "text-foreground")}>{a.timeLabel}</span>
-              <span className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md", a.done ? "bg-success-soft text-success-fg" : "bg-surface-hover text-muted")}>
-                {a.done ? <Check className="size-4" aria-hidden /> : <AgendaIcon kind={a.kind} />}
-              </span>
-              <div className="min-w-0 flex-1">
-                <Link href={a.href} className={cn("block truncate text-sm font-medium hover:text-brand hover:underline", a.done ? "text-muted line-through" : "text-foreground")}>
-                  {a.title}
-                </Link>
-                <div className="flex flex-wrap items-center gap-x-2">
-                  <ClientLink id={a.clientId} name={a.clientName} />
-                  {a.assigneeName ? <span className="text-xs text-muted">· {a.assigneeName}</span> : null}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-      {upcomingVisits.length > 0 ? (
-        <div className="mt-4 border-t border-border pt-3" data-testid="proximas-visitas">
-          <p className="label-caps mb-2">Próximas visitas</p>
-          <ul className="flex flex-col gap-2">
-            {upcomingVisits.map((v) => (
-              <li key={v.id} className="flex items-start gap-3">
-                <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-hover text-muted">
-                  <AgendaIcon kind={v.kind} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <Link href={v.href} className="block truncate text-sm font-medium text-foreground hover:text-brand hover:underline">
-                    {v.title}
-                  </Link>
-                  <div className="flex flex-wrap items-center gap-x-2">
-                    <span className="text-xs tabular-nums text-muted">{v.timeLabel}</span>
-                    <ClientLink id={v.clientId} name={v.clientName} />
-                    {v.assigneeName ? <span className="text-xs text-muted">· {v.assigneeName}</span> : null}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </CollapsibleBlock>
-  );
 }
 
 // ---------------------------------------------------------------------------

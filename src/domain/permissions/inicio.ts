@@ -93,8 +93,8 @@ export const INICIO = {
         {
           key: "inicio.meu-dia.agenda.ver",
           label: "Agenda e visitas",
-          // Onde: AgendaBlock (meu-dia/page.tsx:59) · Hoje: requireUser; visitas por sellerId ∈ escopo
-          // (queries.ts:388)
+          // Onde: AgendaPanel no topo do Meu Dia (meu-dia/page.tsx; hoje + 6 dias) · buildAgendaDays em
+          // src/server/meu-dia/queries.ts: cada fonte só entra com a tela de origem (tarefas, visitas, oportunidades…)
           rule: "all",
         },
         {
