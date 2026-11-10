@@ -27,6 +27,11 @@ function ClientName({ id, name }: { id?: string; name?: string }) {
 
 function AgendaRow({ item }: { item: AgendaItem }) {
   const titleClass = cn("block truncate text-sm font-medium", item.done ? "text-muted line-through" : "text-foreground");
+  // Linha de apoio: cliente · responsável · atrasado (o separador só aparece entre partes que existem).
+  const meta: React.ReactNode[] = [];
+  if (item.clientName) meta.push(<ClientName key="cliente" id={item.clientId} name={item.clientName} />);
+  if (item.assigneeName) meta.push(<span key="responsavel" className="truncate text-xs text-muted">{item.assigneeName}</span>);
+  if (item.overdue) meta.push(<span key="atrasado" className="text-xs font-medium text-danger-fg">atrasado</span>);
   return (
     <li className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
       <span className={cn("w-11 shrink-0 pt-0.5 text-sm font-semibold tabular-nums", item.done ? "text-muted line-through" : item.overdue ? "text-danger-fg" : "text-foreground")}>{item.timeLabel}</span>
@@ -43,11 +48,20 @@ function AgendaRow({ item }: { item: AgendaItem }) {
             {item.title}
           </span>
         )}
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2">
-          <ClientName id={item.clientId} name={item.clientName} />
-          {item.assigneeName ? <span className="text-xs text-muted">· {item.assigneeName}</span> : null}
-          {item.overdue ? <span className="text-xs font-medium text-danger-fg">· atrasado</span> : null}
-        </div>
+        {meta.length ? (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+            {meta.map((part, i) => (
+              <React.Fragment key={i}>
+                {i > 0 ? (
+                  <span aria-hidden className="text-xs text-muted">
+                    ·
+                  </span>
+                ) : null}
+                {part}
+              </React.Fragment>
+            ))}
+          </div>
+        ) : null}
       </div>
     </li>
   );
@@ -60,25 +74,36 @@ export interface AgendaPanelProps {
   className?: string;
 }
 
+/** Quantos compromissos do dia aparecem antes do "Ver mais" (a visão da equipe pode ter dezenas num dia). */
+const VISIBLE_ITEMS = 8;
+
 export function AgendaPanel({ days, team, className }: AgendaPanelProps) {
   const [selected, setSelected] = React.useState(0);
+  const [expanded, setExpanded] = React.useState(false);
   const tabs = React.useRef<(HTMLButtonElement | null)[]>([]);
   const panelId = React.useId();
   if (!days.length) return null;
   const day = days[Math.min(selected, days.length - 1)];
   const next = day.items.length === 0 ? days.findIndex((d, i) => i > selected && d.items.length > 0) : -1;
   const total = days.reduce((n, d) => n + d.items.length, 0);
+  const shown = expanded ? day.items : day.items.slice(0, VISIBLE_ITEMS);
+  const hidden = day.items.length - shown.length;
+
+  const choose = (index: number) => {
+    setSelected(index);
+    setExpanded(false);
+  };
 
   const select = (index: number) => {
     const i = (index + days.length) % days.length;
-    setSelected(i);
+    choose(i);
     tabs.current[i]?.focus();
   };
 
   return (
     <Card className={cn("flex flex-col p-4 md:p-5", className)}>
-      <section aria-labelledby={`${panelId}-titulo`}>
-        <div className="mb-3 flex items-center justify-between gap-2">
+      <section aria-labelledby={`${panelId}-titulo`} className="flex min-h-0 flex-1 flex-col">
+        <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
           <h2 id={`${panelId}-titulo`} className="flex items-center gap-2 text-base font-semibold leading-tight tracking-tight text-foreground">
             <CalendarDays className="size-4 text-brand-fg" aria-hidden /> Agenda
             {team ? <span className="text-xs font-normal text-muted">· equipe</span> : null}
@@ -100,7 +125,7 @@ export function AgendaPanel({ days, team, className }: AgendaPanelProps) {
         </div>
 
         {/* Os 7 dias cabem sempre (grade de 7 colunas): dia da semana, número e a quantidade num selo. */}
-        <div role="tablist" aria-label="Dia da agenda" className="mb-3 grid grid-cols-7 gap-1">
+        <div role="tablist" aria-label="Dia da agenda" className="mb-3 grid shrink-0 grid-cols-7 gap-1">
           {days.map((d, i) => {
             const active = i === selected;
             return (
@@ -116,7 +141,7 @@ export function AgendaPanel({ days, team, className }: AgendaPanelProps) {
                 aria-controls={`${panelId}-dia`}
                 aria-label={`${d.label}: ${d.items.length === 0 ? "nenhum compromisso" : d.items.length === 1 ? "1 compromisso" : `${d.items.length} compromissos`}`}
                 tabIndex={active ? 0 : -1}
-                onClick={() => setSelected(i)}
+                onClick={() => choose(i)}
                 onKeyDown={(e) => {
                   if (e.key === "ArrowRight") {
                     e.preventDefault();
@@ -143,7 +168,8 @@ export function AgendaPanel({ days, team, className }: AgendaPanelProps) {
           })}
         </div>
 
-        <div id={`${panelId}-dia`} role="tabpanel" aria-labelledby={`${panelId}-aba-${selected}`}>
+        {/* Rola por dentro quando o painel fica fixo no desktop e o dia é longo (a altura máxima vem da página). */}
+        <div id={`${panelId}-dia`} role="tabpanel" aria-labelledby={`${panelId}-aba-${selected}`} className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
           <p className="mb-2 text-xs text-muted first-letter:uppercase">
             {selected <= 1 ? `${day.label} · ` : ""}
             {day.longLabel}
@@ -152,17 +178,24 @@ export function AgendaPanel({ days, team, className }: AgendaPanelProps) {
             <div className="text-sm text-muted">
               <p>{selected === 0 ? "Nada agendado para hoje." : "Nada agendado para este dia."}</p>
               {next > 0 ? (
-                <button type="button" onClick={() => setSelected(next)} className="mt-1 text-left text-sm font-medium text-brand hover:underline">
+                <button type="button" onClick={() => choose(next)} className="mt-1 text-left text-sm font-medium text-brand hover:underline">
                   Próximo compromisso: {days[next].label.toLowerCase() === "amanhã" ? "amanhã" : days[next].label}, {days[next].items[0].timeLabel} · {days[next].items[0].title}
                 </button>
               ) : null}
             </div>
           ) : (
-            <ul className="flex flex-col divide-y divide-border">
-              {day.items.map((item) => (
-                <AgendaRow key={item.id} item={item} />
-              ))}
-            </ul>
+            <>
+              <ul className="flex flex-col divide-y divide-border">
+                {shown.map((item) => (
+                  <AgendaRow key={item.id} item={item} />
+                ))}
+              </ul>
+              {day.items.length > VISIBLE_ITEMS ? (
+                <button type="button" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)} className="mt-3 text-sm font-medium text-brand hover:underline">
+                  {expanded ? "Mostrar menos" : `Ver mais ${hidden} ${hidden === 1 ? "compromisso" : "compromissos"}`}
+                </button>
+              ) : null}
+            </>
           )}
         </div>
       </section>
