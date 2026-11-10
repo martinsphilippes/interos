@@ -12,7 +12,7 @@ import { computeSlaState } from "@/server/sla";
 import { listNotifications } from "@/server/notifications";
 import { sweepOverdue } from "@/server/finance/billing";
 import { getDueSoonDays } from "@/server/finance/regua";
-import { can } from "@/server/auth/permissions";
+import { can, canSeeHref } from "@/server/auth/permissions";
 import type { PermissionKey } from "@/domain/permissions";
 import { resolveDataScope } from "@/server/auth/scope";
 import { toNotificationItem } from "@/components/notifications/model";
@@ -53,6 +53,7 @@ import { formatCurrency } from "@/lib/format";
 import { computeKpiBatch, kpiHref, monthPeriod, type KpiResult } from "@/server/kpis/queries";
 import { CONTRACT_STATUS_LABELS } from "@/components/clients/labels";
 import type {
+  AgendaDay,
   AgendaItem,
   AttentionClient,
   AwaitingItem,
@@ -400,6 +401,92 @@ async function computeGoals(user: CurrentUser, scopeInfo: ScopeInfo, month: stri
 // ---------------------------------------------------------------------------
 // Montagem
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Agenda (hoje + 6 dias)
+// ---------------------------------------------------------------------------
+
+/** Dias na agenda do Meu Dia: hoje e os 6 seguintes. */
+export const AGENDA_DAYS = 7;
+
+const weekdayShortFormat = new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, weekday: "short" });
+const dayLongFormat = new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, weekday: "long", day: "numeric", month: "long" });
+
+/** Rótulos do dia: "Hoje", "Amanhã", "Qua 12" e "quarta-feira, 12 de novembro". */
+function agendaDayLabels(key: string, offset: number): { label: string; longLabel: string } {
+  const noon = new Date(`${key}T15:00:00Z`);
+  const weekday = weekdayShortFormat.format(noon).replace(".", "");
+  const label = offset === 0 ? "Hoje" : offset === 1 ? "Amanhã" : `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${Number(key.slice(8, 10))}`;
+  return { label, longLabel: dayLongFormat.format(noon) };
+}
+
+export interface AgendaSources {
+  today: string;
+  nowIso: string;
+  isTeam: boolean;
+  nameOf: (id: string | undefined) => string | undefined;
+  clientName: (id: string | undefined) => string | undefined;
+  /** Link do item, ou "" quando o usuário não vê a tela de destino (o item aparece sem link). */
+  linkable: (href: string) => string;
+  tasks: readonly Task[];
+  visits: readonly Visit[];
+  trainings: readonly Training[];
+  csClients: readonly Client[];
+  successPlans: readonly SuccessPlan[];
+  openLeads: readonly Lead[];
+  openOpps: readonly Opportunity[];
+}
+
+/**
+ * Agenda do Meu Dia: hoje e os 6 dias seguintes, em ordem de horário. Entram tarefas (no dia do início, quando há,
+ * senão do prazo), visitas (comerciais e técnicas), treinamentos, checkpoints de CS e follow-ups (próxima ação de
+ * leads e oportunidades). Feitos ficam riscados; o que já passou hoje sem ser feito fica marcado como atrasado.
+ */
+export function buildAgendaDays(src: AgendaSources): AgendaDay[] {
+  const keys = Array.from({ length: AGENDA_DAYS }, (_, i) => addDaysToKey(src.today, i));
+  const byDay = new Map(keys.map((k) => [k, [] as AgendaItem[]]));
+  const push = (at: string | undefined, item: Omit<AgendaItem, "at" | "timeLabel" | "overdue">) => {
+    if (!at) return;
+    const key = dayKey(at);
+    const items = byDay.get(key);
+    if (!items) return;
+    items.push({ ...item, at, timeLabel: timeLabel(at), href: item.href ? src.linkable(item.href) : "", overdue: !item.done && key === src.today && at < src.nowIso });
+  };
+  const owner = (id: string | undefined) => (src.isTeam ? src.nameOf(id) : undefined);
+
+  for (const t of src.tasks) {
+    if (t.status === "cancelada") continue;
+    const at = t.startAt && byDay.has(dayKey(t.startAt)) ? t.startAt : t.dueAt;
+    push(at, { id: `tarefa:${t.id}`, kind: "tarefa", title: t.title, clientId: t.clientId, clientName: t.clientName ?? src.clientName(t.clientId), href: `/tarefas?tarefa=${t.id}`, done: t.status === "concluida", assigneeName: src.isTeam ? (t.assigneeName ?? src.nameOf(t.assigneeId)) : undefined });
+  }
+  for (const v of src.visits) {
+    if (v.status === "cancelada" || v.status === "remarcada") continue;
+    push(v.scheduledAt, { id: `visita:${v.id}`, kind: "visita", title: `${v.kind === "tecnica" ? "Visita técnica" : "Visita"} · ${v.objective}`, clientId: v.clientId, clientName: src.clientName(v.clientId), href: `/vendas/visitas?visita=${v.id}`, done: v.status === "realizada", assigneeName: owner(v.sellerId) });
+  }
+  for (const tr of src.trainings) {
+    if (tr.status === "cancelado") continue;
+    push(tr.scheduledAt, { id: `treinamento:${tr.id}`, kind: "treinamento", title: `Treinamento · ${tr.subject}`, clientId: tr.clientId, clientName: src.clientName(tr.clientId), href: tr.projectId ? `/implantacao/${tr.projectId}?aba=treinamentos` : "/implantacao/treinamentos", done: tr.status === "realizado", assigneeName: owner(tr.instructorId) });
+  }
+  for (const c of src.csClients) {
+    push(c.nextInteractionAt, { id: `checkpoint:${c.id}`, kind: "checkpoint", title: `Checkpoint · ${c.tradeName}`, clientId: c.id, clientName: c.tradeName, href: `/clientes/${c.id}?aba=cs`, done: false, assigneeName: owner(c.ownerCsId) });
+  }
+  for (const sp of src.successPlans) {
+    if (sp.status !== "ativo") continue;
+    push(sp.checkpointAt, { id: `plano:${sp.id}`, kind: "checkpoint", title: `Checkpoint do plano · ${sp.objective}`, clientId: sp.clientId, clientName: src.clientName(sp.clientId), href: `/clientes/${sp.clientId}?aba=cs`, done: false, assigneeName: owner(sp.ownerId) });
+  }
+  for (const l of src.openLeads) {
+    push(l.nextActionAt, { id: `lead:${l.id}`, kind: "followup", title: `Follow-up · ${l.nextAction ?? l.name}`, clientId: l.clientId, clientName: l.company ?? l.name, href: `/marketing/leads?lead=${l.id}`, done: false, assigneeName: owner(l.ownerId) });
+  }
+  for (const o of src.openOpps) {
+    push(o.nextActionAt, { id: `oportunidade:${o.id}`, kind: "followup", title: `Follow-up · ${o.nextAction ?? o.title}`, clientId: o.clientId, clientName: src.clientName(o.clientId), href: `/vendas?oportunidade=${o.id}`, done: false, assigneeName: owner(o.ownerId) });
+  }
+
+  return keys.map((key, offset) => ({
+    key,
+    ...agendaDayLabels(key, offset),
+    items: (byDay.get(key) ?? []).sort((a, b) => a.at.localeCompare(b.at) || a.title.localeCompare(b.title, "pt-BR")),
+  }));
+}
 
 export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope = "eu"): Promise<MeuDiaData> {
   const now = new Date();
@@ -1108,51 +1195,10 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
   if (followupsOverdue > 0) summaryParts.push(plural(followupsOverdue, "follow-up vencido", "follow-ups vencidos"));
 
   // -------------------------------------------------------------------------
-  // Agenda de hoje: tarefas com início/prazo hoje, visitas e treinamentos de hoje.
+  // Agenda: hoje e os 6 dias seguintes — tarefas (início ou prazo), visitas, treinamentos, checkpoints de CS e
+  // follow-ups (próxima ação de leads e oportunidades). Item cuja tela o usuário não vê aparece sem link.
   // -------------------------------------------------------------------------
-  const agenda: AgendaItem[] = [];
-  for (const t of tasks) {
-    if (t.status === "cancelada") continue;
-    const at = t.startAt && dayKey(t.startAt) === today ? t.startAt : t.dueAt && dayKey(t.dueAt) === today ? t.dueAt : undefined;
-    if (!at) continue;
-    agenda.push({ id: `tarefa:${t.id}`, kind: "tarefa", at, timeLabel: timeLabel(at), title: t.title, clientId: t.clientId, clientName: t.clientName ?? clientName(t.clientId), href: `/tarefas?tarefa=${t.id}`, done: t.status === "concluida", assigneeName: isTeam ? (t.assigneeName ?? nameOf(t.assigneeId)) : undefined });
-  }
-  for (const v of visits) {
-    if (v.status === "cancelada" || v.status === "remarcada" || dayKey(v.scheduledAt) !== today) continue;
-    agenda.push({ id: `visita:${v.id}`, kind: "visita", at: v.scheduledAt, timeLabel: timeLabel(v.scheduledAt), title: `${v.kind === "tecnica" ? "Visita técnica" : "Visita"} · ${v.objective}`, clientId: v.clientId, clientName: clientName(v.clientId), href: `/vendas/visitas?visita=${v.id}`, done: v.status === "realizada", assigneeName: isTeam ? nameOf(v.sellerId) : undefined });
-  }
-  for (const tr of trainings) {
-    if (tr.status === "cancelado" || dayKey(tr.scheduledAt) !== today) continue;
-    agenda.push({ id: `treinamento:${tr.id}`, kind: "treinamento", at: tr.scheduledAt, timeLabel: timeLabel(tr.scheduledAt), title: `Treinamento · ${tr.subject}`, clientId: tr.clientId, clientName: clientName(tr.clientId), href: tr.projectId ? `/implantacao/${tr.projectId}?aba=treinamentos` : "/implantacao/treinamentos", done: tr.status === "realizado", assigneeName: isTeam ? nameOf(tr.instructorId) : undefined });
-  }
-  // Checkpoints de CS do dia (próxima interação da carteira e checkpoints dos planos de sucesso).
-  for (const c of csClients) {
-    if (!c.nextInteractionAt || dayKey(c.nextInteractionAt) !== today) continue;
-    agenda.push({ id: `checkpoint:${c.id}`, kind: "checkpoint", at: c.nextInteractionAt, timeLabel: timeLabel(c.nextInteractionAt), title: `Checkpoint · ${c.tradeName}`, clientId: c.id, clientName: c.tradeName, href: `/clientes/${c.id}?aba=cs`, done: false, assigneeName: isTeam ? nameOf(c.ownerCsId) : undefined });
-  }
-  for (const sp of successPlans) {
-    if (sp.status !== "ativo" || !sp.checkpointAt || dayKey(sp.checkpointAt) !== today) continue;
-    agenda.push({ id: `plano:${sp.id}`, kind: "checkpoint", at: sp.checkpointAt, timeLabel: timeLabel(sp.checkpointAt), title: `Checkpoint do plano · ${sp.objective}`, clientId: sp.clientId, clientName: clientName(sp.clientId), href: `/clientes/${sp.clientId}?aba=cs`, done: false, assigneeName: isTeam ? nameOf(sp.ownerId) : undefined });
-  }
-  agenda.sort((a, b) => a.at.localeCompare(b.at));
-  // Próximas visitas (comerciais e técnicas) dos próximos 7 dias, depois de hoje.
-  const visitHorizon = addDaysToKey(today, 7);
-  const upcomingVisits: AgendaItem[] = visits
-    .filter((v) => v.status === "agendada" && dayKey(v.scheduledAt) > today && dayKey(v.scheduledAt) <= visitHorizon)
-    .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
-    .slice(0, 6)
-    .map((v) => ({
-      id: `visita:${v.id}`,
-      kind: "visita",
-      at: v.scheduledAt,
-      timeLabel: dateLabel(v.scheduledAt, today),
-      title: `${v.kind === "tecnica" ? "Visita técnica" : "Visita"} · ${v.objective}`,
-      clientId: v.clientId,
-      clientName: clientName(v.clientId),
-      href: `/vendas/visitas?visita=${v.id}`,
-      done: false,
-      assigneeName: isTeam ? nameOf(v.sellerId) : undefined,
-    }));
+  const agendaDays = sections.agenda ? buildAgendaDays({ today, nowIso, isTeam, nameOf, clientName, linkable: (href) => (canSeeHref(user, href) ? href : ""), tasks, visits, trainings, csClients, successPlans, openLeads, openOpps }) : [];
 
   // -------------------------------------------------------------------------
   // Follow-ups dos próximos 3 dias (inclui vencidos, marcados).
@@ -1213,8 +1259,7 @@ export async function getMeuDia(user: CurrentUser, requestedScope: MeuDiaScope =
     summaryLine: summaryParts.join(" · "),
     stats,
     priorities: sections.prioridades ? cappedPriorities : [],
-    agenda: sections.agenda ? agenda : [],
-    upcomingVisits: sections.agenda && sections.visitas ? upcomingVisits : [],
+    agendaDays,
     followups: sections.followups ? followups : [],
     steps: sections.etapas ? stepItems : [],
     attentionClients: sections.clientesAtencao ? attentionClients.slice(0, 8) : [],

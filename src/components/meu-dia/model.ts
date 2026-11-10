@@ -95,7 +95,7 @@ export interface MeuDiaStats {
   unreadNotifications: number;
 }
 
-export type AgendaKind = "tarefa" | "visita" | "treinamento" | "checkpoint";
+export type AgendaKind = "tarefa" | "visita" | "treinamento" | "checkpoint" | "followup";
 export interface AgendaItem {
   id: string;
   kind: AgendaKind;
@@ -106,7 +106,20 @@ export interface AgendaItem {
   clientName?: string;
   href: string;
   done: boolean;
+  /** Horário já passou e não foi feito (só no dia de hoje). */
+  overdue?: boolean;
   assigneeName?: string;
+}
+
+/** Um dia da agenda do Meu Dia (hoje e os 6 seguintes), com os compromissos em ordem de horário. */
+export interface AgendaDay {
+  /** AAAA-MM-DD (America/Sao_Paulo). */
+  key: string;
+  /** "Hoje", "Amanhã", "Qua 12". */
+  label: string;
+  /** "quarta-feira, 12 de novembro" (título do dia aberto). */
+  longLabel: string;
+  items: AgendaItem[];
 }
 
 export interface FollowupItem {
@@ -292,9 +305,8 @@ export interface MeuDiaData {
   summaryLine: string;
   stats: MeuDiaStats;
   priorities: PriorityItem[];
-  agenda: AgendaItem[];
-  /** Visitas agendadas nos próximos 7 dias (depois de hoje). */
-  upcomingVisits: AgendaItem[];
+  /** Agenda de hoje e dos 6 dias seguintes (seção inicio.meu-dia.agenda.ver; vazia sem a seção). */
+  agendaDays: AgendaDay[];
   followups: FollowupItem[];
   steps: StepItem[];
   attentionClients: AttentionClient[];

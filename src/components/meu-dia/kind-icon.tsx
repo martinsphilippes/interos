@@ -1,4 +1,4 @@
-import { AlertTriangle, BadgePercent, Building2, CalendarCheck, CheckSquare, FileSignature, GitBranch, GraduationCap, Handshake, MapPin, MessageSquareReply, Receipt, RefreshCw, Rocket, Target, Ticket, Timer, UserPlus, Wallet, type LucideIcon } from "lucide-react";
+import { AlertTriangle, BadgePercent, Building2, CalendarCheck, CheckSquare, FileSignature, GitBranch, GraduationCap, Handshake, MapPin, MessageSquareReply, PhoneForwarded, Receipt, RefreshCw, Rocket, Target, Ticket, Timer, UserPlus, Wallet, type LucideIcon } from "lucide-react";
 import type { AgendaKind, PriorityKind } from "./model";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +24,7 @@ const AGENDA_KIND_ICONS: Record<AgendaKind, LucideIcon> = {
   visita: MapPin,
   treinamento: GraduationCap,
   checkpoint: CalendarCheck,
+  followup: PhoneForwarded,
 };
 
 /** Cor de fundo do ícone por tipo (semântica de módulo, estável entre telas). */

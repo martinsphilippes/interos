@@ -5,12 +5,14 @@ import { getMeuDia } from "@/server/meu-dia/queries";
 import { PageContainer } from "@/components/layout/page-container";
 import { MeuDiaHeader } from "@/components/meu-dia/meu-dia-header";
 import { PrioritiesList } from "@/components/meu-dia/priorities-list";
-import { AgendaBlock, AttentionClientsBlock, AwaitingBlock, ContractsBlock, FinanceBlock, FollowupsBlock, GoalsBlock, NotificationsBlock, StepsBlock, TeamBlock } from "@/components/meu-dia/blocks";
+import { AttentionClientsBlock, AwaitingBlock, ContractsBlock, FinanceBlock, FollowupsBlock, GoalsBlock, NotificationsBlock, StepsBlock, TeamBlock } from "@/components/meu-dia/blocks";
+import { AgendaPanel } from "@/components/meu-dia/agenda-panel";
 import { parsePriorityFilter } from "@/components/meu-dia/model";
 import { InsightsBlock } from "@/components/meu-dia/insights-block";
 import { getTopInsightsForUser } from "@/server/insights/engine";
 import { after } from "next/server";
 import { runDueSweeps } from "@/server/automations/lazy";
+import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Meu Dia" };
 
@@ -54,12 +56,17 @@ export default async function MeuDiaPage({ searchParams }: { searchParams: Searc
 
       <MeuDiaHeader data={data} filter={filter} />
 
-      {show.prioridades ? <PrioritiesList items={data.priorities} filter={filter} scope={data.scope} /> : null}
+      {/* Prioridades e agenda lado a lado em telas largas; no celular a agenda vem antes. */}
+      {show.prioridades || show.agenda ? (
+        <div className={cn("grid grid-cols-1 gap-x-4", show.prioridades && show.agenda && "xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start")}>
+          {show.agenda ? <AgendaPanel days={data.agendaDays} team={team} className="mb-6 xl:order-2" /> : null}
+          {show.prioridades ? <PrioritiesList items={data.priorities} filter={filter} scope={data.scope} /> : null}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 [&>*]:min-w-0">
         {showInsights ? <InsightsBlock insights={insights} director={user.isDirector} /> : null}
         {team && show.equipe ? <TeamBlock members={data.team} /> : null}
-        {show.agenda ? <AgendaBlock items={data.agenda} upcomingVisits={data.upcomingVisits} /> : null}
         {show.aguardando ? <AwaitingBlock items={data.awaiting} /> : null}
         {show.followups ? <FollowupsBlock items={data.followups} /> : null}
         <FinanceBlock digest={data.finance} />
