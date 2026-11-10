@@ -38,6 +38,8 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "lead.qualified": "Lead qualificado",
   "lead.disqualified": "Lead desqualificado",
   "lead.contacted": "Lead contatado",
+  "lead.consent_evidence_added": "Comprovante de consentimento anexado",
+  "lead.consent_evidence_removed": "Comprovante de consentimento removido",
   "prospect.contacted": "Contato da prospecção ativa",
   "opportunity.created": "Oportunidade criada",
   "opportunity.stage_changed": "Etapa da oportunidade alterada",

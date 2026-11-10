@@ -13,6 +13,10 @@ export interface MarketingCapabilities {
     assign: boolean;
     qualify: boolean;
     disqualify: boolean;
+    /** Anexar comprovante do consentimento LGPD (e remover o próprio na primeira hora). */
+    attachConsent: boolean;
+    /** Remover comprovante do consentimento de qualquer pessoa. */
+    removeConsent: boolean;
   };
   campaigns: {
     create: boolean;
@@ -36,7 +40,7 @@ export interface MarketingCapabilities {
 
 /** Sem provedor (ou sem sessão): nada liberado — na dúvida, o controle não aparece. */
 export const NO_MARKETING_CAPABILITIES: MarketingCapabilities = {
-  leads: { create: false, import: false, edit: false, register: false, assign: false, qualify: false, disqualify: false },
+  leads: { create: false, import: false, edit: false, register: false, assign: false, qualify: false, disqualify: false, attachConsent: false, removeConsent: false },
   campaigns: { create: false, edit: false },
   inbox: { assume: false, reply: false },
   prospect: { create: false, edit: false, import: false, assign: false, register: false, convert: false },

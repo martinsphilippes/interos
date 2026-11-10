@@ -56,6 +56,8 @@ export function marketingCapabilities(user: CurrentUser): MarketingCapabilities 
       assign: can(user, "marketing.leads.atribuir"),
       qualify: can(user, "marketing.leads.qualificar"),
       disqualify: can(user, "marketing.leads.desqualificar"),
+      attachConsent: can(user, "marketing.leads.consentimento.anexar"),
+      removeConsent: can(user, "marketing.leads.consentimento.remover"),
     },
     campaigns: {
       create: can(user, "marketing.campanhas.criar"),

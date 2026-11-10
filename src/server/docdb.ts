@@ -356,6 +356,17 @@ export class Query<T extends DocumentData = DocumentData> {
   async get(): Promise<QuerySnapshot<T>> {
     return runQuery(sql(), this, false);
   }
+  /**
+   * Soma de um campo numérico (caminho "a.b") nos documentos da consulta, calculada no banco: nenhum documento é
+   * trazido. Valor ausente não conta; valor não numérico é erro.
+   */
+  async sum(field: string): Promise<number> {
+    const { text, params } = this.toSql(false);
+    params.push(splitPath(field));
+    const pathParam = `$${params.length}`;
+    const rows = await sql().unsafe<{ total: string }[]>(`select coalesce(sum((q.data #>> ${pathParam}::text[])::numeric), 0)::text as total from (${text}) q`, params as never[]);
+    return Number(rows[0]?.total ?? 0);
+  }
   /** Partes da consulta para o executor (uso interno). */
   toSql(lock: boolean): { text: string; params: unknown[] } {
     const params: unknown[] = [];

@@ -315,6 +315,8 @@ export const EVENT_TYPES = [
   "lead.qualified",
   "lead.disqualified",
   "lead.contacted",
+  "lead.consent_evidence_added",
+  "lead.consent_evidence_removed",
   "prospect.contacted",
   "opportunity.created",
   "opportunity.stage_changed",

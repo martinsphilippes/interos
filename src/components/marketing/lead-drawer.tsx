@@ -26,29 +26,41 @@ import { useMarketingUrl } from "./use-marketing-url";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { CanSee, ScreenLink } from "@/components/auth/access-provider";
 import { useMarketingAccess } from "./marketing-access";
+import { ConsentEvidenceSection } from "./consent-evidence-section";
+import type { ConsentEvidenceRow } from "./consent-evidence-transfer";
 
 export interface LeadDrawerProps {
   detail: LeadDetail | null;
   options: MarketingOptions;
+  /** Comprovantes do consentimento LGPD do lead aberto (listConsentEvidence, com as permissões de quem vê). */
+  evidence?: readonly ConsentEvidenceRow[];
 }
 
 /**
  * Drawer do lead (?lead=<id>): dados editáveis, gate de MQL, score explicado e ações. Cada ação aparece só com a
  * chave correspondente (useMarketingAccess); sem marketing.leads.editar a ficha fica somente leitura.
  */
-export function LeadDrawer({ detail, options }: LeadDrawerProps) {
+export function LeadDrawer({ detail, options, evidence = [] }: LeadDrawerProps) {
   const { navigate } = useMarketingUrl();
-  const close = () => navigate({ lead: null }, { replace: true });
+  // Envio de comprovante em andamento: a ficha não fecha no meio (o envio seguiria sem ninguém ver o resultado).
+  const [uploading, setUploading] = React.useState(false);
+  const close = () => {
+    if (uploading) {
+      toast.warning("Espere terminar o envio dos comprovantes para fechar a ficha.");
+      return;
+    }
+    navigate({ lead: null }, { replace: true });
+  };
   return (
     <Drawer open={Boolean(detail)} onOpenChange={(open) => !open && close()}>
-      <DrawerContent size="lg">{detail ? <DrawerInner key={detail.lead.id} detail={detail} options={options} /> : null}</DrawerContent>
+      <DrawerContent size="lg">{detail ? <DrawerInner key={detail.lead.id} detail={detail} options={options} evidence={evidence} onUploadingChange={setUploading} /> : null}</DrawerContent>
     </Drawer>
   );
 }
 
 type DialogKind = "contact" | "qualify" | "disqualify" | "duplicate" | null;
 
-function DrawerInner({ detail, options }: { detail: LeadDetail; options: MarketingOptions }) {
+function DrawerInner({ detail, options, evidence, onUploadingChange }: { detail: LeadDetail; options: MarketingOptions; evidence: readonly ConsentEvidenceRow[]; onUploadingChange: (uploading: boolean) => void }) {
   const router = useRouter();
   const { lead, score, gate } = detail;
   const [pending, startTransition] = React.useTransition();
@@ -281,6 +293,9 @@ function DrawerInner({ detail, options }: { detail: LeadDetail; options: Marketi
             ) : null}
           </form>
         </section>
+
+        {/* Comprovantes do consentimento LGPD */}
+        <ConsentEvidenceSection leadId={lead.id} leadName={lead.name} rows={evidence} consent={lead.consent} onBusyChange={onUploadingChange} />
 
         {/* Dados */}
         <section>

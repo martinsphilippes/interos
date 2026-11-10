@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { closeDocdb, docdb, FieldValue } from "@/server/docdb";
-import { create, createIfAbsent, getById, getManyByIds, isAlreadyExists, list, nextNumber, ORG_ID, update } from "@/server/db";
+import { create, createIfAbsent, getById, getManyByIds, isAlreadyExists, list, nextNumber, ORG_ID, sumField, update } from "@/server/db";
 import { authAdmin } from "@/server/auth/auth-admin";
 import type { BaseEntity } from "@/domain/types";
 
@@ -174,6 +174,19 @@ describe("db.ts sobre o docdb", () => {
     expect(results.filter((r) => r.created)).toHaveLength(1);
     const winner = results.find((r) => r.created)!.doc;
     for (const r of results) expect(r.doc.body).toBe(winner.body);
+  });
+});
+
+describe("soma no banco (Query.sum / sumField)", () => {
+  it("soma o campo numérico dos documentos filtrados, sem trazê-los; ausente não conta; filtro vazio dá 0", async () => {
+    const parent = id("sum");
+    await create<Doc>(C, { parentId: parent, n: 10, flag: true } as Omit<Doc, "id" | "organizationId" | "createdAt" | "updatedAt">, id("s1"));
+    await create<Doc>(C, { parentId: parent, n: 2.5, flag: false } as Omit<Doc, "id" | "organizationId" | "createdAt" | "updatedAt">, id("s2"));
+    await create<Doc>(C, { parentId: parent, flag: true } as Omit<Doc, "id" | "organizationId" | "createdAt" | "updatedAt">, id("s3"));
+    expect(await docdb.collection(C).where("parentId", "==", parent).sum("n")).toBe(12.5);
+    expect(await sumField(C as never, "n", [["parentId", "==", parent], ["flag", "==", true]])).toBe(10);
+    expect(await sumField(C as never, "n", [["parentId", "in", []]])).toBe(0);
+    expect(await sumField(C as never, "n", [["parentId", "==", `${parent}_nenhum`]])).toBe(0);
   });
 });
 

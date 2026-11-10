@@ -111,6 +111,17 @@ export async function list<T extends BaseEntity>(name: CollectionName, options: 
   return items;
 }
 
+/**
+ * Soma de um campo numérico nos documentos da organização que atendem aos filtros de igualdade (como em list()),
+ * calculada no banco sem trazer os documentos. Ex.: espaço ocupado pelos arquivos guardados em partes.
+ */
+export async function sumField(name: CollectionName, field: string, where: WhereClause[] = []): Promise<number> {
+  if (where.some(([, op, value]) => op === "in" && Array.isArray(value) && value.length === 0)) return 0;
+  let query: Query = col(name).where("organizationId", "==", ORG_ID);
+  for (const [f, op, value] of where) query = query.where(f, op, value);
+  return query.sum(field);
+}
+
 export function compareField<T>(a: T, b: T, field: string, dir: "asc" | "desc" = "asc"): number {
   const av = (a as Record<string, unknown>)[field];
   const bv = (b as Record<string, unknown>)[field];
