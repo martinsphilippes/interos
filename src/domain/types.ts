@@ -161,6 +161,13 @@ export const COLLECTIONS = {
   purchaseOrders: "purchase_orders",
   /** Recebimentos dos pedidos de compra (cada um dá entrada no estoque e gera o título em Contas a Pagar). */
   purchaseReceipts: "purchase_receipts",
+  /**
+   * Arquivos guardados em partes (comprovantes do consentimento LGPD do lead, por enquanto): nome, tipo, tamanho,
+   * SHA-256, quem enviou e a situação. O conteúdo fica em `stored_file_chunks` (partes de 2 MB, base64).
+   */
+  storedFiles: "stored_files",
+  /** Partes dos arquivos de `stored_files`: id `<arquivo>__<nº da parte>`. Apagadas quando o arquivo é removido. */
+  storedFileChunks: "stored_file_chunks",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
@@ -1210,6 +1217,47 @@ export interface Invoice extends BaseEntity {
   cancelReason?: string;
   createdBy: string;
   createdByName?: string;
+}
+
+/** Dono de um arquivo guardado em partes (cada dono tem as próprias rotas e regras de acesso). */
+export type StoredFileOwnerKind = "lead_consent";
+/** enviando: partes chegando (descartado em 24 h se não concluir) · ativo: conferido · removido: conteúdo apagado. */
+export type StoredFileStatus = "enviando" | "ativo" | "removido";
+
+/** Arquivo guardado em partes (src/server/files/store.ts). */
+export interface StoredFile extends BaseEntity {
+  ownerKind: StoredFileOwnerKind;
+  /** Lead (ownerKind "lead_consent"). */
+  ownerId: string;
+  /** Nome seguro (safeFileName). */
+  name: string;
+  /** Tipo definido pela extensão (lista do dono), nunca pelo navegador. */
+  mimeType: string;
+  size: number;
+  /** "sha256:<hex>" informado no início do envio e conferido pelo servidor ao concluir. */
+  sha256: string;
+  chunkSize: number;
+  chunkCount: number;
+  status: StoredFileStatus;
+  /** Miniatura (data URL pequena gerada no navegador) para a lista. */
+  thumbnail?: string;
+  uploadedById: string;
+  uploadedByName: string;
+  completedAt?: string;
+  removedAt?: string;
+  removedById?: string;
+  removedByName?: string;
+  removedReason?: string;
+  /** Partes apagadas (a limpeza diária refaz se a remoção parou no meio). */
+  purgedAt?: string;
+}
+
+/** Uma parte de um StoredFile. */
+export interface StoredFileChunk extends BaseEntity {
+  fileId: string;
+  index: number;
+  size: number;
+  contentBase64: string;
 }
 
 export interface InvoiceFile extends BaseEntity {

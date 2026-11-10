@@ -52,6 +52,9 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "operacao.compras.aprovar",
   "operacao.compras.receber",
   "operacao.compras.configuracao.editar",
+  // Comprovantes do consentimento LGPD (Marketing › Leads): anexar (todos com o módulo) e remover (gestores).
+  "marketing.leads.consentimento.anexar",
+  "marketing.leads.consentimento.remover",
 ];
 
 /** Rotas de telas novas em módulos antigos (itens de menu criados depois do T0). */

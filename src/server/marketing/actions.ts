@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { failAction, requirePermission } from "@/server/auth/session";
+import { can, failAction, requirePermission, requireUser } from "@/server/auth/session";
 import type { ActionResult, CurrentUser, Lead, UserRef } from "@/domain/types";
 import {
   assignLead,
@@ -43,6 +43,7 @@ import {
   importLeadsSchema,
   importProspectsSchema,
   leadConsentSchema,
+  removeConsentEvidenceSchema,
   leadDuplicatesSchema,
   leadNextActionSchema,
   leadStatusSchema,
@@ -68,6 +69,7 @@ import {
   assertProspectsInScope,
 } from "./access";
 import { maskDuplicatesOutOfScope } from "./duplicates";
+import { evidenceViewer, removeConsentEvidence } from "./consent-evidence";
 import { campaignSaveKey } from "./permission-keys";
 
 /**
@@ -160,6 +162,27 @@ export async function setLeadConsent(input: unknown): Promise<ActionResult<{ id:
     return { ok: true, data: { id: lead.id } };
   } catch (error) {
     return fail(error, "Não foi possível registrar o consentimento");
+  }
+}
+
+/**
+ * Remover comprovante do consentimento LGPD (motivo obrigatório). Despacho pela permissão (catálogo:
+ * `?qualquer comprovante` → marketing.leads.consentimento.remover; `?o próprio…` → marketing.leads.consentimento.anexar,
+ * e o serviço só deixa remover o que a pessoa anexou, até 1 hora depois).
+ */
+export async function removeLeadConsentEvidenceAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const viewer = await requireUser();
+    const user = can(viewer, "marketing.leads.consentimento.remover")
+      ? await requirePermission("marketing.leads.consentimento.remover")
+      : await requirePermission("marketing.leads.consentimento.anexar");
+    const data = removeConsentEvidenceSchema.parse(input);
+    await assertLeadInScope(user, data.leadId);
+    await removeConsentEvidence(data.leadId, data.fileId, data.reason, actor(user), evidenceViewer(user));
+    revalidateMarketing();
+    return { ok: true, data: { id: data.fileId } };
+  } catch (error) {
+    return fail(error, "Não foi possível remover o comprovante");
   }
 }
 

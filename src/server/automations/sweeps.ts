@@ -526,6 +526,16 @@ async function comissoes(now: Date): Promise<SweepOutcome> {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Arquivos em partes: envios parados e partes que sobraram de remoções
+// ---------------------------------------------------------------------------
+
+async function arquivosPendentes(now: Date, ctx?: SweepContext): Promise<SweepOutcome> {
+  const { sweepStoredFiles } = await import("@/server/files/store");
+  const r = await sweepStoredFiles(now, ctx?.deadline);
+  return { summary: `${r.discarded} envio(s) não concluído(s) descartado(s) · ${r.purged} remoção(ões) completada(s)`, data: { ...r } };
+}
+
 export const SWEEPS: Record<SweepKey, SweepFn> = {
   sla_alerts: slaAlerts,
   followup_vendas: followupVendas,
@@ -547,6 +557,7 @@ export const SWEEPS: Record<SweepKey, SweepFn> = {
   contas_recorrentes: contasRecorrentes,
   contas_a_pagar_vencidas: contasAPagarVencidas,
   indices_reajuste: indicesReajuste,
+  arquivos_pendentes: arquivosPendentes,
 };
 
 /** Campos antigos (dos módulos) que também contam como "última execução" da varredura. */

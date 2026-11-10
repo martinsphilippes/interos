@@ -78,6 +78,7 @@ export const SWEEP_KEYS = [
   "cobrancas_recorrentes",
   "contas_recorrentes",
   "contas_a_pagar_vencidas",
+  "arquivos_pendentes",
 ] as const;
 export type SweepKey = (typeof SWEEP_KEYS)[number];
 
@@ -136,6 +137,12 @@ export const SWEEP_DEFINITIONS: Record<SweepKey, { label: string; description: s
   contas_a_pagar_vencidas: {
     label: "Contas a pagar vencidas",
     description: "Financeiro: avisa o Financeiro uma única vez por título vencido (previsto, aprovado ou a pagar com vencimento passado).",
+    schedule: "diaria",
+  },
+  arquivos_pendentes: {
+    label: "Limpeza de arquivos",
+    description:
+      "Arquivos guardados em partes (comprovantes do consentimento LGPD): descarta os envios que não terminaram em 24 h (a pessoa fechou a tela no meio) e apaga as partes que sobraram de remoções interrompidas.",
     schedule: "diaria",
   },
   indices_reajuste: {

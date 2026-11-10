@@ -436,6 +436,35 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - Eventos: `purchase.order_created|updated|submitted|approved|rejected|cancelled`, `purchase.received`,
   `purchase.settings_updated`.
 
+## Arquivos em partes e comprovantes do consentimento LGPD (`src/server/files/*`, `src/server/marketing/consent-evidence.ts`)
+
+- **Por que em partes**: cada requisição e cada resposta de função na Vercel tem limite de ~4,5 MB. Arquivos grandes
+  sobem e descem em partes de 2 MB (`STORED_FILE_CHUNK_BYTES`), guardados no próprio banco (Supabase, região
+  sa-east-1, sem link público e sem segredo novo). Regras puras em `src/domain/stored-files.ts`.
+- **Coleções** (migration `20261101000000_arquivos_em_partes.sql`): `stored_files` (dono `ownerKind` + `ownerId`, nome
+  seguro, tipo definido pela extensão, tamanho, `sha256`, `chunkSize`/`chunkCount`, `enviando → ativo → removido`,
+  miniatura, quem enviou, registro da remoção e `purgedAt`) e `stored_file_chunks` (id `<arquivo>__<nº>`, base64).
+  Genérico: outro dono (ex.: anexos de chamado, PDFs de nota acima de 3 MB) só precisa de rotas e regras próprias.
+- **Store** (`src/server/files/store.ts`): `createPendingFile` → `writeChunk` (tamanho exato da parte; só quem abriu o
+  envio) → `completeFile` (todas as partes, tamanho e SHA-256 conferidos; só então `ativo`) → `readChunk`/`streamFile`;
+  `removeFile` (marca quem/quando/por quê, apaga a miniatura e as partes). Gravar parte, concluir e remover travam o
+  documento do arquivo (transação): nenhuma parte muda depois da conferência nem entra depois da remoção.
+- **Limpeza** (varredura diária `arquivos_pendentes`): envio parado há mais de 24 h vira `removido` ("Envio não
+  concluído", fora da ficha) e perde as partes; remoção interrompida (`removido` sem `purgedAt`) é completada.
+- **Comprovantes do consentimento** (dono `lead_consent`; regras em `src/domain/consent-evidence.ts`): imagem, PDF,
+  áudio, vídeo, e-mail e documento (lista por extensão, sem HTML/SVG), até 50 MB por arquivo e 20 por lead; o mesmo
+  arquivo (SHA-256) não entra duas vezes. Rotas `src/app/api/marketing/leads/[id]/consentimento` (abrir o envio) e
+  `.../[arquivo]` (`PUT ?parte=N`, `POST` conclui, `GET` abre/baixa; `?parte=N` devolve uma parte). O navegador
+  (`src/components/marketing/consent-evidence-transfer.ts`) calcula o SHA-256 antes de enviar, envia com até 3
+  tentativas por parte e, para arquivos acima de 4 MB, remonta parte a parte e confere o SHA-256 antes de abrir/baixar.
+  Telas: "Novo lead" (anexar, arrastar, colar print; sobe depois de salvar) e a ficha do lead (lista, abrir, baixar,
+  anexar mais, remover com motivo, registro dos removidos).
+- **Permissões** (tela `marketing.leads`): abrir/baixar = ver a tela + lead no escopo (viewGuard da rota `GET`);
+  `marketing.leads.consentimento.anexar` (todos com o módulo; inclui remover o PRÓPRIO comprovante até 1 hora depois de
+  anexar) e `marketing.leads.consentimento.remover` (gestores; qualquer comprovante, sensível). Remover exige motivo.
+- Eventos (histórico do lead): `lead.consent_evidence_added` (nome, tamanho, SHA-256) e `lead.consent_evidence_removed`
+  (motivo).
+
 ## Cadastros financeiros (etapa CP/CR 1, `src/server/finance-registry/*`, `/financeiro/cadastros`)
 - **Coleções novas** (regra `if false`, só servidor): `financial_accounts` (conta financeira: nome, tipo
   corrente|poupanca|cartao|dinheiro|investimento|outro, `initialBalance`, `currency` "BRL", banco/agência/conta só

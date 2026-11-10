@@ -82,6 +82,13 @@ export const MARKETING = {
       // Hoje: Só requireUser (src/app/(app)/marketing/leads/page.tsx:22); listLeads/getLead sem viewer (l.26).
       // A14: passa a exigir o módulo.
       rule: "all",
+      viewGuards: [
+        {
+          guard: "src/app/api/marketing/leads/[id]/consentimento/[arquivo]/route.ts#GET",
+          label: "Abrir ou baixar comprovante do consentimento LGPD",
+          recordCondition: "lead no escopo da tela",
+        },
+      ],
       nav: {
         // Hoje: NAVIGATION.marketing (src/domain/constants.ts:115) filtrado por
         // canAccessModule(user,'marketing') em src/app/(app)/layout.tsx:11 e src/app/(app)/menu/page.tsx:16
@@ -176,6 +183,30 @@ export const MARKETING = {
             "src/server/marketing/actions.ts#disqualifyLeadAction",
             "src/server/marketing/actions.ts#markLeadDuplicateAction",
           ],
+        },
+        {
+          key: "marketing.leads.consentimento.anexar",
+          label: "Anexar comprovante do consentimento LGPD (print, PDF, áudio, e-mail) e remover o próprio na primeira hora",
+          verb: "anexar",
+          // Novo: comprovantes do consentimento (src/server/marketing/consent-evidence.ts). Mesmo padrão de criar/editar
+          // lead. Rotas (o arquivo sobe em partes de 2 MB): abrir o envio, mandar cada parte e concluir.
+          rule: "all",
+          guards: [
+            "src/app/api/marketing/leads/[id]/consentimento/route.ts#POST",
+            "src/app/api/marketing/leads/[id]/consentimento/[arquivo]/route.ts#PUT",
+            "src/app/api/marketing/leads/[id]/consentimento/[arquivo]/route.ts#POST",
+            "src/server/marketing/actions.ts#removeLeadConsentEvidenceAction?o próprio comprovante, até 1 hora depois de anexar",
+          ],
+          recordCondition: "Remover: só o comprovante que a própria pessoa anexou, até 1 hora depois de concluir o envio.",
+        },
+        {
+          key: "marketing.leads.consentimento.remover",
+          label: "Remover comprovante do consentimento LGPD de qualquer pessoa (com motivo)",
+          verb: "remover",
+          // Novo: apaga o conteúdo (fica o registro: nome, SHA-256, quem anexou, quem removeu, quando e por quê).
+          rule: { manager: true },
+          guards: ["src/server/marketing/actions.ts#removeLeadConsentEvidenceAction?qualquer comprovante"],
+          sensitive: true,
         },
       ],
       scope: {

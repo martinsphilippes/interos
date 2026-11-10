@@ -125,9 +125,13 @@ describe("permissões padrão ≡ comportamento anterior", () => {
   it("demais ações e telas: antes todo usuário logado; agora quem tem o módulo (A14)", () => {
     for (const u of ALL_USERS) {
       const cu = asCurrentUser(u);
-      const { campaigns: _campaigns, createTask: _task, ...rest } = marketingCapabilities(cu);
+      const { campaigns: _campaigns, createTask: _task, leads, ...others } = marketingCapabilities(cu);
       void _campaigns;
       void _task;
+      // Remover comprovante de qualquer pessoa (chave nova): só gestores; anexar segue o módulo.
+      const { removeConsent, ...leadFlags } = leads;
+      expect(removeConsent, `${label(u)} remover comprovante`).toBe(inModule(u) && cu.isManager);
+      const rest = { leads: leadFlags, ...others };
       const flags = Object.values(rest).flatMap((group) => Object.values(group));
       expect(flags.every((f) => f === inModule(u)), label(u)).toBe(true);
       for (const screen of Object.values(MARKETING_SCREENS)) expect(NODE_BY_KEY.has(`${screen}.ver`) && cu.permissions.has(`${screen}.ver` as PermissionKey), `${label(u)} ${screen}`).toBe(inModule(u));

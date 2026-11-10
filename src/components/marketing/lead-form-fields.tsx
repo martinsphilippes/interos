@@ -55,10 +55,12 @@ export interface LeadFormFieldsProps {
   /** Oculta responsável e consentimento (editados em blocos próprios no drawer). */
   compact?: boolean;
   idPrefix?: string;
+  /** Logo abaixo do consentimento (ex.: comprovantes no "Novo lead"). */
+  consentExtra?: React.ReactNode;
 }
 
 /** Campos do lead, compartilhados entre "Novo lead" e a edição no drawer. */
-export function LeadFormFields({ value, onChange, options, compact, idPrefix = "lead" }: LeadFormFieldsProps) {
+export function LeadFormFields({ value, onChange, options, compact, idPrefix = "lead", consentExtra }: LeadFormFieldsProps) {
   const id = (name: string) => `${idPrefix}-${name}`;
   const toggleProduct = (productId: string, checked: boolean) =>
     onChange({ productInterestIds: checked ? [...value.productInterestIds, productId] : value.productInterestIds.filter((p) => p !== productId) });
@@ -133,8 +135,9 @@ export function LeadFormFields({ value, onChange, options, compact, idPrefix = "
         <Textarea id={id("notes")} value={value.notes} onChange={(e) => onChange({ notes: e.target.value })} className="min-h-[64px]" />
       </FormField>
       {!compact ? (
-        <div className="sm:col-span-2">
+        <div className="flex flex-col gap-3 sm:col-span-2">
           <Switch label="Consentimento LGPD obtido" description="O contato autorizou o uso dos dados para contato comercial." checked={value.consent} onCheckedChange={(consent) => onChange({ consent })} />
+          {consentExtra}
         </div>
       ) : null}
     </div>

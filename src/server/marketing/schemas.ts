@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CONSENT_EVIDENCE_REASON_MIN } from "@/domain/consent-evidence";
 
 /**
  * Esquemas de validação (zod) do módulo de Marketing e Prospecção. Mensagens em português porque
@@ -111,6 +112,12 @@ export const disqualifyLeadSchema = z.object({ leadId: id("Lead"), reason: z.str
 export const markDuplicateSchema = z.object({ leadId: id("Lead"), originalId: id("Lead original") });
 export const assignLeadSchema = z.object({ leadId: id("Lead"), ownerId: optionalId });
 export const leadConsentSchema = z.object({ leadId: id("Lead"), consent: z.boolean() });
+/** Remover comprovante do consentimento LGPD: motivo obrigatório (fica no registro). */
+export const removeConsentEvidenceSchema = z.object({
+  leadId: id("Lead"),
+  fileId: id("Comprovante"),
+  reason: z.string().trim().min(CONSENT_EVIDENCE_REASON_MIN, `Informe o motivo da remoção (mínimo de ${CONSENT_EVIDENCE_REASON_MIN} caracteres).`).max(500, "Motivo muito longo (máximo de 500 caracteres)."),
+});
 export const leadNextActionSchema = z.object({ leadId: id("Lead"), nextAction: optionalText(200), nextActionAt: optionalIso });
 /** Mudanças de status "simples" (kanban). Qualificar e desqualificar têm ações próprias. */
 export const leadStatusSchema = z.object({ leadId: id("Lead"), status: z.enum(["novo", "em_contato", "convertido"], "Status inválido") });

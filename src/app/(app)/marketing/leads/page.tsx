@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ACCESS_DENIED_REDIRECT, requireScreen } from "@/server/auth/session";
 import { leadAccess, leadExists, marketingCapabilities } from "@/server/marketing/access";
 import { getLead, getMarketingOptions, listLeads } from "@/server/marketing/queries";
+import { evidenceViewer, listConsentEvidence } from "@/server/marketing/consent-evidence";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { ImportLeadsDialog } from "@/components/marketing/import-leads-dialog";
@@ -32,7 +33,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
   const leadId = Array.isArray(sp.lead) ? sp.lead[0] : sp.lead;
   const caps = marketingCapabilities(user);
   const access = await leadAccess(user);
-  const [result, options, detail] = await Promise.all([listLeads(filters, access), getMarketingOptions(), leadId ? getLead(leadId, access) : Promise.resolve(null)]);
+  const [result, options, detail, evidence] = await Promise.all([
+    listLeads(filters, access),
+    getMarketingOptions(),
+    leadId ? getLead(leadId, access) : Promise.resolve(null),
+    leadId ? listConsentEvidence(leadId, evidenceViewer(user)) : Promise.resolve([]),
+  ]);
   if (leadId && !detail && (await leadExists(leadId))) redirect(ACCESS_DENIED_REDIRECT);
   const view = filters.view ?? "lista";
   const filtered = Boolean(filters.q || filters.status || filters.temperature || filters.origin || filters.campaignId || filters.ownerId || filters.period || filters.noContact || filters.possibleDuplicate || filters.needsAction);
@@ -64,7 +70,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
         </div>
 
         <Suspense fallback={null}>
-          <LeadDrawer detail={detail} options={options} />
+          {/* Comprovantes só acompanham a ficha (lead no escopo): sem ficha, nada vai para o navegador. */}
+          <LeadDrawer detail={detail} options={options} evidence={detail ? evidence : []} />
         </Suspense>
       </PageContainer>
     </MarketingAccessProvider>
