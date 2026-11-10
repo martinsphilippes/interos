@@ -13,7 +13,19 @@ import { emitEvent } from "@/server/events";
 import { can } from "@/server/auth/permissions";
 import { PermissionError } from "@/server/auth/error-classes";
 import { isUserFacingError } from "@/server/auth/errors";
-import { completeFile, createPendingFile, discardRetriedPending, getOwnedFile, listOwnerFiles, removeFile, writeChunk, type StoredFileRef } from "@/server/files/store";
+import {
+  StoredFileError,
+  completeFile,
+  createPendingFile,
+  discardRetriedPending,
+  getOwnedFile,
+  listOwnerFiles,
+  markHistoryLogged,
+  markRemovalLogged,
+  removeFile,
+  writeChunk,
+  type StoredFileRef,
+} from "@/server/files/store";
 import {
   CONSENT_EVIDENCE_MAX_FILES,
   CONSENT_EVIDENCE_REASON_MIN,
@@ -21,6 +33,7 @@ import {
   consentEvidenceMimeType,
   consentEvidenceProblem,
   isInlineEvidenceType,
+  isThumbnailableType,
   isValidEvidenceThumbnail,
 } from "@/domain/consent-evidence";
 import { SHA256_TAG, STORED_FILE_PENDING_TTL_MS, formatBytes, safeFileName } from "@/domain/stored-files";
@@ -123,10 +136,18 @@ export interface StartConsentEvidenceInput {
 }
 
 /**
- * Abre o envio de um comprovante: tipo e tamanho aceitos, sem repetir um arquivo já anexado (mesmo SHA-256) e dentro
- * do limite de comprovantes do lead. Uma nova tentativa do mesmo arquivo pela mesma pessoa descarta a anterior.
+ * Abre o envio de um comprovante: tipo e tamanho aceitos e, com a trava de abertura de envios (sem corrida entre
+ * pedidos simultâneos), sem repetir um arquivo já anexado ou sendo anexado por outra pessoa (mesmo SHA-256) e dentro
+ * do limite de comprovantes do lead (ativos + envios em andamento). Uma nova tentativa do mesmo arquivo pela mesma
+ * pessoa descarta a anterior. O espaço total da organização e os envios abertos por pessoa ficam no store.
  */
-export async function startConsentEvidenceUpload(leadId: string, input: StartConsentEvidenceInput, actor: UserRef, now = new Date()): Promise<StoredFile> {
+export async function startConsentEvidenceUpload(
+  leadId: string,
+  input: StartConsentEvidenceInput,
+  actor: UserRef,
+  now = new Date(),
+  limits: { orgMaxBytes?: number } = {},
+): Promise<StoredFile> {
   await loadLead(leadId);
   const name = safeFileName(input.name);
   const problem = consentEvidenceProblem({ name, size: input.size });
@@ -134,34 +155,47 @@ export async function startConsentEvidenceUpload(leadId: string, input: StartCon
   const mimeType = consentEvidenceMimeType(name);
   if (!mimeType) throw new MarketingError("Tipo de arquivo não aceito.");
   if (!SHA256_TAG.test(input.sha256)) throw new MarketingError("Não foi possível identificar o arquivo (SHA-256). Tente de novo.");
-  await discardRetriedPending(OWNER, leadId, actor.id, input.sha256);
-  const files = await listOwnerFiles(OWNER, leadId);
-  const same = files.find((f) => f.status === "ativo" && f.sha256 === input.sha256);
-  if (same) throw new MarketingError(`Este arquivo já está anexado a este lead (${same.name}).`);
-  const staleBefore = new Date(now.getTime() - STORED_FILE_PENDING_TTL_MS).toISOString();
-  const open = files.filter((f) => f.status === "ativo" || (f.status === "enviando" && f.createdAt > staleBefore));
-  if (open.length >= CONSENT_EVIDENCE_MAX_FILES) throw new MarketingError(`Este lead já tem ${CONSENT_EVIDENCE_MAX_FILES} comprovantes (o limite). Remova um para anexar outro.`);
-  return createPendingFile({
-    ownerKind: OWNER,
-    ownerId: leadId,
-    name,
-    mimeType,
-    size: input.size,
-    sha256: input.sha256,
-    // Miniatura fora do formato é só ignorada (é um enfeite da lista, não o comprovante).
-    thumbnail: input.thumbnail && isValidEvidenceThumbnail(input.thumbnail) ? input.thumbnail : undefined,
-    uploadedBy: actor,
-  });
+  const check = async () => {
+    await discardRetriedPending(OWNER, leadId, actor.id, input.sha256);
+    const abandonedBefore = new Date(now.getTime() - STORED_FILE_PENDING_TTL_MS).toISOString();
+    const files = (await listOwnerFiles(OWNER, leadId)).filter((f) => f.status === "ativo" || (f.status === "enviando" && f.createdAt > abandonedBefore));
+    const same = files.find((f) => f.sha256 === input.sha256);
+    if (same?.status === "ativo") throw new MarketingError(`Este arquivo já está anexado a este lead (${same.name}).`);
+    if (same) throw new MarketingError(`Este arquivo já está sendo anexado a este lead por ${same.uploadedByName}.`);
+    if (files.length >= CONSENT_EVIDENCE_MAX_FILES) {
+      const uploading = files.filter((f) => f.status === "enviando").length;
+      throw new MarketingError(
+        `Este lead já tem ${CONSENT_EVIDENCE_MAX_FILES} comprovantes${uploading ? `, contando ${uploading} envio(s) em andamento` : ""} (o limite). Remova um para anexar outro.`,
+      );
+    }
+  };
+  return createPendingFile(
+    {
+      ownerKind: OWNER,
+      ownerId: leadId,
+      name,
+      mimeType,
+      size: input.size,
+      sha256: input.sha256,
+      // Miniatura só para imagem e no formato aceito; fora disso é ignorada (é uma prévia da lista, não o comprovante).
+      thumbnail: input.thumbnail && isThumbnailableType(mimeType) && isValidEvidenceThumbnail(input.thumbnail) ? input.thumbnail : undefined,
+      uploadedBy: actor,
+    },
+    { orgMaxBytes: limits.orgMaxBytes, check, now },
+  );
 }
 
 export async function putConsentEvidenceChunk(leadId: string, fileId: string, index: number, bytes: Uint8Array, actor: UserRef): Promise<void> {
   await writeChunk(ref(leadId, fileId), index, bytes, actor.id);
 }
 
-/** Conclui o envio (servidor confere tamanho e SHA-256) e registra no histórico do lead na primeira conclusão. */
+/**
+ * Conclui o envio (servidor confere tamanho e SHA-256) e registra no histórico do lead. O registro é marcado no
+ * arquivo (`historyLoggedAt`): se a conclusão gravou mas o registro falhou, a nova tentativa do navegador registra.
+ */
 export async function completeConsentEvidenceUpload(leadId: string, fileId: string, actor: UserRef): Promise<StoredFile> {
-  const { file, completed } = await completeFile(ref(leadId, fileId), actor.id);
-  if (completed) {
+  const { file } = await completeFile(ref(leadId, fileId), actor.id);
+  if (!file.historyLoggedAt) {
     const lead = await getById<Lead>(COLLECTIONS.leads, leadId);
     await emitEvent({
       type: "lead.consent_evidence_added",
@@ -173,6 +207,7 @@ export async function completeConsentEvidenceUpload(leadId: string, fileId: stri
       department: "marketing",
       payload: { fileId: file.id, name: file.name, mimeType: file.mimeType, size: file.size, sha256: file.sha256 },
     });
+    await markHistoryLogged(file.id);
   }
   return file;
 }
@@ -180,28 +215,43 @@ export async function completeConsentEvidenceUpload(leadId: string, fileId: stri
 /**
  * Remove um comprovante: motivo obrigatório; quem tem a chave de remover pode sempre, quem anexou só na primeira hora.
  * O conteúdo e a miniatura são apagados; ficam nome, tamanho, SHA-256, quem anexou e quem removeu, quando e por quê.
+ * O registro no histórico é marcado no arquivo (`removalLoggedAt`): se a remoção gravou mas o registro falhou, a nova
+ * tentativa de quem removeu registra (em vez de só dizer que já foi removido).
  */
 export async function removeConsentEvidence(leadId: string, fileId: string, reason: string, actor: UserRef, viewer: EvidenceViewer, now = new Date()): Promise<StoredFile> {
   const why = reason.trim();
   if (why.length < CONSENT_EVIDENCE_REASON_MIN) throw new MarketingError(`Informe o motivo da remoção (mínimo de ${CONSENT_EVIDENCE_REASON_MIN} caracteres).`);
   const lead = await loadLead(leadId);
-  const file = await removeFile(
-    ref(leadId, fileId),
-    actor,
-    why,
-    (f) => removableBy(viewer, f, now),
-    () => new PermissionError("Só quem anexou (na primeira hora) ou quem tem permissão para remover comprovantes pode remover este arquivo."),
-  );
-  await emitEvent({
-    type: "lead.consent_evidence_removed",
-    actor,
-    clientId: lead.clientId,
-    entity: { type: "lead", id: leadId },
-    title: `Comprovante do consentimento LGPD removido: ${file.name}`,
-    description: `Motivo: ${why}`,
-    department: "marketing",
-    payload: { fileId: file.id, name: file.name, size: file.size, sha256: file.sha256, reason: why, uploadedByName: file.uploadedByName },
-  });
+  let file: StoredFile;
+  let logReason = why;
+  try {
+    file = await removeFile(
+      ref(leadId, fileId),
+      actor,
+      why,
+      (f) => removableBy(viewer, f, now),
+      () => new PermissionError("Só quem anexou (na primeira hora) ou quem tem permissão para remover comprovantes pode remover este arquivo."),
+    );
+  } catch (error) {
+    if (!(error instanceof StoredFileError) || error.code !== "ja_removido") throw error;
+    const current = await getOwnedFile(ref(leadId, fileId));
+    if (!current || current.removalLoggedAt || !current.completedAt || current.removedById !== actor.id) throw error;
+    file = current;
+    logReason = current.removedReason ?? why;
+  }
+  if (!file.removalLoggedAt) {
+    await emitEvent({
+      type: "lead.consent_evidence_removed",
+      actor,
+      clientId: lead.clientId,
+      entity: { type: "lead", id: leadId },
+      title: `Comprovante do consentimento LGPD removido: ${file.name}`,
+      description: `Motivo: ${logReason}`,
+      department: "marketing",
+      payload: { fileId: file.id, name: file.name, size: file.size, sha256: file.sha256, reason: logReason, uploadedByName: file.uploadedByName },
+    });
+    await markRemovalLogged(file.id);
+  }
   return file;
 }
 

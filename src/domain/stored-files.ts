@@ -13,8 +13,20 @@ export const STORED_FILE_CHUNK_BYTES = 2 * 1024 * 1024;
 /** Até este tamanho o arquivo abre por link direto (uma resposta só, abaixo do limite da Vercel). */
 export const STORED_FILE_DIRECT_MAX_BYTES = 4 * 1024 * 1024;
 
-/** Envio que não terminou neste prazo é descartado pela limpeza diária (varredura `arquivos_pendentes`). */
-export const STORED_FILE_PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * Envio aberto há mais que isto foi abandonado (a pessoa fechou a tela no meio): é descartado na próxima abertura de
+ * envio ou na limpeza diária (varredura `arquivos_pendentes`) e deixa de contar nos limites.
+ */
+export const STORED_FILE_PENDING_TTL_MS = 2 * 60 * 60 * 1000;
+
+/** Envios abertos ao mesmo tempo por pessoa (nenhum usuário enche o espaço com envios inacabados). */
+export const STORED_FILE_MAX_OPEN_UPLOADS_PER_USER = 10;
+
+/**
+ * Espaço total para arquivos guardados em partes na organização (soma dos tamanhos dos ativos e dos envios abertos).
+ * No banco o conteúdo ocupa ~1,33× (base64): 3 GB de arquivos ≈ 4 GB dos 8 GB do plano atual do Supabase.
+ */
+export const STORED_FILES_ORG_MAX_BYTES = 3 * 1024 * 1024 * 1024;
 
 /** Quantidade de partes de um arquivo (arquivo vazio não é aceito; o mínimo é 1). */
 export function chunkCountFor(size: number, chunkSize = STORED_FILE_CHUNK_BYTES): number {
@@ -43,16 +55,21 @@ export function fileExtension(name: string): string {
 
 const FORBIDDEN_NAME_CHARS = new Set(['<', '>', ':', '"', "|", "?", "*"]);
 
+/** Caracteres invisíveis de direção/formatação (ex.: U+202E inverte o texto: "termo-\u202Efdp.mp4" aparece como "termo-4pm.pdf"). */
+function isInvisibleFormatChar(code: number): boolean {
+  return code === 0x061c || (code >= 0x200b && code <= 0x200f) || (code >= 0x202a && code <= 0x202e) || (code >= 0x2060 && code <= 0x2069) || code === 0xfeff;
+}
+
 /**
- * Nome seguro para exibir e para o Content-Disposition: sem caminho, sem caracteres de controle nem reservados do
- * Windows, espaços normalizados e no máximo 120 caracteres (a extensão é mantida ao cortar).
+ * Nome seguro para exibir e para o Content-Disposition: sem caminho, sem caracteres de controle, de direção invisíveis
+ * nem reservados do Windows, espaços normalizados e no máximo 120 caracteres (a extensão é mantida ao cortar).
  */
 export function safeFileName(raw: string, fallback = "arquivo"): string {
   const base = raw.split(/[\\/]/).pop() ?? "";
   const clean = Array.from(base)
     .filter((ch) => {
-      const code = ch.charCodeAt(0);
-      return code >= 32 && code !== 127 && !FORBIDDEN_NAME_CHARS.has(ch);
+      const code = ch.codePointAt(0) ?? 0;
+      return code >= 32 && code !== 127 && !isInvisibleFormatChar(code) && !FORBIDDEN_NAME_CHARS.has(ch);
     })
     .join("")
     .replace(/\s+/g, " ")
@@ -64,12 +81,12 @@ export function safeFileName(raw: string, fallback = "arquivo"): string {
   return `${clean.slice(0, 120 - suffix.length).trimEnd()}${suffix}`;
 }
 
-/** "850 KB", "12,5 MB" (sem depender do Intl: igual no servidor e no navegador). */
+/** "850 KB", "12,5 MB", "3 GB" (sem depender do Intl: igual no servidor e no navegador). */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  const mb = bytes / (1024 * 1024);
-  const text = mb >= 100 ? String(Math.round(mb)) : mb.toFixed(1).replace(/\.0$/, "");
-  return `${text.replace(".", ",")} MB`;
+  const decimal = (n: number) => (n >= 100 ? String(Math.round(n)) : n.toFixed(1).replace(/\.0$/, "")).replace(".", ",");
+  if (bytes < 1024 * 1024 * 1024) return `${decimal(bytes / (1024 * 1024))} MB`;
+  return `${decimal(bytes / (1024 * 1024 * 1024))} GB`;
 }

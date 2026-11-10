@@ -51,6 +51,9 @@ describe("arquivos em partes", () => {
     expect(safeFileName("../../etc/passwd")).toBe("passwd");
     expect(safeFileName('a<b>:"c|d?*e.pdf')).toBe("abcde.pdf");
     expect(safeFileName("linha\u0000\u0007\nquebrada.txt")).toBe("linhaquebrada.txt");
+    // Caractere invisível que inverte o texto ("termo-‮fdp.mp4" apareceria como "termo-4pm.pdf").
+    expect(safeFileName("termo-\u202Efdp.mp4")).toBe("termo-fdp.mp4");
+    expect(safeFileName("a\u200Bb\uFEFF\u2066c.png")).toBe("abc.png");
     expect(safeFileName("   ")).toBe("arquivo");
     expect(safeFileName("..")).toBe("arquivo");
     const long = `${"x".repeat(200)}.jpeg`;
@@ -67,6 +70,8 @@ describe("arquivos em partes", () => {
     expect(formatBytes(850 * 1024)).toBe("850 KB");
     expect(formatBytes(12.5 * MB)).toBe("12,5 MB");
     expect(formatBytes(50 * MB)).toBe("50 MB");
+    expect(formatBytes(3 * 1024 * MB)).toBe("3 GB");
+    expect(formatBytes(1.5 * 1024 * MB)).toBe("1,5 GB");
     expect(formatBytes(-1)).toBe("—");
   });
 });
@@ -120,6 +125,7 @@ describe("comprovantes do consentimento", () => {
     const now = new Date("2026-11-10T15:00:00Z");
     const base = { viewerId: "u1", uploadedById: "u1", completedAt: "2026-11-10T14:30:00Z", now };
     expect(canRemoveConsentEvidence({ ...base, canRemoveAny: false, canRemoveOwn: true })).toBe(true);
+    expect(canRemoveConsentEvidence({ ...base, viewerId: "u2", canRemoveAny: false, canRemoveOwn: true })).toBe(false);
     expect(canRemoveConsentEvidence({ ...base, canRemoveAny: false, canRemoveOwn: false })).toBe(false);
     expect(canRemoveConsentEvidence({ ...base, uploadedById: "u2", canRemoveAny: false, canRemoveOwn: true })).toBe(false);
     const late = new Date(Date.parse(base.completedAt) + CONSENT_EVIDENCE_UNDO_MS + 1000);

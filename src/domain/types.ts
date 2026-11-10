@@ -1248,8 +1248,16 @@ export interface StoredFile extends BaseEntity {
   removedById?: string;
   removedByName?: string;
   removedReason?: string;
+  /** Removido com partes ainda por apagar (a limpeza diária procura por este campo). */
+  purgePending?: boolean;
   /** Partes apagadas (a limpeza diária refaz se a remoção parou no meio). */
   purgedAt?: string;
+  /** A conclusão já foi registrada no histórico do dono (evento): repetir a conclusão não registra de novo. */
+  historyLoggedAt?: string;
+  /** A remoção já foi registrada no histórico do dono (evento). */
+  removalLoggedAt?: string;
+  /** Partes já recebidas (índices): concluir sem todas recusa na hora, sem ler o conteúdo. */
+  received?: number[];
 }
 
 /** Uma parte de um StoredFile. */

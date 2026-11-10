@@ -3,7 +3,7 @@ import { requireApiPermission } from "@/server/auth/session";
 import { assertLeadInScope } from "@/server/marketing/access";
 import { completeConsentEvidenceUpload, evidenceErrorResponse, evidenceViewer, getActiveConsentEvidence, putConsentEvidenceChunk, toEvidenceRow } from "@/server/marketing/consent-evidence";
 import { readChunk, streamFile } from "@/server/files/store";
-import { readBodyLimited, storedFileHeaders } from "@/server/files/http";
+import { htmlErrorPage, readBodyLimited, storedFileHeaders, wantsHtml } from "@/server/files/http";
 import { isInlineEvidenceType } from "@/domain/consent-evidence";
 import { STORED_FILE_CHUNK_BYTES } from "@/domain/stored-files";
 
@@ -24,14 +24,24 @@ function partIndex(request: Request): number | null {
  * remonta os arquivos grandes parte a parte, abaixo do limite de resposta da Vercel, e confere o SHA-256.
  */
 export async function GET(request: Request, { params }: Params) {
+  const url = new URL(request.url);
+  // Aberto direto pelo navegador (link "Abrir"/"Baixar"): erros viram página legível em vez de JSON.
+  const page = !url.searchParams.has("parte") && wantsHtml(request);
   const user = await requireApiPermission("marketing.leads.ver");
-  if (user instanceof Response) return user;
+  if (user instanceof Response) {
+    if (!page) return user;
+    return user.status === 401
+      ? htmlErrorPage(401, "Sua sessão expirou. Entre no INTEROS e abra o comprovante de novo.", { href: "/login", label: "Entrar no INTEROS" })
+      : htmlErrorPage(403, "Seu perfil não pode abrir comprovantes de leads.");
+  }
   const { id, arquivo } = await params;
+  const back = { href: `/marketing/leads?lead=${encodeURIComponent(id)}`, label: "Voltar à ficha do lead" };
   try {
     await assertLeadInScope(user, id);
     const file = await getActiveConsentEvidence(id, arquivo);
-    if (!file) return Response.json({ ok: false, error: "Comprovante não encontrado." }, { status: 404 });
-    const url = new URL(request.url);
+    if (!file) {
+      return page ? htmlErrorPage(404, "Comprovante não encontrado: ele pode ter sido removido.", back) : Response.json({ ok: false, error: "Comprovante não encontrado." }, { status: 404 });
+    }
     if (url.searchParams.has("parte")) {
       const index = partIndex(request);
       if (index === null) return Response.json({ ok: false, error: "Parte inválida." }, { status: 400 });
@@ -43,7 +53,10 @@ export async function GET(request: Request, { params }: Params) {
     const download = url.searchParams.get("download") === "1" || !isInlineEvidenceType(file.mimeType);
     return new Response(streamFile(file), { headers: storedFileHeaders(file, download) });
   } catch (error) {
-    return evidenceErrorResponse(error, "Não foi possível abrir o comprovante.");
+    const response = evidenceErrorResponse(error, "Não foi possível abrir o comprovante.");
+    if (!page) return response;
+    const message = ((await response.clone().json()) as { error?: string }).error ?? "Não foi possível abrir o comprovante.";
+    return htmlErrorPage(response.status, message, back);
   }
 }
 

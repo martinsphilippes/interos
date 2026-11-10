@@ -12,7 +12,7 @@ import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { CONSENT_EVIDENCE_ACCEPT, CONSENT_EVIDENCE_MAX_BYTES, CONSENT_EVIDENCE_MAX_FILES, consentEvidenceKind, consentEvidenceMimeType, consentEvidenceProblem, type ConsentEvidenceKind } from "@/domain/consent-evidence";
 import { formatBytes } from "@/domain/stored-files";
-import { makeThumbnail, normalizeEvidenceFile, type TransferProgress } from "./consent-evidence-transfer";
+import { normalizeEvidenceFile, thumbnailOf, type TransferProgress } from "./consent-evidence-transfer";
 
 export interface PendingEvidence {
   key: string;
@@ -66,14 +66,17 @@ export function acceptEvidenceFiles(files: readonly File[], current: readonly Pe
   return accepted;
 }
 
-/** Gera as miniaturas das imagens escolhidas e devolve cada uma pelo callback (fora de effect). */
+/**
+ * Gera as miniaturas das imagens escolhidas, uma de cada vez (fotos grandes não disputam a memória), e devolve cada
+ * uma pelo callback (fora de effect). O envio reaproveita a mesma miniatura (thumbnailOf).
+ */
 export function loadThumbnails(items: readonly PendingEvidence[], onThumb: (key: string, thumbnail: string) => void): void {
-  for (const item of items) {
-    const mimeType = consentEvidenceMimeType(item.file.name) ?? "";
-    void makeThumbnail(item.file, mimeType).then((thumbnail) => {
+  void (async () => {
+    for (const item of items) {
+      const thumbnail = await thumbnailOf(item.file);
       if (thumbnail) onThumb(item.key, thumbnail);
-    });
-  }
+    }
+  })();
 }
 
 /** Arquivos do Ctrl+V (print copiado). Texto colado num campo segue normal. */
@@ -176,6 +179,10 @@ export interface EvidenceUploadState {
   status: "aguardando" | "enviando" | "enviado" | "erro";
   progress?: TransferProgress;
   error?: string;
+  /** Vale tentar de novo (rede, conexão parada, cancelado); regra de negócio não. */
+  retryable?: boolean;
+  /** Comprovante criado (envio concluído). */
+  fileId?: string;
 }
 
 /** Lista dos arquivos escolhidos (antes de enviar ou durante o envio). */

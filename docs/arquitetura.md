@@ -446,19 +446,28 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   miniatura, quem enviou, registro da remoção e `purgedAt`) e `stored_file_chunks` (id `<arquivo>__<nº>`, base64).
   Genérico: outro dono (ex.: anexos de chamado, PDFs de nota acima de 3 MB) só precisa de rotas e regras próprias.
 - **Store** (`src/server/files/store.ts`): `createPendingFile` → `writeChunk` (tamanho exato da parte; só quem abriu o
-  envio) → `completeFile` (todas as partes, tamanho e SHA-256 conferidos; só então `ativo`) → `readChunk`/`streamFile`;
-  `removeFile` (marca quem/quando/por quê, apaga a miniatura e as partes). Gravar parte, concluir e remover travam o
-  documento do arquivo (transação): nenhuma parte muda depois da conferência nem entra depois da remoção.
-- **Limpeza** (varredura diária `arquivos_pendentes`): envio parado há mais de 24 h vira `removido` ("Envio não
-  concluído", fora da ficha) e perde as partes; remoção interrompida (`removido` sem `purgedAt`) é completada.
+  envio; registra a parte em `received`) → `completeFile` (todas as partes recebidas, tamanho e SHA-256 conferidos; só
+  então `ativo`; conteúdo diferente encerra o envio e apaga as partes) → `readChunk`/`streamFile`; `removeFile` (marca
+  quem/quando/por quê, apaga a miniatura e depois as partes, sem derrubar a chamada se apagar falhar).
+- **Concorrência e limites**: abrir envio passa por uma trava única da organização (advisory lock da transação) — limite
+  do dono, no máximo 10 envios abertos por pessoa e o espaço total (`STORED_FILES_ORG_MAX_BYTES`, 3 GB de arquivos ≈ 4 GB
+  no banco; soma calculada no banco com `sumField`) não são furados por pedidos simultâneos. Gravar parte, concluir e
+  remover travam o documento do arquivo: nenhuma parte muda depois da conferência nem entra depois da remoção.
+- **Histórico sem perda**: `historyLoggedAt`/`removalLoggedAt` marcam que o evento foi registrado; se a conclusão ou a
+  remoção gravou e o evento falhou, a nova tentativa (do navegador ou de quem removeu) registra uma vez.
+- **Limpeza**: envio aberto há mais de 2 h é abandonado — descartado (até 20) a cada abertura de envio e pela varredura
+  diária `arquivos_pendentes` (vira `removido` "Envio não concluído", fora da ficha, e perde as partes); remoção
+  interrompida (`purgePending`) é completada. Cada item é independente; no máximo 200 por execução.
 - **Comprovantes do consentimento** (dono `lead_consent`; regras em `src/domain/consent-evidence.ts`): imagem, PDF,
   áudio, vídeo, e-mail e documento (lista por extensão, sem HTML/SVG), até 50 MB por arquivo e 20 por lead; o mesmo
   arquivo (SHA-256) não entra duas vezes. Rotas `src/app/api/marketing/leads/[id]/consentimento` (abrir o envio) e
   `.../[arquivo]` (`PUT ?parte=N`, `POST` conclui, `GET` abre/baixa; `?parte=N` devolve uma parte). O navegador
   (`src/components/marketing/consent-evidence-transfer.ts`) calcula o SHA-256 antes de enviar, envia com até 3
   tentativas por parte e, para arquivos acima de 4 MB, remonta parte a parte e confere o SHA-256 antes de abrir/baixar.
-  Telas: "Novo lead" (anexar, arrastar, colar print; sobe depois de salvar) e a ficha do lead (lista, abrir, baixar,
-  anexar mais, remover com motivo, registro dos removidos).
+  Telas: "Novo lead" (anexar, arrastar, colar print; sobe depois de salvar — com comprovantes a janela vira "Lead
+  cadastrado", mostra o envio, permite cancelar e, se algo falhar, tentar de novo) e a ficha do lead (lista, abrir,
+  baixar, anexar mais, remover com motivo, registro dos removidos; não fecha no meio de um envio). Link direto com
+  sessão expirada ou arquivo removido mostra página legível (não JSON). Cada requisição tem tempo-limite de 2 min.
 - **Permissões** (tela `marketing.leads`): abrir/baixar = ver a tela + lead no escopo (viewGuard da rota `GET`);
   `marketing.leads.consentimento.anexar` (todos com o módulo; inclui remover o PRÓPRIO comprovante até 1 hora depois de
   anexar) e `marketing.leads.consentimento.remover` (gestores; qualquer comprovante, sensível). Remover exige motivo.
