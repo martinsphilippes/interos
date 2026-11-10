@@ -150,7 +150,7 @@ describe("enviar", () => {
     await completeFile({ ownerKind: "client_document", ownerId: CLIENT_ORPHAN, fileId: started.id }, UPLOADER.id);
     expect(await getById<Document>(COLLECTIONS.documents, started.id)).toBeNull();
     await expect(startClientDocumentUpload(CLIENT_ORPHAN, { name: "procuracao.pdf", size: bytes.byteLength, sha256: sha(bytes) }, UPLOADER)).rejects.toThrow(/agora está na lista/);
-    expect(await doc(started.id)).toMatchObject({ name: "Procuracao", category: "Procuração", fileId: started.id, version: 1 });
+    expect(await doc(started.id)).toMatchObject({ name: "Procuração", category: "Procuração", fileId: started.id, version: 1 });
     expect((await events(CLIENT_ORPHAN, "document.added")).filter((e) => e.entityId === started.id)).toHaveLength(1);
   });
 

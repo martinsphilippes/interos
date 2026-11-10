@@ -97,12 +97,14 @@ function acceptDocumentFiles(files: readonly File[], current: readonly PendingDo
     seen.add(id);
     room -= 1;
     keySeq += 1;
+    // Pelo atalho do cadastro ("Falta contrato social"), o nome é o da categoria; senão, vem do nome do arquivo.
+    const category = presetCategory ?? suggestDocumentCategory(file.name);
     accepted.push({
       key: `doc-${keySeq}`,
       file,
       mimeType: clientDocumentMimeType(file.name) ?? "",
-      title: suggestDocumentTitle(file.name),
-      category: presetCategory ?? suggestDocumentCategory(file.name),
+      title: presetCategory ?? suggestDocumentTitle(file.name, category),
+      category,
     });
   }
   return { accepted, problems };

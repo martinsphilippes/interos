@@ -100,6 +100,12 @@ describe("sugestões pelo nome do arquivo", () => {
     expect(suggestDocumentTitle(`${"a".repeat(300)}.pdf`)).toHaveLength(160);
   });
 
+  it("nome igual à categoria vira o nome da categoria (com acentos)", () => {
+    expect(suggestDocumentTitle("cartao-cnpj.png", "Cartão CNPJ")).toBe("Cartão CNPJ");
+    expect(suggestDocumentTitle("CONTRATO_SOCIAL.pdf", "Contrato social")).toBe("Contrato social");
+    expect(suggestDocumentTitle("contrato social 2024.pdf", "Contrato social")).toBe("Contrato social 2024");
+  });
+
   it("mesmo nome para a versão: ignora maiúsculas, acentos e espaços extras", () => {
     expect(sameDocumentTitle("Cartão CNPJ", "cartao  cnpj ")).toBe(true);
     expect(sameDocumentTitle("Contrato social", "Contrato social 2024")).toBe(false);

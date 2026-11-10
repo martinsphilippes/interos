@@ -182,8 +182,8 @@ export async function nextDocumentVersion(clientId: string, title: string): Prom
 async function ensureFileDocument(clientId: string, file: StoredFile, meta: ClientDocumentMeta): Promise<Document> {
   const existing = await getById<Document>(COLLECTIONS.documents, file.id);
   if (existing) return existing;
-  const title = cleanTitle(meta.title) ?? suggestDocumentTitle(file.name);
   const category = cleanCategory(meta.category) ?? suggestDocumentCategory(file.name);
+  const title = cleanTitle(meta.title) ?? suggestDocumentTitle(file.name, category);
   const version = await nextDocumentVersion(clientId, title);
   return create<Document>(
     COLLECTIONS.documents,

@@ -162,15 +162,17 @@ export function suggestDocumentCategory(fileName: string): (typeof CLIENT_DOCUME
 
 /**
  * Nome sugerido a partir do arquivo: sem extensão, "_" e "-" viram espaço, primeira letra maiúscula
- * ("contrato_social-2024.pdf" → "Contrato social 2024"). Print colado vira "Print de AAAA-MM-DD…".
+ * ("contrato_social-2024.pdf" → "Contrato social 2024"). Quando o nome do arquivo é a própria categoria
+ * ("cartao-cnpj.png" com a categoria "Cartão CNPJ"), vale o nome da categoria, com acentos e maiúsculas.
  */
-export function suggestDocumentTitle(fileName: string): string {
+export function suggestDocumentTitle(fileName: string, category?: string): string {
   const base = fileName
     .replace(/\.[a-z0-9]{1,8}$/i, "")
     .replace(/[_]+/g, " ")
     .replace(/(?<=\S)-(?=\S)/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+  if (category && base && sameDocumentTitle(base, category)) return category;
   const title = base || "Documento";
   const capped = title.length > CLIENT_DOCUMENT_TITLE_MAX ? title.slice(0, CLIENT_DOCUMENT_TITLE_MAX).trimEnd() : title;
   return `${capped.charAt(0).toUpperCase()}${capped.slice(1)}`;
