@@ -361,11 +361,7 @@ export class Query<T extends DocumentData = DocumentData> {
    * trazido. Valor ausente não conta; valor não numérico é erro.
    */
   async sum(field: string): Promise<number> {
-    const { text, params } = this.toSql(false);
-    params.push(splitPath(field));
-    const pathParam = `$${params.length}`;
-    const rows = await sql().unsafe<{ total: string }[]>(`select coalesce(sum((q.data #>> ${pathParam}::text[])::numeric), 0)::text as total from (${text}) q`, params as never[]);
-    return Number(rows[0]?.total ?? 0);
+    return runSum(sql(), this, field);
   }
   /** Partes da consulta para o executor (uso interno). */
   toSql(lock: boolean): { text: string; params: unknown[] } {
@@ -482,6 +478,15 @@ async function readMany(run: Runner, refs: DocumentReference[], lock: boolean): 
     }),
   );
   return refs.map((ref) => new DocumentSnapshot(ref, found.get(ref.path)));
+}
+
+/** Soma de um campo numérico dos documentos da consulta, calculada no banco (sem trazer os documentos). */
+async function runSum(run: Runner, query: Query, field: string): Promise<number> {
+  const { text, params } = query.toSql(false);
+  params.push(splitPath(field));
+  const pathParam = `$${params.length}`;
+  const rows = await run.unsafe<{ total: string }[]>(`select coalesce(sum((q.data #>> ${pathParam}::text[])::numeric), 0)::text as total from (${text}) q`, params as never[]);
+  return Number(rows[0]?.total ?? 0);
 }
 
 async function runQuery<T extends DocumentData>(run: Runner, query: Query<T>, lock: boolean): Promise<QuerySnapshot<T>> {
@@ -622,6 +627,27 @@ export class Transaction extends WriteBuffer {
   async getAll(...refs: DocumentReference[]): Promise<DocumentSnapshot[]> {
     if (this.writes.length > 0) throw new Error("Transação: todas as leituras precisam acontecer antes das escritas.");
     return readMany(this.run, refs, true);
+  }
+  /**
+   * Consulta SEM travar os documentos, na conexão da própria transação. Para ler dentro de uma seção crítica (já
+   * serializada por outra trava) sem pedir outra conexão ao pool: quem segura uma trava e espera uma segunda conexão
+   * pode travar o processo quando todas as conexões estão com transações esperando a mesma trava.
+   */
+  async getUnlocked<T extends DocumentData>(query: Query<T>): Promise<QuerySnapshot<T>> {
+    if (this.writes.length > 0) throw new Error("Transação: todas as leituras precisam acontecer antes das escritas.");
+    return runQuery(this.run, query, false);
+  }
+  /** Soma de um campo numérico (como Query.sum), na conexão da própria transação e sem travar. */
+  async sum(query: Query, field: string): Promise<number> {
+    if (this.writes.length > 0) throw new Error("Transação: todas as leituras precisam acontecer antes das escritas.");
+    return runSum(this.run, query, field);
+  }
+  /**
+   * Espera máxima por trava nesta transação (consultiva ou de linha). Passou do tempo: erro 55P03 (lock_not_available)
+   * em vez de esperar sem limite.
+   */
+  async lockTimeout(ms: number): Promise<void> {
+    await this.run.unsafe(`set local lock_timeout = '${Math.max(1, Math.floor(ms))}ms'`);
   }
   /** Uso interno: aplica as escritas pendentes. */
   async commit(): Promise<void> {

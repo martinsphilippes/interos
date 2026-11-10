@@ -436,11 +436,14 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
 - Eventos: `purchase.order_created|updated|submitted|approved|rejected|cancelled`, `purchase.received`,
   `purchase.settings_updated`.
 
-## Arquivos em partes e comprovantes do consentimento LGPD (`src/server/files/*`, `src/server/marketing/consent-evidence.ts`)
+## Arquivos em partes, comprovantes LGPD e documentos do cliente (`src/server/files/*`, `src/server/marketing/consent-evidence.ts`, `src/server/clients/documents.ts`)
 
-- **Por que em partes**: cada requisição e cada resposta de função na Vercel tem limite de ~4,5 MB. Arquivos grandes
-  sobem e descem em partes de 2 MB (`STORED_FILE_CHUNK_BYTES`), guardados no próprio banco (Supabase, região
-  sa-east-1, sem link público e sem segredo novo). Regras puras em `src/domain/stored-files.ts`.
+- **Por que em partes**: o corpo de cada requisição a uma função na Vercel tem limite de ~4,5 MB. Arquivos grandes
+  sobem em partes de 2 MB (`STORED_FILE_CHUNK_BYTES`), guardados no próprio banco (Supabase, região sa-east-1, sem
+  link público e sem segredo novo). A resposta em stream passa desse limite (conferido em produção em 10/11/2026 com
+  9 MB numa resposta só): abrir/baixar pode ser link direto. Regras puras em `src/domain/stored-files.ts`; no navegador,
+  envio/remontagem genéricos em `src/components/files/stored-file-transfer.ts` e a área de escolher arquivos (botão,
+  arrastar, colar print) em `src/components/files/file-drop-zone.tsx`.
 - **Coleções** (migration `20261101000000_arquivos_em_partes.sql`): `stored_files` (dono `ownerKind` + `ownerId`, nome
   seguro, tipo definido pela extensão, tamanho, `sha256`, `chunkSize`/`chunkCount`, `enviando → ativo → removido`,
   miniatura, quem enviou, registro da remoção e `purgedAt`) e `stored_file_chunks` (id `<arquivo>__<nº>`, base64).
@@ -451,8 +454,12 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   quem/quando/por quê, apaga a miniatura e depois as partes, sem derrubar a chamada se apagar falhar).
 - **Concorrência e limites**: abrir envio passa por uma trava única da organização (advisory lock da transação) — limite
   do dono, no máximo 10 envios abertos por pessoa e o espaço total (`STORED_FILES_ORG_MAX_BYTES`, 3 GB de arquivos ≈ 4 GB
-  no banco; soma calculada no banco com `sumField`) não são furados por pedidos simultâneos. Gravar parte, concluir e
-  remover travam o documento do arquivo: nenhuma parte muda depois da conferência nem entra depois da remoção.
+  no banco; soma calculada no banco) não são furados por pedidos simultâneos. Com a trava, tudo é lido na conexão da
+  própria transação (`txList`, `txSumField`, `tx.getUnlocked`, `tx.sum`; as regras do dono recebem a transação): quem
+  segura a trava nunca espera outra conexão do pool — senão, com tantas aberturas simultâneas quanto conexões, o processo
+  travava. Os descartes (abandonados, nova tentativa do mesmo arquivo) rodam antes da trava, cada um na sua transação; a
+  espera pela trava tem limite (`tx.lockTimeout`, 10 s; passou, erro 5xx e o navegador tenta de novo). Gravar parte,
+  concluir e remover travam o documento do arquivo: nenhuma parte muda depois da conferência nem entra depois da remoção.
 - **Histórico sem perda**: `historyLoggedAt`/`removalLoggedAt` marcam que o evento foi registrado; se a conclusão ou a
   remoção gravou e o evento falhou, a nova tentativa (do navegador ou de quem removeu) registra uma vez.
 - **Limpeza**: envio aberto há mais de 2 h é abandonado — descartado (até 20) a cada abertura de envio e pela varredura
@@ -473,6 +480,34 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   anexar) e `marketing.leads.consentimento.remover` (gestores; qualquer comprovante, sensível). Remover exige motivo.
 - Eventos (histórico do lead): `lead.consent_evidence_added` (nome, tamanho, SHA-256) e `lead.consent_evidence_removed`
   (motivo).
+- **Documentos do cliente** (dono `client_document` = cliente; regras em `src/domain/client-documents.ts`; aba
+  Documentos do Cliente 360º): vários arquivos de uma vez (até 20 por vez, 50 MB cada, 100 por cliente): PDF, PDF
+  assinado (`.p7s`), imagem, Word/Excel/PowerPoint/OpenDocument, CSV, TXT, XML, ZIP e e-mail (lista por extensão, sem
+  HTML/SVG). Nome e categoria vêm sugeridos pelo nome do arquivo ("contrato_social.pdf" → "Contrato social"; "Cartão
+  CNPJ", documentos dos sócios, comprovante de endereço, alvará, certidão, procuração…) e podem ser ajustados antes de
+  enviar. Ao concluir o envio, o servidor cria o `Document` com o MESMO id do arquivo (`fileId`, `fileName`, `sha256`,
+  `url` = rota interna; data = conclusão do envio) numa transação com a trava de versões do cliente: duas conclusões ao
+  mesmo tempo (nova tentativa do navegador) dão um documento só, e a versão sai uma de cada vez. O registro no histórico
+  é reservado com o arquivo travado (`claimHistoryLog`; se o evento falhar, `releaseHistoryClaim` devolve a reserva):
+  uma vez só. Um arquivo concluído sem documento (a função caiu no meio) ganha o documento no próximo envio do mesmo
+  arquivo, com quem enviou como autor. Versão pelo nome (sem diferença de maiúsculas e acentos), igual para link e
+  arquivo. O registro por link continua (Drive, assinatura digital, ERP). A aba confere os documentos de cadastro de
+  pessoa jurídica (`CLIENT_ESSENTIAL_DOCUMENTS`: contrato social e cartão CNPJ — pela categoria ou, nos antigos, pelo
+  nome; CPF não confere) com atalho que abre o seletor no próprio clique e só dá a categoria ao primeiro arquivo dele.
+  Limites: o cliente precisa existir (rotas e serviço); 1 GB por cliente; os documentos usam até 2,5 GB do espaço da
+  organização (`CLIENT_DOCUMENTS_ORG_MAX_BYTES`), deixando 0,5 GB para os comprovantes LGPD.
+  Rotas `src/app/api/clientes/[id]/documentos` (abrir o envio) e `.../[arquivo]` (`PUT ?parte=N`, `POST` conclui com
+  `{ title, category }`, `GET` abre — PDF, imagem e texto no navegador; o resto e `?download=1` baixam — em stream,
+  com `maxDuration` 300 s para conexões lentas). Remover (link ou arquivo, só os da própria aba — documento de contrato,
+  cobrança ou chamado pertence àquela tela): motivo obrigatório; arquivo tem o conteúdo apagado; o `Document` é
+  marcado com ele travado (duas remoções ao mesmo tempo: uma vale, a outra recebe "já foi removido"; um registro só) e
+  fica `status: "removido"` com quem/quando/por quê, fora das listas, dos portões do workflow (`documentsCount`) e dos
+  documentos do contrato (`isActiveDocument`). Permissões: abrir = seção `operacao.clientes.documentos.ver` + cliente
+  no escopo (viewGuard da rota `GET`); `operacao.clientes.documentos.anexar` (todos; inclui remover o PRÓPRIO até 1 hora
+  depois) e `operacao.clientes.documentos.remover` (gestores; qualquer documento da aba; sensível). Eventos (histórico do
+  cliente): `document.added` e `document.removed` (motivo). O link registrado pela aba é sempre do próprio cliente
+  (`entityType` "client"; o formulário não escolhe outro vínculo). Na tela, o envio continua se a pessoa trocar de aba
+  (o aviso de fechar a página vale até o fim) e "Cancelar envio" ignora o segundo clique de um clique duplo em "Enviar".
 
 ## Cadastros financeiros (etapa CP/CR 1, `src/server/finance-registry/*`, `/financeiro/cadastros`)
 - **Coleções novas** (regra `if false`, só servidor): `financial_accounts` (conta financeira: nome, tipo

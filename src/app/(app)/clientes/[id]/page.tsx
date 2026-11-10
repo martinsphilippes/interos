@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { ACCESS_DENIED_REDIRECT, can, canSeeHref, getCurrentUser, requireScreen } from "@/server/auth/session";
 import { canSeeClient, canSeeClientId, clientCapabilities, clientSectionAccess } from "@/server/clients/access";
+import { clientDocumentRows, documentViewer } from "@/server/clients/documents";
 import { getClient, getClient360, getClientFormOptions } from "@/server/clients/queries";
 import { getCommunicationChannelStatus, isConnected } from "@/server/integrations/status";
 import { getClientConversations } from "@/server/conversations/client-view";
@@ -83,6 +84,8 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
   const showPortal = tab === "financeiro" && can(user, "financeiro.contratos.portal.ver") && data.contracts.length > 0;
   const portal = showPortal ? await listPortalLinks(id) : null;
   const ticketOptions = supportOptions ? { clients: supportOptions.clients, products: supportOptions.products, team: supportOptions.team, categories: supportOptions.categories, slaRules: supportOptions.slaRules } : null;
+  // Documentos: ativos e removidos (registro), com o que quem vê pode remover (o servidor confere de novo).
+  const documentRows = sections.documentos ? clientDocumentRows(data.documents, documentViewer(user)) : [];
   const originName = data.client.origin ? (options.leadSources.find((s) => s.key === data.client.origin)?.name ?? data.client.origin) : undefined;
   const counts: Partial<Record<ClientTab, number>> = {
     timeline: data.timeline.length,
@@ -92,7 +95,7 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
     implantacao: data.projects.filter((p) => p.status !== "concluida" && p.status !== "cancelada").length,
     cs: data.successPlans.filter((p) => p.status === "ativo").length,
     suporte: data.tickets.filter((t) => OPEN_TICKETS.has(t.status)).length,
-    documentos: data.documents.length,
+    documentos: documentRows.filter((d) => d.status === "ativo").length,
     tarefas: data.tasks.filter((t) => OPEN_TASKS.has(t.status)).length,
   };
 
@@ -158,7 +161,17 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
         }
       />
     ),
-    documentos: <TabDocumentos data={data} canAttach={caps.attachDocument} />,
+    documentos: (
+      <TabDocumentos
+        clientId={data.client.id}
+        clientName={data.client.tradeName}
+        rows={documentRows}
+        users={data.users}
+        canAttach={caps.attachDocument}
+        // CPF (11 dígitos) não tem contrato social nem cartão CNPJ; sem documento informado, confere.
+        checkCompanyDocuments={(data.client.document ?? "").replace(/\D/g, "").length !== 11}
+      />
+    ),
     tarefas: <TabTarefas data={data} canCreate={caps.createTask} />,
   };
 

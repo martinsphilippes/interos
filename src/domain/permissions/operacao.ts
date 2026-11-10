@@ -321,6 +321,13 @@ export const OPERACAO = {
           label: "Documentos",
           // Onde: ?aba=documentos — TabDocumentos (page.tsx:84) · Hoje: nenhuma
           rule: "all",
+          viewGuards: [
+            {
+              guard: "src/app/api/clientes/[id]/documentos/[arquivo]/route.ts#GET",
+              label: "Abrir ou baixar documento enviado ao INTEROS",
+              recordCondition: "cliente no escopo da tela",
+            },
+          ],
         },
         {
           key: "operacao.clientes.comercial.ver",
@@ -402,11 +409,29 @@ export const OPERACAO = {
         },
         {
           key: "operacao.clientes.documentos.anexar",
-          label: "Anexar documento",
+          label: "Anexar documento (enviar arquivos ou registrar link) e remover o próprio na primeira hora",
           verb: "anexar",
-          // Hoje: requireUser (clients/actions.ts:396)
+          // Hoje: requireUser (clients/actions.ts:396). Envio de arquivos (src/server/clients/documents.ts): o arquivo
+          // sobe em partes de 2 MB — abrir o envio, mandar cada parte e concluir.
           rule: "all",
-          guards: ["src/server/clients/actions.ts#addDocument"],
+          guards: [
+            "src/server/clients/actions.ts#addDocument",
+            "src/app/api/clientes/[id]/documentos/route.ts#POST",
+            "src/app/api/clientes/[id]/documentos/[arquivo]/route.ts#PUT",
+            "src/app/api/clientes/[id]/documentos/[arquivo]/route.ts#POST",
+            "src/server/clients/actions.ts#removeClientDocumentAction?o próprio documento, até 1 hora depois de enviar",
+          ],
+          recordCondition: "Remover: só o documento que a própria pessoa enviou, até 1 hora depois.",
+        },
+        {
+          key: "operacao.clientes.documentos.remover",
+          label: "Remover documento do cliente de qualquer pessoa (com motivo)",
+          verb: "remover",
+          // Novo: arquivo tem o conteúdo apagado; link sai da lista. Fica o registro (quem enviou, quem removeu, quando e
+          // por quê) no documento e no histórico do cliente. Documento de contrato, cobrança ou chamado não sai por aqui.
+          rule: { manager: true },
+          guards: ["src/server/clients/actions.ts#removeClientDocumentAction?qualquer documento da aba"],
+          sensitive: true,
         },
         {
           key: "operacao.clientes.criar-oportunidade",

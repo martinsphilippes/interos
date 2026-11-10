@@ -10,7 +10,12 @@
 /** Tamanho de cada parte (bytes). Cada arquivo grava o próprio `chunkSize`: mudar aqui só vale para arquivos novos. */
 export const STORED_FILE_CHUNK_BYTES = 2 * 1024 * 1024;
 
-/** Até este tamanho o arquivo abre por link direto (uma resposta só, abaixo do limite da Vercel). */
+/**
+ * Comprovantes LGPD até este tamanho abrem por link direto; os maiores são remontados no navegador parte a parte
+ * (conferindo o SHA-256). O limite de ~4,5 MB da Vercel vale para o corpo das REQUISIÇÕES (por isso o envio é em
+ * partes); a resposta em stream passa dele — conferido em produção (10/11/2026) com um arquivo de 9 MB numa resposta
+ * só. Os documentos do cliente abrem e baixam sempre por link direto.
+ */
 export const STORED_FILE_DIRECT_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
@@ -79,6 +84,18 @@ export function safeFileName(raw: string, fallback = "arquivo"): string {
   const ext = fileExtension(clean);
   const suffix = ext && ext.length <= 8 ? `.${ext}` : "";
   return `${clean.slice(0, 120 - suffix.length).trimEnd()}${suffix}`;
+}
+
+/**
+ * Pode remover um arquivo enviado? Quem tem a chave de remover (`canRemoveAny`), sempre; quem enviou e ainda pode
+ * enviar (`canRemoveOwn`), só dentro de `undoMs` depois de concluir o envio — para corrigir um envio errado sem
+ * depender do gestor.
+ */
+export function canRemoveUpload(input: { canRemoveAny: boolean; canRemoveOwn: boolean; viewerId: string; uploadedById: string; completedAt?: string; now: Date; undoMs: number }): boolean {
+  if (input.canRemoveAny) return true;
+  if (!input.canRemoveOwn || input.viewerId !== input.uploadedById || !input.completedAt) return false;
+  const completed = Date.parse(input.completedAt);
+  return Number.isFinite(completed) && input.now.getTime() - completed <= input.undoMs;
 }
 
 /** "850 KB", "12,5 MB", "3 GB" (sem depender do Intl: igual no servidor e no navegador). */

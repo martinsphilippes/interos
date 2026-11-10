@@ -1,6 +1,7 @@
 import { isValidCpf } from "@/domain/documents";
 import { z } from "zod";
 import { CLIENT_STATUS } from "@/domain/constants";
+import { CLIENT_DOCUMENT_REASON_MIN } from "@/domain/client-documents";
 
 /**
  * Esquemas de validação (zod) do módulo Clientes 360º. Mensagens em português porque
@@ -156,10 +157,18 @@ export const documentSchema = z.object({
     .min(1, "Informe o link do documento")
     .refine((v) => /^https?:\/\/[^\s]+$/i.test(v), "Link inválido: use um endereço iniciado por http(s)://"),
   category: optionalText(60),
-  entityType: optionalText(40),
-  entityId: optionalText(60),
 });
 export type DocumentInput = z.input<typeof documentSchema>;
+
+export const removeDocumentSchema = z.object({
+  clientId: z.string().min(1, "Cliente inválido"),
+  documentId: z.string().min(1, "Documento inválido"),
+  reason: z
+    .string()
+    .trim()
+    .min(CLIENT_DOCUMENT_REASON_MIN, `Informe o motivo da remoção (mínimo de ${CLIENT_DOCUMENT_REASON_MIN} caracteres).`)
+    .max(500, "Motivo muito longo (máximo de 500 caracteres)."),
+});
 
 export const upsellSchema = z.object({
   clientId: z.string().min(1, "Cliente inválido"),

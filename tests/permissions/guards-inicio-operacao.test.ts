@@ -57,6 +57,7 @@ const { analyzeAccess } = await import("../../scripts/check-access/analyze");
 const { statusChangeKeys, deleteTaskKeys } = await import("@/server/tasks/permission-keys");
 const { canSeeTask, taskCapabilities } = await import("@/server/tasks/access");
 const { CLIENT_SECTION_KEYS, canSeeClient, canSeeClientId, clientCapabilities, clientSectionAccess } = await import("@/server/clients/access");
+const { documentViewer } = await import("@/server/clients/documents");
 const { canSeeInstance, canSeeStep, canSeeStepId } = await import("@/server/workflow/access");
 const { meuDiaSections } = await import("@/server/meu-dia/queries");
 
@@ -116,6 +117,15 @@ describe("permissões padrão ≡ comportamento anterior", () => {
       const cu = asCurrentUser(u);
       expect(Object.values(clientSectionAccess(cu)).every(Boolean), label(u)).toBe(true);
       expect(Object.values(clientCapabilities(cu)).every(Boolean), label(u)).toBe(true);
+    }
+  });
+
+  it("Documentos do cliente: remover de qualquer pessoa ≡ isManager; o próprio (1ª hora) para todos", () => {
+    for (const u of ALL_USERS) {
+      const cu = asCurrentUser(u);
+      const viewer = documentViewer(cu);
+      expect(viewer.canRemoveAny, `${label(u)} remover documento`).toBe(cu.isManager);
+      expect(viewer.canRemoveOwn, `${label(u)} remover o próprio`).toBe(true);
     }
   });
 

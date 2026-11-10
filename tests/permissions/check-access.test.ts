@@ -104,8 +104,9 @@ describe("repositório real", () => {
   // devolução, séries do item, ajuste, separar, reservar pelo contrato, liberar e configuração). Compras: + página
   // /compras e 9 actions (criar, editar, enviar, cancelar, aprovar, devolver, receber, refazer o título e configuração).
   // Comprovantes do consentimento LGPD: + 1 action (remover) e 4 rotas (abrir o envio, mandar parte, concluir, abrir/baixar).
-  it("inventário: 104 páginas (10 isentas), 349 funções 'use server' (3 isentas), 38 handlers de API (23 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 104, pagesExempt: 10, serverFunctions: 349, serverFunctionsExempt: 3, apiHandlers: 38, apiExempt: 23 });
+  // Documentos do cliente: + 1 action (remover) e 4 rotas (abrir o envio, mandar parte, concluir, abrir/baixar).
+  it("inventário: 104 páginas (10 isentas), 350 funções 'use server' (3 isentas), 42 handlers de API (23 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 104, pagesExempt: 10, serverFunctions: 350, serverFunctionsExempt: 3, apiHandlers: 42, apiExempt: 23 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {

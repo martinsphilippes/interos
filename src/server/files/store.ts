@@ -11,7 +11,7 @@ import "server-only";
  *   SHA-256 e nenhuma parte entra depois da remoção.
  */
 import { createHash } from "node:crypto";
-import { col, getById, list, nowIso, ORG_ID, sumField, txGetOwn } from "@/server/db";
+import { col, getById, list, nowIso, ORG_ID, sumField, txGetOwn, txList, txSumField } from "@/server/db";
 import { docdb, FieldValue, type Transaction } from "@/server/docdb";
 import { BusinessError } from "@/server/auth/error-classes";
 import {
@@ -145,37 +145,51 @@ export interface NewStoredFile {
 }
 
 export interface CreatePendingOptions {
-  /** Espaço total da organização para arquivos (os testes usam um limite menor). */
+  /** Espaço total da organização para arquivos (os testes usam um limite menor; um dono pode reservar espaço a outro). */
   orgMaxBytes?: number;
-  /** Regras do dono (limite por dono, arquivo repetido…), conferidas com a trava; recusa lançando o erro. */
-  check?: () => Promise<void>;
+  /**
+   * Regras do dono (limite por dono, arquivo repetido…), conferidas com a trava; recusa lançando o erro. Leia SÓ pela
+   * transação recebida (`txList`/`txGetOwn`): pedir outra conexão ao pool segurando a trava pode travar o processo.
+   */
+  check?: (tx: Transaction) => Promise<void>;
   now?: Date;
 }
 
+/** Espera máxima pela trava de abertura de envio (passou: erro, e o navegador tenta de novo). */
+const START_LOCK_TIMEOUT_MS = 10_000;
+
+/** Arquivos de um dono lidos pela transação (sem travar; uso dentro da trava de abertura de envio). */
+export async function listOwnerFilesInTx(tx: Transaction, ownerKind: StoredFileOwnerKind, ownerId: string): Promise<StoredFile[]> {
+  return txList<StoredFile>(tx, COLLECTIONS.storedFiles, [
+    ["ownerKind", "==", ownerKind],
+    ["ownerId", "==", ownerId],
+  ]);
+}
+
 /**
- * Abre o envio: o arquivo nasce "enviando", com a quantidade de partes calculada aqui. Com a trava da organização:
- * descarta envios abandonados (mais de 2 h), confere as regras do dono, o máximo de envios abertos por pessoa e o
- * espaço total da organização.
+ * Abre o envio: o arquivo nasce "enviando", com a quantidade de partes calculada aqui. Antes da trava, descarta envios
+ * abandonados (mais de 2 h; cada descarte tem a própria transação). Com a trava da organização, confere as regras do
+ * dono, o máximo de envios abertos por pessoa e o espaço total — tudo lido na conexão da própria transação (quem
+ * segura a trava nunca espera outra conexão do pool) e com espera limitada pela trava.
  */
 export async function createPendingFile(input: NewStoredFile, options: CreatePendingOptions = {}): Promise<StoredFile> {
   if (!SHA256_TAG.test(input.sha256)) throw new StoredFileError("Identificador (SHA-256) do arquivo inválido.");
   if (!Number.isInteger(input.size) || input.size <= 0) throw new StoredFileError("O arquivo está vazio.");
   const now = options.now ?? new Date();
   const orgMaxBytes = options.orgMaxBytes ?? STORED_FILES_ORG_MAX_BYTES;
+  await discardAbandoned(now, DISCARD_ON_START_MAX);
   return docdb.runTransaction(async (tx) => {
+    await tx.lockTimeout(START_LOCK_TIMEOUT_MS);
     await tx.get(fileRef(START_LOCK_ID));
-    await discardAbandoned(now, DISCARD_ON_START_MAX);
-    await options.check?.();
-    const open = await list<StoredFile>(COLLECTIONS.storedFiles, {
-      where: [
-        ["uploadedById", "==", input.uploadedBy.id],
-        ["status", "==", "enviando"],
-      ],
-    });
+    await options.check?.(tx);
+    const open = await txList<StoredFile>(tx, COLLECTIONS.storedFiles, [
+      ["uploadedById", "==", input.uploadedBy.id],
+      ["status", "==", "enviando"],
+    ]);
     if (open.length >= STORED_FILE_MAX_OPEN_UPLOADS_PER_USER) {
       throw new StoredFileError(`Você já tem ${open.length} envios de arquivo em andamento. Espere terminarem para começar outro.`);
     }
-    const used = await storedFilesUsage();
+    const used = await txSumField(tx, COLLECTIONS.storedFiles, "size", [["status", "in", ["ativo", "enviando"]]]);
     if (used + input.size > orgMaxBytes) {
       throw new StoredFileError(`O espaço para arquivos do INTEROS está cheio (${formatBytes(used)} de ${formatBytes(orgMaxBytes)} usados). Fale com o administrador do sistema.`);
     }
@@ -296,6 +310,26 @@ export async function markRemovalLogged(fileId: string): Promise<void> {
   await fileRef(fileId).update({ removalLoggedAt: now, updatedAt: now });
 }
 
+/**
+ * Reserva o registro da conclusão no histórico (com o arquivo travado): true = esta chamada registra. Duas conclusões
+ * ao mesmo tempo (uma nova tentativa do navegador enquanto a primeira ainda confere o SHA-256) registram uma vez só.
+ * Se o registro falhar, `releaseHistoryClaim` devolve a reserva para a próxima tentativa registrar.
+ */
+export async function claimHistoryLog(ref: StoredFileRef): Promise<boolean> {
+  return docdb.runTransaction(async (tx) => {
+    const file = await lockOwned(tx, ref);
+    if (!file || file.status !== "ativo" || file.historyLoggedAt) return false;
+    const now = nowIso();
+    tx.update(fileRef(file.id), { historyLoggedAt: now, updatedAt: now });
+    return true;
+  });
+}
+
+/** Desfaz a reserva de `claimHistoryLog` (o registro falhou; a próxima tentativa registra). */
+export async function releaseHistoryClaim(fileId: string): Promise<void> {
+  await fileRef(fileId).update({ historyLoggedAt: FieldValue.delete(), updatedAt: nowIso() });
+}
+
 // ---------------------------------------------------------------------------
 // Remoção e limpeza
 // ---------------------------------------------------------------------------
@@ -394,6 +428,33 @@ export async function discardRetriedPending(ownerKind: StoredFileOwnerKind, owne
     if (await discardStalePending(f, nowIso())) discarded += 1;
   }
   return discarded;
+}
+
+/** Sinal interno da checagem: há um envio aberto do mesmo arquivo pela mesma pessoa (tentativa sobreposta). */
+export class OverlappingRetry extends Error {}
+
+/**
+ * Abre um envio descartando antes a tentativa anterior do mesmo arquivo pela mesma pessoa. Se a anterior só ficou
+ * visível depois do descarte (as duas chegaram juntas), a checagem lança `OverlappingRetry` e o descarte roda mais
+ * uma vez; na última tentativa (`lastTry`) a checagem trata como envio em andamento comum.
+ */
+export async function startReplacingRetry<T>(
+  ownerKind: StoredFileOwnerKind,
+  ownerId: string,
+  uploaderId: string,
+  sha256: string,
+  start: (lastTry: boolean) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    // Antes da trava: cada descarte tem a própria transação.
+    await discardRetriedPending(ownerKind, ownerId, uploaderId, sha256);
+    try {
+      return await start(attempt >= 1);
+    } catch (error) {
+      if (error instanceof OverlappingRetry && attempt < 1) continue;
+      throw error;
+    }
+  }
 }
 
 export interface StoredFilesSweepResult {

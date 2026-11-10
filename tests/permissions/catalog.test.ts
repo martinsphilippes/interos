@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 12 módulos, 75 telas, 161 seções e 297 ações (545 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 20 abas, 27 ações); fase 4: + 2 relatórios, agendar envio; assinatura eletrônica: + 3 abas e 4 ações (inclui testar a conexão com a Clicksign); reajuste: + aba Índices (4 ações), seção Reajuste anual e aplicar/dispensar o reajuste do contrato; faturamento: + tela Faturamento (1 aba, 7 ações); estoque: + tela Estoque (custos, 1 aba, 6 ações); compras: + tela Compras (1 aba, 4 ações); comprovantes do consentimento LGPD: + 2 ações em Leads (anexar e remover)", () => {
+  it("tem 12 módulos, 75 telas, 161 seções e 297 ações (545 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 20 abas, 27 ações); fase 4: + 2 relatórios, agendar envio; assinatura eletrônica: + 3 abas e 4 ações (inclui testar a conexão com a Clicksign); reajuste: + aba Índices (4 ações), seção Reajuste anual e aplicar/dispensar o reajuste do contrato; faturamento: + tela Faturamento (1 aba, 7 ações); estoque: + tela Estoque (custos, 1 aba, 6 ações); compras: + tela Compras (1 aba, 4 ações); comprovantes do consentimento LGPD: + 2 ações em Leads (anexar e remover); documentos do cliente: + 1 ação (remover)", () => {
     expect(MODULES.length).toBe(12);
     expect(SCREENS.length).toBe(77);
     expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(164);
-    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(309);
-    expect(PERMISSION_KEYS.length).toBe(562);
+    expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(310);
+    expect(PERMISSION_KEYS.length).toBe(563);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 

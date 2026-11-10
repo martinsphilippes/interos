@@ -1220,14 +1220,14 @@ export interface Invoice extends BaseEntity {
 }
 
 /** Dono de um arquivo guardado em partes (cada dono tem as próprias rotas e regras de acesso). */
-export type StoredFileOwnerKind = "lead_consent";
+export type StoredFileOwnerKind = "lead_consent" | "client_document";
 /** enviando: partes chegando (descartado em 24 h se não concluir) · ativo: conferido · removido: conteúdo apagado. */
 export type StoredFileStatus = "enviando" | "ativo" | "removido";
 
 /** Arquivo guardado em partes (src/server/files/store.ts). */
 export interface StoredFile extends BaseEntity {
   ownerKind: StoredFileOwnerKind;
-  /** Lead (ownerKind "lead_consent"). */
+  /** Lead (ownerKind "lead_consent") ou cliente (ownerKind "client_document"). */
   ownerId: string;
   /** Nome seguro (safeFileName). */
   name: string;
@@ -1638,12 +1638,28 @@ export interface Document extends BaseEntity {
   entityType?: string;
   entityId?: string;
   name: string;
+  /** Link externo (Drive, assinatura, ERP) ou, para arquivo enviado ao INTEROS, a rota interna do arquivo. */
   url: string;
   mimeType?: string;
   size?: number;
   version: number;
   uploadedBy: string;
   category?: string;
+  /**
+   * Arquivo enviado ao INTEROS (stored_files, dono "client_document"; o documento tem o mesmo id do arquivo). Sem ele,
+   * o documento é um link.
+   */
+  fileId?: string;
+  /** Nome original do arquivo enviado. */
+  fileName?: string;
+  /** SHA-256 do arquivo enviado ("sha256:<hex>"). */
+  sha256?: string;
+  /** Ausente = ativo. removido: link retirado ou conteúdo apagado — fica o registro (quem, quando e por quê). */
+  status?: "ativo" | "removido";
+  removedAt?: string;
+  removedById?: string;
+  removedByName?: string;
+  removedReason?: string;
 }
 
 // ---------------------------------------------------------------------------
