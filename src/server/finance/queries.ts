@@ -1,6 +1,7 @@
 import "server-only";
 import { getReferenceGoals } from "@/server/kpis/reference-goals";
 import { cache } from "react";
+import { isActiveDocument } from "@/domain/client-documents";
 /**
  * Leituras do módulo Financeiro. Filtram por organização via `list()` (igualdade apenas) e agregam em
  * memória. Toda leitura de cobranças passa por `listBillingsSwept`, que marca vencidas na primeira
@@ -453,6 +454,7 @@ export const getContract = cache(async (id: string): Promise<ContractDetail | nu
   billings.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.installment ?? 0) - (b.installment ?? 0) || a.type.localeCompare(b.type));
   const billingIds = new Set(billings.map((b) => b.id));
   const documents = clientDocs
+    .filter(isActiveDocument)
     .filter((d) => (d.entityType === "contract" && d.entityId === contract.id) || (d.entityType === "billing" && d.entityId && billingIds.has(d.entityId)) || contract.documentIds.includes(d.id))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 

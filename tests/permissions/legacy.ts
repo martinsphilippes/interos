@@ -55,6 +55,8 @@ export const KEYS_AFTER_T0: readonly string[] = [
   // Comprovantes do consentimento LGPD (Marketing › Leads): anexar (todos com o módulo) e remover (gestores).
   "marketing.leads.consentimento.anexar",
   "marketing.leads.consentimento.remover",
+  // Documentos do cliente enviados ao INTEROS (Clientes 360º › Documentos): remover de qualquer pessoa (gestores).
+  "operacao.clientes.documentos.remover",
 ];
 
 /** Rotas de telas novas em módulos antigos (itens de menu criados depois do T0). */

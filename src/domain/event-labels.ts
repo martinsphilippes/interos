@@ -17,6 +17,7 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "task.assigned": "Tarefa atribuída",
   "comment.added": "Comentário adicionado",
   "document.added": "Documento anexado",
+  "document.removed": "Documento removido",
   "note.added": "Nota registrada",
   "workflow.started": "Jornada iniciada",
   "workflow.stage.started": "Etapa da jornada iniciada",

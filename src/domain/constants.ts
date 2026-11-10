@@ -293,6 +293,7 @@ export const EVENT_TYPES = [
   "task.assigned",
   "comment.added",
   "document.added",
+  "document.removed",
   "note.added",
   "workflow.started",
   "workflow.stage.started",

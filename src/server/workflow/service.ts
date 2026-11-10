@@ -9,6 +9,7 @@ import "server-only";
  */
 import { FieldValue } from "@/server/docdb";
 import { col, create, getById, getManyByIds, list, nowIso, stripUndefined, update } from "@/server/db";
+import { isActiveDocument } from "@/domain/client-documents";
 import { emitEvent } from "@/server/events";
 import { can } from "@/server/auth/permissions";
 import { resolvePermissionsForUser } from "@/server/auth/permission-store";
@@ -492,7 +493,7 @@ export async function buildGateContext(instance: WorkflowInstance): Promise<Gate
     instance: { id: instance.id, gateData: instance.gateData, context: instance.context },
   };
 
-  return { data, documentsCount: documents.length };
+  return { data, documentsCount: documents.filter(isActiveDocument).length };
 }
 
 /** Avalia o gate de uma etapa carregando template e contexto. */

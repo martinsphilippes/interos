@@ -7,7 +7,7 @@
  *
  * Regras puras: valem no navegador (antes de enviar) e no servidor (que confere tudo de novo).
  */
-import { fileExtension, formatBytes } from "./stored-files";
+import { canRemoveUpload, fileExtension, formatBytes } from "./stored-files";
 
 /** Tamanho máximo de cada arquivo. */
 export const CONSENT_EVIDENCE_MAX_BYTES = 50 * 1024 * 1024;
@@ -120,8 +120,5 @@ export function isValidEvidenceThumbnail(value: string): boolean {
  * gestor.
  */
 export function canRemoveConsentEvidence(input: { canRemoveAny: boolean; canRemoveOwn: boolean; viewerId: string; uploadedById: string; completedAt?: string; now: Date }): boolean {
-  if (input.canRemoveAny) return true;
-  if (!input.canRemoveOwn || input.viewerId !== input.uploadedById || !input.completedAt) return false;
-  const completed = Date.parse(input.completedAt);
-  return Number.isFinite(completed) && input.now.getTime() - completed <= CONSENT_EVIDENCE_UNDO_MS;
+  return canRemoveUpload({ ...input, undoMs: CONSENT_EVIDENCE_UNDO_MS });
 }

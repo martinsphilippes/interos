@@ -1,63 +1,23 @@
-import { ExternalLink, FileText } from "lucide-react";
-import type { Client360 } from "@/server/clients/queries";
-import { formatDate } from "@/lib/format";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/empty-state";
-import { SectionTitle } from "@/components/ui/section-title";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { UserCell } from "./client-badges";
-import { DocumentForm } from "./document-form";
+import type { ClientDocumentRow } from "@/server/clients/documents";
+import { ClientDocumentsPanel } from "./client-documents-panel";
 
-/** Aba Documentos: registro por link e lista versionada. */
-/** `canAttach` (calculado no servidor): sem a ação de anexar o formulário não aparece. */
-export function TabDocumentos({ data, canAttach = true }: { data: Client360; canAttach?: boolean }) {
-  const { client, documents, users } = data;
-  return (
-    <div className="flex flex-col gap-5">
-      {canAttach ? <DocumentForm clientId={client.id} /> : null}
-      <section>
-        <SectionTitle title="Documentos" count={documents.length} />
-        <Card className="overflow-hidden">
-          {documents.length === 0 ? (
-            <EmptyState size="sm" icon={<FileText />} title="Nenhum documento" description="Contratos, propostas, comprovantes e evidências ficam aqui, versionados." />
-          ) : (
-            <Table className="min-w-[720px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nome</TableHead>
-                  <TableHead>Categoria</TableHead>
-                  <TableHead className="text-right">Versão</TableHead>
-                  <TableHead>Enviado por</TableHead>
-                  <TableHead>Data</TableHead>
-                  <TableHead className="w-24">Link</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {documents.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell className="max-w-[320px]">
-                      <p className="truncate font-medium">{d.name}</p>
-                      {d.entityType && d.entityType !== "client" ? <p className="text-xs text-muted">Vinculado a {d.entityType}</p> : null}
-                    </TableCell>
-                    <TableCell>{d.category ? <Badge variant="muted" size="sm">{d.category}</Badge> : <span className="text-muted-light">—</span>}</TableCell>
-                    <TableCell className="text-right tabular-nums">v{d.version}</TableCell>
-                    <TableCell>
-                      <UserCell users={users} id={d.uploadedBy} />
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-muted">{formatDate(d.createdAt, "dd/MM/yyyy HH:mm")}</TableCell>
-                    <TableCell>
-                      <a href={d.url} target="_blank" rel="noreferrer" className="inline-flex min-h-[32px] items-center gap-1 text-sm text-secondary hover:underline">
-                        Abrir <ExternalLink className="size-3.5" aria-hidden />
-                      </a>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </Card>
-      </section>
-    </div>
-  );
+/**
+ * Aba Documentos: enviar arquivos (vários de uma vez) ou registrar link, conferir os documentos de cadastro, abrir,
+ * baixar e remover com motivo. `rows` e `canAttach` são calculados no servidor (quem vê pode remover o quê); sem a ação
+ * de anexar, só a lista aparece.
+ */
+export function TabDocumentos({
+  clientId,
+  clientName,
+  rows,
+  users,
+  canAttach = true,
+}: {
+  clientId: string;
+  clientName: string;
+  rows: ClientDocumentRow[];
+  users: Record<string, { name: string }>;
+  canAttach?: boolean;
+}) {
+  return <ClientDocumentsPanel clientId={clientId} clientName={clientName} rows={rows} users={users} canAttach={canAttach} />;
 }

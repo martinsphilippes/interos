@@ -153,4 +153,3 @@ export const TICKET_STATUS_VARIANT: Record<SupportTicket["status"], Variant> = {
   reaberto: "danger",
 };
 
-export const DOCUMENT_CATEGORIES = ["Contrato", "Proposta", "Documento fiscal", "Comprovante de pagamento", "Cadastro", "Treinamento", "Evidência", "Outro"] as const;

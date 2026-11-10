@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { BusinessError, PermissionError, failAction, requirePermission } from "@/server/auth/session";
+import { BusinessError, PermissionError, can, failAction, requirePermission, requireUser } from "@/server/auth/session";
 import { create, getById, getManyByIds, list, remove, update, nowIso, type CreateInput } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { auditChanges } from "@/server/audit";
@@ -32,6 +32,7 @@ import {
   findDuplicatesSchema,
   noteSchema,
   removeContactSchema,
+  removeDocumentSchema,
   updateClientSchema,
   updateContactSchema,
   upsellSchema,
@@ -40,6 +41,7 @@ import { createWorkflowInstanceForClient } from "@/server/workflow/service";
 import { syncContractSignersFromContact } from "@/server/finance/service";
 import { canSeeClient, clientScope, scopeClients } from "./access";
 import { createContact } from "./contacts";
+import { documentViewer, nextDocumentVersion, removeClientDocument } from "./documents";
 
 /**
  * Server Actions do módulo Clientes 360º.
@@ -398,14 +400,13 @@ export async function addDocument(input: unknown): Promise<ActionResult<{ id: st
     const user = await requirePermission("operacao.clientes.documentos.anexar");
     const data = documentSchema.parse(input);
     const client = await loadClient(user, data.clientId);
-    // Versão: incrementa quando já existe documento com o mesmo nome para o cliente.
-    const existing = await list<Document>(COLLECTIONS.documents, { where: [["clientId", "==", client.id]] });
-    const sameName = existing.filter((d) => d.name.trim().toLowerCase() === data.name.toLowerCase());
-    const version = sameName.reduce((max, d) => Math.max(max, d.version), 0) + 1;
+    // Versão: incrementa quando já existe documento com o mesmo nome para o cliente (link ou arquivo).
+    const version = await nextDocumentVersion(client.id, data.name);
+    // Link registrado pela aba Documentos: sempre do próprio cliente (vínculo com contrato, cobrança… é de outras telas).
     const doc = await create<Document>(COLLECTIONS.documents, {
       clientId: client.id,
-      entityType: data.entityType ?? "client",
-      entityId: data.entityId ?? client.id,
+      entityType: "client",
+      entityId: client.id,
       name: data.name,
       url: data.url,
       version,
@@ -427,6 +428,27 @@ export async function addDocument(input: unknown): Promise<ActionResult<{ id: st
     return { ok: true, data: { id: doc.id } };
   } catch (error) {
     return fail(error, "Não foi possível registrar o documento");
+  }
+}
+
+/**
+ * Remove um documento da aba Documentos (link ou arquivo enviado), com motivo; fica o registro. Com
+ * operacao.clientes.documentos.remover, qualquer documento da aba; sem ela, operacao.clientes.documentos.anexar basta
+ * para o que a própria pessoa enviou, até 1 hora depois (o serviço confere).
+ */
+export async function removeClientDocumentAction(input: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const viewer = await requireUser();
+    const user = can(viewer, "operacao.clientes.documentos.remover")
+      ? await requirePermission("operacao.clientes.documentos.remover")
+      : await requirePermission("operacao.clientes.documentos.anexar");
+    const data = removeDocumentSchema.parse(input);
+    const client = await loadClient(user, data.clientId);
+    await removeClientDocument(client.id, data.documentId, data.reason, { ...actor(user), departmentId: user.departmentId }, documentViewer(user));
+    revalidateClient(client.id);
+    return { ok: true, data: { id: data.documentId } };
+  } catch (error) {
+    return fail(error, "Não foi possível remover o documento");
   }
 }
 
