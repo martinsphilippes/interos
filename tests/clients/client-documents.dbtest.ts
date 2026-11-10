@@ -5,13 +5,14 @@
  * link também; documento de contrato não), arquivo concluído sem documento recuperado no próximo envio e limite de
  * arquivos por cliente.
  *
- * Isolamento: clientes, arquivos, partes, documentos e eventos com prefixo próprio, apagados no fim.
+ * Isolamento: clientes, arquivos, partes, documentos e eventos com prefixo próprio, apagados no fim. Os clientes são
+ * criados de verdade: o histórico grava a última interação no cliente (sem ele, ficaria um registro incompleto).
  */
 import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { docdb } from "@/server/docdb";
 import { create, getById, list } from "@/server/db";
-import { COLLECTIONS, type Document, type DomainEvent, type StoredFile } from "@/domain/types";
+import { COLLECTIONS, type Client, type Document, type DomainEvent, type StoredFile } from "@/domain/types";
 import { CLIENT_DOCUMENT_MAX_FILES, CLIENT_DOCUMENT_UNDO_MS } from "@/domain/client-documents";
 import { sha256Tag } from "@/domain/stored-files";
 import { completeFile, streamFile } from "@/server/files/store";
@@ -65,8 +66,11 @@ async function readAll(file: StoredFile): Promise<Buffer> {
   return Buffer.concat(parts);
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   if (!process.env.DATABASE_URL) throw new Error("Defina DATABASE_URL (veja scripts/db-local.sh)");
+  for (const id of CLIENTS) {
+    await create<Client>(COLLECTIONS.clients, { tradeName: `Cliente ${id}`, legalName: `Cliente ${id} LTDA`, status: "ativo", tags: [] } as never, id);
+  }
 });
 
 afterAll(async () => {
@@ -77,6 +81,7 @@ afterAll(async () => {
   await sql`delete from interos.stored_files where data->>'ownerId' = any(${CLIENTS})`;
   await sql`delete from interos.documents where data->>'clientId' = any(${CLIENTS})`;
   await sql`delete from interos.events where data->>'clientId' = any(${CLIENTS})`;
+  await sql`delete from interos.clients where id = any(${CLIENTS})`;
 });
 
 describe("enviar", () => {
