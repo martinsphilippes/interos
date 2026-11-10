@@ -37,6 +37,7 @@ describe("agenda do Meu Dia", () => {
     expect(days).toHaveLength(AGENDA_DAYS);
     expect(days.map((d) => d.key)).toEqual(["2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15", "2026-11-16"]);
     expect(days.map((d) => d.label)).toEqual(["Hoje", "Amanhã", "Qui 12", "Sex 13", "Sáb 14", "Dom 15", "Seg 16"]);
+    expect(days.map((d) => `${d.tabLabel} ${d.dayNumber}`)).toEqual(["Hoje 10", "Qua 11", "Qui 12", "Sex 13", "Sáb 14", "Dom 15", "Seg 16"]);
     expect(days[2].longLabel).toBe("quinta-feira, 12 de novembro");
   });
 

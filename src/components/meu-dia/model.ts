@@ -117,6 +117,10 @@ export interface AgendaDay {
   key: string;
   /** "Hoje", "Amanhã", "Qua 12". */
   label: string;
+  /** Aba do dia: "Hoje", "Ter", "Qua"… */
+  tabLabel: string;
+  /** Dia do mês (12). */
+  dayNumber: number;
   /** "quarta-feira, 12 de novembro" (título do dia aberto). */
   longLabel: string;
   items: AgendaItem[];

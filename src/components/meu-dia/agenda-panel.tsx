@@ -99,7 +99,8 @@ export function AgendaPanel({ days, team, className }: AgendaPanelProps) {
           </ScreenLink>
         </div>
 
-        <div role="tablist" aria-label="Dia da agenda" className="-mx-1 mb-3 flex gap-1 overflow-x-auto px-1 pb-1">
+        {/* Os 7 dias cabem sempre (grade de 7 colunas): dia da semana, número e a quantidade num selo. */}
+        <div role="tablist" aria-label="Dia da agenda" className="mb-3 grid grid-cols-7 gap-1">
           {days.map((d, i) => {
             const active = i === selected;
             return (
@@ -113,6 +114,7 @@ export function AgendaPanel({ days, team, className }: AgendaPanelProps) {
                 id={`${panelId}-aba-${i}`}
                 aria-selected={active}
                 aria-controls={`${panelId}-dia`}
+                aria-label={`${d.label}: ${d.items.length === 0 ? "nenhum compromisso" : d.items.length === 1 ? "1 compromisso" : `${d.items.length} compromissos`}`}
                 tabIndex={active ? 0 : -1}
                 onClick={() => setSelected(i)}
                 onKeyDown={(e) => {
@@ -125,21 +127,27 @@ export function AgendaPanel({ days, team, className }: AgendaPanelProps) {
                   }
                 }}
                 className={cn(
-                  "flex min-h-[44px] min-w-[56px] shrink-0 flex-col items-center justify-center rounded-lg border px-2 py-1 text-xs transition-colors md:min-h-0",
+                  "relative flex min-h-[48px] min-w-0 flex-col items-center justify-center rounded-lg border px-0.5 py-1 leading-tight",
                   active ? "border-brand bg-brand-soft text-foreground" : "border-border text-muted hover:bg-surface-hover hover:text-foreground",
                 )}
               >
-                <span className="font-medium">{d.label}</span>
-                <span className={cn("tabular-nums", d.items.length ? (active ? "text-brand-fg" : "text-foreground") : "text-muted-light")} aria-label={`${d.items.length} compromisso(s)`}>
-                  {d.items.length || "–"}
-                </span>
+                <span className="text-[11px] font-medium">{d.tabLabel}</span>
+                <span className={cn("text-sm font-semibold tabular-nums", active ? "text-foreground" : d.items.length ? "text-foreground" : "text-muted")}>{d.dayNumber}</span>
+                {d.items.length ? (
+                  <span aria-hidden className={cn("absolute -right-1 -top-1.5 min-w-[18px] rounded-full px-1 text-center text-[10px] font-semibold leading-[18px] tabular-nums", active ? "bg-brand text-white" : "bg-surface-hover text-foreground ring-1 ring-border")}>
+                    {d.items.length}
+                  </span>
+                ) : null}
               </button>
             );
           })}
         </div>
 
         <div id={`${panelId}-dia`} role="tabpanel" aria-labelledby={`${panelId}-aba-${selected}`}>
-          <p className="mb-2 text-xs text-muted first-letter:uppercase">{day.longLabel}</p>
+          <p className="mb-2 text-xs text-muted first-letter:uppercase">
+            {selected <= 1 ? `${day.label} · ` : ""}
+            {day.longLabel}
+          </p>
           {day.items.length === 0 ? (
             <div className="text-sm text-muted">
               <p>{selected === 0 ? "Nada agendado para hoje." : "Nada agendado para este dia."}</p>

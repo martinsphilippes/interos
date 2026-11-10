@@ -59,7 +59,7 @@ export default async function MeuDiaPage({ searchParams }: { searchParams: Searc
       {/* Prioridades e agenda lado a lado em telas largas; no celular a agenda vem antes. */}
       {show.prioridades || show.agenda ? (
         <div className={cn("grid grid-cols-1 gap-x-4", show.prioridades && show.agenda && "xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start")}>
-          {show.agenda ? <AgendaPanel days={data.agendaDays} team={team} className="mb-6 xl:order-2" /> : null}
+          {show.agenda ? <AgendaPanel days={data.agendaDays} team={team} className="mb-6 xl:sticky xl:top-20 xl:order-2" /> : null}
           {show.prioridades ? <PrioritiesList items={data.priorities} filter={filter} scope={data.scope} /> : null}
         </div>
       ) : null}

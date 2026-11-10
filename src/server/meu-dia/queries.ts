@@ -412,12 +412,14 @@ export const AGENDA_DAYS = 7;
 const weekdayShortFormat = new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, weekday: "short" });
 const dayLongFormat = new Intl.DateTimeFormat("pt-BR", { timeZone: TZ, weekday: "long", day: "numeric", month: "long" });
 
-/** Rótulos do dia: "Hoje", "Amanhã", "Qua 12" e "quarta-feira, 12 de novembro". */
-function agendaDayLabels(key: string, offset: number): { label: string; longLabel: string } {
+/** Rótulos do dia: "Hoje"/"Amanhã"/"Qua 12", a aba ("Hoje"/"Qua" + 12) e "quarta-feira, 12 de novembro". */
+function agendaDayLabels(key: string, offset: number): { label: string; tabLabel: string; dayNumber: number; longLabel: string } {
   const noon = new Date(`${key}T15:00:00Z`);
-  const weekday = weekdayShortFormat.format(noon).replace(".", "");
-  const label = offset === 0 ? "Hoje" : offset === 1 ? "Amanhã" : `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${Number(key.slice(8, 10))}`;
-  return { label, longLabel: dayLongFormat.format(noon) };
+  const raw = weekdayShortFormat.format(noon).replace(".", "");
+  const weekday = `${raw.charAt(0).toUpperCase()}${raw.slice(1)}`;
+  const dayNumber = Number(key.slice(8, 10));
+  const label = offset === 0 ? "Hoje" : offset === 1 ? "Amanhã" : `${weekday} ${dayNumber}`;
+  return { label, tabLabel: offset === 0 ? "Hoje" : weekday, dayNumber, longLabel: dayLongFormat.format(noon) };
 }
 
 export interface AgendaSources {
