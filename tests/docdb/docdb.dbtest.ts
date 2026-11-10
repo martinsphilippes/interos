@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { closeDocdb, docdb, FieldValue } from "@/server/docdb";
-import { create, createIfAbsent, getById, getManyByIds, isAlreadyExists, list, nextNumber, ORG_ID, sumField, update } from "@/server/db";
+import { create, createIfAbsent, getById, getManyByIds, isAlreadyExists, list, nextNumber, ORG_ID, sumField, txList, txSumField, update } from "@/server/db";
 import { authAdmin } from "@/server/auth/auth-admin";
 import type { BaseEntity } from "@/domain/types";
 
@@ -230,6 +230,53 @@ describe("transações", () => {
         await tx.get(ref);
       }),
     ).rejects.toThrow(/leituras/);
+  });
+
+  it("tx.getUnlocked e tx.sum leem na conexão da transação sem travar; txList/txSumField filtram a organização", async () => {
+    const parent = id("txread");
+    await create<Doc>(C, { parentId: parent, n: 4 } as Omit<Doc, "id" | "organizationId" | "createdAt" | "updatedAt">, id("tr1"));
+    await create<Doc>(C, { parentId: parent, n: 6 } as Omit<Doc, "id" | "organizationId" | "createdAt" | "updatedAt">, id("tr2"));
+    // Documento de outra organização com o mesmo parentId: fora de txList/txSumField.
+    await docdb.collection(C).doc(id("tr3")).set({ parentId: parent, n: 100, organizationId: "outra-org" });
+    const out = await docdb.runTransaction(async (tx) => {
+      const rows = await txList<Doc>(tx, C as never, [["parentId", "==", parent]]);
+      const total = await txSumField(tx, C as never, "n", [["parentId", "==", parent]]);
+      const raw = await tx.getUnlocked(docdb.collection(C).where("parentId", "==", parent));
+      const rawTotal = await tx.sum(docdb.collection(C).where("parentId", "==", parent), "n");
+      // Sem trava: outra transação altera o documento lido enquanto esta ainda está aberta.
+      await docdb.runTransaction(async (other) => {
+        const ref = docdb.collection(C).doc(id("tr1"));
+        await other.get(ref);
+        other.update(ref, { n: 5 });
+      });
+      return { rows: rows.length, total, raw: raw.size, rawTotal };
+    });
+    expect(out).toEqual({ rows: 2, total: 10, raw: 3, rawTotal: 110 });
+    expect((await getById<Doc>(C as never, id("tr1")))?.n).toBe(5);
+  });
+
+  it("tx.lockTimeout: esperar demais por uma trava vira erro (lock_not_available) em vez de esperar sem limite", async () => {
+    const ref = docdb.collection(C).doc(id("lockwait"));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    const holder = docdb.runTransaction(async (tx) => {
+      await tx.get(ref);
+      locked();
+      await held;
+    });
+    await isLocked;
+    const started = Date.now();
+    await expect(
+      docdb.runTransaction(async (tx) => {
+        await tx.lockTimeout(200);
+        await tx.get(ref);
+      }),
+    ).rejects.toMatchObject({ code: "55P03" });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    release();
+    await holder;
   });
 
   it("tx.getAll devolve na ordem pedida, com inexistentes", async () => {

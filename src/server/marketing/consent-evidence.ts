@@ -9,6 +9,7 @@ import "server-only";
  * Autorização (chave + escopo do lead) fica nas rotas e na action; aqui só as regras.
  */
 import { getById } from "@/server/db";
+import type { Transaction } from "@/server/docdb";
 import { emitEvent } from "@/server/events";
 import { can } from "@/server/auth/permissions";
 import { PermissionError } from "@/server/auth/error-classes";
@@ -20,6 +21,7 @@ import {
   discardRetriedPending,
   getOwnedFile,
   listOwnerFiles,
+  listOwnerFilesInTx,
   markHistoryLogged,
   markRemovalLogged,
   removeFile,
@@ -155,10 +157,11 @@ export async function startConsentEvidenceUpload(
   const mimeType = consentEvidenceMimeType(name);
   if (!mimeType) throw new MarketingError("Tipo de arquivo não aceito.");
   if (!SHA256_TAG.test(input.sha256)) throw new MarketingError("Não foi possível identificar o arquivo (SHA-256). Tente de novo.");
-  const check = async () => {
-    await discardRetriedPending(OWNER, leadId, actor.id, input.sha256);
+  // Antes da trava (cada descarte tem a própria transação): a tentativa anterior do mesmo arquivo pela mesma pessoa.
+  await discardRetriedPending(OWNER, leadId, actor.id, input.sha256);
+  const check = async (tx: Transaction) => {
     const abandonedBefore = new Date(now.getTime() - STORED_FILE_PENDING_TTL_MS).toISOString();
-    const files = (await listOwnerFiles(OWNER, leadId)).filter((f) => f.status === "ativo" || (f.status === "enviando" && f.createdAt > abandonedBefore));
+    const files = (await listOwnerFilesInTx(tx, OWNER, leadId)).filter((f) => f.status === "ativo" || (f.status === "enviando" && f.createdAt > abandonedBefore));
     const same = files.find((f) => f.sha256 === input.sha256);
     if (same?.status === "ativo") throw new MarketingError(`Este arquivo já está anexado a este lead (${same.name}).`);
     if (same) throw new MarketingError(`Este arquivo já está sendo anexado a este lead por ${same.uploadedByName}.`);

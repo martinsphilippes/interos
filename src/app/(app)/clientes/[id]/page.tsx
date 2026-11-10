@@ -161,7 +161,17 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
         }
       />
     ),
-    documentos: <TabDocumentos clientId={data.client.id} clientName={data.client.tradeName} rows={documentRows} users={data.users} canAttach={caps.attachDocument} />,
+    documentos: (
+      <TabDocumentos
+        clientId={data.client.id}
+        clientName={data.client.tradeName}
+        rows={documentRows}
+        users={data.users}
+        canAttach={caps.attachDocument}
+        // CPF (11 dígitos) não tem contrato social nem cartão CNPJ; sem documento informado, confere.
+        checkCompanyDocuments={(data.client.document ?? "").replace(/\D/g, "").length !== 11}
+      />
+    ),
     tarefas: <TabTarefas data={data} canCreate={caps.createTask} />,
   };
 

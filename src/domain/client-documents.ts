@@ -16,6 +16,15 @@ export const CLIENT_DOCUMENT_MAX_BYTES = 50 * 1024 * 1024;
 /** Arquivos por cliente (ativos + envios em andamento): o espaço é da organização inteira. */
 export const CLIENT_DOCUMENT_MAX_FILES = 100;
 
+/** Espaço por cliente (soma dos arquivos ativos e em envio): nenhum cliente sozinho ocupa o espaço de todos. */
+export const CLIENT_DOCUMENT_CLIENT_MAX_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * Até onde os documentos do cliente podem encher o espaço da organização (STORED_FILES_ORG_MAX_BYTES, 3 GB): o resto
+ * (0,5 GB) fica reservado aos comprovantes do consentimento LGPD, que não podem deixar de ser anexados.
+ */
+export const CLIENT_DOCUMENTS_ORG_MAX_BYTES = 2.5 * 1024 * 1024 * 1024;
+
 /** Arquivos escolhidos de uma vez. */
 export const CLIENT_DOCUMENT_MAX_BATCH = 20;
 
@@ -139,7 +148,10 @@ function plain(text: string): string {
 /** Palavras do nome do arquivo → categoria sugerida (a primeira que bate vale). */
 const CATEGORY_HINTS: readonly [RegExp, (typeof CLIENT_DOCUMENT_CATEGORIES)[number]][] = [
   [/contrato[\s_.-]*social|estatuto|requerimento[\s_.-]*de[\s_.-]*empresario|\bccmei\b|alteracao[\s_.-]*contratual/, "Contrato social"],
-  [/cartao[\s_.-]*cnpj|comprovante[\s_.-]*(de[\s_.-]*)?inscricao|\bcnpj\b/, "Cartão CNPJ"],
+  // Inscrição estadual/municipal é outro documento (não é o cartão CNPJ).
+  [/inscricao[\s_.-]*(estadual|municipal)|\bie\b|\bccm\b/, "Cadastro"],
+  // Cartão CNPJ: título oficial "Comprovante de Inscrição e de Situação Cadastral".
+  [/cartao[\s_.-]*(do[\s_.-]*)?cnpj|comprovante[\s_.-]*(de[\s_.-]*)?inscricao[\s_.-]*(e[\s_.-]*)?(de[\s_.-]*)?situacao|\bcnpj\b/, "Cartão CNPJ"],
   [/\b(rg|cnh|cpf)\b|identidade|habilitacao|documento[\s_.-]*(do|dos|de)[\s_.-]*socio/, "Documento dos sócios"],
   [/comprovante[\s_.-]*(de[\s_.-]*)?(endereco|residencia)|conta[\s_.-]*de[\s_.-]*(luz|agua|energia)/, "Comprovante de endereço"],
   [/alvara|licenca|vigilancia|bombeiro|\bavcb\b/, "Alvará e licenças"],
@@ -166,6 +178,9 @@ export function suggestDocumentCategory(fileName: string): (typeof CLIENT_DOCUME
  * ("cartao-cnpj.png" com a categoria "Cartão CNPJ"), vale o nome da categoria, com acentos e maiúsculas.
  */
 export function suggestDocumentTitle(fileName: string, category?: string): string {
+  // Print colado (nome gerado ao colar): "Print de 10/11/2026 09h30".
+  const print = /^print-(\d{4})-(\d{2})-(\d{2})-(\d{2})h(\d{2})m\d{2}s\.[a-z0-9]{1,8}$/i.exec(fileName);
+  if (print) return `Print de ${print[3]}/${print[2]}/${print[1]} ${print[4]}h${print[5]}`;
   const base = fileName
     .replace(/\.[a-z0-9]{1,8}$/i, "")
     .replace(/[_]+/g, " ")

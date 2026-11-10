@@ -12,12 +12,15 @@ export function TabDocumentos({
   rows,
   users,
   canAttach = true,
+  checkCompanyDocuments = true,
 }: {
   clientId: string;
   clientName: string;
   rows: ClientDocumentRow[];
   users: Record<string, { name: string }>;
   canAttach?: boolean;
+  /** Pessoa jurídica (ou sem documento informado): a aba confere contrato social e cartão CNPJ. */
+  checkCompanyDocuments?: boolean;
 }) {
-  return <ClientDocumentsPanel clientId={clientId} clientName={clientName} rows={rows} users={users} canAttach={canAttach} />;
+  return <ClientDocumentsPanel clientId={clientId} clientName={clientName} rows={rows} users={users} canAttach={canAttach} checkCompanyDocuments={checkCompanyDocuments} />;
 }

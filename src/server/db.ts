@@ -122,6 +122,29 @@ export async function sumField(name: CollectionName, field: string, where: Where
   return query.sum(field);
 }
 
+/** Consulta dos documentos da organização com os filtros (como em list()), para usar dentro de uma transação. */
+export function orgQuery(name: CollectionName, where: WhereClause[] = []): Query {
+  let query: Query = col(name).where("organizationId", "==", ORG_ID);
+  for (const [field, op, value] of where) query = query.where(field, op, value);
+  return query;
+}
+
+/**
+ * Como list() (sem ordenação, limite nem lotes de `in`), mas na conexão da transação e SEM travar: para ler numa
+ * seção crítica já serializada por outra trava sem pedir outra conexão ao pool.
+ */
+export async function txList<T extends BaseEntity>(tx: Transaction, name: CollectionName, where: WhereClause[] = []): Promise<T[]> {
+  if (where.some(([, op, value]) => op === "in" && Array.isArray(value) && value.length === 0)) return [];
+  const snap = await tx.getUnlocked(orgQuery(name, where));
+  return snap.docs.map((d) => toEntity<T>(d.id, d.data())).filter((x): x is T => x !== null);
+}
+
+/** Como sumField(), na conexão da transação (sem travar). */
+export async function txSumField(tx: Transaction, name: CollectionName, field: string, where: WhereClause[] = []): Promise<number> {
+  if (where.some(([, op, value]) => op === "in" && Array.isArray(value) && value.length === 0)) return 0;
+  return tx.sum(orgQuery(name, where), field);
+}
+
 export function compareField<T>(a: T, b: T, field: string, dir: "asc" | "desc" = "asc"): number {
   const av = (a as Record<string, unknown>)[field];
   const bv = (b as Record<string, unknown>)[field];

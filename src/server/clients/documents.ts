@@ -6,18 +6,33 @@ import "server-only";
  * Fluxo: o navegador calcula o SHA-256, abre o envio (startClientDocumentUpload), manda as partes de 2 MB
  * (putClientDocumentChunk) e conclui (completeClientDocumentUpload: o servidor confere tamanho e SHA-256, cria o
  * Document — com o mesmo id do arquivo, então repetir a conclusão não duplica — com nome, categoria e versão, e
- * registra no histórico do cliente). Remover exige motivo; para arquivo, apaga o conteúdo e fica o registro.
+ * registra no histórico do cliente uma vez só). Remover exige motivo; para arquivo, apaga o conteúdo e fica o registro.
  * Autorização (chave + escopo do cliente) fica nas rotas e na action; aqui só as regras.
  */
-import { create, getById, list, update } from "@/server/db";
+import { col, getById, list, nowIso, ORG_ID, stripUndefined, txGetOwn, txList } from "@/server/db";
+import { docdb, type Transaction } from "@/server/docdb";
 import { emitEvent } from "@/server/events";
 import { can } from "@/server/auth/permissions";
 import { BusinessError, PermissionError } from "@/server/auth/error-classes";
 import { isUserFacingError } from "@/server/auth/errors";
-import { StoredFileError, completeFile, createPendingFile, discardRetriedPending, getOwnedFile, listOwnerFiles, markHistoryLogged, removeFile, writeChunk, type StoredFileRef } from "@/server/files/store";
-import { canSeeClientId } from "./access";
 import {
+  StoredFileError,
+  claimHistoryLog,
+  completeFile,
+  createPendingFile,
+  discardRetriedPending,
+  getOwnedFile,
+  listOwnerFilesInTx,
+  releaseHistoryClaim,
+  removeFile,
+  writeChunk,
+  type StoredFileRef,
+} from "@/server/files/store";
+import { canSeeClient } from "./access";
+import {
+  CLIENT_DOCUMENTS_ORG_MAX_BYTES,
   CLIENT_DOCUMENT_CATEGORY_MAX,
+  CLIENT_DOCUMENT_CLIENT_MAX_BYTES,
   CLIENT_DOCUMENT_MAX_FILES,
   CLIENT_DOCUMENT_REASON_MIN,
   CLIENT_DOCUMENT_TITLE_MAX,
@@ -33,9 +48,12 @@ import {
 } from "@/domain/client-documents";
 import { SHA256_TAG, STORED_FILE_PENDING_TTL_MS, formatBytes, safeFileName } from "@/domain/stored-files";
 import type { DepartmentKey } from "@/domain/constants";
-import { COLLECTIONS, type CurrentUser, type Document, type StoredFile, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type Client, type CurrentUser, type Document, type StoredFile, type UserRef } from "@/domain/types";
 
 const OWNER = "client_document" as const;
+
+/** Uma remoção de conteúdo mais antiga que isto não é concorrente: o documento que ficou ativo pode ser marcado. */
+const STALE_REMOVAL_MS = 2 * 60 * 1000;
 
 /** Regra de negócio dos documentos (mensagem mostrada ao usuário). */
 export class ClientDocumentError extends BusinessError {}
@@ -146,9 +164,29 @@ function ref(clientId: string, fileId: string): StoredFileRef {
   return { ownerKind: OWNER, ownerId: clientId, fileId };
 }
 
-/** Cliente no escopo de quem pede (tela Clientes 360º + escopo de registros). Sem acesso = 403 (não revela se existe). */
-export async function assertClientInScope(user: CurrentUser, clientId: string): Promise<void> {
-  if (!(await canSeeClientId(user, clientId))) throw new PermissionError();
+function docRef(id: string) {
+  return col(COLLECTIONS.documents).doc(id);
+}
+
+/** Trava (sem documento) que enfileira a criação de documentos de um cliente: as versões saem uma de cada vez. */
+function versionLockRef(clientId: string) {
+  return docRef(`__versoes__${clientId}`);
+}
+
+async function loadClient(clientId: string): Promise<Client> {
+  const client = await getById<Client>(COLLECTIONS.clients, clientId);
+  if (!client) throw new ClientDocumentError("Cliente não encontrado.");
+  return client;
+}
+
+/**
+ * Cliente existente e no escopo de quem pede (tela Clientes 360º + escopo de registros). Cliente inexistente é recusado
+ * (ninguém guarda arquivos num cliente que não existe, ocupando o espaço da organização).
+ */
+export async function assertClientInScope(user: CurrentUser, clientId: string): Promise<Client> {
+  const client = await loadClient(clientId);
+  if (!(await canSeeClient(user, client))) throw new PermissionError();
+  return client;
 }
 
 /** Arquivo ativo do cliente (abrir/baixar). null = não existe, é de outro cliente ou foi removido. */
@@ -169,25 +207,30 @@ function cleanCategory(raw: string | undefined): string | undefined {
   return category ? category.slice(0, CLIENT_DOCUMENT_CATEGORY_MAX) : undefined;
 }
 
-/** Próxima versão para o nome: o mesmo nome (sem diferença de maiúsculas e acentos) vira v2, v3… */
-export async function nextDocumentVersion(clientId: string, title: string): Promise<number> {
-  const docs = await list<Document>(COLLECTIONS.documents, { where: [["clientId", "==", clientId]] });
+function versionFor(docs: readonly Document[], title: string): number {
   return docs.filter((d) => sameDocumentTitle(d.name, title)).reduce((max, d) => Math.max(max, d.version), 0) + 1;
 }
 
+/** Próxima versão para o nome: o mesmo nome (sem diferença de maiúsculas e acentos) vira v2, v3… (links e arquivos). */
+export async function nextDocumentVersion(clientId: string, title: string): Promise<number> {
+  return versionFor(await list<Document>(COLLECTIONS.documents, { where: [["clientId", "==", clientId]] }), title);
+}
+
 /**
- * Document do arquivo (mesmo id): criado na conclusão do envio; se já existe (nova tentativa), é o mesmo. Sem nome ou
- * categoria informados, vale a sugestão pelo nome do arquivo.
+ * Document do arquivo (mesmo id), criado uma vez só: com a trava de versões do cliente, quem chega primeiro cria; uma
+ * conclusão repetida ao mesmo tempo encontra o documento pronto. Sem nome ou categoria informados, vale a sugestão pelo
+ * nome do arquivo. A data do documento é a da conclusão do envio (a janela de 1 hora para remover conta dela).
  */
 async function ensureFileDocument(clientId: string, file: StoredFile, meta: ClientDocumentMeta): Promise<Document> {
-  const existing = await getById<Document>(COLLECTIONS.documents, file.id);
-  if (existing) return existing;
   const category = cleanCategory(meta.category) ?? suggestDocumentCategory(file.name);
   const title = cleanTitle(meta.title) ?? suggestDocumentTitle(file.name, category);
-  const version = await nextDocumentVersion(clientId, title);
-  return create<Document>(
-    COLLECTIONS.documents,
-    {
+  return docdb.runTransaction(async (tx: Transaction) => {
+    await tx.get(versionLockRef(clientId));
+    const existing = await txGetOwn(tx, docRef(file.id));
+    if (existing) return { ...(existing.data() as Omit<Document, "id">), id: existing.id } as Document;
+    const docs = await txList<Document>(tx, COLLECTIONS.documents, [["clientId", "==", clientId]]);
+    const at = nowIso();
+    const data: Omit<Document, "id"> = {
       clientId,
       entityType: "client",
       entityId: clientId,
@@ -195,32 +238,45 @@ async function ensureFileDocument(clientId: string, file: StoredFile, meta: Clie
       url: clientDocumentFileUrl(clientId, file.id),
       mimeType: file.mimeType,
       size: file.size,
-      version,
+      version: versionFor(docs, title),
       uploadedBy: file.uploadedById,
       category,
       createdBy: file.uploadedById,
       fileId: file.id,
       fileName: file.name,
       sha256: file.sha256,
-    },
-    file.id,
-  );
+      organizationId: ORG_ID,
+      createdAt: file.completedAt ?? at,
+      updatedAt: at,
+    };
+    tx.set(docRef(file.id), stripUndefined(data));
+    return { ...data, id: file.id };
+  });
 }
 
-/** Registra o envio no histórico do cliente uma vez só (marcador `historyLoggedAt` no arquivo). */
+/**
+ * Registra o envio no histórico do cliente uma vez só (reserva `historyLoggedAt` com o arquivo travado). Autor: quem
+ * enviou o arquivo — também quando o documento é recuperado no envio de outra pessoa. Se o registro falhar, a reserva
+ * volta e a próxima tentativa registra.
+ */
 async function logAdded(clientId: string, file: StoredFile, doc: Document, actor: DocumentActor): Promise<void> {
   if (file.historyLoggedAt) return;
-  await emitEvent({
-    type: "document.added",
-    actor: { id: actor.id, name: actor.name },
-    clientId,
-    entity: { type: "document", id: doc.id },
-    title: `Documento enviado: ${doc.name}${doc.version > 1 ? ` (v${doc.version})` : ""}`,
-    description: [doc.category, file.name, formatBytes(file.size)].filter(Boolean).join(" · "),
-    department: actor.departmentId as DepartmentKey | undefined,
-    payload: { fileId: file.id, fileName: file.name, mimeType: file.mimeType, size: file.size, sha256: file.sha256, category: doc.category, version: doc.version },
-  });
-  await markHistoryLogged(file.id);
+  if (!(await claimHistoryLog(ref(clientId, file.id)))) return;
+  try {
+    await emitEvent({
+      type: "document.added",
+      actor: { id: file.uploadedById, name: file.uploadedByName },
+      clientId,
+      entity: { type: "document", id: doc.id },
+      title: `Documento enviado: ${doc.name}${doc.version > 1 ? ` (v${doc.version})` : ""}`,
+      description: [doc.category, file.name, formatBytes(file.size)].filter(Boolean).join(" · "),
+      department: actor.id === file.uploadedById ? (actor.departmentId as DepartmentKey | undefined) : undefined,
+      payload: { fileId: file.id, fileName: file.name, mimeType: file.mimeType, size: file.size, sha256: file.sha256, category: doc.category, version: doc.version },
+    });
+  } catch (error) {
+    await releaseHistoryClaim(file.id).catch(() => undefined);
+    throw error;
+  }
 }
 
 export interface StartClientDocumentInput {
@@ -230,34 +286,38 @@ export interface StartClientDocumentInput {
   sha256: string;
 }
 
+export interface ClientDocumentLimits {
+  /** Espaço da organização que os documentos do cliente podem usar (o resto fica para os comprovantes LGPD). */
+  orgMaxBytes?: number;
+  /** Espaço por cliente. */
+  clientMaxBytes?: number;
+}
+
 /**
- * Abre o envio de um documento: tipo e tamanho aceitos e, com a trava de abertura de envios (sem corrida entre pedidos
- * simultâneos), sem repetir um arquivo que já está nos documentos do cliente ou sendo enviado por outra pessoa (mesmo
- * SHA-256) e dentro do limite de arquivos do cliente (ativos + envios em andamento). Uma nova tentativa do mesmo
- * arquivo pela mesma pessoa descarta a anterior. O espaço total da organização e os envios abertos por pessoa ficam no
- * store. Arquivo já concluído sem documento (a conclusão caiu no meio) ganha o documento aqui.
+ * Abre o envio de um documento: cliente existente, tipo e tamanho aceitos e, com a trava de abertura de envios (sem
+ * corrida entre pedidos simultâneos; leituras pela própria transação), sem repetir um arquivo que já está nos
+ * documentos do cliente ou sendo enviado por outra pessoa (mesmo SHA-256), dentro do limite de arquivos e de espaço do
+ * cliente (ativos + envios em andamento). Uma nova tentativa do mesmo arquivo pela mesma pessoa descarta a anterior.
+ * Arquivo já concluído sem documento (a conclusão caiu no meio) ganha o documento aqui.
  */
-export async function startClientDocumentUpload(
-  clientId: string,
-  input: StartClientDocumentInput,
-  actor: DocumentActor,
-  now = new Date(),
-  limits: { orgMaxBytes?: number } = {},
-): Promise<StoredFile> {
+export async function startClientDocumentUpload(clientId: string, input: StartClientDocumentInput, actor: DocumentActor, now = new Date(), limits: ClientDocumentLimits = {}): Promise<StoredFile> {
+  await loadClient(clientId);
   const name = safeFileName(input.name);
   const problem = clientDocumentProblem({ name, size: input.size });
   if (problem) throw new ClientDocumentError(problem);
   const mimeType = clientDocumentMimeType(name);
   if (!mimeType) throw new ClientDocumentError("Tipo de arquivo não aceito.");
   if (!SHA256_TAG.test(input.sha256)) throw new ClientDocumentError("Não foi possível identificar o arquivo (SHA-256). Tente de novo.");
+  const clientMaxBytes = limits.clientMaxBytes ?? CLIENT_DOCUMENT_CLIENT_MAX_BYTES;
+  // Antes da trava (cada descarte tem a própria transação): a tentativa anterior do mesmo arquivo pela mesma pessoa.
+  await discardRetriedPending(OWNER, clientId, actor.id, input.sha256);
   let orphan: StoredFile | null = null;
-  const check = async () => {
-    await discardRetriedPending(OWNER, clientId, actor.id, input.sha256);
+  const check = async (tx: Transaction) => {
     const abandonedBefore = new Date(now.getTime() - STORED_FILE_PENDING_TTL_MS).toISOString();
-    const files = (await listOwnerFiles(OWNER, clientId)).filter((f) => f.status === "ativo" || (f.status === "enviando" && f.createdAt > abandonedBefore));
+    const files = (await listOwnerFilesInTx(tx, OWNER, clientId)).filter((f) => f.status === "ativo" || (f.status === "enviando" && f.createdAt > abandonedBefore));
     const same = files.find((f) => f.sha256 === input.sha256);
     if (same?.status === "ativo") {
-      const doc = await getById<Document>(COLLECTIONS.documents, same.id);
+      const [doc] = await txList<Document>(tx, COLLECTIONS.documents, [["fileId", "==", same.id]]);
       if (doc) throw new ClientDocumentError(`Este arquivo já está nos documentos do cliente ("${doc.name}").`);
       orphan = same;
       throw new ClientDocumentError("Este arquivo já tinha sido enviado e agora está na lista de documentos do cliente.");
@@ -269,9 +329,16 @@ export async function startClientDocumentUpload(
         `Este cliente já tem ${CLIENT_DOCUMENT_MAX_FILES} arquivos${uploading ? `, contando ${uploading} envio(s) em andamento` : ""} (o limite). Remova um para enviar outro.`,
       );
     }
+    const used = files.reduce((sum, f) => sum + f.size, 0);
+    if (used + input.size > clientMaxBytes) {
+      throw new ClientDocumentError(`Os arquivos deste cliente já ocupam ${formatBytes(used)} (limite de ${formatBytes(clientMaxBytes)} por cliente). Remova arquivos antigos para enviar este.`);
+    }
   };
   try {
-    return await createPendingFile({ ownerKind: OWNER, ownerId: clientId, name, mimeType, size: input.size, sha256: input.sha256, uploadedBy: actor }, { orgMaxBytes: limits.orgMaxBytes, check, now });
+    return await createPendingFile(
+      { ownerKind: OWNER, ownerId: clientId, name, mimeType, size: input.size, sha256: input.sha256, uploadedBy: { id: actor.id, name: actor.name } },
+      { orgMaxBytes: limits.orgMaxBytes ?? CLIENT_DOCUMENTS_ORG_MAX_BYTES, check, now },
+    );
   } catch (error) {
     // Fora da trava: o arquivo concluído sem documento ganha o documento (nome e categoria sugeridos) e o registro.
     const found = orphan as StoredFile | null;
@@ -295,7 +362,8 @@ export interface ClientDocumentMeta {
 
 /**
  * Conclui o envio (servidor confere tamanho e SHA-256), cria o documento e registra no histórico do cliente. Repetir
- * (a resposta se perdeu) devolve o mesmo documento e registra só o que faltou.
+ * (a resposta se perdeu, ou o navegador tentou de novo enquanto a primeira conferia o arquivo) devolve o mesmo
+ * documento e registra uma vez só.
  */
 export async function completeClientDocumentUpload(clientId: string, fileId: string, meta: ClientDocumentMeta, actor: DocumentActor): Promise<Document> {
   const { file } = await completeFile(ref(clientId, fileId), actor.id);
@@ -308,7 +376,8 @@ export async function completeClientDocumentUpload(clientId: string, fileId: str
  * Remove um documento da aba: motivo obrigatório; quem tem a chave de remover pode sempre, quem enviou só na primeira
  * hora. Arquivo: o conteúdo é apagado (ficam nome, tamanho, SHA-256 e quem enviou). Link: sai da lista. Em ambos fica
  * o registro (quem removeu, quando e por quê) no documento e no histórico do cliente. Documento de contrato, cobrança
- * ou chamado pertence àquela tela e não sai por aqui.
+ * ou chamado pertence àquela tela e não sai por aqui. Duas remoções ao mesmo tempo: uma vale, a outra recebe "já foi
+ * removido" (um registro só).
  */
 export async function removeClientDocument(clientId: string, documentId: string, reason: string, actor: DocumentActor, viewer: DocumentViewer, now = new Date()): Promise<Document> {
   const why = reason.replace(/\s+/g, " ").trim();
@@ -328,13 +397,24 @@ export async function removeClientDocument(clientId: string, documentId: string,
         () => new PermissionError(),
       );
     } catch (error) {
-      // Conteúdo já apagado numa tentativa anterior que não chegou a marcar o documento: segue para marcar.
       if (!(error instanceof StoredFileError) || error.code !== "ja_removido") throw error;
+      // Conteúdo já apagado: segue só a nova tentativa de quem removeu (que não chegou a marcar o documento) ou uma
+      // remoção antiga que ficou pela metade; remoção simultânea de outra pessoa vence e esta para aqui.
+      const current = await getOwnedFile(ref(clientId, doc.fileId));
+      const removedAt = current?.removedAt ? Date.parse(current.removedAt) : NaN;
+      const stale = Number.isFinite(removedAt) && now.getTime() - removedAt > STALE_REMOVAL_MS;
+      if (!current || (current.removedById !== actor.id && !stale)) throw new ClientDocumentError("Este documento já foi removido.");
     }
   }
   const removedAt = now.toISOString();
   const patch: Partial<Document> = { status: "removido", removedAt, removedById: actor.id, removedByName: actor.name, removedReason: why };
-  await update<Document>(COLLECTIONS.documents, doc.id, patch);
+  // Marca o documento com ele travado: só uma remoção marca e registra.
+  await docdb.runTransaction(async (tx) => {
+    const snap = await txGetOwn(tx, docRef(doc.id));
+    if (!snap) throw new ClientDocumentError("Documento não encontrado.");
+    if (snap.get("status") === "removido") throw new ClientDocumentError("Este documento já foi removido.");
+    tx.update(docRef(doc.id), { ...patch, updatedAt: nowIso() });
+  });
   try {
     await emitEvent({
       type: "document.removed",

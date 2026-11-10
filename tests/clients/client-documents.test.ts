@@ -82,6 +82,9 @@ describe("sugestões pelo nome do arquivo", () => {
       ["Proposta comercial.pdf", "Proposta"],
       ["Contrato de prestação de serviços.pdf", "Contrato"],
       ["Ficha cadastral.xlsx", "Cadastro"],
+      ["Comprovante de Inscrição Estadual.pdf", "Cadastro"],
+      ["inscricao-municipal.pdf", "Cadastro"],
+      ["comprovante_inscricao_situacao_cadastral.pdf", "Cartão CNPJ"],
       ["foto.png", "Outro"],
     ];
     for (const [file, category] of cases) expect(suggestDocumentCategory(file), file).toBe(category);
@@ -94,7 +97,7 @@ describe("sugestões pelo nome do arquivo", () => {
   it("nome: sem extensão, separadores viram espaço, primeira letra maiúscula", () => {
     expect(suggestDocumentTitle("contrato_social-2024.pdf")).toBe("Contrato social 2024");
     expect(suggestDocumentTitle("Cartão CNPJ.pdf")).toBe("Cartão CNPJ");
-    expect(suggestDocumentTitle("print-2026-11-10-09h30m00s.png")).toBe("Print 2026 11 10 09h30m00s");
+    expect(suggestDocumentTitle("print-2026-11-10-09h30m00s.png")).toBe("Print de 10/11/2026 09h30");
     expect(suggestDocumentTitle("rg - joão.jpg")).toBe("Rg - joão");
     expect(suggestDocumentTitle(".pdf")).toBe("Documento");
     expect(suggestDocumentTitle(`${"a".repeat(300)}.pdf`)).toHaveLength(160);

@@ -7,8 +7,11 @@ import { htmlErrorPage, readBodyLimited, storedFileHeaders, wantsHtml } from "@/
 import { CLIENT_DOCUMENT_CATEGORY_MAX, CLIENT_DOCUMENT_TITLE_MAX, isInlineClientDocumentType } from "@/domain/client-documents";
 import { STORED_FILE_CHUNK_BYTES } from "@/domain/stored-files";
 
-/** Concluir confere o SHA-256 de até 50 MB (partes lidas do banco uma a uma); abrir manda o arquivo em stream. */
-export const maxDuration = 60;
+/**
+ * Abrir/baixar manda o arquivo em stream e a função fica viva enquanto o arquivo desce: 50 MB numa conexão lenta passam
+ * de 1 minuto. Concluir confere o SHA-256 de até 50 MB (partes lidas do banco uma a uma).
+ */
+export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string; arquivo: string }> };
 

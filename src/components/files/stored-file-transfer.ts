@@ -2,7 +2,7 @@
  * Arquivos guardados em partes no navegador (genérico): preparar o arquivo (nome, miniatura, SHA-256), enviar em
  * partes de 2 MB com novas tentativas e tempo-limite, remontar parte a parte conferindo o SHA-256 e baixar.
  * Quem usa: comprovantes do consentimento LGPD (src/components/marketing/consent-evidence-transfer.ts) e documentos do
- * cliente (src/components/clients/client-document-upload.tsx). Servidor: src/server/files/store.ts.
+ * cliente (src/components/clients/client-documents-panel.tsx). Servidor: src/server/files/store.ts.
  * Por que em partes: limite de ~4,5 MB por requisição na Vercel (src/domain/stored-files.ts).
  */
 import { sha256Tag } from "@/domain/stored-files";

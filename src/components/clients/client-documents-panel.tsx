@@ -17,7 +17,6 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { SectionTitle } from "@/components/ui/section-title";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -70,11 +69,15 @@ interface UserName {
   name: string;
 }
 
+/** Cliques em "Cancelar envio" logo depois de enviar são o segundo clique de um clique duplo: ignorados. */
+const CANCEL_GRACE_MS = 800;
+
 let keySeq = 0;
 
 /**
  * Valida e prepara os arquivos escolhidos: nome final (print colado ganha data), tipo e tamanho aceitos, sem repetir um
- * já escolhido e até o limite por vez; nome e categoria sugeridos pelo nome do arquivo (ou a categoria do atalho).
+ * já escolhido e até o limite por vez; nome e categoria sugeridos pelo nome do arquivo. Pelo atalho do cadastro
+ * ("Falta: Contrato social"), só o PRIMEIRO arquivo leva o nome e a categoria do atalho.
  */
 function acceptDocumentFiles(files: readonly File[], current: readonly PendingDocument[], presetCategory: string | null): { accepted: PendingDocument[]; problems: string[] } {
   const problems: string[] = [];
@@ -97,13 +100,13 @@ function acceptDocumentFiles(files: readonly File[], current: readonly PendingDo
     seen.add(id);
     room -= 1;
     keySeq += 1;
-    // Pelo atalho do cadastro ("Falta contrato social"), o nome é o da categoria; senão, vem do nome do arquivo.
-    const category = presetCategory ?? suggestDocumentCategory(file.name);
+    const preset = accepted.length === 0 ? presetCategory : null;
+    const category = preset ?? suggestDocumentCategory(file.name);
     accepted.push({
       key: `doc-${keySeq}`,
       file,
       mimeType: clientDocumentMimeType(file.name) ?? "",
-      title: presetCategory ?? suggestDocumentTitle(file.name, category),
+      title: preset ?? suggestDocumentTitle(file.name, category),
       category,
     });
   }
@@ -125,15 +128,32 @@ function titleProblem(title: string): string | null {
   return null;
 }
 
+/** Documento de cadastro presente: pela categoria ou, nos antigos (categoria "Contrato"…), pelo nome. */
+function hasEssential(rows: readonly ClientDocumentRow[], category: string): boolean {
+  return rows.some((r) => r.category === category || suggestDocumentCategory(r.name) === category);
+}
+
+/** Aviso ao fechar/recarregar a página, preso ao envio (vale mesmo se a pessoa trocou de aba no meio dele). */
+function holdLeaveGuard(): () => void {
+  const handler = (event: BeforeUnloadEvent) => {
+    event.preventDefault();
+    event.returnValue = "";
+  };
+  window.addEventListener("beforeunload", handler);
+  return () => window.removeEventListener("beforeunload", handler);
+}
+
 export interface ClientDocumentsPanelProps {
   clientId: string;
   clientName: string;
   rows: readonly ClientDocumentRow[];
   users: Readonly<Record<string, UserName>>;
   canAttach: boolean;
+  /** Pessoa jurídica (ou sem documento informado): confere contrato social e cartão CNPJ. CPF não confere. */
+  checkCompanyDocuments: boolean;
 }
 
-export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAttach }: ClientDocumentsPanelProps) {
+export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAttach, checkCompanyDocuments }: ClientDocumentsPanelProps) {
   const router = useRouter();
   const active = rows.filter((r) => r.status === "ativo");
   const removed = rows.filter((r) => r.status === "removido");
@@ -142,28 +162,53 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
   const [states, setStates] = React.useState<Record<string, UploadState>>({});
   const [busy, setBusy] = React.useState(false);
   const [removing, setRemoving] = React.useState<ClientDocumentRow | null>(null);
+  const [focusKey, setFocusKey] = React.useState<string | null>(null);
   const abort = React.useRef<AbortController | null>(null);
-  const picker = React.useRef<HTMLInputElement>(null);
-  /** Categoria escolhida no atalho "Enviar contrato social": vale para os arquivos escolhidos em seguida. */
-  const preset = React.useRef<string | null>(null);
-  useLeaveGuard(busy);
+  /** Momento do clique em "Enviar" (`event.timeStamp`), para reconhecer o segundo clique de um clique duplo. */
+  const sendStartedAt = React.useRef(0);
+  const shortcutInput = React.useRef<HTMLInputElement>(null);
+  /** Categoria do atalho: vale só para o seletor aberto por ele (consumida no `change`, apagada no `cancel`). */
+  const shortcutCategory = React.useRef<string | null>(null);
+  const listHeading = React.useRef<HTMLHeadingElement>(null);
 
   const setState = (key: string, state: UploadState) => setStates((s) => ({ ...s, [key]: state }));
   // Enviados continuam na fila até a lista do servidor trazê-los (não somem por um instante entre as duas listas).
-  const shownQueue = queue.filter((p) => {
+  const listed = (p: PendingDocument) => {
     const docId = states[p.key]?.docId;
-    return !docId || !rows.some((r) => r.id === docId);
-  });
+    return Boolean(docId && rows.some((r) => r.id === docId));
+  };
+  const shownQueue = queue.filter((p) => !listed(p));
   const toSend = shownQueue.filter((p) => !states[p.key] || (states[p.key].status === "erro" && states[p.key].retryable));
   const blocked = shownQueue.filter((p) => states[p.key]?.status === "erro" && !states[p.key]?.retryable);
+  const retryOnly = toSend.length > 0 && toSend.every((p) => states[p.key]?.status === "erro");
+  // Arquivos escolhidos e ainda não enviados também se perdem ao fechar a página.
+  useLeaveGuard(!busy && toSend.length > 0);
 
-  const add = (files: File[]) => {
-    const presetCategory = preset.current;
-    preset.current = null;
+  React.useEffect(() => {
+    const input = shortcutInput.current;
+    if (!input) return;
+    const clear = () => {
+      shortcutCategory.current = null;
+    };
+    input.addEventListener("cancel", clear);
+    return () => input.removeEventListener("cancel", clear);
+  }, [canAttach]);
+
+  /** Tira da fila (e da memória) os que já estão na lista do servidor. */
+  const prune = () => {
+    const done = new Set(queue.filter(listed).map((p) => p.key));
+    if (!done.size) return;
+    setQueue((q) => q.filter((p) => !done.has(p.key)));
+    setStates((s) => Object.fromEntries(Object.entries(s).filter(([key]) => !done.has(key))));
+  };
+
+  const add = (files: File[], presetCategory: string | null = null) => {
+    prune();
     const { accepted, problems } = acceptDocumentFiles(files, shownQueue, presetCategory);
     if (problems.length) toast.error(problems.length === 1 ? "Arquivo não incluído" : `${problems.length} arquivos não incluídos`, { description: problems.slice(0, 4).join(" · ") });
     if (!accepted.length) return;
     setQueue((q) => [...q, ...accepted]);
+    if (presetCategory) setFocusKey(accepted[0].key);
     // Miniaturas das imagens, uma de cada vez (fotos grandes não disputam a memória).
     void (async () => {
       for (const item of accepted) {
@@ -178,7 +223,8 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
 
   /**
    * Envia um por vez (cada arquivo em partes de 2 MB). Os que falharam ficam com o erro (e "Tentar de novo" quando
-   * adianta); o resultado sempre vira aviso.
+   * adianta); o resultado sempre vira aviso e a lista é recarregada (também quando a pessoa já trocou de aba: o envio
+   * continua e o aviso de fechar a página vale até o fim).
    */
   const send = async (items: PendingDocument[]) => {
     const invalid = items.map((p) => ({ p, problem: titleProblem(p.title) })).filter((x) => x.problem);
@@ -186,58 +232,70 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
       toast.error("Confira o nome dos documentos", { description: invalid.map((x) => `${x.p.file.name}: ${x.problem}`).slice(0, 3).join(" · ") });
       return;
     }
+    prune();
     const controller = new AbortController();
     abort.current = controller;
+    const releaseGuard = holdLeaveGuard();
     setBusy(true);
     setStates((s) => ({ ...s, ...Object.fromEntries(items.map((p) => [p.key, { status: "aguardando" } as UploadState])) }));
     let sent = 0;
     const failures: string[] = [];
-    for (const item of items) {
-      if (controller.signal.aborted) {
-        setState(item.key, { status: "erro", error: "Envio cancelado.", retryable: true });
-        continue;
+    try {
+      for (const item of items) {
+        if (controller.signal.aborted) {
+          setState(item.key, { status: "erro", error: "Envio cancelado.", retryable: true });
+          continue;
+        }
+        setState(item.key, { status: "enviando", progress: { done: 0, total: item.file.size } });
+        try {
+          const sha256 = await sha256OfBlob(item.file);
+          const row = await uploadInParts<ClientDocumentRow>(
+            apiBase(clientId),
+            item.file,
+            { name: item.file.name, size: item.file.size, sha256 },
+            { complete: { title: item.title.trim(), category: item.category }, signal: controller.signal, onProgress: (progress) => setState(item.key, { status: "enviando", progress }) },
+          );
+          sent += 1;
+          setState(item.key, { status: "enviado", docId: row.id });
+        } catch (error) {
+          const message = errorText(error, "Falha no envio.");
+          failures.push(`${item.file.name}: ${message}`);
+          setState(item.key, { status: "erro", error: message, retryable: !(error instanceof TransferError) || error.retryable });
+        }
       }
-      setState(item.key, { status: "enviando", progress: { done: 0, total: item.file.size } });
-      try {
-        const sha256 = await sha256OfBlob(item.file);
-        const row = await uploadInParts<ClientDocumentRow>(
-          apiBase(clientId),
-          item.file,
-          { name: item.file.name, size: item.file.size, sha256 },
-          { complete: { title: item.title.trim(), category: item.category }, signal: controller.signal, onProgress: (progress) => setState(item.key, { status: "enviando", progress }) },
-        );
-        sent += 1;
-        setState(item.key, { status: "enviado", docId: row.id });
-      } catch (error) {
-        const message = errorText(error, "Falha no envio.");
-        failures.push(`${item.file.name}: ${message}`);
-        setState(item.key, { status: "erro", error: message, retryable: !(error instanceof TransferError) || error.retryable });
-      }
+    } finally {
+      releaseGuard();
+      abort.current = null;
+      setBusy(false);
     }
-    abort.current = null;
-    setBusy(false);
+    // Recarrega sempre: um envio cancelado no fim pode ter sido concluído no servidor.
+    router.refresh();
     if (sent) {
       toast.success(sent === 1 ? `Documento enviado para ${clientName}` : `${sent} documentos enviados para ${clientName}`, {
         description: "Guardado no INTEROS e registrado no histórico do cliente.",
       });
-      router.refresh();
     }
     if (failures.length) {
       toast.error(failures.length === 1 ? "Um documento não foi enviado" : `${failures.length} documentos não foram enviados`, { description: failures.slice(0, 3).join(" · "), duration: 12_000 });
     }
   };
 
-  /** Atalho do que falta no cadastro: abre o seletor já com a categoria. */
+  const cancel = (event: React.MouseEvent) => {
+    // Clique duplo em "Enviar": o segundo clique cai aqui (o botão troca de lugar) e não pode cancelar.
+    if (event.detail > 1 || event.timeStamp - sendStartedAt.current < CANCEL_GRACE_MS) return;
+    abort.current?.abort();
+  };
+
+  /** Atalho do que falta no cadastro: abre o seletor (no próprio clique) já com a categoria e o nome. */
   const pickFor = (category: string) => {
-    preset.current = category;
+    shortcutCategory.current = category;
     setMode("arquivos");
-    // O seletor só existe no modo "arquivos": espera a tela trocar de modo antes de abrir.
-    requestAnimationFrame(() => picker.current?.click());
+    shortcutInput.current?.click();
   };
 
   const essentials = CLIENT_ESSENTIAL_DOCUMENTS.map((category) => ({
     category,
-    done: active.some((r) => r.category === category),
+    done: hasEssential(active, category),
     queued: shownQueue.some((p) => p.category === category),
   }));
 
@@ -264,40 +322,50 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
             />
           </div>
 
-          {mode === "link" ? (
-            <>
-              <p className="mb-3 text-xs text-muted">Para arquivos que ficam em outro sistema (Google Drive, plataforma de assinatura, ERP): o documento fica referenciado pelo link.</p>
-              <DocumentLinkForm clientId={clientId} />
-            </>
-          ) : (
+          {/* Os dois modos ficam montados: trocar de modo não perde o link digitado nem esconde um envio em andamento. */}
+          <div className={cn(mode !== "link" && "hidden")}>
+            <p className="mb-3 text-xs text-muted">Para arquivos que ficam em outro sistema (Google Drive, plataforma de assinatura, ERP): o documento fica referenciado pelo link.</p>
+            <DocumentLinkForm clientId={clientId} />
+          </div>
+          <div className={cn(mode !== "arquivos" && "hidden")}>
             <FileDropZone
-              onFiles={add}
+              onFiles={(files) => add(files)}
               disabled={busy}
               label={shownQueue.length ? "Escolher mais arquivos" : "Escolher arquivos"}
               accept={`${CLIENT_DOCUMENT_ACCEPT},image/*`}
               hint={`PDF, imagem, Word, Excel, XML, ZIP ou e-mail · até ${formatBytes(CLIENT_DOCUMENT_MAX_BYTES)} cada. O nome e a categoria vêm do nome do arquivo; ajuste antes de enviar.`}
-              inputRef={picker}
             >
               {shownQueue.length ? (
                 <>
                   <ul className="flex flex-col gap-2" aria-label="Arquivos escolhidos">
                     {shownQueue.map((item) => (
-                      <PendingRow key={item.key} item={item} state={states[item.key]} disabled={busy} onEdit={(patch) => edit(item.key, patch)} onRemove={busy ? undefined : () => dismiss(item.key)} />
+                      <PendingRow
+                        key={item.key}
+                        item={item}
+                        state={states[item.key]}
+                        disabled={busy}
+                        autoFocus={item.key === focusKey}
+                        onEdit={(patch) => edit(item.key, patch)}
+                        onRemove={busy ? undefined : () => dismiss(item.key)}
+                      />
                     ))}
                   </ul>
                   <div className="flex flex-wrap items-center gap-2">
                     {busy ? (
-                      <Button type="button" variant="outline" size="sm" onClick={() => abort.current?.abort()}>
+                      <Button type="button" variant="outline" size="sm" onClick={cancel}>
                         <X /> Cancelar envio
                       </Button>
                     ) : toSend.length ? (
-                      <Button type="button" size="sm" onClick={() => void send(toSend)}>
-                        {toSend.some((p) => states[p.key]?.status === "erro") ? <RotateCcw /> : <UploadCloud />}
-                        {toSend.some((p) => states[p.key]?.status === "erro")
-                          ? `Tentar de novo (${toSend.length})`
-                          : toSend.length === 1
-                            ? "Enviar documento"
-                            : `Enviar ${toSend.length} documentos`}
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={(e) => {
+                          sendStartedAt.current = e.timeStamp;
+                          void send(toSend);
+                        }}
+                      >
+                        {retryOnly ? <RotateCcw /> : <UploadCloud />}
+                        {retryOnly ? `Tentar de novo (${toSend.length})` : toSend.length === 1 ? "Enviar documento" : `Enviar ${toSend.length} documentos`}
                       </Button>
                     ) : null}
                     {!busy && blocked.length ? (
@@ -309,30 +377,60 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
                 </>
               ) : null}
             </FileDropZone>
-          )}
+          </div>
+          {/* Seletor do atalho do cadastro: aberto no próprio clique (gesto do usuário) e só ele usa a categoria do atalho. */}
+          <input
+            ref={shortcutInput}
+            type="file"
+            multiple
+            accept={`${CLIENT_DOCUMENT_ACCEPT},image/*`}
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              const category = shortcutCategory.current;
+              shortcutCategory.current = null;
+              if (files.length) add(files, category);
+            }}
+          />
         </Card>
       ) : null}
 
       <section aria-labelledby="client-documents-title">
-        <SectionTitle title={<span id="client-documents-title">Documentos</span>} count={active.length} />
-        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm" aria-label="Documentos de cadastro">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted">Cadastro</span>
-          {essentials.map((e) =>
-            e.done ? (
-              <span key={e.category} className="inline-flex items-center gap-1 text-success-fg">
-                <CheckCircle2 className="size-4" aria-hidden /> {e.category}
-              </span>
-            ) : canAttach && !e.queued ? (
-              <button key={e.category} type="button" onClick={() => pickFor(e.category)} disabled={busy} className="inline-flex items-center gap-1 text-warning-fg hover:underline disabled:opacity-60">
-                <CircleDashed className="size-4" aria-hidden /> Falta {e.category.toLowerCase()} · enviar
-              </button>
-            ) : (
-              <span key={e.category} className="inline-flex items-center gap-1 text-muted">
-                <CircleDashed className="size-4" aria-hidden /> {e.queued ? `${e.category} na fila` : `Falta ${e.category.toLowerCase()}`}
-              </span>
-            ),
-          )}
+        <div className="mb-3 flex items-center gap-2">
+          <h2 id="client-documents-title" ref={listHeading} tabIndex={-1} className="text-base font-semibold leading-tight tracking-tight text-foreground outline-none">
+            Documentos
+          </h2>
+          <span className="rounded-md border border-border bg-surface-hover px-2 py-0.5 text-xs font-medium tabular-nums text-muted">{active.length}</span>
         </div>
+        {checkCompanyDocuments ? (
+          <div role="group" aria-label="Documentos de cadastro da empresa" className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted" aria-hidden>
+              Cadastro
+            </span>
+            {essentials.map((e) =>
+              e.done ? (
+                <span key={e.category} className="inline-flex items-center gap-1 text-success-fg">
+                  <CheckCircle2 className="size-4" aria-hidden /> {e.category}
+                </span>
+              ) : e.queued ? (
+                <span key={e.category} className="inline-flex items-center gap-1 text-muted">
+                  <CircleDashed className="size-4" aria-hidden /> {e.category}: escolhido, falta enviar
+                </span>
+              ) : canAttach ? (
+                <button key={e.category} type="button" onClick={() => pickFor(e.category)} disabled={busy} className="inline-flex items-center gap-1 text-warning-fg hover:underline disabled:opacity-60">
+                  <CircleDashed className="size-4" aria-hidden /> Falta: {e.category} · enviar
+                </button>
+              ) : (
+                <span key={e.category} className="inline-flex items-center gap-1 text-muted">
+                  <CircleDashed className="size-4" aria-hidden /> Falta: {e.category}
+                </span>
+              ),
+            )}
+          </div>
+        ) : null}
         <Card className="overflow-hidden">
           {active.length === 0 ? (
             <EmptyState size="sm" icon={<FileText />} title="Nenhum documento" description="Contrato social, cartão CNPJ, contratos, propostas e comprovantes do cliente ficam aqui, com versão e histórico." />
@@ -349,7 +447,7 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
             <summary className="cursor-pointer text-xs text-muted">{removed.length === 1 ? "1 documento removido" : `${removed.length} documentos removidos`} (registro)</summary>
             <ul className="mt-2 flex flex-col gap-1.5">
               {removed.map((row) => (
-                <li key={row.id} className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-xs">
+                <li key={row.id} className="min-w-0 rounded-lg border border-border bg-surface-muted px-3 py-2 text-xs [overflow-wrap:anywhere]">
                   <p className="font-medium">
                     {row.name}
                     {row.version > 1 ? ` (v${row.version})` : ""}
@@ -375,6 +473,8 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
         onRemoved={() => {
           setRemoving(null);
           router.refresh();
+          // O botão "Remover" sumiu com a linha: o foco vai para o título da lista.
+          requestAnimationFrame(() => listHeading.current?.focus());
         }}
       />
     </div>
@@ -385,12 +485,14 @@ function PendingRow({
   item,
   state,
   disabled,
+  autoFocus,
   onEdit,
   onRemove,
 }: {
   item: PendingDocument;
   state?: UploadState;
   disabled: boolean;
+  autoFocus?: boolean;
   onEdit: (patch: Partial<Pick<PendingDocument, "title" | "category">>) => void;
   onRemove?: () => void;
 }) {
@@ -398,23 +500,44 @@ function PendingRow({
   const pct = state?.progress && state.progress.total > 0 ? Math.round((state.progress.done / state.progress.total) * 100) : 0;
   const locked = disabled || state?.status === "enviando" || state?.status === "enviado";
   const categories: readonly string[] = CLIENT_DOCUMENT_CATEGORIES.includes(item.category as (typeof CLIENT_DOCUMENT_CATEGORIES)[number]) ? CLIENT_DOCUMENT_CATEGORIES : [item.category, ...CLIENT_DOCUMENT_CATEGORIES];
+  const status = !state
+    ? " · pronto para enviar"
+    : state.status === "enviando"
+      ? ` · enviando ${pct}%`
+      : state.status === "enviado"
+        ? " · enviado"
+        : state.status === "aguardando"
+          ? " · na fila"
+          : "";
   return (
     <li className="flex items-start gap-3 rounded-lg border border-border bg-surface p-2.5">
       <FileThumb thumbnail={item.thumbnail} mimeType={item.mimeType} className="mt-5 hidden sm:flex" />
       <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[minmax(0,1fr)_200px]">
         <FormField label="Nome do documento" htmlFor={`${id}-title`} className="min-w-0">
-          <Input id={`${id}-title`} value={item.title} maxLength={CLIENT_DOCUMENT_TITLE_MAX} disabled={locked} onChange={(e) => onEdit({ title: e.target.value })} />
+          <Input
+            id={`${id}-title`}
+            value={item.title}
+            maxLength={CLIENT_DOCUMENT_TITLE_MAX}
+            disabled={locked}
+            autoFocus={autoFocus}
+            aria-describedby={`${id}-file`}
+            onChange={(e) => onEdit({ title: e.target.value })}
+          />
         </FormField>
         <FormField label="Categoria" htmlFor={`${id}-category`}>
-          <Select id={`${id}-category`} value={item.category} disabled={locked} onChange={(e) => onEdit({ category: e.target.value })} options={categories.map((c) => ({ value: c, label: c }))} />
+          <Select id={`${id}-category`} value={item.category} disabled={locked} aria-describedby={`${id}-file`} onChange={(e) => onEdit({ category: e.target.value })} options={categories.map((c) => ({ value: c, label: c }))} />
         </FormField>
         <div className="min-w-0 sm:col-span-2">
-          <p className="truncate text-xs text-muted" title={item.file.name}>
+          <p id={`${id}-file`} className="truncate text-xs text-muted" title={item.file.name}>
             {item.file.name} · {formatBytes(item.file.size)}
-            {state?.status === "enviando" ? ` · enviando ${pct}%` : state?.status === "enviado" ? " · enviado" : state?.status === "aguardando" ? " · na fila" : ""}
+            {status}
           </p>
           {state?.status === "enviando" ? <Progress value={pct} size="sm" className="mt-1" aria-label={`Enviando ${item.file.name}`} /> : null}
-          {state?.status === "erro" ? <p className="text-xs text-danger-fg">{state.error}</p> : null}
+          {state?.status === "erro" ? (
+            <p className="text-xs text-danger-fg" role="alert">
+              {state.error}
+            </p>
+          ) : null}
         </div>
       </div>
       {onRemove && (!state || state.status === "erro") ? (
@@ -441,9 +564,9 @@ function DocumentRow({ row, uploader, onRemove }: { row: ClientDocumentRow; uplo
         <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface-muted text-muted">
           {isFile ? <FileKindIcon mimeType={row.mimeType ?? ""} className="size-4" /> : <Link2 className="size-4" aria-hidden />}
         </span>
-        <div className="min-w-0">
-          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="break-words text-sm font-medium">{row.name}</span>
+        <div className="min-w-0 flex-1">
+          <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">{row.name}</span>
             {row.version > 1 ? (
               <Badge variant="muted" size="sm">
                 v{row.version}
@@ -455,22 +578,24 @@ function DocumentRow({ row, uploader, onRemove }: { row: ClientDocumentRow; uplo
               </Badge>
             ) : null}
           </p>
-          <p className="text-xs text-muted">{meta.join(" · ")}</p>
+          <p className="text-xs text-muted [overflow-wrap:anywhere]">{meta.join(" · ")}</p>
         </div>
       </div>
       <div className="flex shrink-0 flex-wrap gap-1.5 pl-12 sm:pl-0">
         {row.inline ? (
-          <a href={row.url} target="_blank" rel="noopener noreferrer" className={action}>
+          <a href={row.url} target="_blank" rel="noopener noreferrer" className={action} aria-label={`Abrir ${row.name}`}>
             <ExternalLink className="size-3.5" aria-hidden /> Abrir
           </a>
         ) : null}
         {isFile && row.downloadUrl ? (
-          <a href={row.downloadUrl} download={row.fileName} className={action}>
+          // Sem o atributo `download`: o servidor já manda baixar, e um erro (sessão expirada, arquivo removido) aparece
+          // como página legível em vez de um download cancelado.
+          <a href={row.downloadUrl} className={action} aria-label={`Baixar ${row.name}`}>
             <Download className="size-3.5" aria-hidden /> Baixar
           </a>
         ) : null}
         {row.removable ? (
-          <Button type="button" size="sm" variant="ghost" className={cn("h-8 px-2.5 text-xs text-danger-fg")} onClick={onRemove}>
+          <Button type="button" size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-danger-fg" onClick={onRemove} aria-label={`Remover ${row.name}`}>
             <Trash2 /> Remover
           </Button>
         ) : null}

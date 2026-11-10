@@ -79,16 +79,13 @@ export interface FileDropZoneProps {
   accept: string;
   className?: string;
   children?: React.ReactNode;
-  /** Para abrir o seletor de fora (ex.: atalho "enviar contrato social"). */
-  inputRef?: React.Ref<HTMLInputElement>;
 }
 
 /** Área de anexar: botão (vários arquivos), arrastar e soltar e colar print quando o foco está aqui. */
-export function FileDropZone({ onFiles, disabled, label, hint, accept, className, children, inputRef }: FileDropZoneProps) {
+export function FileDropZone({ onFiles, disabled, label, hint, accept, className, children }: FileDropZoneProps) {
   const input = React.useRef<HTMLInputElement>(null);
   const [over, setOver] = React.useState(false);
   const inputId = React.useId();
-  React.useImperativeHandle(inputRef, () => input.current as HTMLInputElement, []);
 
   // Arquivo solto FORA da área: o navegador abriria o arquivo e o formulário seria perdido. Enquanto a área existe,
   // soltar arquivo em outro ponto da página não faz nada (a área continua recebendo normalmente).
