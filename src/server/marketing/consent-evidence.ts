@@ -18,7 +18,8 @@ import {
   StoredFileError,
   completeFile,
   createPendingFile,
-  discardRetriedPending,
+  OverlappingRetry,
+  startReplacingRetry,
   getOwnedFile,
   listOwnerFiles,
   listOwnerFilesInTx,
@@ -157,13 +158,13 @@ export async function startConsentEvidenceUpload(
   const mimeType = consentEvidenceMimeType(name);
   if (!mimeType) throw new MarketingError("Tipo de arquivo não aceito.");
   if (!SHA256_TAG.test(input.sha256)) throw new MarketingError("Não foi possível identificar o arquivo (SHA-256). Tente de novo.");
-  // Antes da trava (cada descarte tem a própria transação): a tentativa anterior do mesmo arquivo pela mesma pessoa.
-  await discardRetriedPending(OWNER, leadId, actor.id, input.sha256);
+  let lastTry = false;
   const check = async (tx: Transaction) => {
     const abandonedBefore = new Date(now.getTime() - STORED_FILE_PENDING_TTL_MS).toISOString();
     const files = (await listOwnerFilesInTx(tx, OWNER, leadId)).filter((f) => f.status === "ativo" || (f.status === "enviando" && f.createdAt > abandonedBefore));
     const same = files.find((f) => f.sha256 === input.sha256);
     if (same?.status === "ativo") throw new MarketingError(`Este arquivo já está anexado a este lead (${same.name}).`);
+    if (same && same.uploadedById === actor.id && !lastTry) throw new OverlappingRetry();
     if (same) throw new MarketingError(`Este arquivo já está sendo anexado a este lead por ${same.uploadedByName}.`);
     if (files.length >= CONSENT_EVIDENCE_MAX_FILES) {
       const uploading = files.filter((f) => f.status === "enviando").length;
@@ -172,20 +173,24 @@ export async function startConsentEvidenceUpload(
       );
     }
   };
-  return createPendingFile(
-    {
-      ownerKind: OWNER,
-      ownerId: leadId,
-      name,
-      mimeType,
-      size: input.size,
-      sha256: input.sha256,
-      // Miniatura só para imagem e no formato aceito; fora disso é ignorada (é uma prévia da lista, não o comprovante).
-      thumbnail: input.thumbnail && isThumbnailableType(mimeType) && isValidEvidenceThumbnail(input.thumbnail) ? input.thumbnail : undefined,
-      uploadedBy: actor,
-    },
-    { orgMaxBytes: limits.orgMaxBytes, check, now },
-  );
+  // A tentativa anterior do mesmo arquivo pela mesma pessoa é descartada (inclusive a que chegou junto com esta).
+  return startReplacingRetry(OWNER, leadId, actor.id, input.sha256, (final) => {
+    lastTry = final;
+    return createPendingFile(
+      {
+        ownerKind: OWNER,
+        ownerId: leadId,
+        name,
+        mimeType,
+        size: input.size,
+        sha256: input.sha256,
+        // Miniatura só para imagem e no formato aceito; fora disso é ignorada (é uma prévia da lista, não o comprovante).
+        thumbnail: input.thumbnail && isThumbnailableType(mimeType) && isValidEvidenceThumbnail(input.thumbnail) ? input.thumbnail : undefined,
+        uploadedBy: actor,
+      },
+      { orgMaxBytes: limits.orgMaxBytes, check, now },
+    );
+  });
 }
 
 export async function putConsentEvidenceChunk(leadId: string, fileId: string, index: number, bytes: Uint8Array, actor: UserRef): Promise<void> {

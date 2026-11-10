@@ -182,6 +182,40 @@ describe("enviar", () => {
     expect(outcome).toBe(8);
   });
 
+  it("nova tentativa que chega junto com a anterior (mesma pessoa, mesmo arquivo): a anterior é descartada e a nova abre", async () => {
+    const sql = docdb.sql();
+    // Segura a trava de abertura para que as duas tentativas passem do descarte antes de qualquer uma abrir o envio.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let ready!: () => void;
+    const locked = new Promise<void>((resolve) => (ready = resolve));
+    const holder = sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${`${COLLECTIONS.storedFiles}/__abertura_de_envio__`}, 0))`;
+      ready();
+      await held;
+    });
+    const waiting = async (n: number) => {
+      for (let i = 0; i < 200; i++) {
+        const [row] = (await sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted`) as unknown as { n: number }[];
+        if (row.n >= n) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    };
+    await locked;
+    const bytes = Buffer.from(`sobreposta-${RUN}`);
+    const start = () => startClientDocumentUpload(CLIENT_POOL, { name: "sobreposta.pdf", size: bytes.byteLength, sha256: sha(bytes) }, UPLOADER);
+    const first = start();
+    await waiting(1);
+    const second = start();
+    await waiting(2);
+    release();
+    await holder;
+    const [a, b] = await Promise.allSettled([first, second]);
+    expect([a.status, b.status]).toEqual(["fulfilled", "fulfilled"]);
+    const files = (await list<StoredFile>(COLLECTIONS.storedFiles, { where: [["ownerId", "==", CLIENT_POOL]] })).filter((f) => f.sha256 === sha(bytes));
+    expect(files.map((f) => f.status).sort()).toEqual(["enviando", "removido"]);
+  });
+
   it("duas conclusões ao mesmo tempo (nova tentativa do navegador): um documento v1 e um registro só", async () => {
     const bytes = randomBytes(3 * 1024 * 1024);
     const started = await startClientDocumentUpload(CLIENT_POOL, { name: "alvara-2026.pdf", size: bytes.byteLength, sha256: sha(bytes) }, UPLOADER);

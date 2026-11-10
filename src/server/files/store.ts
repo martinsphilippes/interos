@@ -430,6 +430,33 @@ export async function discardRetriedPending(ownerKind: StoredFileOwnerKind, owne
   return discarded;
 }
 
+/** Sinal interno da checagem: há um envio aberto do mesmo arquivo pela mesma pessoa (tentativa sobreposta). */
+export class OverlappingRetry extends Error {}
+
+/**
+ * Abre um envio descartando antes a tentativa anterior do mesmo arquivo pela mesma pessoa. Se a anterior só ficou
+ * visível depois do descarte (as duas chegaram juntas), a checagem lança `OverlappingRetry` e o descarte roda mais
+ * uma vez; na última tentativa (`lastTry`) a checagem trata como envio em andamento comum.
+ */
+export async function startReplacingRetry<T>(
+  ownerKind: StoredFileOwnerKind,
+  ownerId: string,
+  uploaderId: string,
+  sha256: string,
+  start: (lastTry: boolean) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    // Antes da trava: cada descarte tem a própria transação.
+    await discardRetriedPending(ownerKind, ownerId, uploaderId, sha256);
+    try {
+      return await start(attempt >= 1);
+    } catch (error) {
+      if (error instanceof OverlappingRetry && attempt < 1) continue;
+      throw error;
+    }
+  }
+}
+
 export interface StoredFilesSweepResult {
   /** Envios abandonados (abertos há mais de 2 h) descartados. */
   discarded: number;

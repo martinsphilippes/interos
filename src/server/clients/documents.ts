@@ -20,7 +20,8 @@ import {
   claimHistoryLog,
   completeFile,
   createPendingFile,
-  discardRetriedPending,
+  OverlappingRetry,
+  startReplacingRetry,
   getOwnedFile,
   listOwnerFilesInTx,
   releaseHistoryClaim,
@@ -309,9 +310,8 @@ export async function startClientDocumentUpload(clientId: string, input: StartCl
   if (!mimeType) throw new ClientDocumentError("Tipo de arquivo não aceito.");
   if (!SHA256_TAG.test(input.sha256)) throw new ClientDocumentError("Não foi possível identificar o arquivo (SHA-256). Tente de novo.");
   const clientMaxBytes = limits.clientMaxBytes ?? CLIENT_DOCUMENT_CLIENT_MAX_BYTES;
-  // Antes da trava (cada descarte tem a própria transação): a tentativa anterior do mesmo arquivo pela mesma pessoa.
-  await discardRetriedPending(OWNER, clientId, actor.id, input.sha256);
   let orphan: StoredFile | null = null;
+  let lastTry = false;
   const check = async (tx: Transaction) => {
     const abandonedBefore = new Date(now.getTime() - STORED_FILE_PENDING_TTL_MS).toISOString();
     const files = (await listOwnerFilesInTx(tx, OWNER, clientId)).filter((f) => f.status === "ativo" || (f.status === "enviando" && f.createdAt > abandonedBefore));
@@ -322,6 +322,7 @@ export async function startClientDocumentUpload(clientId: string, input: StartCl
       orphan = same;
       throw new ClientDocumentError("Este arquivo já tinha sido enviado e agora está na lista de documentos do cliente.");
     }
+    if (same && same.uploadedById === actor.id && !lastTry) throw new OverlappingRetry();
     if (same) throw new ClientDocumentError(`Este arquivo já está sendo enviado para este cliente por ${same.uploadedByName}.`);
     if (files.length >= CLIENT_DOCUMENT_MAX_FILES) {
       const uploading = files.filter((f) => f.status === "enviando").length;
@@ -335,10 +336,14 @@ export async function startClientDocumentUpload(clientId: string, input: StartCl
     }
   };
   try {
-    return await createPendingFile(
-      { ownerKind: OWNER, ownerId: clientId, name, mimeType, size: input.size, sha256: input.sha256, uploadedBy: { id: actor.id, name: actor.name } },
-      { orgMaxBytes: limits.orgMaxBytes ?? CLIENT_DOCUMENTS_ORG_MAX_BYTES, check, now },
-    );
+    // A tentativa anterior do mesmo arquivo pela mesma pessoa é descartada (inclusive a que chegou junto com esta).
+    return await startReplacingRetry(OWNER, clientId, actor.id, input.sha256, (final) => {
+      lastTry = final;
+      return createPendingFile(
+        { ownerKind: OWNER, ownerId: clientId, name, mimeType, size: input.size, sha256: input.sha256, uploadedBy: { id: actor.id, name: actor.name } },
+        { orgMaxBytes: limits.orgMaxBytes ?? CLIENT_DOCUMENTS_ORG_MAX_BYTES, check, now },
+      );
+    });
   } catch (error) {
     // Fora da trava: o arquivo concluído sem documento ganha o documento (nome e categoria sugeridos) e o registro.
     const found = orphan as StoredFile | null;
