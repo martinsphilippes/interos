@@ -296,3 +296,37 @@
   background-image: radial-gradient(circle, rgb(148 163 186 / 0.14) 1px, transparent 1px);
   background-size: 22px 22px;
 }
+
+/*
+ * Abertura do INTEROS (src/lib/intro.ts e src/components/intro-player.tsx).
+ * `pending`: o script inline do <head> cobriu a tela e o vídeo ainda não
+ * desenhou o primeiro quadro; a cor é a do fundo do vídeo. Enquanto a abertura
+ * toca, a página fica um pouco maior; no `done` ela "pousa" no tamanho normal
+ * enquanto o hexágono termina de se abrir.
+ */
+html[data-io-intro="pending"]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147482999;
+  background: #081428;
+}
+/* Origem em 40 % da janela (não da página): numa tela longa o movimento do
+   pouso continua o mesmo que numa tela do tamanho da janela. */
+html[data-io-intro] body {
+  transform: scale(1.035);
+  transform-origin: 50% 40vh;
+}
+html[data-io-intro="done"] {
+  overflow-x: hidden;
+}
+html[data-io-intro="done"] body {
+  transform: none;
+  transition: transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-io-intro] body {
+    transform: none;
+    transition: none;
+  }
+}
