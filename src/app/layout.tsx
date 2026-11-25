@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
+import { IntroPlayer } from "@/components/intro-player";
 import { RegisterServiceWorker } from "@/components/pwa/register-sw";
+import { INTRO_BOOT } from "@/lib/intro";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -48,7 +50,17 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`} style={{ colorScheme: "dark" }}>
+    <html
+      lang="pt-BR"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      style={{ colorScheme: "dark" }}
+      // A abertura marca <html data-io-intro> antes da hidratação (só neste elemento).
+      suppressHydrationWarning
+    >
+      <head>
+        {/* Abertura (desktop): decide antes do primeiro quadro e cobre a tela (src/lib/intro.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: INTRO_BOOT }} />
+      </head>
       <body className="min-h-full flex flex-col bg-canvas text-foreground">
         {children}
         <Toaster
@@ -63,6 +75,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
         <RegisterServiceWorker />
+        <IntroPlayer />
       </body>
     </html>
   );

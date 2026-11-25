@@ -1,0 +1,560 @@
+<!doctype html>
+<!--
+  Abertura do INTEROS (docs/abertura.md). Animação desenhada quadro a quadro
+  num canvas 1920 × 1080: `window.renderFrame(t)` desenha o instante t (em
+  segundos). `scripts/intro/render.mjs` abre esta página no Chromium, grava
+  os quadros a 60 por segundo e monta o vídeo com o ffmpeg.
+
+  História: os seis departamentos são os seis vértices do hexágono da marca.
+  A linha laranja do cliente passa por todos, cada gate acende (MQL, Ganho,
+  Contrato, Go-live, Ativado, Resolvido) e cada passagem vira um evento que
+  corre para o centro: a linha do tempo única do cliente. O anel fecha, vira
+  o símbolo do INTEROS, o nome se escreve ao lado e a câmera mergulha no
+  miolo laranja, que se abre num hexágono até a página.
+
+  Abra no navegador com `?t=3.2` para ver um instante parado, ou `?play`
+  para ver a animação tocando.
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Abertura INTEROS</title>
+<style>
+  @font-face { font-family: "Geist"; font-weight: 400; src: url("./fonts/geist-400.woff2") format("woff2"); }
+  @font-face { font-family: "Geist"; font-weight: 500; src: url("./fonts/geist-500.woff2") format("woff2"); }
+  @font-face { font-family: "Geist"; font-weight: 600; src: url("./fonts/geist-600.woff2") format("woff2"); }
+  @font-face { font-family: "Geist"; font-weight: 700; src: url("./fonts/geist-700.woff2") format("woff2"); }
+  html, body { margin: 0; background: #040914; }
+  canvas { display: block; width: 100vw; height: auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+(() => {
+  const W = 1920, H = 1080, CX = W / 2, CY = H / 2;
+  const DURATION = 7.0;
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  // Paleta do INTEROS (src/app/globals.css)
+  const C = {
+    canvas: "#060d1a",       // fundo da página: o último quadro
+    navy950: "#040914",
+    navy900: "#0b1f3a",
+    navy800: "#122a4c",
+    navy600: "#244673",
+    navy500: "#4a6d9c",
+    navy200: "#b7c6dc",
+    brand: "#f26a21",
+    brandLight: "#ff8a4c",
+    brandFg: "#ff9a5c",
+    cyan: "#1ba3c6",
+    cyanFg: "#67cfe8",
+    fg: "#e7edf6",
+    muted: "#94a3ba",
+  };
+
+  // ---------- utilidades ----------
+  const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+  const lerp = (a, b, k) => a + (b - a) * k;
+  const prog = (t, a, b) => clamp((t - a) / (b - a));
+  const easeOut = (k) => 1 - Math.pow(1 - k, 3);
+  const easeIn = (k) => k * k * k;
+  const easeInOut = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+  const easeOutBack = (k) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); };
+  const easeOutExpo = (k) => (k >= 1 ? 1 : 1 - Math.pow(2, -10 * k));
+  const rgba = (hex, a) => {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  };
+  /** Hexágono de ponta para cima (como o símbolo), vértice 0 no topo, sentido horário. */
+  const hexPoint = (cx, cy, r, i) => {
+    const a = (-90 + 60 * i) * Math.PI / 180;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  };
+  const hexPath = (cx, cy, r) => {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const [x, y] = hexPoint(cx, cy, r, i);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+  };
+  // Ruído determinístico (o vídeo sai igual toda vez)
+  const rand = (seed) => { const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+
+  // ---------- roteiro (segundos) ----------
+  const NODES = [
+    { name: "MARKETING", gate: "MQL" },
+    { name: "VENDAS", gate: "GANHO" },
+    { name: "FINANCEIRO", gate: "CONTRATO" },
+    { name: "IMPLANTAÇÃO", gate: "GO-LIVE" },
+    { name: "CS", gate: "ATIVADO" },
+    { name: "SUPORTE", gate: "RESOLVIDO" },
+  ];
+  const RING_R = 300;
+  const NODE_IN = 0.45;         // vértices aparecem
+  const NODE_STAGGER = 0.09;
+  const TRAVEL_START = 1.15;    // a linha do cliente sai do Marketing
+  const EDGE_DUR = 0.4;         // tempo de cada aresta
+  const litAt = (i) => TRAVEL_START + i * EDGE_DUR;   // gate i acende
+  const RING_CLOSED = TRAVEL_START + 6 * EDGE_DUR;    // volta ao Marketing (3.55)
+  const SPOKE_DUR = 0.42;       // evento corre do vértice ao centro
+  const CONVERGE_A = 3.75, CONVERGE_B = 4.55;         // anel vira o símbolo
+  const WORD_A = 4.45, WORD_B = 5.25;                 // nome entra
+  const DIVE_A = 5.65, DIVE_B = 6.4;                  // mergulho no miolo
+  const IRIS_A = 6.32, IRIS_B = 6.95;                 // hexágono abre até a página
+
+  // Símbolo final (proporções do logo: R 19,5, traço 5 e miolo 7,5 numa caixa de 48)
+  const MARK_R = 96;
+  const MARK_STROKE = MARK_R * (5 / 19.5);
+  const CORE_R = MARK_R * (7.5 / 19.5);
+  const WORD_SIZE = 132;
+  const WORD = "INTEROS";
+  const WORD_TRACK = WORD_SIZE * 0.08;
+  const GAP = 58;
+  let wordW = 0;               // medido depois que a fonte carrega
+  let lockX = CX;              // centro do símbolo no logo completo
+
+  function measure() {
+    ctx.save();
+    ctx.font = `700 ${WORD_SIZE}px Geist`;
+    ctx.letterSpacing = `${WORD_TRACK}px`;
+    wordW = ctx.measureText(WORD).width - WORD_TRACK;
+    ctx.restore();
+    const markW = 2 * MARK_R * 0.866 + MARK_STROKE;
+    const total = markW + GAP + wordW;
+    lockX = CX - total / 2 + markW / 2;
+  }
+
+  // ---------- camadas ----------
+  function background(t) {
+    const g = ctx.createRadialGradient(CX, CY * 0.92, 60, CX, CY, W * 0.62);
+    g.addColorStop(0, "#0d2442");
+    g.addColorStop(0.55, "#081428");
+    g.addColorStop(1, C.navy950);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // Grade de hexágonos ao fundo, quase invisível, aproximando devagar
+    const a = 0.08 * easeOut(prog(t, 0, 0.9));
+    if (a > 0) {
+      const s = 1 + 0.04 * t;
+      const r = 46 * s;
+      const dx = r * 1.732, dy = r * 1.5;
+      ctx.save();
+      ctx.lineWidth = 1;
+      for (let row = -1; row * dy < H + dy; row++) {
+        for (let col = -1; col * dx < W + dx; col++) {
+          const x = CX + (col - Math.round(W / dx / 2)) * dx + (row % 2 ? dx / 2 : 0);
+          const y = CY + (row - Math.round(H / dy / 2)) * dy;
+          const d = Math.hypot(x - CX, y - CY) / (W * 0.55);
+          const twinkle = 0.6 + 0.4 * Math.sin(t * 1.4 + rand(row * 31 + col) * 6.28);
+          ctx.strokeStyle = rgba(C.navy500, a * clamp(1 - d) * twinkle);
+          hexPath(x, y, r * 0.94);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    // Vinheta
+    const v = ctx.createRadialGradient(CX, CY, H * 0.35, CX, CY, W * 0.7);
+    v.addColorStop(0, "rgba(0,0,0,0)");
+    v.addColorStop(1, "rgba(2,5,12,0.55)");
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function glowLine(x1, y1, x2, y2, color, width, blur, alpha = 1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = "round";
+    ctx.shadowColor = color;
+    ctx.shadowBlur = blur;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function text(str, x, y, { size = 14, weight = 600, color = C.fg, align = "center", track = 0.22, alpha = 1, base = "middle" } = {}) {
+    if (alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = `${weight} ${size}px Geist`;
+    ctx.letterSpacing = `${size * track}px`;
+    ctx.fillStyle = color;
+    ctx.textBaseline = base;
+    // letterSpacing acrescenta espaço depois da última letra: compensa no centro
+    const w = ctx.measureText(str).width;
+    let x0 = x;
+    if (align === "center") x0 = x - (w - size * track) / 2;
+    else if (align === "right") x0 = x - (w - size * track);
+    ctx.textAlign = "left";
+    ctx.fillText(str, x0, y);
+    ctx.restore();
+  }
+
+  /** Posição do rótulo de cada vértice: para fora do anel. */
+  function labelPos(i, r) {
+    const [x, y] = hexPoint(CX, CY, r + 62, i);
+    const align = i === 0 || i === 3 ? "center" : i < 3 ? "left" : "right";
+    const dx = align === "left" ? -18 : align === "right" ? 18 : 0;
+    const dy = i === 0 ? -6 : i === 3 ? 10 : 0;
+    return { x: x + dx, y: y + dy, align };
+  }
+
+  // ---------- cena 1: os seis departamentos e a linha do cliente ----------
+  function sceneFlow(t) {
+    const conv = easeInOut(prog(t, CONVERGE_A, CONVERGE_B));
+    if (conv >= 1) return;
+    const sceneA = 1 - conv;
+
+    // Raios para o centro (linha do tempo única)
+    for (let i = 0; i < 6; i++) {
+      const k = prog(t, litAt(i), litAt(i) + SPOKE_DUR);
+      if (k <= 0) continue;
+      const [x, y] = hexPoint(CX, CY, RING_R, i);
+      const e = easeInOut(k);
+      // trilho fino
+      glowLine(x, y, lerp(x, CX, e), lerp(y, CY, e), C.cyan, 1.5, 8, 0.35 * sceneA);
+      // pulso que corre
+      if (k < 1) {
+        const px = lerp(x, CX, e), py = lerp(y, CY, e);
+        ctx.save();
+        ctx.fillStyle = C.cyanFg;
+        ctx.shadowColor = C.cyan;
+        ctx.shadowBlur = 22;
+        ctx.beginPath();
+        ctx.arc(px, py, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Anel base (traço apagado)
+    const ringIn = easeOut(prog(t, 0.35, 1.0));
+    ctx.save();
+    ctx.globalAlpha = ringIn * 0.55 * sceneA;
+    ctx.strokeStyle = C.navy600;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 10]);
+    ctx.lineDashOffset = -t * 30;
+    hexPath(CX, CY, RING_R);
+    ctx.stroke();
+    ctx.restore();
+
+    // Linha laranja do cliente: aresta a aresta
+    const travel = clamp((t - TRAVEL_START) / EDGE_DUR, 0, 6);
+    if (travel > 0) {
+      ctx.save();
+      ctx.globalAlpha = sceneA;
+      ctx.strokeStyle = C.brand;
+      ctx.lineWidth = 4;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.shadowColor = C.brand;
+      ctx.shadowBlur = 18;
+      ctx.beginPath();
+      let [hx, hy] = hexPoint(CX, CY, RING_R, 0);
+      ctx.moveTo(hx, hy);
+      const full = Math.floor(travel);
+      for (let i = 1; i <= full; i++) {
+        const [x, y] = hexPoint(CX, CY, RING_R, i % 6);
+        ctx.lineTo(x, y);
+        hx = x; hy = y;
+      }
+      if (full < 6) {
+        const f = easeInOut(travel - full);
+        const [ax, ay] = hexPoint(CX, CY, RING_R, full % 6);
+        const [bx, by] = hexPoint(CX, CY, RING_R, (full + 1) % 6);
+        hx = lerp(ax, bx, f); hy = lerp(ay, by, f);
+        ctx.lineTo(hx, hy);
+      } else {
+        ctx.closePath();
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      // Cabeça do cometa
+      if (travel < 6) {
+        ctx.save();
+        ctx.globalAlpha = sceneA;
+        const g = ctx.createRadialGradient(hx, hy, 0, hx, hy, 34);
+        g.addColorStop(0, "rgba(255,230,210,1)");
+        g.addColorStop(0.25, rgba(C.brandLight, 0.9));
+        g.addColorStop(1, rgba(C.brand, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(hx, hy, 34, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Brilho do anel fechado
+    const closedGlow = prog(t, RING_CLOSED, RING_CLOSED + 0.25) * (1 - prog(t, RING_CLOSED + 0.25, CONVERGE_A + 0.2));
+    if (closedGlow > 0) {
+      ctx.save();
+      ctx.globalAlpha = closedGlow * 0.5;
+      ctx.strokeStyle = C.brandLight;
+      ctx.lineWidth = 10;
+      ctx.shadowColor = C.brand;
+      ctx.shadowBlur = 50;
+      hexPath(CX, CY, RING_R);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Vértices (departamentos)
+    for (let i = 0; i < 6; i++) {
+      const appear = prog(t, NODE_IN + i * NODE_STAGGER, NODE_IN + i * NODE_STAGGER + 0.45);
+      if (appear <= 0) continue;
+      const s = easeOutBack(appear);
+      const lit = prog(t, litAt(i), litAt(i) + 0.18);
+      const [x, y] = hexPoint(CX, CY, RING_R, i);
+      const nr = 20 * s;
+
+      // onda do gate
+      const wave = prog(t, litAt(i), litAt(i) + 0.7);
+      if (wave > 0 && wave < 1) {
+        ctx.save();
+        ctx.globalAlpha = (1 - wave) * 0.7 * sceneA;
+        ctx.strokeStyle = C.brandLight;
+        ctx.lineWidth = 2;
+        hexPath(x, y, nr + 70 * easeOut(wave));
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.globalAlpha = sceneA;
+      hexPath(x, y, nr);
+      ctx.fillStyle = lit > 0 ? rgba(C.brand, 0.2 + 0.25 * lit) : rgba(C.navy800, 0.95);
+      if (lit > 0) { ctx.shadowColor = C.brand; ctx.shadowBlur = 30 * lit; }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = lit > 0 ? C.brand : C.navy500;
+      ctx.stroke();
+      // miolo do vértice
+      if (lit > 0) {
+        hexPath(x, y, nr * 0.38 * easeOutBack(lit));
+        ctx.fillStyle = C.brandLight;
+        ctx.fill();
+      } else {
+        hexPath(x, y, nr * 0.3);
+        ctx.fillStyle = C.navy500;
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // rótulos
+      const lp = labelPos(i, RING_R);
+      const labelA = easeOut(prog(t, NODE_IN + i * NODE_STAGGER + 0.15, NODE_IN + i * NODE_STAGGER + 0.6)) * sceneA;
+      const nameY = i === 0 ? lp.y - 22 : lp.y - 10;
+      text(NODES[i].name, lp.x, nameY, { size: 20, weight: 600, color: lit > 0 ? C.fg : C.navy200, align: lp.align, alpha: labelA });
+      const gateA = easeOut(lit) * sceneA;
+      if (gateA > 0) {
+        const gy = nameY + 30;
+        const slide = (1 - easeOut(lit)) * 8;
+        text(NODES[i].gate, lp.x, gy + slide, { size: 16, weight: 600, color: C.brandFg, align: lp.align, alpha: gateA, track: 0.2 });
+      }
+    }
+
+    // Legenda de baixo
+    const capA = easeOut(prog(t, 2.2, 2.8)) * (1 - prog(t, CONVERGE_A - 0.15, CONVERGE_A + 0.25));
+    text("SEIS ÁREAS  ·  UM SÓ FLUXO  ·  O CLIENTE NO CENTRO", CX, H - 92, { size: 17, weight: 500, color: C.muted, alpha: capA, track: 0.32 });
+  }
+
+  // ---------- miolo (o cliente), anel → símbolo, nome ----------
+  function coreRadius(t) {
+    // cresce a cada evento que chega ao centro
+    let n = 0;
+    for (let i = 0; i < 6; i++) n += easeOutBack(prog(t, litAt(i) + SPOKE_DUR - 0.05, litAt(i) + SPOKE_DUR + 0.25));
+    const appear = easeOutBack(prog(t, 0.15, 0.6));
+    return 7 * appear + n * 4.2;
+  }
+
+  function markState(t) {
+    const conv = easeInOut(prog(t, CONVERGE_A, CONVERGE_B));
+    const slide = easeInOut(prog(t, WORD_A, WORD_B));
+    const x = lerp(CX, lockX, slide);
+    const r = lerp(RING_R, MARK_R, conv);
+    const stroke = lerp(4, MARK_STROKE, conv);
+    const core = lerp(coreRadius(t), CORE_R, easeInOut(prog(t, CONVERGE_A, CONVERGE_B)));
+    return { x, y: CY, r, stroke, core, conv };
+  }
+
+  function sceneMark(t) {
+    const m = markState(t);
+    // Núcleo (o cliente): visível desde o começo
+    const pulse = 1 + 0.06 * Math.sin(t * 7) * (1 - m.conv);
+    ctx.save();
+    ctx.shadowColor = C.brand;
+    ctx.shadowBlur = 40;
+    hexPath(m.x, m.y, m.core * pulse);
+    ctx.fillStyle = C.brandLight;
+    ctx.fill();
+    ctx.restore();
+
+    if (m.conv <= 0) return;
+
+    // Anel do símbolo
+    ctx.save();
+    ctx.globalAlpha = clamp(m.conv * 1.6);
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = C.brand;
+    ctx.lineWidth = m.stroke;
+    ctx.shadowColor = rgba(C.brand, 0.6);
+    ctx.shadowBlur = 36 * (1 - m.conv) + 18;
+    hexPath(m.x, m.y, m.r);
+    ctx.stroke();
+    ctx.restore();
+
+    // Brilho que varre o símbolo quando assenta
+    const sheen = prog(t, CONVERGE_B - 0.1, CONVERGE_B + 0.5);
+    if (sheen > 0 && sheen < 1) {
+      ctx.save();
+      hexPath(m.x, m.y, m.r + m.stroke / 2);
+      ctx.clip();
+      const sx = lerp(m.x - m.r * 1.6, m.x + m.r * 1.6, easeInOut(sheen));
+      const g = ctx.createLinearGradient(sx - 60, m.y - m.r, sx + 60, m.y + m.r);
+      g.addColorStop(0, "rgba(255,255,255,0)");
+      g.addColorStop(0.5, "rgba(255,255,255,0.35)");
+      g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.globalCompositeOperation = "lighter";
+      ctx.fillStyle = g;
+      ctx.fillRect(m.x - m.r * 2, m.y - m.r * 2, m.r * 4, m.r * 4);
+      ctx.restore();
+    }
+  }
+
+  function sceneWord(t) {
+    if (t < WORD_A) return;
+    const markW = 2 * MARK_R * 0.866 + MARK_STROKE;
+    // o nome acompanha o símbolo enquanto ele desliza para a esquerda
+    const x0 = markState(t).x + markW / 2 + GAP;
+    const baseY = CY + WORD_SIZE * 0.36;
+    ctx.save();
+    ctx.font = `700 ${WORD_SIZE}px Geist`;
+    ctx.letterSpacing = `${WORD_TRACK}px`;
+    ctx.textBaseline = "alphabetic";
+    let x = x0;
+    for (let i = 0; i < WORD.length; i++) {
+      const ch = WORD[i];
+      const w = ctx.measureText(ch).width;
+      const k = prog(t, WORD_A + 0.22 + i * 0.055, WORD_A + 0.62 + i * 0.055);
+      if (k > 0) {
+        ctx.globalAlpha = easeOut(k);
+        ctx.fillStyle = C.fg;
+        ctx.fillText(ch, x, baseY + (1 - easeOutExpo(k)) * 26);
+      }
+      x += w;
+    }
+    ctx.restore();
+
+    // by Intercert
+    const tagA = easeOut(prog(t, WORD_A + 0.6, WORD_A + 1.0));
+    if (tagA > 0) {
+      ctx.save();
+      ctx.globalAlpha = tagA;
+      ctx.font = `500 34px Geist`;
+      ctx.letterSpacing = "0px";
+      ctx.textBaseline = "alphabetic";
+      const y = baseY + 58 + (1 - tagA) * 8;
+      ctx.fillStyle = C.muted;
+      ctx.fillText("by ", x0 + 4, y);
+      let tx = x0 + 4 + ctx.measureText("by ").width;
+      ctx.font = `600 34px Geist`;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText("Inter", tx, y);
+      tx += ctx.measureText("Inter").width;
+      ctx.fillStyle = C.brand;
+      ctx.fillText("cert", tx, y);
+      ctx.restore();
+    }
+  }
+
+  // ---------- final: mergulho no miolo e o hexágono que se abre ----------
+  function drawScene(t) {
+    background(t);
+    sceneFlow(t);
+    sceneMark(t);
+    sceneWord(t);
+  }
+
+  function renderFrame(t) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const dive = prog(t, DIVE_A, DIVE_B);
+    if (dive > 0) {
+      // Câmera: o miolo vai para o centro da tela e cresce até cobri-la
+      const m = markState(DIVE_A);
+      const e = easeIn(dive);
+      const scale = Math.exp(Math.log(1) + e * Math.log(34));
+      const pan = easeInOut(prog(t, DIVE_A, DIVE_A + 0.45));
+      const fx = lerp(m.x, CX, pan);
+      ctx.translate(fx, CY);
+      ctx.scale(scale, scale);
+      ctx.translate(-m.x, -CY);
+    }
+    drawScene(t);
+    ctx.restore();
+
+    // Hexágono que se abre do centro até a página (#060d1a)
+    const iris = prog(t, IRIS_A, IRIS_B);
+    if (iris > 0) {
+      const r = 1400 * easeInOut(iris);
+      ctx.save();
+      // borda laranja da abertura
+      ctx.strokeStyle = C.brandLight;
+      ctx.lineWidth = 6 * (1 - iris) + 1;
+      ctx.shadowColor = C.brand;
+      ctx.shadowBlur = 40;
+      ctx.globalAlpha = 1 - iris * 0.6;
+      hexPath(CX, CY, r);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+      hexPath(CX, CY, r);
+      ctx.fillStyle = C.canvas;
+      ctx.fill();
+      ctx.restore();
+    }
+    if (t >= IRIS_B) {
+      ctx.fillStyle = C.canvas;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  window.INTRO = { DURATION, W, H };
+  window.renderFrame = renderFrame;
+  window.introReady = document.fonts.ready
+    .then(() => Promise.all([400, 500, 600, 700].map((w) => document.fonts.load(`${w} 40px Geist`))))
+    .then(() => { measure(); return true; });
+
+  window.introReady.then(() => {
+    const q = new URLSearchParams(location.search);
+    if (q.has("play")) {
+      const t0 = performance.now();
+      const loop = () => {
+        const t = ((performance.now() - t0) / 1000) % (DURATION + 1);
+        renderFrame(Math.min(t, DURATION));
+        requestAnimationFrame(loop);
+      };
+      loop();
+    } else {
+      renderFrame(Number(q.get("t") ?? 0));
+    }
+  });
+})();
+</script>
+</body>
+</html>
