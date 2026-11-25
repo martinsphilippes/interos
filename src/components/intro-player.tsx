@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
-import { INTRO_ATTR, INTRO_VIDEO } from "@/lib/intro";
+import { INTRO_ATTR, INTRO_IRIS, INTRO_VIDEO, introIrisPath } from "@/lib/intro";
 
 /** Textos da abertura (o sistema é só em português). */
 const LABELS = {
@@ -30,8 +30,10 @@ const SKIP_FADE_MS = 350;
 /** "Pular" aparece depois do primeiro instante e sai quando a câmera mergulha no símbolo. */
 const SKIP_SHOW_AT_S = 0.6;
 const SKIP_HIDE_AT_S = 5.6;
-/** A página começa a "pousar" quando faltam estes segundos (o vídeo já está liso). */
-const LAND_BEFORE_END_S = 0.3;
+/** O navegador sabe recortar a camada com um caminho (hexágono vazado)? */
+function canClipPath(): boolean {
+  return typeof CSS !== "undefined" && CSS.supports("clip-path", 'path(evenodd, "M0 0H1V1Z")');
+}
 
 /**
  * O script inline do `<head>` (src/lib/intro.ts) decide e cobre a tela antes
@@ -68,7 +70,8 @@ function getHost(): HTMLElement {
 
 /**
  * Abertura do INTEROS (docs/abertura.md): toca o vídeo por cima da página,
- * sem som, e ao fim a camada some e a página "pousa". Acompanha a fase em
+ * sem som, e no fim o hexágono do vídeo se abre sobre a página de verdade,
+ * que "pousa" enquanto ele cresce. Acompanha a fase em
  * `<html data-io-intro>`. Sem o atributo `pending` (celular, aba que já
  * viu, navegador automatizado, menos movimento), não renderiza nada.
  */
@@ -78,6 +81,7 @@ export function IntroPlayer() {
   const [phase, setPhase] = useState<"playing" | "leaving" | "gone">("playing");
   const [skipOn, setSkipOn] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const landed = useRef(false);
 
   /** A página "pousa" (uma vez só) e, passado o pouso, o atributo sai. */
@@ -131,6 +135,33 @@ export function IntroPlayer() {
     return () => document.removeEventListener("keydown", onKey);
   }, [armed, phase, skip]);
 
+  // A cada quadro da tela: "Pular" visível, pouso da página e o hexágono que se
+  // abre recortado na camada, mostrando a página por dentro (src/lib/intro.ts).
+  useEffect(() => {
+    if (!armed || phase !== "playing") return;
+    const clip = canClipPath();
+    let frame = 0;
+    const tick = () => {
+      const v = videoRef.current;
+      const overlay = overlayRef.current;
+      if (v && overlay) {
+        const t = v.currentTime;
+        setSkipOn(t > SKIP_SHOW_AT_S && t < SKIP_HIDE_AT_S);
+        if (t >= INTRO_IRIS.start) land();
+        if (clip) {
+          overlay.style.clipPath = introIrisPath(window.innerWidth, window.innerHeight, t) ?? "";
+          if (t >= INTRO_IRIS.end) {
+            leave(0);
+            return;
+          }
+        }
+      }
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [armed, phase, land, leave]);
+
   // Terminou: tira o contêiner do documento.
   useEffect(() => {
     if (phase !== "gone") return;
@@ -142,6 +173,7 @@ export function IntroPlayer() {
 
   return createPortal(
     <div
+      ref={overlayRef}
       role="dialog"
       aria-label={labels.title}
       data-intro-overlay
@@ -170,14 +202,6 @@ export function IntroPlayer() {
           const root = document.documentElement;
           if (root.getAttribute(INTRO_ATTR) === "pending")
             root.setAttribute(INTRO_ATTR, "playing");
-        }}
-        onTimeUpdate={(e) => {
-          const v = e.currentTarget;
-          setSkipOn(
-            v.currentTime > SKIP_SHOW_AT_S && v.currentTime < SKIP_HIDE_AT_S,
-          );
-          if (v.duration > 0 && v.duration - v.currentTime < LAND_BEFORE_END_S)
-            land();
         }}
         onEnded={() => leave(FADE_MS)}
         onError={fail}

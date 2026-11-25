@@ -17,6 +17,11 @@
  * - `?intro=always` força (ignora as regras acima e não marca o dia) e
  *   `?intro=off` não toca.
  *
+ * Final: o hexágono que se abre no vídeo (6,32 s a 6,95 s) é recortado na
+ * camada do portal (`introIrisPath`), então por dentro dele já aparece a
+ * página de verdade, que "pousa" enquanto ele cresce. Navegador sem
+ * `clip-path: path()` vê o hexágono se abrir para o fundo escuro do vídeo.
+ *
  * Em `<html>`, `data-io-intro` conta a fase: `pending` (coberta, vídeo a
  * caminho) → `playing` → `done` (a página "pousa", transição em globals.css)
  * → atributo removido.
@@ -45,6 +50,50 @@ export const INTRO_VIDEO = {
   /** Primeiro quadro, para a tela não ficar vazia enquanto o vídeo carrega. */
   poster: "/intro/interos-intro-poster.jpg",
 } as const;
+/**
+ * O hexágono do fim do vídeo, nas medidas do vídeo (scripts/intro/intro.html:
+ * IRIS_A, IRIS_B e IRIS_R). O centro é o centro do quadro.
+ */
+export const INTRO_IRIS = {
+  start: 6.32,
+  end: 6.95,
+  radius: 1400,
+  videoWidth: 1920,
+  videoHeight: 1080,
+} as const;
+
+/**
+ * Vértices do hexágono no instante `time`, na tela (`viewW` × `viewH`), com o
+ * vídeo em `object-cover` (escala que cobre a tela, centrado). Antes do início,
+ * `null`. A curva de tempo é a mesma do vídeo (ease-in-out cúbica); 2 px a
+ * mais cobrem a borda do hexágono escuro desenhado no próprio vídeo.
+ */
+export function introIrisHex(viewW: number, viewH: number, time: number): [number, number][] | null {
+  if (time < INTRO_IRIS.start) return null;
+  const k = Math.min(1, (time - INTRO_IRIS.start) / (INTRO_IRIS.end - INTRO_IRIS.start));
+  const eased = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+  const scale = Math.max(viewW / INTRO_IRIS.videoWidth, viewH / INTRO_IRIS.videoHeight);
+  const r = INTRO_IRIS.radius * eased * scale + 2;
+  const points: [number, number][] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = ((-90 + 60 * i) * Math.PI) / 180;
+    points.push([viewW / 2 + r * Math.cos(a), viewH / 2 + r * Math.sin(a)]);
+  }
+  return points;
+}
+
+/**
+ * `clip-path` da camada no instante `time`: a tela inteira menos o hexágono
+ * (regra evenodd), ou `null` antes de ele começar a abrir.
+ */
+export function introIrisPath(viewW: number, viewH: number, time: number): string | null {
+  const hex = introIrisHex(viewW, viewH, time);
+  if (!hex) return null;
+  const n = (v: number) => Math.round(v * 10) / 10;
+  const hole = hex.map(([x, y], i) => `${i ? "L" : "M"}${n(x)} ${n(y)}`).join(" ");
+  return `path(evenodd, "M0 0H${viewW}V${viewH}H0Z ${hole}Z")`;
+}
+
 /** Atributo de fase em `<html>`. */
 export const INTRO_ATTR = "data-io-intro";
 

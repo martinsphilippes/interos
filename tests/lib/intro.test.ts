@@ -4,8 +4,11 @@ import {
   INTRO_ATTR,
   INTRO_BOOT,
   INTRO_DAY_KEY,
+  INTRO_IRIS,
   INTRO_MEDIA,
   INTRO_REDUCED_MEDIA,
+  introIrisHex,
+  introIrisPath,
 } from "@/lib/intro";
 
 /*
@@ -136,5 +139,41 @@ describe("abertura do INTEROS: quando cobrir a tela", () => {
 
   it("sem storage (navegador restrito): a página aparece normalmente", () => {
     expect(boot({ storageBroken: true }).attr).toBeNull();
+  });
+});
+
+describe("abertura do INTEROS: hexágono que se abre sobre a página", () => {
+  /** O ponto está dentro do hexágono (convexo, vértices em sentido horário)? */
+  const inside = (hex: [number, number][], [px, py]: [number, number]) =>
+    hex.every(([ax, ay], i) => {
+      const [bx, by] = hex[(i + 1) % 6];
+      return (bx - ax) * (py - ay) - (by - ay) * (px - ax) >= 0;
+    });
+
+  it("antes do início não recorta a camada", () => {
+    expect(introIrisHex(1440, 900, INTRO_IRIS.start - 0.01)).toBeNull();
+    expect(introIrisPath(1440, 900, 3)).toBeNull();
+  });
+
+  it("no fim o hexágono cobre a tela inteira, em qualquer formato de janela", () => {
+    for (const [w, h] of [[1024, 768], [1440, 900], [1920, 1080], [2560, 1080], [3840, 2160]] as const) {
+      const hex = introIrisHex(w, h, INTRO_IRIS.end)!;
+      for (const corner of [[0, 0], [w, 0], [w, h], [0, h]] as [number, number][]) {
+        expect(inside(hex, corner)).toBe(true);
+      }
+    }
+  });
+
+  it("no meio do caminho a página aparece só no centro", () => {
+    const mid = (INTRO_IRIS.start + INTRO_IRIS.end) / 2;
+    const hex = introIrisHex(1440, 900, mid)!;
+    expect(inside(hex, [720, 450])).toBe(true);
+    expect(inside(hex, [0, 0])).toBe(false);
+  });
+
+  it("o recorte é a tela menos o hexágono (evenodd)", () => {
+    const path = introIrisPath(1440, 900, INTRO_IRIS.end)!;
+    expect(path.startsWith('path(evenodd, "M0 0H1440V900H0Z M720 ')).toBe(true);
+    expect(path.endsWith('Z")')).toBe(true);
   });
 });

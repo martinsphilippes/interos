@@ -1,19 +1,27 @@
 <!doctype html>
 <!--
-  Abertura do INTEROS (docs/abertura.md). Animação desenhada quadro a quadro
-  num canvas 1920 × 1080: `window.renderFrame(t)` desenha o instante t (em
-  segundos). `scripts/intro/render.mjs` abre esta página no Chromium, grava
+  Abertura do INTEROS, versão 2 (docs/abertura.md). Animação desenhada quadro
+  a quadro num canvas 1920 × 1080: `window.renderFrame(t)` desenha o instante t
+  (em segundos). `scripts/intro/render.mjs` abre esta página no Chromium, grava
   os quadros a 60 por segundo e monta o vídeo com o ffmpeg.
 
-  História: os seis departamentos são os seis vértices do hexágono da marca.
-  A linha laranja do cliente passa por todos, cada gate acende (MQL, Ganho,
-  Contrato, Go-live, Ativado, Resolvido) e cada passagem vira um evento que
-  corre para o centro: a linha do tempo única do cliente. O anel fecha, vira
-  o símbolo do INTEROS, o nome se escreve ao lado e a câmera mergulha no
-  miolo laranja, que se abre num hexágono até a página.
+  História: os seis departamentos são os seis vértices do hexágono da marca,
+  com os seus ícones, num anel inclinado em 3D. A linha laranja do cliente
+  passa por todos, cada gate acende (MQL, Ganho, Contrato, Go-live, Ativado,
+  Resolvido) com faíscas, e o cliente de exemplo "Mercado Silva" ganha uma
+  linha no cartão Cliente 360º a cada etapa. Cada passagem também corre para o
+  centro: a linha do tempo única do cliente. O anel endireita, fecha e vira o
+  símbolo do INTEROS, o nome se escreve ao lado e a câmera mergulha no miolo
+  laranja, que se abre num hexágono. No portal, esse hexágono já mostra a
+  página de verdade (src/components/intro-player.tsx); no vídeo ele se abre
+  para o fundo da página, caso o navegador não saiba recortar a camada.
+
+  Acabamento: cada quadro é a média de 5 instantes dentro de meio quadro
+  (desfoque de movimento, como o obturador de uma câmera), com grão de filme
+  por cima.
 
   Abra no navegador com `?t=3.2` para ver um instante parado, ou `?play`
-  para ver a animação tocando.
+  para ver a animação tocando (sem o desfoque, para caber em tempo real).
 -->
 <html lang="pt-BR">
 <head>
@@ -34,18 +42,25 @@
 (() => {
   const W = 1920, H = 1080, CX = W / 2, CY = H / 2;
   const DURATION = 7.0;
-  const canvas = document.getElementById("c");
-  const ctx = canvas.getContext("2d");
+  const FPS = 60;
+  const out = document.getElementById("c");
+  const outCtx = out.getContext("2d");
+  // Cada subquadro é desenhado aqui e somado em `out` (desfoque de movimento)
+  const work = document.createElement("canvas");
+  work.width = W; work.height = H;
+  let ctx = work.getContext("2d");
 
   // Paleta do INTEROS (src/app/globals.css)
   const C = {
     canvas: "#060d1a",       // fundo da página: o último quadro
     navy950: "#040914",
-    navy900: "#0b1f3a",
     navy800: "#122a4c",
+    navy700: "#1a375f",
     navy600: "#244673",
     navy500: "#4a6d9c",
     navy200: "#b7c6dc",
+    surface: "#0c1a2e",
+    border: "#1b2c47",
     brand: "#f26a21",
     brandLight: "#ff8a4c",
     brandFg: "#ff9a5c",
@@ -53,9 +68,11 @@
     cyanFg: "#67cfe8",
     fg: "#e7edf6",
     muted: "#94a3ba",
+    success: "#4ade80",
   };
 
   // ---------- utilidades ----------
+  const PI = Math.PI;
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const lerp = (a, b, k) => a + (b - a) * k;
   const prog = (t, a, b) => clamp((t - a) / (b - a));
@@ -68,33 +85,71 @@
     const n = parseInt(hex.slice(1), 16);
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   };
-  /** Hexágono de ponta para cima (como o símbolo), vértice 0 no topo, sentido horário. */
-  const hexPoint = (cx, cy, r, i) => {
-    const a = (-90 + 60 * i) * Math.PI / 180;
-    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-  };
-  const hexPath = (cx, cy, r) => {
-    ctx.beginPath();
-    for (let i = 0; i < 6; i++) {
-      const [x, y] = hexPoint(cx, cy, r, i);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    }
-    ctx.closePath();
-  };
   // Ruído determinístico (o vídeo sai igual toda vez)
   const rand = (seed) => { const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
+  /** Vértice i de um hexágono de ponta para cima (como o símbolo), em coordenadas locais. */
+  const hexLocal = (r, i) => {
+    const a = (-90 + 60 * i) * PI / 180;
+    return [r * Math.cos(a), r * Math.sin(a)];
+  };
+  /** Hexágono chapado (de frente para a câmera). */
+  const hexPath = (cx, cy, r) => {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const [x, y] = hexLocal(r, i);
+      i ? ctx.lineTo(cx + x, cy + y) : ctx.moveTo(cx + x, cy + y);
+    }
+    ctx.closePath();
+  };
+
+  // ---------- câmera 3D: o anel começa inclinado e endireita ao virar o símbolo ----------
+  const FOCAL = 1600;
+  let TILT = [0, 0];
+  /** Ponto (x, y) do plano do anel, centrado em (cx, cy), projetado na tela. */
+  function proj(cx, cy, x, y) {
+    const [th, ph] = TILT;
+    const y1 = y * Math.cos(th);
+    const z1 = -y * Math.sin(th);             // a parte de cima do anel fica mais longe
+    const x2 = x * Math.cos(ph) + z1 * Math.sin(ph);
+    const z2 = -x * Math.sin(ph) + z1 * Math.cos(ph);
+    const s = FOCAL / (FOCAL + z2);
+    return [cx + x2 * s, cy + y1 * s, s];
+  }
+  const ringPt = (cx, cy, r, i) => { const [x, y] = hexLocal(r, i); return proj(cx, cy, x, y); };
+  /** Hexágono deitado no plano do anel (inclinado). */
+  function hexPathP(cx, cy, r) {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const [x, y] = ringPt(cx, cy, r, i);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+  }
+
   // ---------- roteiro (segundos) ----------
   const NODES = [
-    { name: "MARKETING", gate: "MQL" },
-    { name: "VENDAS", gate: "GANHO" },
-    { name: "FINANCEIRO", gate: "CONTRATO" },
-    { name: "IMPLANTAÇÃO", gate: "GO-LIVE" },
-    { name: "CS", gate: "ATIVADO" },
-    { name: "SUPORTE", gate: "RESOLVIDO" },
+    { name: "MARKETING", gate: "MQL", icon: "megaphone" },
+    { name: "VENDAS", gate: "GANHO", icon: "handshake" },
+    { name: "FINANCEIRO", gate: "CONTRATO", icon: "circle-dollar-sign" },
+    { name: "IMPLANTAÇÃO", gate: "GO-LIVE", icon: "rocket" },
+    { name: "CS", gate: "ATIVADO", icon: "heart-handshake" },
+    { name: "SUPORTE", gate: "RESOLVIDO", icon: "headset" },
   ];
-  const RING_R = 300;
-  const NODE_IN = 0.45;         // vértices aparecem
+  // Cartão Cliente 360º do cliente de exemplo: uma linha a cada gate
+  const CLIENT = "Mercado Silva";
+  const TIMELINE = [
+    { detail: "Lead do Instagram · score 82", when: "dia 1" },
+    { detail: "ERP + TEF + maquininha", when: "dia 6" },
+    { detail: "Assinado · R$ 1.290/mês", when: "dia 8" },
+    { detail: "Treinamento concluído", when: "dia 21" },
+    { detail: "Saúde do cliente 94", when: "dia 35" },
+    { detail: "Chamado resolvido em 1h40", when: "dia 52" },
+  ];
+
+  const RING_CX = 760, RING_CY = 530, RING_R = 290;
+  const NODE_R = 34;
+  const NODE_IN = 0.4;          // vértices aparecem
   const NODE_STAGGER = 0.09;
   const TRAVEL_START = 1.15;    // a linha do cliente sai do Marketing
   const EDGE_DUR = 0.4;         // tempo de cada aresta
@@ -105,6 +160,12 @@
   const WORD_A = 4.45, WORD_B = 5.25;                 // nome entra
   const DIVE_A = 5.65, DIVE_B = 6.4;                  // mergulho no miolo
   const IRIS_A = 6.32, IRIS_B = 6.95;                 // hexágono abre até a página
+  const IRIS_R = 1400;                                // raio final (o portal usa o mesmo)
+
+  // Cartão
+  const CARD = { x: 1318, y: 268, w: 452, head: 112, row: 64 };
+  CARD.h = CARD.head + 6 * CARD.row + 22;
+  const rowY = (i) => CARD.y + CARD.head + i * CARD.row + CARD.row / 2;
 
   // Símbolo final (proporções do logo: R 19,5, traço 5 e miolo 7,5 numa caixa de 48)
   const MARK_R = 96;
@@ -114,6 +175,7 @@
   const WORD = "INTEROS";
   const WORD_TRACK = WORD_SIZE * 0.08;
   const GAP = 58;
+  const MARK_W = 2 * MARK_R * 0.866 + MARK_STROKE;
   let wordW = 0;               // medido depois que a fonte carrega
   let lockX = CX;              // centro do símbolo no logo completo
 
@@ -123,36 +185,83 @@
     ctx.letterSpacing = `${WORD_TRACK}px`;
     wordW = ctx.measureText(WORD).width - WORD_TRACK;
     ctx.restore();
-    const markW = 2 * MARK_R * 0.866 + MARK_STROKE;
-    const total = markW + GAP + wordW;
-    lockX = CX - total / 2 + markW / 2;
+    lockX = CX - (MARK_W + GAP + wordW) / 2 + MARK_W / 2;
+  }
+
+  // ---------- ícones (lucide, os mesmos do sistema) ----------
+  const ICON_SVG = {
+    "megaphone": '<path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14"/><path d="M8 6v8"/>',
+    "handshake": '<path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"/><path d="m21 3 1 11h-2"/><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"/><path d="M3 4h8"/>',
+    "circle-dollar-sign": '<circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/>',
+    "rocket": '<path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09"/><path d="M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05"/>',
+    "heart-handshake": '<path d="M19.414 14.414C21 12.828 22 11.5 22 9.5a5.5 5.5 0 0 0-9.591-3.676.6.6 0 0 1-.818.001A5.5 5.5 0 0 0 2 9.5c0 2.3 1.5 4 3 5.5l5.535 5.362a2 2 0 0 0 2.879.052 2.12 2.12 0 0 0-.004-3 2.124 2.124 0 1 0 3-3 2.124 2.124 0 0 0 3.004 0 2 2 0 0 0 0-2.828l-1.881-1.882a2.41 2.41 0 0 0-3.409 0l-1.71 1.71a2 2 0 0 1-2.828 0 2 2 0 0 1 0-2.828l2.823-2.762"/>',
+    "headset": '<path d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Zm0 0a9 9 0 1 1 18 0m0 0v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3Z"/><path d="M21 16v2a4 4 0 0 1-4 4h-5"/>',
+  };
+  const ICONS = {}; // ICONS[nome][cor] = Image
+  function loadIcons() {
+    const jobs = [];
+    for (const [name, inner] of Object.entries(ICON_SVG)) {
+      ICONS[name] = {};
+      for (const color of [C.navy200, "#ffffff"]) {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+        const img = new Image();
+        img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+        ICONS[name][color] = img;
+        jobs.push(img.decode());
+      }
+    }
+    return Promise.all(jobs);
+  }
+
+  // ---------- grão de filme ----------
+  const GRAIN = [];
+  function makeGrain() {
+    for (let g = 0; g < 4; g++) {
+      const c = document.createElement("canvas");
+      c.width = c.height = 320;
+      const gc = c.getContext("2d");
+      const img = gc.createImageData(320, 320);
+      for (let p = 0; p < 320 * 320; p++) {
+        const v = Math.floor(rand(p * 0.37 + g * 9301) * 255);
+        img.data[p * 4] = img.data[p * 4 + 1] = img.data[p * 4 + 2] = v;
+        img.data[p * 4 + 3] = 255;
+      }
+      gc.putImageData(img, 0, 0);
+      GRAIN.push(c);
+    }
   }
 
   // ---------- camadas ----------
   function background(t) {
-    const g = ctx.createRadialGradient(CX, CY * 0.92, 60, CX, CY, W * 0.62);
-    g.addColorStop(0, "#0d2442");
+    const g = ctx.createRadialGradient(RING_CX + 120, CY * 0.9, 60, CX, CY, W * 0.62);
+    g.addColorStop(0, "#0e2646");
     g.addColorStop(0.55, "#081428");
     g.addColorStop(1, C.navy950);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
-    // Grade de hexágonos ao fundo, quase invisível, aproximando devagar
-    const a = 0.08 * easeOut(prog(t, 0, 0.9));
+    // Piso de hexágonos no plano do anel (inclinado), quase invisível
+    const a = 0.09 * easeOut(prog(t, 0, 0.9));
     if (a > 0) {
-      const s = 1 + 0.04 * t;
-      const r = 46 * s;
-      const dx = r * 1.732, dy = r * 1.5;
+      const r = 50, dx = r * 1.732, dy = r * 1.5;
       ctx.save();
       ctx.lineWidth = 1;
-      for (let row = -1; row * dy < H + dy; row++) {
-        for (let col = -1; col * dx < W + dx; col++) {
-          const x = CX + (col - Math.round(W / dx / 2)) * dx + (row % 2 ? dx / 2 : 0);
-          const y = CY + (row - Math.round(H / dy / 2)) * dy;
-          const d = Math.hypot(x - CX, y - CY) / (W * 0.55);
-          const twinkle = 0.6 + 0.4 * Math.sin(t * 1.4 + rand(row * 31 + col) * 6.28);
+      for (let row = -16; row <= 16; row++) {
+        for (let col = -16; col <= 16; col++) {
+          const lx = col * dx + (row & 1 ? dx / 2 : 0);
+          const ly = row * dy;
+          const [sx, sy] = proj(RING_CX, RING_CY, lx, ly);
+          if (sx < -120 || sx > W + 120 || sy < -120 || sy > H + 120) continue;
+          const d = Math.hypot(lx, ly) / 1100;
+          const twinkle = 0.55 + 0.45 * Math.sin(t * 1.4 + rand(row * 31 + col) * 6.28);
           ctx.strokeStyle = rgba(C.navy500, a * clamp(1 - d) * twinkle);
-          hexPath(x, y, r * 0.94);
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const [hx, hy] = hexLocal(r * 0.93, i);
+            const [px, py] = proj(RING_CX, RING_CY, lx + hx, ly + hy);
+            i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+          }
+          ctx.closePath();
           ctx.stroke();
         }
       }
@@ -162,12 +271,13 @@
     // Vinheta
     const v = ctx.createRadialGradient(CX, CY, H * 0.35, CX, CY, W * 0.7);
     v.addColorStop(0, "rgba(0,0,0,0)");
-    v.addColorStop(1, "rgba(2,5,12,0.55)");
+    v.addColorStop(1, "rgba(2,5,12,0.6)");
     ctx.fillStyle = v;
     ctx.fillRect(0, 0, W, H);
   }
 
   function glowLine(x1, y1, x2, y2, color, width, blur, alpha = 1) {
+    if (alpha <= 0) return;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = color;
@@ -201,12 +311,30 @@
   }
 
   /** Posição do rótulo de cada vértice: para fora do anel. */
-  function labelPos(i, r) {
-    const [x, y] = hexPoint(CX, CY, r + 62, i);
+  function labelPos(i) {
+    const [x, y] = ringPt(RING_CX, RING_CY, RING_R + 78, i);
     const align = i === 0 || i === 3 ? "center" : i < 3 ? "left" : "right";
-    const dx = align === "left" ? -18 : align === "right" ? 18 : 0;
-    const dy = i === 0 ? -6 : i === 3 ? 10 : 0;
+    const dx = align === "left" ? -26 : align === "right" ? 26 : 0;
+    const dy = i === 0 ? -14 : i === 3 ? 4 : -8;
     return { x: x + dx, y: y + dy, align };
+  }
+
+  /** Onde está a cabeça da linha do cliente no instante t (null fora do percurso). */
+  function cometAt(t) {
+    const travel = (t - TRAVEL_START) / EDGE_DUR;
+    if (travel <= 0 || travel >= 6) return null;
+    const full = Math.floor(travel);
+    const f = easeInOut(travel - full);
+    const [ax, ay] = hexLocal(RING_R, full % 6);
+    const [bx, by] = hexLocal(RING_R, (full + 1) % 6);
+    return proj(RING_CX, RING_CY, lerp(ax, bx, f), lerp(ay, by, f));
+  }
+
+  /** Quanto o anel "pisca" logo depois de cada gate acender. */
+  function gateFlash(t) {
+    let f = 0;
+    for (let i = 0; i < 6; i++) { const d = t - litAt(i); if (d >= 0) f += Math.max(0, 1 - d / 0.35); }
+    return Math.min(1, f);
   }
 
   // ---------- cena 1: os seis departamentos e a linha do cliente ----------
@@ -214,38 +342,37 @@
     const conv = easeInOut(prog(t, CONVERGE_A, CONVERGE_B));
     if (conv >= 1) return;
     const sceneA = 1 - conv;
+    const flash = gateFlash(t);
 
     // Raios para o centro (linha do tempo única)
     for (let i = 0; i < 6; i++) {
       const k = prog(t, litAt(i), litAt(i) + SPOKE_DUR);
       if (k <= 0) continue;
-      const [x, y] = hexPoint(CX, CY, RING_R, i);
+      const [x, y] = ringPt(RING_CX, RING_CY, RING_R, i);
       const e = easeInOut(k);
-      // trilho fino
-      glowLine(x, y, lerp(x, CX, e), lerp(y, CY, e), C.cyan, 1.5, 8, 0.35 * sceneA);
-      // pulso que corre
+      glowLine(x, y, lerp(x, RING_CX, e), lerp(y, RING_CY, e), C.cyan, 1.5, 8, 0.35 * sceneA);
       if (k < 1) {
-        const px = lerp(x, CX, e), py = lerp(y, CY, e);
         ctx.save();
+        ctx.globalAlpha = sceneA;
         ctx.fillStyle = C.cyanFg;
         ctx.shadowColor = C.cyan;
         ctx.shadowBlur = 22;
         ctx.beginPath();
-        ctx.arc(px, py, 5, 0, Math.PI * 2);
+        ctx.arc(lerp(x, RING_CX, e), lerp(y, RING_CY, e), 5, 0, PI * 2);
         ctx.fill();
         ctx.restore();
       }
     }
 
-    // Anel base (traço apagado)
-    const ringIn = easeOut(prog(t, 0.35, 1.0));
+    // Anel base (traço apagado, girando devagar)
+    const ringIn = easeOut(prog(t, 0.3, 1.0));
     ctx.save();
-    ctx.globalAlpha = ringIn * 0.55 * sceneA;
+    ctx.globalAlpha = ringIn * 0.6 * sceneA;
     ctx.strokeStyle = C.navy600;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 10]);
     ctx.lineDashOffset = -t * 30;
-    hexPath(CX, CY, RING_R);
+    hexPathP(RING_CX, RING_CY, RING_R);
     ctx.stroke();
     ctx.restore();
 
@@ -255,43 +382,51 @@
       ctx.save();
       ctx.globalAlpha = sceneA;
       ctx.strokeStyle = C.brand;
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 4 + 2 * flash;
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
       ctx.shadowColor = C.brand;
-      ctx.shadowBlur = 18;
+      ctx.shadowBlur = 18 + 34 * flash;
       ctx.beginPath();
-      let [hx, hy] = hexPoint(CX, CY, RING_R, 0);
+      let [hx, hy] = ringPt(RING_CX, RING_CY, RING_R, 0);
       ctx.moveTo(hx, hy);
       const full = Math.floor(travel);
       for (let i = 1; i <= full; i++) {
-        const [x, y] = hexPoint(CX, CY, RING_R, i % 6);
+        const [x, y] = ringPt(RING_CX, RING_CY, RING_R, i % 6);
         ctx.lineTo(x, y);
-        hx = x; hy = y;
       }
       if (full < 6) {
-        const f = easeInOut(travel - full);
-        const [ax, ay] = hexPoint(CX, CY, RING_R, full % 6);
-        const [bx, by] = hexPoint(CX, CY, RING_R, (full + 1) % 6);
-        hx = lerp(ax, bx, f); hy = lerp(ay, by, f);
-        ctx.lineTo(hx, hy);
+        const head = cometAt(t);
+        if (head) ctx.lineTo(head[0], head[1]);
       } else {
         ctx.closePath();
       }
       ctx.stroke();
       ctx.restore();
 
-      // Cabeça do cometa
-      if (travel < 6) {
+      // Rastro e cabeça do cometa
+      const head = cometAt(t);
+      if (head) {
         ctx.save();
         ctx.globalAlpha = sceneA;
-        const g = ctx.createRadialGradient(hx, hy, 0, hx, hy, 34);
-        g.addColorStop(0, "rgba(255,230,210,1)");
-        g.addColorStop(0.25, rgba(C.brandLight, 0.9));
+        ctx.globalCompositeOperation = "lighter";
+        for (let j = 14; j >= 1; j--) {
+          const p = cometAt(t - j * 0.013);
+          if (!p) continue;
+          const k = 1 - j / 15;
+          ctx.fillStyle = rgba(C.brandLight, 0.35 * k);
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 2 + 9 * k, 0, PI * 2);
+          ctx.fill();
+        }
+        const [hx2, hy2] = head;
+        const g = ctx.createRadialGradient(hx2, hy2, 0, hx2, hy2, 40);
+        g.addColorStop(0, "rgba(255,236,220,1)");
+        g.addColorStop(0.22, rgba(C.brandLight, 0.9));
         g.addColorStop(1, rgba(C.brand, 0));
         ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(hx, hy, 34, 0, Math.PI * 2);
+        ctx.arc(hx2, hy2, 40, 0, PI * 2);
         ctx.fill();
         ctx.restore();
       }
@@ -301,12 +436,12 @@
     const closedGlow = prog(t, RING_CLOSED, RING_CLOSED + 0.25) * (1 - prog(t, RING_CLOSED + 0.25, CONVERGE_A + 0.2));
     if (closedGlow > 0) {
       ctx.save();
-      ctx.globalAlpha = closedGlow * 0.5;
+      ctx.globalAlpha = closedGlow * 0.55;
       ctx.strokeStyle = C.brandLight;
       ctx.lineWidth = 10;
       ctx.shadowColor = C.brand;
-      ctx.shadowBlur = 50;
-      hexPath(CX, CY, RING_R);
+      ctx.shadowBlur = 56;
+      hexPathP(RING_CX, RING_CY, RING_R);
       ctx.stroke();
       ctx.restore();
     }
@@ -315,61 +450,221 @@
     for (let i = 0; i < 6; i++) {
       const appear = prog(t, NODE_IN + i * NODE_STAGGER, NODE_IN + i * NODE_STAGGER + 0.45);
       if (appear <= 0) continue;
-      const s = easeOutBack(appear);
       const lit = prog(t, litAt(i), litAt(i) + 0.18);
-      const [x, y] = hexPoint(CX, CY, RING_R, i);
-      const nr = 20 * s;
+      const [x, y, s] = ringPt(RING_CX, RING_CY, RING_R, i);
+      const nr = NODE_R * s * easeOutBack(appear);
 
       // onda do gate
-      const wave = prog(t, litAt(i), litAt(i) + 0.7);
+      const wave = prog(t, litAt(i), litAt(i) + 0.75);
       if (wave > 0 && wave < 1) {
         ctx.save();
-        ctx.globalAlpha = (1 - wave) * 0.7 * sceneA;
+        ctx.globalAlpha = (1 - wave) * 0.75 * sceneA;
         ctx.strokeStyle = C.brandLight;
         ctx.lineWidth = 2;
-        hexPath(x, y, nr + 70 * easeOut(wave));
+        hexPath(x, y, nr + 90 * easeOut(wave));
         ctx.stroke();
         ctx.restore();
       }
 
+      // faíscas do gate
+      const age = t - litAt(i);
+      if (age > 0 && age < 0.7) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        for (let j = 0; j < 12; j++) {
+          const ang = rand(i * 17 + j * 3.1) * PI * 2;
+          const speed = 150 + 170 * rand(i * 31 + j * 7.7);
+          const life = 0.45 + 0.25 * rand(i * 5 + j);
+          const k = age / life;
+          if (k >= 1) continue;
+          const dist = speed * life * easeOut(k) * 0.8;
+          ctx.globalAlpha = (1 - k) * sceneA;
+          ctx.fillStyle = j % 3 ? C.brandLight : "#ffe2cc";
+          ctx.beginPath();
+          ctx.arc(x + Math.cos(ang) * dist, y + Math.sin(ang) * dist * 0.8, 2.6 * (1 - k * 0.6), 0, PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
       ctx.save();
-      ctx.globalAlpha = sceneA;
+      ctx.globalAlpha = sceneA * clamp(appear * 2);
       hexPath(x, y, nr);
-      ctx.fillStyle = lit > 0 ? rgba(C.brand, 0.2 + 0.25 * lit) : rgba(C.navy800, 0.95);
-      if (lit > 0) { ctx.shadowColor = C.brand; ctx.shadowBlur = 30 * lit; }
+      ctx.fillStyle = lit > 0 ? rgba(C.brand, 0.3 + 0.55 * lit) : rgba(C.navy800, 0.96);
+      if (lit > 0) { ctx.shadowColor = C.brand; ctx.shadowBlur = 36 * lit; }
       ctx.fill();
       ctx.shadowBlur = 0;
       ctx.lineWidth = 3;
-      ctx.strokeStyle = lit > 0 ? C.brand : C.navy500;
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = lit > 0 ? C.brandLight : C.navy500;
       ctx.stroke();
-      // miolo do vértice
+      // ícone do departamento
+      const iconSize = nr * 0.95;
+      const icons = ICONS[NODES[i].icon];
+      ctx.globalAlpha = sceneA * clamp(appear * 2) * (1 - lit);
+      ctx.drawImage(icons[C.navy200], x - iconSize / 2, y - iconSize / 2, iconSize, iconSize);
       if (lit > 0) {
-        hexPath(x, y, nr * 0.38 * easeOutBack(lit));
-        ctx.fillStyle = C.brandLight;
-        ctx.fill();
-      } else {
-        hexPath(x, y, nr * 0.3);
-        ctx.fillStyle = C.navy500;
-        ctx.fill();
+        ctx.globalAlpha = sceneA * lit;
+        ctx.drawImage(icons["#ffffff"], x - iconSize / 2, y - iconSize / 2, iconSize, iconSize);
       }
       ctx.restore();
 
       // rótulos
-      const lp = labelPos(i, RING_R);
+      const lp = labelPos(i);
       const labelA = easeOut(prog(t, NODE_IN + i * NODE_STAGGER + 0.15, NODE_IN + i * NODE_STAGGER + 0.6)) * sceneA;
       const nameY = i === 0 ? lp.y - 22 : lp.y - 10;
       text(NODES[i].name, lp.x, nameY, { size: 20, weight: 600, color: lit > 0 ? C.fg : C.navy200, align: lp.align, alpha: labelA });
       const gateA = easeOut(lit) * sceneA;
       if (gateA > 0) {
-        const gy = nameY + 30;
         const slide = (1 - easeOut(lit)) * 8;
-        text(NODES[i].gate, lp.x, gy + slide, { size: 16, weight: 600, color: C.brandFg, align: lp.align, alpha: gateA, track: 0.2 });
+        text(NODES[i].gate, lp.x, nameY + 30 + slide, { size: 16, weight: 600, color: C.brandFg, align: lp.align, alpha: gateA, track: 0.2 });
       }
     }
 
     // Legenda de baixo
     const capA = easeOut(prog(t, 2.2, 2.8)) * (1 - prog(t, CONVERGE_A - 0.15, CONVERGE_A + 0.25));
-    text("SEIS ÁREAS  ·  UM SÓ FLUXO  ·  O CLIENTE NO CENTRO", CX, H - 92, { size: 17, weight: 500, color: C.muted, alpha: capA, track: 0.32 });
+    text("SEIS ÁREAS  ·  UM SÓ FLUXO  ·  O CLIENTE NO CENTRO", CX, H - 74, { size: 17, weight: 500, color: C.muted, alpha: capA, track: 0.32 });
+  }
+
+  // ---------- cartão Cliente 360º do cliente de exemplo ----------
+  function sceneCard(t) {
+    const appear = easeOut(prog(t, 0.8, 1.3));
+    const leave = easeInOut(prog(t, CONVERGE_A - 0.1, CONVERGE_A + 0.45));
+    const a = appear * (1 - leave);
+    if (a <= 0) return;
+    const ox = (1 - appear) * 50 + leave * 60;
+    const { y, w, h } = CARD;
+    const x = CARD.x + ox;
+
+    // ligação do gate até a linha do cartão
+    for (let i = 0; i < 6; i++) {
+      const k = prog(t, litAt(i), litAt(i) + 0.55);
+      if (k <= 0 || k >= 1) continue;
+      const [nx, ny] = ringPt(RING_CX, RING_CY, RING_R, i);
+      const tx = x + 34, ty = rowY(i);
+      const e = easeOut(clamp(k * 1.8));
+      // curva por fora do anel (por cima para os vértices de cima, por baixo para os de baixo)
+      const top = i === 0 || i === 1 || i === 5;
+      const qx = (nx + tx) / 2 + (i >= 4 ? 120 : 0);
+      const qy = top ? Math.min(ny, ty) - 240 : Math.max(ny, ty) + 240;
+      const at = (u) => [
+        (1 - u) * (1 - u) * nx + 2 * (1 - u) * u * qx + u * u * tx,
+        (1 - u) * (1 - u) * ny + 2 * (1 - u) * u * qy + u * u * ty,
+      ];
+      ctx.save();
+      ctx.globalAlpha = 0.6 * (1 - k) * a;
+      ctx.strokeStyle = C.brand;
+      ctx.lineWidth = 1.5;
+      ctx.shadowColor = C.brand;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      for (let s = 0; s <= 32; s++) {
+        const [px, py] = at((s / 32) * e);
+        s ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.stroke();
+      if (k < 0.55) {
+        const [px, py] = at(e);
+        ctx.globalAlpha = a;
+        ctx.fillStyle = "#ffe2cc";
+        ctx.shadowBlur = 18;
+        ctx.beginPath();
+        ctx.arc(px, py, 4, 0, PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.globalAlpha = a;
+    // corpo
+    ctx.shadowColor = "rgba(0,0,0,0.55)";
+    ctx.shadowBlur = 60;
+    ctx.shadowOffsetY = 24;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 18);
+    ctx.fillStyle = rgba(C.surface, 0.92);
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = C.border;
+    ctx.stroke();
+    // brilho na borda de cima
+    const edge = ctx.createLinearGradient(x, y, x + w, y);
+    edge.addColorStop(0, rgba(C.brand, 0));
+    edge.addColorStop(0.5, rgba(C.brand, 0.6));
+    edge.addColorStop(1, rgba(C.brand, 0));
+    ctx.strokeStyle = edge;
+    ctx.beginPath();
+    ctx.moveTo(x + 24, y + 0.75);
+    ctx.lineTo(x + w - 24, y + 0.75);
+    ctx.stroke();
+
+    // cabeçalho: avatar, nome e etapa
+    hexPath(x + 46, y + 48, 24);
+    ctx.fillStyle = rgba(C.brand, 0.16);
+    ctx.fill();
+    ctx.strokeStyle = C.brand;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+    text("MS", x + 46, y + 49, { size: 15, weight: 700, color: C.brandFg, alpha: a, track: 0.04 });
+    text(CLIENT, x + 86, y + 38, { size: 24, weight: 600, color: C.fg, align: "left", alpha: a, track: 0 });
+    text("CLIENTE 360°  ·  LINHA DO TEMPO", x + 87, y + 66, { size: 12, weight: 500, color: C.muted, align: "left", alpha: a, track: 0.2 });
+    let done = 0;
+    for (let i = 0; i < 6; i++) done += easeOut(prog(t, litAt(i), litAt(i) + 0.3));
+    let step = 0;
+    for (let i = 0; i < 6; i++) if (t >= litAt(i) + 0.12) step = i + 1;
+    text(`ETAPA ${step} DE 6`, x + w - 26, y + 38, { size: 12, weight: 600, color: step ? C.brandFg : C.muted, align: "right", alpha: a, track: 0.18 });
+    // barra de progresso
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = C.navy700;
+    ctx.beginPath();
+    ctx.roundRect(x + 26, y + 92, w - 52, 4, 2);
+    ctx.fill();
+    if (done > 0) {
+      ctx.fillStyle = C.brand;
+      ctx.shadowColor = C.brand;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.roundRect(x + 26, y + 92, (w - 52) * done / 6, 4, 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // linha do tempo
+    const lx = x + 34;
+    ctx.save();
+    ctx.globalAlpha = a * 0.8;
+    ctx.strokeStyle = C.navy700;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(lx, rowY(0));
+    ctx.lineTo(lx, rowY(5));
+    ctx.stroke();
+    ctx.restore();
+    for (let i = 0; i < 6; i++) {
+      const k = prog(t, litAt(i) + 0.12, litAt(i) + 0.5);
+      const ry = rowY(i);
+      ctx.save();
+      ctx.globalAlpha = a;
+      hexPath(lx, ry, 7);
+      ctx.fillStyle = k > 0 ? C.brand : C.surface;
+      ctx.strokeStyle = k > 0 ? C.brandLight : C.navy600;
+      ctx.lineWidth = 2;
+      if (k > 0) { ctx.shadowColor = C.brand; ctx.shadowBlur = 14 * k; }
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+      if (k <= 0) continue;
+      const e = easeOut(k);
+      const ra = a * e;
+      const dx = (1 - e) * 16;
+      text(NODES[i].gate, lx + 26 + dx, ry - 12, { size: 12, weight: 600, color: C.brandFg, align: "left", alpha: ra, track: 0.18 });
+      text(TIMELINE[i].detail, lx + 26 + dx, ry + 11, { size: 18, weight: 500, color: C.fg, align: "left", alpha: ra, track: 0 });
+      text(TIMELINE[i].when, x + w - 26, ry - 12, { size: 13, weight: 500, color: C.muted, align: "right", alpha: ra, track: 0.04 });
+    }
   }
 
   // ---------- miolo (o cliente), anel → símbolo, nome ----------
@@ -378,27 +673,28 @@
     let n = 0;
     for (let i = 0; i < 6; i++) n += easeOutBack(prog(t, litAt(i) + SPOKE_DUR - 0.05, litAt(i) + SPOKE_DUR + 0.25));
     const appear = easeOutBack(prog(t, 0.15, 0.6));
-    return 7 * appear + n * 4.2;
+    return 8 * appear + n * 4.4;
   }
 
   function markState(t) {
     const conv = easeInOut(prog(t, CONVERGE_A, CONVERGE_B));
     const slide = easeInOut(prog(t, WORD_A, WORD_B));
-    const x = lerp(CX, lockX, slide);
+    const x = lerp(lerp(RING_CX, CX, conv), lockX, slide);
+    const y = lerp(RING_CY, CY, conv);
     const r = lerp(RING_R, MARK_R, conv);
     const stroke = lerp(4, MARK_STROKE, conv);
-    const core = lerp(coreRadius(t), CORE_R, easeInOut(prog(t, CONVERGE_A, CONVERGE_B)));
-    return { x, y: CY, r, stroke, core, conv };
+    const core = lerp(coreRadius(t), CORE_R, conv);
+    return { x, y, r, stroke, core, conv };
   }
 
   function sceneMark(t) {
     const m = markState(t);
-    // Núcleo (o cliente): visível desde o começo
+    // Núcleo (o cliente): visível desde o começo, deitado no plano do anel
     const pulse = 1 + 0.06 * Math.sin(t * 7) * (1 - m.conv);
     ctx.save();
     ctx.shadowColor = C.brand;
-    ctx.shadowBlur = 40;
-    hexPath(m.x, m.y, m.core * pulse);
+    ctx.shadowBlur = 44;
+    hexPathP(m.x, m.y, m.core * pulse);
     ctx.fillStyle = C.brandLight;
     ctx.fill();
     ctx.restore();
@@ -413,7 +709,7 @@
     ctx.lineWidth = m.stroke;
     ctx.shadowColor = rgba(C.brand, 0.6);
     ctx.shadowBlur = 36 * (1 - m.conv) + 18;
-    hexPath(m.x, m.y, m.r);
+    hexPathP(m.x, m.y, m.r);
     ctx.stroke();
     ctx.restore();
 
@@ -437,9 +733,8 @@
 
   function sceneWord(t) {
     if (t < WORD_A) return;
-    const markW = 2 * MARK_R * 0.866 + MARK_STROKE;
     // o nome acompanha o símbolo enquanto ele desliza para a esquerda
-    const x0 = markState(t).x + markW / 2 + GAP;
+    const x0 = markState(t).x + MARK_W / 2 + GAP;
     const baseY = CY + WORD_SIZE * 0.36;
     ctx.save();
     ctx.font = `700 ${WORD_SIZE}px Geist`;
@@ -481,15 +776,16 @@
     }
   }
 
-  // ---------- final: mergulho no miolo e o hexágono que se abre ----------
-  function drawScene(t) {
-    background(t);
-    sceneFlow(t);
-    sceneMark(t);
-    sceneWord(t);
+  /** Inclinação da câmera no instante t: começa deitada, endireita até o símbolo. */
+  function tiltAt(t) {
+    const th = 40 - 16 * easeOut(prog(t, 0, RING_CLOSED)) - 24 * easeInOut(prog(t, RING_CLOSED, CONVERGE_B));
+    const ph = -16 * (1 - easeInOut(prog(t, 0, CONVERGE_B)));
+    return [th * PI / 180, ph * PI / 180];
   }
 
-  function renderFrame(t) {
+  // ---------- um instante (subquadro) ----------
+  function drawInstant(t) {
+    TILT = tiltAt(t);
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
@@ -497,23 +793,24 @@
     if (dive > 0) {
       // Câmera: o miolo vai para o centro da tela e cresce até cobri-la
       const m = markState(DIVE_A);
-      const e = easeIn(dive);
-      const scale = Math.exp(Math.log(1) + e * Math.log(34));
+      const scale = Math.exp(easeIn(dive) * Math.log(34));
       const pan = easeInOut(prog(t, DIVE_A, DIVE_A + 0.45));
-      const fx = lerp(m.x, CX, pan);
-      ctx.translate(fx, CY);
+      ctx.translate(lerp(m.x, CX, pan), CY);
       ctx.scale(scale, scale);
       ctx.translate(-m.x, -CY);
     }
-    drawScene(t);
+    background(t);
+    sceneFlow(t);
+    sceneCard(t);
+    sceneMark(t);
+    sceneWord(t);
     ctx.restore();
 
     // Hexágono que se abre do centro até a página (#060d1a)
     const iris = prog(t, IRIS_A, IRIS_B);
     if (iris > 0) {
-      const r = 1400 * easeInOut(iris);
+      const r = IRIS_R * easeInOut(iris);
       ctx.save();
-      // borda laranja da abertura
       ctx.strokeStyle = C.brandLight;
       ctx.lineWidth = 6 * (1 - iris) + 1;
       ctx.shadowColor = C.brand;
@@ -534,11 +831,40 @@
     }
   }
 
-  window.INTRO = { DURATION, W, H };
+  // ---------- quadro final: desfoque de movimento + grão ----------
+  const SUBFRAMES = 5;
+  const SHUTTER = 0.5 / FPS;   // obturador de 180°
+  function renderFrame(t, { blur = true } = {}) {
+    const n = blur ? SUBFRAMES : 1;
+    outCtx.save();
+    outCtx.globalCompositeOperation = "source-over";
+    for (let k = 0; k < n; k++) {
+      drawInstant(Math.min(DURATION, t + (k / n) * SHUTTER));
+      outCtx.globalAlpha = 1 / (k + 1);   // média progressiva
+      outCtx.drawImage(work, 0, 0);
+    }
+    outCtx.restore();
+
+    // Grão: muda 30 vezes por segundo e some enquanto o hexágono abre
+    const grainA = 0.07 * (1 - prog(t, IRIS_A, IRIS_B));
+    if (grainA > 0) {
+      const tick = Math.floor(t * 30);
+      const tile = GRAIN[tick % GRAIN.length];
+      outCtx.save();
+      outCtx.globalAlpha = grainA;
+      outCtx.globalCompositeOperation = "overlay";
+      const ox = -Math.floor(rand(tick) * 320), oy = -Math.floor(rand(tick + 99) * 320);
+      for (let gy = oy; gy < H; gy += 320) for (let gx = ox; gx < W; gx += 320) outCtx.drawImage(tile, gx, gy);
+      outCtx.restore();
+    }
+  }
+
+  window.INTRO = { DURATION, W, H, IRIS_A, IRIS_B, IRIS_R };
   window.renderFrame = renderFrame;
   window.introReady = document.fonts.ready
     .then(() => Promise.all([400, 500, 600, 700].map((w) => document.fonts.load(`${w} 40px Geist`))))
-    .then(() => { measure(); return true; });
+    .then(() => loadIcons())
+    .then(() => { makeGrain(); measure(); return true; });
 
   window.introReady.then(() => {
     const q = new URLSearchParams(location.search);
@@ -546,7 +872,7 @@
       const t0 = performance.now();
       const loop = () => {
         const t = ((performance.now() - t0) / 1000) % (DURATION + 1);
-        renderFrame(Math.min(t, DURATION));
+        renderFrame(Math.min(t, DURATION), { blur: false });
         requestAnimationFrame(loop);
       };
       loop();
