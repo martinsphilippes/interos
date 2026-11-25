@@ -29,7 +29,7 @@ const FADE_MS = 450;
 const SKIP_FADE_MS = 350;
 /** "Pular" aparece depois do primeiro instante e sai quando a câmera mergulha no símbolo. */
 const SKIP_SHOW_AT_S = 0.6;
-const SKIP_HIDE_AT_S = 5.6;
+const SKIP_HIDE_AT_S = 8.05;
 /** O navegador sabe recortar a camada com um caminho (hexágono vazado)? */
 function canClipPath(): boolean {
   return typeof CSS !== "undefined" && CSS.supports("clip-path", 'path(evenodd, "M0 0H1V1Z")');

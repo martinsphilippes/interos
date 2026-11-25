@@ -1,6 +1,6 @@
 # Abertura do INTEROS
 
-Vídeo de 7 s que toca ao abrir o sistema no desktop, no mesmo padrão da abertura do portal Wellmix.
+Vídeo de 9,5 s que toca ao abrir o sistema no desktop, no mesmo padrão da abertura do portal Wellmix.
 
 ## A história (versão 2, 25/11/2026)
 
@@ -29,7 +29,7 @@ Acabamento:
 - Cada quadro é a média de 5 instantes dentro de meio quadro: desfoque de movimento, como o obturador de uma câmera.
 - Grão de filme leve por cima, que some no hexágono final.
 
-A versão 1 (PR #43) tinha o anel chapado, sem ícones, sem o cartão e com o final escuro.
+A versão 1 (PR #43) tinha 7 s, o anel chapado, sem ícones, sem o cartão e com o final escuro. Na versão 2 o dono achou 7 s rápido demais: o tempo a mais foi para o percurso do cliente (0,6 s por departamento, para dar tempo de ler o cartão) e para o logo parado antes do mergulho.
 
 ## Arquivos
 
@@ -47,9 +47,9 @@ A versão 1 (PR #43) tinha o anel chapado, sem ícones, sem o cartão e com o fi
 
 - Só com janela de 1024 px ou mais: o celular nunca vê.
 - Na primeira abertura do dia (localStorage `interos-intro-day`, data local do navegador) e ao recarregar (F5) uma página inicial (`/`, `/login` ou `/meu-dia`). Navegar pelo menu ou abrir outra aba no mesmo dia não repete.
-- "Pular" (Esc, Enter ou espaço) aparece aos 0,6 s e sai aos 5,6 s, quando começa o mergulho.
+- "Pular" (Esc, Enter ou espaço) aparece aos 0,6 s e sai aos 8,05 s, quando começa o mergulho.
 - Nunca com `prefers-reduced-motion` e nunca em navegador automatizado (`navigator.webdriver`), para os testes e as auditorias não esperarem.
-- O "pouso" da página começa quando o hexágono começa a abrir (6,32 s).
+- O "pouso" da página começa quando o hexágono começa a abrir (8,77 s).
 - Se o vídeo não começar em 8 s ou der erro, a página aparece normalmente.
 - Na URL: `?intro=always` força e `?intro=off` não toca.
 

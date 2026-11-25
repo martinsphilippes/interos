@@ -41,7 +41,7 @@
 <script>
 (() => {
   const W = 1920, H = 1080, CX = W / 2, CY = H / 2;
-  const DURATION = 7.0;
+  const DURATION = 9.5;
   const FPS = 60;
   const out = document.getElementById("c");
   const outCtx = out.getContext("2d");
@@ -150,16 +150,16 @@
   const RING_CX = 760, RING_CY = 530, RING_R = 290;
   const NODE_R = 34;
   const NODE_IN = 0.4;          // vértices aparecem
-  const NODE_STAGGER = 0.09;
-  const TRAVEL_START = 1.15;    // a linha do cliente sai do Marketing
-  const EDGE_DUR = 0.4;         // tempo de cada aresta
+  const NODE_STAGGER = 0.12;
+  const TRAVEL_START = 1.3;     // a linha do cliente sai do Marketing
+  const EDGE_DUR = 0.6;         // tempo de cada aresta
   const litAt = (i) => TRAVEL_START + i * EDGE_DUR;   // gate i acende
-  const RING_CLOSED = TRAVEL_START + 6 * EDGE_DUR;    // volta ao Marketing (3.55)
-  const SPOKE_DUR = 0.42;       // evento corre do vértice ao centro
-  const CONVERGE_A = 3.75, CONVERGE_B = 4.55;         // anel vira o símbolo
-  const WORD_A = 4.45, WORD_B = 5.25;                 // nome entra
-  const DIVE_A = 5.65, DIVE_B = 6.4;                  // mergulho no miolo
-  const IRIS_A = 6.32, IRIS_B = 6.95;                 // hexágono abre até a página
+  const RING_CLOSED = TRAVEL_START + 6 * EDGE_DUR;    // volta ao Marketing (4.9)
+  const SPOKE_DUR = 0.55;       // evento corre do vértice ao centro
+  const CONVERGE_A = 5.15, CONVERGE_B = 6.05;         // anel vira o símbolo
+  const WORD_A = 5.95, WORD_B = 6.75;                 // nome entra
+  const DIVE_A = 8.1, DIVE_B = 8.85;                  // mergulho no miolo
+  const IRIS_A = 8.77, IRIS_B = 9.4;                  // hexágono abre até a página
   const IRIS_R = 1400;                                // raio final (o portal usa o mesmo)
 
   // Cartão
@@ -411,7 +411,7 @@
         ctx.globalAlpha = sceneA;
         ctx.globalCompositeOperation = "lighter";
         for (let j = 14; j >= 1; j--) {
-          const p = cometAt(t - j * 0.013);
+          const p = cometAt(t - j * 0.02);
           if (!p) continue;
           const k = 1 - j / 15;
           ctx.fillStyle = rgba(C.brandLight, 0.35 * k);
@@ -522,7 +522,7 @@
     }
 
     // Legenda de baixo
-    const capA = easeOut(prog(t, 2.2, 2.8)) * (1 - prog(t, CONVERGE_A - 0.15, CONVERGE_A + 0.25));
+    const capA = easeOut(prog(t, 2.6, 3.2)) * (1 - prog(t, CONVERGE_A - 0.15, CONVERGE_A + 0.25));
     text("SEIS ÁREAS  ·  UM SÓ FLUXO  ·  O CLIENTE NO CENTRO", CX, H - 74, { size: 17, weight: 500, color: C.muted, alpha: capA, track: 0.32 });
   }
 
@@ -744,7 +744,7 @@
     for (let i = 0; i < WORD.length; i++) {
       const ch = WORD[i];
       const w = ctx.measureText(ch).width;
-      const k = prog(t, WORD_A + 0.22 + i * 0.055, WORD_A + 0.62 + i * 0.055);
+      const k = prog(t, WORD_A + 0.22 + i * 0.07, WORD_A + 0.7 + i * 0.07);
       if (k > 0) {
         ctx.globalAlpha = easeOut(k);
         ctx.fillStyle = C.fg;
@@ -755,7 +755,7 @@
     ctx.restore();
 
     // by Intercert
-    const tagA = easeOut(prog(t, WORD_A + 0.6, WORD_A + 1.0));
+    const tagA = easeOut(prog(t, WORD_A + 0.75, WORD_A + 1.2));
     if (tagA > 0) {
       ctx.save();
       ctx.globalAlpha = tagA;

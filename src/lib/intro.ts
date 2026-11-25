@@ -17,7 +17,7 @@
  * - `?intro=always` força (ignora as regras acima e não marca o dia) e
  *   `?intro=off` não toca.
  *
- * Final: o hexágono que se abre no vídeo (6,32 s a 6,95 s) é recortado na
+ * Final: o hexágono que se abre no vídeo (8,77 s a 9,4 s) é recortado na
  * camada do portal (`introIrisPath`), então por dentro dele já aparece a
  * página de verdade, que "pousa" enquanto ele cresce. Navegador sem
  * `clip-path: path()` vê o hexágono se abrir para o fundo escuro do vídeo.
@@ -36,7 +36,7 @@ export const INTRO_MEDIA = "(min-width: 1024px)";
 /** Quem pede menos movimento não vê a abertura. */
 export const INTRO_REDUCED_MEDIA = "(prefers-reduced-motion: reduce)";
 /**
- * O vídeo, em dois formatos (1920 × 1080, 60 quadros, sem som, 7 s; gerado por
+ * O vídeo, em dois formatos (1920 × 1080, 60 quadros, sem som, 9,5 s; gerado por
  * `scripts/intro/render.mjs`): o MP4 (H.264) para Chrome, Safari, Edge e
  * Firefox, e o WebM (VP9) para o Chromium sem H.264 (Playwright). O navegador
  * escolhe o primeiro que sabe tocar.
@@ -55,8 +55,8 @@ export const INTRO_VIDEO = {
  * IRIS_A, IRIS_B e IRIS_R). O centro é o centro do quadro.
  */
 export const INTRO_IRIS = {
-  start: 6.32,
-  end: 6.95,
+  start: 8.77,
+  end: 9.4,
   radius: 1400,
   videoWidth: 1920,
   videoHeight: 1080,
