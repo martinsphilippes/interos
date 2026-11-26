@@ -18,6 +18,7 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "comment.added": "Comentário adicionado",
   "document.added": "Documento anexado",
   "document.removed": "Documento removido",
+  "document.updated": "Documento editado",
   "erp.linked": "Empresa vinculada ao ERP",
   "erp.provisioned": "Empresa criada no ERP",
   "erp.license_changed": "Módulos do ERP alterados",

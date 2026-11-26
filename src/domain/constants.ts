@@ -294,6 +294,7 @@ export const EVENT_TYPES = [
   "comment.added",
   "document.added",
   "document.removed",
+  "document.updated",
   "erp.linked",
   "erp.provisioned",
   "erp.license_changed",

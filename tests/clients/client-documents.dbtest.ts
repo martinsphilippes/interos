@@ -25,6 +25,7 @@ import {
   putClientDocumentChunk,
   removeClientDocument,
   startClientDocumentUpload,
+  updateClientDocument,
   type DocumentViewer,
 } from "@/server/clients/documents";
 
@@ -293,6 +294,44 @@ describe("remover", () => {
     const contractDoc = await create<Document>(COLLECTIONS.documents, { clientId: CLIENT, entityType: "contract", entityId: "ct1", name: "Contrato assinado", url: "https://assinatura.example/ct1", version: 1, uploadedBy: MANAGER.id, createdBy: MANAGER.id });
     await expect(removeClientDocument(CLIENT, contractDoc.id, "Não deveria sair", MANAGER, viewer(MANAGER.id, true))).rejects.toThrow(/pertence a outro registro/);
     await expect(removeClientDocument(CLIENT_ORPHAN, d.id, "Cliente errado", MANAGER, viewer(MANAGER.id, true))).rejects.toThrow(/não encontrado/);
+  });
+});
+
+describe("editar nome e categoria", () => {
+  it("quem enviou edita o próprio; outra pessoa só com a chave de editar; o antes e o depois ficam no histórico", async () => {
+    const d = await sendWhole(CLIENT, "procuracao-assinada.pdf", randomBytes(800), { title: "Procuração do sócio", category: "Procuração" });
+    await expect(updateClientDocument(CLIENT, d.id, { title: "Outro nome" }, OTHER, viewer(OTHER.id))).rejects.toThrow(/Só quem enviou/);
+    const mine = await updateClientDocument(CLIENT, d.id, { title: "Procuração do sócio-administrador", category: "Procuração" }, UPLOADER, viewer(UPLOADER.id));
+    expect(mine).toMatchObject({ name: "Procuração do sócio-administrador", category: "Procuração", version: 1 });
+    const byManager = await updateClientDocument(CLIENT, d.id, { title: "Procuração do sócio-administrador", category: "Documento dos sócios" }, MANAGER, { ...viewer(MANAGER.id), canEditAny: true });
+    expect(byManager.category).toBe("Documento dos sócios");
+    const logged = (await events(CLIENT, "document.updated")).filter((e) => e.entityId === d.id);
+    expect(logged).toHaveLength(2);
+    expect(JSON.stringify(logged.map((e) => e.payload))).toContain("Procuração do sócio-administrador");
+    expect(logged.some((e) => (e.payload as { changes?: Record<string, unknown> }).changes?.Categoria)).toBe(true);
+  });
+
+  it("renomear para um nome que já existe vira a próxima versão daquele nome; sem mudança não registra nada; categoria pode ficar vazia", async () => {
+    await sendWhole(CLIENT, "alvara-2025.pdf", randomBytes(500), { title: "Alvará de funcionamento", category: "Alvará e licenças" });
+    const second = await sendWhole(CLIENT, "alvara-2026.pdf", randomBytes(510), { title: "Alvará 2026", category: "Alvará e licenças" });
+    expect(second.version).toBe(1);
+    const renamed = await updateClientDocument(CLIENT, second.id, { title: "alvara de funcionamento", category: "Alvará e licenças" }, UPLOADER, viewer(UPLOADER.id));
+    expect(renamed.version).toBe(2);
+    const before = (await events(CLIENT, "document.updated")).length;
+    await updateClientDocument(CLIENT, second.id, { title: "alvara de funcionamento", category: "Alvará e licenças" }, UPLOADER, viewer(UPLOADER.id));
+    expect((await events(CLIENT, "document.updated")).length).toBe(before);
+    const cleared = await updateClientDocument(CLIENT, second.id, { title: "alvara de funcionamento", category: null }, UPLOADER, viewer(UPLOADER.id));
+    expect(cleared.category ?? null).toBeNull();
+    expect((await doc(second.id)).category ?? null).toBeNull();
+  });
+
+  it("removido e documento de outro registro não são editados aqui; nome curto é recusado", async () => {
+    const d = await sendWhole(CLIENT, "rascunho.pdf", randomBytes(300));
+    await expect(updateClientDocument(CLIENT, d.id, { title: "x" }, UPLOADER, viewer(UPLOADER.id))).rejects.toThrow(/mínimo de 2/);
+    await removeClientDocument(CLIENT, d.id, "Arquivo errado enviado", UPLOADER, viewer(UPLOADER.id));
+    await expect(updateClientDocument(CLIENT, d.id, { title: "Novo nome" }, UPLOADER, viewer(UPLOADER.id))).rejects.toThrow(/removido não pode/);
+    const contractDoc = await create<Document>(COLLECTIONS.documents, { clientId: CLIENT, entityType: "contract", entityId: "ct2", name: "Contrato 2", url: "https://assinatura.example/ct2", version: 1, uploadedBy: MANAGER.id, createdBy: MANAGER.id });
+    await expect(updateClientDocument(CLIENT, contractDoc.id, { title: "Contrato renomeado" }, MANAGER, { ...viewer(MANAGER.id, true), canEditAny: true })).rejects.toThrow(/pertence a outro registro/);
   });
 });
 

@@ -3,12 +3,12 @@
 /**
  * Aba Documentos do Cliente 360º: enviar arquivos (vários de uma vez, em partes, com nome e categoria sugeridos pelo
  * nome do arquivo), registrar link, conferir os documentos de cadastro (contrato social, cartão CNPJ), abrir, baixar e
- * remover com motivo (fica o registro). Botões conforme as chaves; o servidor confere tudo de novo.
+ * editar nome e categoria e remover com motivo (fica o registro). Botões conforme as chaves; o servidor confere tudo de novo.
  * Regras em src/domain/client-documents.ts; servidor em src/server/clients/documents.ts.
  */
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, CircleDashed, Download, ExternalLink, FileText, Link2, RotateCcw, Trash2, UploadCloud, X } from "lucide-react";
+import { CheckCircle2, CircleDashed, Download, ExternalLink, FileText, Link2, Pencil, RotateCcw, Trash2, UploadCloud, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -40,7 +40,7 @@ import {
   suggestDocumentTitle,
 } from "@/domain/client-documents";
 import { formatBytes } from "@/domain/stored-files";
-import { removeClientDocumentAction } from "@/server/clients/actions";
+import { removeClientDocumentAction, updateClientDocumentAction } from "@/server/clients/actions";
 import type { ClientDocumentRow } from "@/server/clients/documents";
 import { FileDropZone, FileKindIcon, FileThumb, useLeaveGuard } from "@/components/files/file-drop-zone";
 import { TransferError, imageThumbnail, normalizePickedFile, sha256OfBlob, uploadInParts, type TransferProgress } from "@/components/files/stored-file-transfer";
@@ -162,6 +162,7 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
   const [states, setStates] = React.useState<Record<string, UploadState>>({});
   const [busy, setBusy] = React.useState(false);
   const [removing, setRemoving] = React.useState<ClientDocumentRow | null>(null);
+  const [editing, setEditing] = React.useState<ClientDocumentRow | null>(null);
   const [focusKey, setFocusKey] = React.useState<string | null>(null);
   const abort = React.useRef<AbortController | null>(null);
   /** Momento do clique em "Enviar" (`event.timeStamp`), para reconhecer o segundo clique de um clique duplo. */
@@ -437,7 +438,7 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
           ) : (
             <ul className="divide-y divide-border">
               {active.map((row) => (
-                <DocumentRow key={row.id} row={row} uploader={users[row.uploadedBy]?.name} onRemove={() => setRemoving(row)} />
+                <DocumentRow key={row.id} row={row} uploader={users[row.uploadedBy]?.name} onRemove={() => setRemoving(row)} onEdit={() => setEditing(row)} />
               ))}
             </ul>
           )}
@@ -465,6 +466,18 @@ export function ClientDocumentsPanel({ clientId, clientName, rows, users, canAtt
           </details>
         ) : null}
       </section>
+
+      {editing ? (
+        <EditDocumentDialog
+          clientId={clientId}
+          row={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
 
       <RemoveDocumentDialog
         clientId={clientId}
@@ -549,7 +562,7 @@ function PendingRow({
   );
 }
 
-function DocumentRow({ row, uploader, onRemove }: { row: ClientDocumentRow; uploader?: string; onRemove: () => void }) {
+function DocumentRow({ row, uploader, onRemove, onEdit }: { row: ClientDocumentRow; uploader?: string; onRemove: () => void; onEdit: () => void }) {
   const isFile = row.kind === "arquivo";
   const meta = [
     row.category,
@@ -594,6 +607,11 @@ function DocumentRow({ row, uploader, onRemove }: { row: ClientDocumentRow; uplo
             <Download className="size-3.5" aria-hidden /> Baixar
           </a>
         ) : null}
+        {row.editable ? (
+          <Button type="button" size="sm" variant="ghost" className="h-8 px-2.5 text-xs" onClick={onEdit} aria-label={`Editar nome e categoria de ${row.name}`}>
+            <Pencil /> Editar
+          </Button>
+        ) : null}
         {row.removable ? (
           <Button type="button" size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-danger-fg" onClick={onRemove} aria-label={`Remover ${row.name}`}>
             <Trash2 /> Remover
@@ -601,6 +619,64 @@ function DocumentRow({ row, uploader, onRemove }: { row: ClientDocumentRow; uplo
         ) : null}
       </div>
     </li>
+  );
+}
+
+/** Edita nome e categoria (o servidor recalcula a versão pelo novo nome e registra o antes e o depois no histórico). */
+function EditDocumentDialog({ clientId, row, onClose, onSaved }: { clientId: string; row: ClientDocumentRow; onClose: () => void; onSaved: () => void }) {
+  const [title, setTitle] = React.useState(row.name);
+  const [category, setCategory] = React.useState(row.category ?? "");
+  const [pending, startTransition] = React.useTransition();
+  const problem = titleProblem(title);
+  const changed = title.replace(/\s+/g, " ").trim() !== row.name || category !== (row.category ?? "");
+  const categories: readonly string[] = !category || CLIENT_DOCUMENT_CATEGORIES.includes(category as (typeof CLIENT_DOCUMENT_CATEGORIES)[number]) ? CLIENT_DOCUMENT_CATEGORIES : [category, ...CLIENT_DOCUMENT_CATEGORIES];
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (problem || !changed) return;
+    startTransition(async () => {
+      const result = await updateClientDocumentAction({ clientId, documentId: row.id, title, category: category || null });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Documento atualizado", { description: result.data.version !== row.version ? `Agora é a versão ${result.data.version} deste nome. O antes e o depois ficam no histórico do cliente.` : "O antes e o depois ficam no histórico do cliente." });
+      onSaved();
+    });
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <DialogContent size="sm">
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+          <DialogHeader>
+            <DialogTitle>Editar documento</DialogTitle>
+            <DialogDescription>O arquivo não muda. Com outro nome, a versão é recalculada (o mesmo nome vira v2, v3…).</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="flex flex-col gap-3">
+            <FormField label="Nome" htmlFor="edit-document-title" required error={problem ?? undefined}>
+              <Input id="edit-document-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={CLIENT_DOCUMENT_TITLE_MAX} autoFocus />
+            </FormField>
+            <FormField label="Categoria" htmlFor="edit-document-category">
+              <Select
+                id="edit-document-category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                options={[{ value: "", label: "Sem categoria" }, ...categories.map((c) => ({ value: c, label: c }))]}
+              />
+            </FormField>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+              Cancelar
+            </Button>
+            <Button type="submit" loading={pending} disabled={Boolean(problem) || !changed}>
+              Salvar
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

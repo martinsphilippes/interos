@@ -459,8 +459,9 @@ export const OPERACAO = {
             "src/app/api/clientes/[id]/documentos/[arquivo]/route.ts#PUT",
             "src/app/api/clientes/[id]/documentos/[arquivo]/route.ts#POST",
             "src/server/clients/actions.ts#removeClientDocumentAction?o próprio documento, até 1 hora depois de enviar",
+            "src/server/clients/actions.ts#updateClientDocumentAction?nome e categoria do próprio documento",
           ],
-          recordCondition: "Remover: só o documento que a própria pessoa enviou, até 1 hora depois.",
+          recordCondition: "Remover: só o documento que a própria pessoa enviou, até 1 hora depois. Editar nome e categoria: o próprio documento.",
         },
         {
           key: "operacao.clientes.documentos.remover",
@@ -471,6 +472,15 @@ export const OPERACAO = {
           rule: { manager: true },
           guards: ["src/server/clients/actions.ts#removeClientDocumentAction?qualquer documento da aba"],
           sensitive: true,
+        },
+        {
+          key: "operacao.clientes.documentos.editar",
+          label: "Editar nome e categoria de documento do cliente de qualquer pessoa",
+          verb: "editar",
+          // Novo: renomear recalcula a versão pelo novo nome; o antes e o depois ficam no histórico do cliente. Quem
+          // enviou edita o próprio documento com operacao.clientes.documentos.anexar.
+          rule: { manager: true },
+          guards: ["src/server/clients/actions.ts#updateClientDocumentAction?qualquer documento da aba"],
         },
         {
           key: "operacao.clientes.criar-oportunidade",

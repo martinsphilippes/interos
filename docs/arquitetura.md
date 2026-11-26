@@ -504,8 +504,11 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   fica `status: "removido"` com quem/quando/por quê, fora das listas, dos portões do workflow (`documentsCount`) e dos
   documentos do contrato (`isActiveDocument`). Permissões: abrir = seção `operacao.clientes.documentos.ver` + cliente
   no escopo (viewGuard da rota `GET`); `operacao.clientes.documentos.anexar` (todos; inclui remover o PRÓPRIO até 1 hora
-  depois) e `operacao.clientes.documentos.remover` (gestores; qualquer documento da aba; sensível). Eventos (histórico do
-  cliente): `document.added` e `document.removed` (motivo). O link registrado pela aba é sempre do próprio cliente
+  depois) e `operacao.clientes.documentos.remover` (gestores; qualquer documento da aba; sensível). Editar nome e
+  categoria (`updateClientDocumentAction`; o arquivo não muda): quem enviou, com `anexar`, ou gestores com
+  `operacao.clientes.documentos.editar` (qualquer documento da aba); documento removido não se edita; com outro nome a
+  versão é recalculada pelos demais documentos do cliente (mesmo nome = v2, v3…). Eventos (histórico do cliente):
+  `document.added`, `document.updated` (antes → depois de nome, categoria e versão) e `document.removed` (motivo). O link registrado pela aba é sempre do próprio cliente
   (`entityType` "client"; o formulário não escolhe outro vínculo). Na tela, o envio continua se a pessoa trocar de aba
   (o aviso de fechar a página vale até o fim) e "Cancelar envio" ignora o segundo clique de um clique duplo em "Enviar".
 
@@ -691,7 +694,10 @@ Avaliados no **estado resultante** de criar/editar/ativar/excluir usuário e de 
 - **I1** sempre existe ≥ 1 usuário ativo com `admin.acessos.gerir` + `admin.usuarios.editar` efetivas (só acusa quando
   a mudança quebra a condição);
 - **I2** ninguém edita as próprias exceções, perde por perfil/módulo/cadastro uma chave protegida que tinha, se
-  desativa/exclui ou muda o próprio papel;
+  desativa/exclui ou muda o próprio papel — exceto a troca do próprio papel **confirmada** na tela
+  (`confirmSelfRoleChange` → `selfRoleConfirmed`; ex.: o administrador passa a gestor): vale só com OUTRO administrador
+  ativo depois da troca (I1 sem contar quem troca), nunca dá chave nem escopo que a pessoa não tinha (I6) e encerra a
+  sessão de quem trocou (as chaves protegidas perdidas são justamente o efeito pedido);
 - **I3** o perfil `admin` não aceita negar chaves protegidas;
 - **I4** `inicio` e `admin` sempre ativos; `inicio.acessar`/`inicio.meu-dia.ver` nunca negados (evita laço de redirect);
 - **I5** não se exclui quem é gestor de departamento;

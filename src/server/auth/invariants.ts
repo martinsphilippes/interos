@@ -7,7 +7,9 @@
  *
  *   I1 sempre existe ≥ 1 usuário ATIVO com `admin.acessos.gerir` e `admin.usuarios.editar` efetivas;
  *   I2 ninguém edita as próprias exceções, nem perde (por perfil, módulo ou mudança de cadastro) uma chave protegida
- *      que tinha, nem se desativa/exclui, nem muda o próprio papel;
+ *      que tinha, nem se desativa/exclui, nem muda o próprio papel — exceto a troca do próprio papel CONFIRMADA
+ *      (`selfRoleConfirmed`), que nunca dá acesso que a pessoa não tinha e só vale se sobrar outro administrador
+ *      ativo (I1 sem contar quem troca);
  *   I3 o perfil `admin` não aceita negar chaves protegidas;
  *   I4 `inicio` e `admin` sempre ativos; `inicio.acessar`/`inicio.meu-dia.ver` nunca negados (destino de todo acesso
  *      negado — evita laço de redirecionamento);
@@ -52,7 +54,7 @@ export interface AccessState {
 
 export type AccessChange =
   | { kind: "user.create"; userId: string }
-  | { kind: "user.update"; userId: string }
+  | { kind: "user.update"; userId: string; /** A pessoa confirmou trocar o PRÓPRIO papel (ex.: administrador → gestor). */ selfRoleConfirmed?: boolean }
   | { kind: "user.delete"; userId: string }
   | { kind: "profile"; role: RoleKey }
   | { kind: "override"; userId: string }
@@ -157,12 +159,27 @@ export function checkAccessInvariants({ actorId, before, after, change }: Invari
   if (change.kind === "user.delete" && change.userId === actorId) {
     add("I2", "Você não pode excluir o seu próprio usuário.");
   }
+  // Troca confirmada do próprio papel (ex.: o administrador passa a gestor): permitida sem ganhar nenhum acesso que não
+  // tinha e só com outro administrador ativo depois da troca. Perder as chaves protegidas é justamente o efeito pedido.
+  const ownRoleChange = change.kind === "user.update" && change.userId === actorId && Boolean(actorBefore && actorAfter && actorAfter.role !== actorBefore.role);
+  const confirmedOwnRoleChange = ownRoleChange && change.kind === "user.update" && change.selfRoleConfirmed === true;
   if (change.kind === "user.update" && change.userId === actorId && actorBefore && actorAfter) {
-    if (actorAfter.role !== actorBefore.role) add("I2", "Você não pode alterar o seu próprio papel.");
+    if (ownRoleChange && !confirmedOwnRoleChange) add("I2", "Para mudar o seu próprio papel, confirme a mudança (e mantenha outro administrador ativo).");
     if (actorBefore.active === true && actorAfter.active !== true) add("I2", "Você não pode desativar o seu próprio usuário.");
   }
+  if (confirmedOwnRoleChange && actorAfter && actorPerms) {
+    const afterPerms = permissionsInState(after, actorAfter);
+    const gained = [...afterPerms.keys].filter((key) => !actorPerms.has(key));
+    if (gained.length) add("I6", `Mudar o próprio papel não pode dar acessos que você não tem (${gained.slice(0, 3).map(label).join(", ")}${gained.length > 3 ? "…" : ""}). Peça a outro administrador.`, gained[0]);
+    for (const [screen, to] of Object.entries(afterPerms.scopes) as [keyof EffectivePermissions["scopes"], ScopeKind | undefined][]) {
+      const from = actorPerms.scopes[screen];
+      if (to && from && scopeWider(to, from)) add("I6", `Mudar o próprio papel não pode ampliar o seu escopo de dados em ${SCREEN_BY_KEY.get(screen)?.label ?? screen}. Peça a outro administrador.`, `escopo:${screen}`);
+    }
+    const otherAdministrator = after.users.some((u) => u.id !== actorId && u.active === true && ADMIN_CORE_KEYS.every((k) => permissionsInState(after, u).has(k)));
+    if (!otherAdministrator) add("I1", "Você só pode mudar o próprio papel se houver outro administrador ativo (que gerencie acessos e usuários).");
+  }
   // Perder uma chave protegida que tinha (perfil do próprio papel, módulo, departamento…).
-  if (actorBefore && actorAfter && actorPerms) {
+  if (actorBefore && actorAfter && actorPerms && !confirmedOwnRoleChange) {
     const afterPerms = permissionsInState(after, actorAfter);
     for (const key of PROTECTED_KEYS) {
       if (actorPerms.has(key) && !afterPerms.has(key)) add("I2", `A alteração retiraria de você o acesso ${label(key)}. Peça a outro administrador.`, key);
@@ -237,7 +254,7 @@ export function checkAccessInvariants({ actorId, before, after, change }: Invari
 
   // ---- I1: sempre um administrador de acessos ativo. Estado anterior já sem nenhum (dados legados/corrompidos):
   // não trava as gravações — qualquer mudança só pode manter ou corrigir a situação.
-  if (hasAccessAdministrator(before) && !hasAccessAdministrator(after)) {
+  if (hasAccessAdministrator(before) && !hasAccessAdministrator(after) && !violations.some((v) => v.code === "I1")) {
     add("I1", "A alteração deixaria a empresa sem nenhum usuário ativo capaz de gerir acessos e editar usuários. Mantenha pelo menos um administrador ativo com esses acessos.");
   }
 

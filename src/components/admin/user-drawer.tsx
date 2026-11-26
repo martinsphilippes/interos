@@ -181,8 +181,10 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
   const isSelf = user.id === currentUserId;
   const canEdit = abilities.edit;
   const readOnly = !canEdit;
-  // Papel: exige alterar-papel; o papel Administrador (atribuir ou retirar) exige gerir acessos; nunca o próprio.
-  const roleLocked = readOnly || isSelf || !abilities.changeRole || (user.role === "admin" && !abilities.assignAdmin);
+  // Papel: exige alterar-papel; o papel Administrador (atribuir ou retirar) exige gerir acessos. O próprio papel pode
+  // mudar com confirmação (o servidor exige outro administrador ativo e não deixa a troca dar acessos novos).
+  const roleLocked = readOnly || !abilities.changeRole || (user.role === "admin" && !abilities.assignAdmin);
+  const [selfRoleInput, setSelfRoleInput] = React.useState<UpdateUserInput | null>(null);
   const roleOptions = ROLE_KEYS.filter((r) => r === user.role || r !== "admin" || abilities.assignAdmin);
   const hasActions = abilities.activate || abilities.resetPassword || abilities.remove;
   const managers = users.filter((u) => u.id !== user.id && u.active !== false);
@@ -251,11 +253,7 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
    * Um botão só: salva o cadastro (se mudou) e as exceções de acesso (se mudaram). Com acessos alterados, primeiro abre
    * a revisão dos acessos (motivo + prévia) e, confirmada, grava o cadastro em seguida.
    */
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    const input = formDirty ? buildInput() : null;
-    if (formDirty && !input) return;
+  const persist = (input: UpdateUserInput | null) => {
     if (accessDirty && accessEditor.current) {
       accessEditor.current.save(input || centralDirty ? () => saveProfile(input) : undefined);
       return;
@@ -265,6 +263,19 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
       return;
     }
     saveProfile(input);
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const input = formDirty ? buildInput() : null;
+    if (formDirty && !input) return;
+    // Trocar o próprio papel pede confirmação explícita antes de gravar qualquer coisa.
+    if (input && isSelf && input.role !== user.role) {
+      setSelfRoleInput(input);
+      return;
+    }
+    persist(input);
   };
 
   return (
@@ -300,7 +311,7 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
               label="Papel"
               htmlFor="ud-role"
               required
-              hint={isSelf ? "Você não pode alterar o próprio papel." : !readOnly && roleLocked ? (user.role === "admin" ? "Retirar o papel Administrador exige a permissão de gerir acessos." : "Seu perfil não pode alterar o papel.") : undefined}
+              hint={!readOnly && roleLocked ? (user.role === "admin" ? "Retirar o papel Administrador exige a permissão de gerir acessos." : "Seu perfil não pode alterar o papel.") : isSelf && !roleLocked ? "Mudar o seu próprio papel pede confirmação e só vale se houver outro administrador ativo." : undefined}
             >
               <Select id="ud-role" value={form.role} onChange={(e) => set("role", e.target.value as RoleKey)} disabled={roleLocked}>
                 {roleOptions.map((r) => (
@@ -445,6 +456,23 @@ function DrawerInner({ user, users, departments, abilities, currentUserId, acces
         confirmLabel="Excluir"
         destructive
         onConfirm={() => run(() => deleteUser({ id: user.id }), "Usuário excluído", onClose)}
+      />
+      <ConfirmDialog
+        open={selfRoleInput !== null}
+        onOpenChange={(o) => !o && setSelfRoleInput(null)}
+        title="Mudar o seu próprio papel?"
+        description={
+          selfRoleInput
+            ? `Você passa de ${ROLE_LABELS[user.role]} para ${ROLE_LABELS[selfRoleInput.role as RoleKey]} e fica só com os acessos desse papel${user.role === "admin" ? ": deixa de administrar usuários e acessos e só outro administrador pode devolver o papel" : ""}. A troca exige outro administrador ativo e nunca dá acessos que você ainda não tem. Ao confirmar, sua sessão é encerrada e você entra de novo já com o novo papel.`
+            : undefined
+        }
+        confirmLabel="Mudar meu papel"
+        destructive={user.role === "admin"}
+        onConfirm={() => {
+          const input = selfRoleInput;
+          setSelfRoleInput(null);
+          if (input) persist({ ...input, confirmSelfRoleChange: true });
+        }}
       />
       <ResetPasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} userId={user.id} userName={user.name} />
     </>

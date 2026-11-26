@@ -107,6 +107,47 @@ describe("I2 — ninguém se bloqueia nem se promove", () => {
     expect(codes(del)).toContain("I2");
   });
 
+  it("trocar o próprio papel sem confirmar é recusado, com a orientação de confirmar", () => {
+    const self = users.find((u) => u.id === HERCULES)!;
+    const v = checkAccessInvariants({ actorId: HERCULES, before: base, after: withUser(base, { ...self, role: "gestor" }), change: { kind: "user.update", userId: HERCULES, selfRoleConfirmed: false } });
+    expect(codes(v)).toContain("I2");
+    expect(v.find((x) => x.code === "I2")?.message).toContain("confirme");
+  });
+
+  it("administrador confirma e passa a gestor enquanto sobra outro administrador ativo", () => {
+    const self = users.find((u) => u.id === HERCULES)!;
+    const v = checkAccessInvariants({ actorId: HERCULES, before: base, after: withUser(base, { ...self, role: "gestor" }), change: { kind: "user.update", userId: HERCULES, selfRoleConfirmed: true } });
+    expect(v).toEqual([]);
+  });
+
+  it("o único administrador não pode deixar de ser administrador, nem confirmando", () => {
+    const alone = withoutUser(base, PHILIPPE);
+    const self = users.find((u) => u.id === HERCULES)!;
+    const v = checkAccessInvariants({ actorId: HERCULES, before: alone, after: withUser(alone, { ...self, role: "gestor" }), change: { kind: "user.update", userId: HERCULES, selfRoleConfirmed: true } });
+    expect(codes(v)).toEqual(["I1"]);
+    expect(v[0].message).toContain("outro administrador ativo");
+  });
+
+  it("o outro administrador precisa estar ativo para a troca confirmada valer", () => {
+    const self = users.find((u) => u.id === HERCULES)!;
+    const philippeOff = withUser(base, { ...users.find((u) => u.id === PHILIPPE)!, active: false });
+    const v = checkAccessInvariants({ actorId: HERCULES, before: philippeOff, after: withUser(philippeOff, { ...self, role: "gestor" }), change: { kind: "user.update", userId: HERCULES, selfRoleConfirmed: true } });
+    expect(codes(v)).toContain("I1");
+  });
+
+  it("trocar o próprio papel nunca dá acesso que a pessoa não tinha (nem confirmando)", () => {
+    const self = { ...users.find((u) => u.id === HERCULES)!, id: "syn_colab_self", role: "colaborador" as const };
+    const state = withUser(base, self);
+    const v = checkAccessInvariants({ actorId: self.id, before: state, after: withUser(state, { ...self, role: "gestor" }), change: { kind: "user.update", userId: self.id, selfRoleConfirmed: true } });
+    expect(codes(v)).toContain("I6");
+  });
+
+  it("a confirmação só vale para o próprio papel: trocar o papel de outra pessoa segue as regras normais", () => {
+    const vin = users.find((u) => u.id === VINICIUS)!;
+    const v = checkAccessInvariants({ actorId: HERCULES, before: base, after: withUser(base, { ...vin, role: "gestor" }), change: { kind: "user.update", userId: VINICIUS, selfRoleConfirmed: true } });
+    expect(codes(v)).not.toContain("I2");
+  });
+
   it("editar o próprio cargo/telefone continua permitido", () => {
     const self = users.find((u) => u.id === HERCULES)!;
     const v = checkAccessInvariants({ actorId: HERCULES, before: base, after: withUser(base, { ...self, name: "Hércules A." }), change: { kind: "user.update", userId: HERCULES } });

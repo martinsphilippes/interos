@@ -38,6 +38,7 @@ import {
   CLIENT_DOCUMENT_REASON_MIN,
   CLIENT_DOCUMENT_TITLE_MAX,
   CLIENT_DOCUMENT_TITLE_MIN,
+  canEditClientDocument,
   canRemoveClientDocument,
   clientDocumentFileUrl,
   clientDocumentMimeType,
@@ -90,6 +91,8 @@ export interface ClientDocumentRow {
   removedReason?: string;
   /** Quem está vendo pode remover agora (o servidor confere de novo). */
   removable: boolean;
+  /** Quem está vendo pode editar nome e categoria (o servidor confere de novo). */
+  editable: boolean;
 }
 
 /** Permissões de quem está vendo/agindo, avaliadas uma vez. */
@@ -97,6 +100,8 @@ export interface DocumentViewer {
   id: string;
   canRemoveAny: boolean;
   canRemoveOwn: boolean;
+  /** Editar nome e categoria de qualquer documento da aba. */
+  canEditAny?: boolean;
 }
 
 export function documentViewer(user: CurrentUser): DocumentViewer {
@@ -104,6 +109,7 @@ export function documentViewer(user: CurrentUser): DocumentViewer {
     id: user.id,
     canRemoveAny: can(user, "operacao.clientes.documentos.remover"),
     canRemoveOwn: can(user, "operacao.clientes.documentos.anexar"),
+    canEditAny: can(user, "operacao.clientes.documentos.editar"),
   };
 }
 
@@ -121,6 +127,10 @@ const LINKED_LABELS: Record<string, string> = {
 /** Documento da própria aba (vínculo "client")? Os de contrato, cobrança, chamado… pertencem àquelas telas. */
 function ownedByTab(doc: Document): boolean {
   return (doc.entityType ?? "client") === "client";
+}
+
+function editableBy(viewer: DocumentViewer, doc: Document): boolean {
+  return ownedByTab(doc) && canEditClientDocument({ canEditAny: Boolean(viewer.canEditAny), canEditOwn: viewer.canRemoveOwn, viewerId: viewer.id, uploadedById: doc.uploadedBy });
 }
 
 function removableBy(viewer: DocumentViewer, doc: Document, now: Date): boolean {
@@ -151,6 +161,7 @@ export function toClientDocumentRow(doc: Document, viewer: DocumentViewer, now =
     removedByName: doc.removedByName,
     removedReason: doc.removedReason,
     removable: active && removableBy(viewer, doc, now),
+    editable: active && editableBy(viewer, doc),
   };
 }
 
@@ -436,6 +447,74 @@ export async function removeClientDocument(clientId: string, documentId: string,
     console.error("[documentos do cliente] remoção sem registro no histórico", error);
   }
   return { ...doc, ...patch };
+}
+
+export interface ClientDocumentEdit {
+  title: string;
+  category?: string | null;
+}
+
+/**
+ * Edita nome e categoria de um documento da aba (quem enviou, ou quem tem a chave de editar). Renomear recalcula a
+ * versão pelo novo nome (o mesmo nome vira v2, v3…), com a trava de versões do cliente; nada é apagado e o antes e o
+ * depois ficam no histórico do cliente. Documento removido ou de outro registro (contrato, cobrança…) não muda aqui.
+ */
+export async function updateClientDocument(clientId: string, documentId: string, input: ClientDocumentEdit, actor: DocumentActor, viewer: DocumentViewer): Promise<Document> {
+  const title = cleanTitle(input.title);
+  if (!title) throw new ClientDocumentError("Informe o nome do documento (mínimo de 2 caracteres).");
+  // A categoria informada substitui a atual (vazia = sem categoria).
+  const category = cleanCategory(input.category ?? undefined);
+  const doc = await getById<Document>(COLLECTIONS.documents, documentId);
+  if (!doc || doc.clientId !== clientId) throw new ClientDocumentError("Documento não encontrado.");
+  if (!ownedByTab(doc)) throw new ClientDocumentError("Este documento pertence a outro registro (contrato, cobrança, chamado…) e não é editado por aqui.");
+  if (doc.status === "removido") throw new ClientDocumentError("Documento removido não pode ser editado.");
+  if (!editableBy(viewer, doc)) throw new PermissionError("Só quem enviou ou quem tem permissão para editar documentos pode editar este documento.");
+
+  let before: Document = doc;
+  let after: Document | null = null;
+  await docdb.runTransaction(async (tx: Transaction) => {
+    await tx.get(versionLockRef(clientId));
+    const snap = await txGetOwn(tx, docRef(doc.id));
+    if (!snap) throw new ClientDocumentError("Documento não encontrado.");
+    const current = { ...(snap.data() as Omit<Document, "id">), id: snap.id } as Document;
+    if (current.status === "removido") throw new ClientDocumentError("Documento removido não pode ser editado.");
+    const others = (await txList<Document>(tx, COLLECTIONS.documents, [["clientId", "==", clientId]])).filter((d) => d.id !== current.id);
+    const renamed = !sameDocumentTitle(current.name, title);
+    const version = renamed ? versionFor(others, title) : current.version;
+    const nextCategory = category;
+    before = current;
+    if (current.name === title && (current.category || undefined) === nextCategory && current.version === version) {
+      after = current;
+      return;
+    }
+    tx.update(docRef(current.id), { name: title, category: nextCategory ?? null, version, updatedAt: nowIso() });
+    after = { ...current, name: title, category: nextCategory, version };
+  });
+  const updated = after as Document | null;
+  if (!updated) throw new ClientDocumentError("Documento não encontrado.");
+  if (updated === before) return updated;
+
+  const changes: Record<string, { from: string; to: string }> = {};
+  if (before.name !== updated.name) changes.Nome = { from: before.name, to: updated.name };
+  if ((before.category ?? "") !== (updated.category ?? "")) changes.Categoria = { from: before.category ?? "—", to: updated.category ?? "—" };
+  if (before.version !== updated.version) changes["Versão"] = { from: `v${before.version}`, to: `v${updated.version}` };
+  try {
+    await emitEvent({
+      type: "document.updated",
+      actor: { id: actor.id, name: actor.name },
+      clientId,
+      entity: { type: "document", id: updated.id },
+      title: `Documento editado: ${updated.name}${updated.version > 1 ? ` (v${updated.version})` : ""}`,
+      description: Object.entries(changes)
+        .map(([k, v]) => `${k}: ${v.from} → ${v.to}`)
+        .join(" · "),
+      department: actor.departmentId as DepartmentKey | undefined,
+      payload: { fileId: updated.fileId, changes },
+    });
+  } catch (error) {
+    console.error("[documentos do cliente] edição sem registro no histórico", error);
+  }
+  return updated;
 }
 
 /** Erro das rotas de documento: permissão → 403; regra de negócio → 400 com a mensagem; o resto vai para o log. */
