@@ -36,7 +36,7 @@ import {
 } from "@/domain/types";
 import { getCommissionPaymentSettings, getPayablesSettings, listPayableAttachments } from "./payables";
 import { listSuppliers } from "./suppliers";
-import { can } from "@/server/auth/permissions";
+import { can, canSeeHref } from "@/server/auth/permissions";
 import type { CommissionScope } from "./permissions";
 import {
   commissionAllowed,
@@ -486,7 +486,7 @@ export interface RulesWorkspace {
   paymentDay: number;
   /** Alterar regras (financeiro.comissoes.regras.editar). */
   canManage: boolean;
-  can: { edit: boolean; toggle: boolean; exception: boolean; configure: boolean };
+  can: { edit: boolean; toggle: boolean; exception: boolean; configure: boolean; editProducts: boolean };
   selectedId?: string;
 }
 
@@ -593,6 +593,8 @@ export async function getRulesWorkspace(viewer: CurrentUser, selectedId?: string
       toggle: can(viewer, "financeiro.comissoes.regras.ativar"),
       exception: can(viewer, "financeiro.comissoes.regras.criar-excecao"),
       configure: can(viewer, "financeiro.comissoes.regras.configurar"),
+      // Comissão padrão é editada no cadastro do produto: o card só vira link para quem pode editar lá.
+      editProducts: canSeeHref(viewer, "/admin/produtos") && can(viewer, "admin.produtos.editar"),
     },
     selectedId,
   };

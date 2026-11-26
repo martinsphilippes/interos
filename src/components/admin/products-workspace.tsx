@@ -38,10 +38,18 @@ export function ProductsWorkspace({ products, templates, permissions = { create:
   const router = useRouter();
   const { searchParams, setLocal } = useAdminUrl();
   const [pending, startTransition] = React.useTransition();
-  const [drawer, setDrawer] = React.useState<ProductDrawerState>(null);
+  const [openDrawer, setDrawer] = React.useState<ProductDrawerState>(null);
   const q = searchParams.get("q") ?? "";
   const category = searchParams.get("categoria") ?? "";
   const active = searchParams.get("ativo") ?? "";
+  // Link direto para o cadastro (?produto=<id>, ex.: vindo de Regras de comissão): abre o drawer do produto.
+  const linkedId = searchParams.get("produto") ?? "";
+  const linked: ProductDrawerState = linkedId && products.some((p) => p.id === linkedId) ? { mode: "edit", id: linkedId } : null;
+  const drawer = openDrawer ?? linked;
+  const closeDrawer = () => {
+    setDrawer(null);
+    if (linkedId) setLocal({ produto: null });
+  };
 
   const items = React.useMemo(() => {
     const term = normalizeText(q);
@@ -253,7 +261,7 @@ export function ProductsWorkspace({ products, templates, permissions = { create:
         </>
       )}
 
-      <ProductDrawer state={drawer} product={selected} templates={templates} onClose={() => setDrawer(null)} readOnly={!permissions.edit} />
+      <ProductDrawer state={drawer} product={selected} templates={templates} onClose={closeDrawer} readOnly={!permissions.edit} />
     </div>
   );
 }

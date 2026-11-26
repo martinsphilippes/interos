@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { CalendarDays, History, Package, Pencil, Plus, Power, PowerOff, Scale, UserRound } from "lucide-react";
 import type { RuleRow, RulesWorkspace } from "@/server/commissions/queries";
 import { saveCommissionPaymentDayAction, saveCommissionRuleAction, setCommissionRuleActiveAction } from "@/server/commissions/actions";
 import { COMMISSION_BASE_LABELS, COMMISSION_REVENUE_LABELS, COMMISSION_SCOPE_LABELS, COMMISSION_TRIGGER_LABELS } from "@/domain/commissions";
 import type { CommissionTrigger } from "@/domain/types";
+import { formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -190,23 +192,43 @@ export function RulesWorkspaceView({ ws }: { ws: RulesWorkspace }) {
   );
 }
 
+/** Percentual no padrão brasileiro (2,5%), sem casas decimais desnecessárias. */
+function pct(value: number): string {
+  return `${formatNumber(value)}%`;
+}
+
 function ProductDefaultsCard({ ws }: { ws: RulesWorkspace }) {
   if (ws.productDefaults.length === 0) return null;
+  const canEdit = ws.can.editProducts;
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Package className="size-4 text-muted" /> Padrão do cadastro de produtos
         </CardTitle>
-        <CardDescription>Usado só quando nenhuma regra acima se aplica (percentual sobre o contratado, liberado no recebimento; recorrência na mensalidade indicada). Editado no cadastro do produto.</CardDescription>
+        <CardDescription>
+          Usado só quando nenhuma regra acima se aplica (percentual sobre o contratado, liberado no recebimento; recorrência na mensalidade indicada).{" "}
+          {canEdit ? "Clique no produto para editar o padrão dele." : "Editado no cadastro do produto (Administração › Produtos)."}
+        </CardDescription>
       </CardHeader>
       <CardContent className="pt-0">
         <ul className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
           {ws.productDefaults.map((p) => (
             <li key={p.id} className="flex min-w-0 justify-between gap-3">
-              <span className="truncate">{p.name}</span>
+              {canEdit ? (
+                <Link
+                  href={`/admin/produtos?produto=${encodeURIComponent(p.id)}`}
+                  className="inline-flex min-w-0 items-center gap-1.5 text-primary underline-offset-4 hover:underline"
+                  title={`Editar a comissão padrão de ${p.name}`}
+                >
+                  <span className="truncate">{p.name}</span>
+                  <Pencil className="size-3 shrink-0" aria-hidden />
+                </Link>
+              ) : (
+                <span className="truncate">{p.name}</span>
+              )}
               <span className="shrink-0 tabular-nums text-muted">
-                {p.setupPct}% · {p.recurringPct}% ({p.recurringReleaseInstallment}ª) · {p.hardwarePct}%
+                {pct(p.setupPct)} · {pct(p.recurringPct)} ({p.recurringReleaseInstallment}ª) · {pct(p.hardwarePct)}
               </span>
             </li>
           ))}
