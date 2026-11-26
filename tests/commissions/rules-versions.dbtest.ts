@@ -25,6 +25,9 @@ const OLD = `${RUN}_ct_old`;
 const NEW = `${RUN}_ct_new`;
 const REV = `${RUN}_ct_rev`;
 let ruleId = "";
+let otherRuleId = "";
+/** Regras ativas que já estavam no banco (ex.: seed): desativadas durante o teste e reativadas no fim. */
+let pausedRules: string[] = [];
 
 const iso = (d: string) => `${d}T12:00:00.000Z`;
 
@@ -91,6 +94,9 @@ function input(over: Record<string, unknown>) {
 
 beforeAll(async () => {
   if (!process.env.DATABASE_URL) throw new Error("Defina DATABASE_URL (veja scripts/db-local.sh)");
+  const sql = docdb.sql();
+  pausedRules = ((await sql`select id from interos.commission_rules where (data->>'active')::boolean`) as unknown as { id: string }[]).map((r) => r.id);
+  if (pausedRules.length) await sql`update interos.commission_rules set data = jsonb_set(data, '{active}', 'false') where id = any(${pausedRules})`;
   await create<User>(COLLECTIONS.users, { name: `Vendedor ${RUN}`, email: `${RUN}@teste.local`, role: "vendas", departmentId: "vendas", active: true } as never, SELLER);
   await create<Client>(COLLECTIONS.clients, { legalName: `Cliente ${RUN} LTDA`, tradeName: `Cliente ${RUN}`, document: "35176948000187", status: "ativo", mrr: 0, tags: [] } as never, CLIENT);
   await create<Product>(COLLECTIONS.products, { name: `ERP ${RUN}`, category: "erp", setupPrice: 0, monthlyPrice: 400, hardwarePrice: 0, billingType: "recorrente", commission: { setupPct: 0, recurringPct: 0, hardwarePct: 0, recurringReleaseInstallment: 3 }, active: true, order: 99 } as never, PRODUCT);
@@ -106,10 +112,12 @@ afterAll(async () => {
   await sql`delete from interos.commissions where data->>'contractId' = any(${contracts})`;
   await sql`delete from interos.billing where data->>'contractId' = any(${contracts})`;
   await sql`delete from interos.contracts where id = any(${contracts})`;
-  if (ruleId) {
-    await sql`delete from interos.commission_rule_versions where data->>'ruleId' = ${ruleId}`;
-    await sql`delete from interos.commission_rules where id = ${ruleId}`;
+  const created = [ruleId, otherRuleId].filter(Boolean);
+  if (created.length) {
+    await sql`delete from interos.commission_rule_versions where data->>'ruleId' = any(${created})`;
+    await sql`delete from interos.commission_rules where id = any(${created})`;
   }
+  if (pausedRules.length) await sql`update interos.commission_rules set data = jsonb_set(data, '{active}', 'true') where id = any(${pausedRules})`;
   await sql`delete from interos.commercial_plans where id = ${PLAN}`;
   await sql`delete from interos.products where id = ${PRODUCT}`;
   await sql`delete from interos.clients where id = ${CLIENT}`;
@@ -170,6 +178,24 @@ describe("regras v3 + motor no banco", () => {
     ]);
     expect(versions[2].summary).toContain("Valor");
     expect(versions[3].reason).toBe("acordo comercial retroativo");
+  });
+
+  it("regra exclusiva nova não duplica a comissão já adquirida da mesma parcela", async () => {
+    const { rule } = await saveCommissionRule(input({ name: `Prioritária ${RUN}`, code: `COM-${RUN}-P`, priority: 1, value: 10, installments: [3, 6], baseCap: null }), ACTOR, { applyToPending: true });
+    otherRuleId = rule.id;
+    const r = await reconcileCommissions({ contractIds: [NEW], actor: ACTOR, emit: false });
+    const list_ = await commissionsOf(NEW);
+    const earnedM3 = slot(list_, "m3").filter((c) => ["liberada", "titulo_gerado", "paga"].includes(c.status));
+    expect(earnedM3).toHaveLength(1);
+    expect(earnedM3[0].ruleId).toBe(ruleId);
+    expect(r.skippedDuplicate).toBeGreaterThanOrEqual(1);
+    // A 6ª (pendente) passa para a regra prioritária: 10% de 400.
+    const m6 = slot(list_, "m6");
+    expect(m6).toHaveLength(1);
+    expect(m6[0].ruleId).toBe(otherRuleId);
+    expect(m6[0].amount).toBe(40);
+    // Desliga a prioritária para não interferir no próximo caso (reaplicado: só pendentes mudam).
+    await saveCommissionRule(input({ id: otherRuleId, name: `Prioritária ${RUN}`, code: `COM-${RUN}-P`, priority: 1, value: 10, installments: [3, 6], baseCap: null, active: false }), ACTOR, { applyToPending: true });
   });
 
   it("cancelamento: pendente é cancelada; adquirida só é estornada se a versão em que nasceu mandava estornar", async () => {

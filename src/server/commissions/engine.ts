@@ -70,10 +70,12 @@ export interface ReconcileResult {
   payables: number;
   /** Tipos de receita pulados porque o motor v1 já liberou/pagou comissão para o item. */
   skippedLegacy: number;
+  /** Parcelas puladas porque já têm comissão adquirida de outra regra exclusiva (sem comissão em dobro). */
+  skippedDuplicate: number;
   commissionIds: string[];
 }
 
-const emptyResult = (): ReconcileResult => ({ contracts: 0, created: 0, updated: 0, released: 0, inGrace: 0, awaiting: 0, cancelled: 0, payables: 0, skippedLegacy: 0, commissionIds: [] });
+const emptyResult = (): ReconcileResult => ({ contracts: 0, created: 0, updated: 0, released: 0, inGrace: 0, awaiting: 0, cancelled: 0, payables: 0, skippedLegacy: 0, skippedDuplicate: 0, commissionIds: [] });
 
 interface Desired {
   id: string;
@@ -179,6 +181,14 @@ async function reconcileContract(contract: Contract, ctx: ContractContext): Prom
   const totals = effectiveTotals(items);
   const legacy = Array.from(existing.values()).filter((c) => !c.sourceKey);
   const legacyEarned = new Set(legacy.filter((c) => c.status === "liberada" || c.status === "titulo_gerado" || c.status === "paga").map((c) => `${c.productId}|${c.revenueType}`));
+  // Sem comissão em dobro para o mesmo evento: parcela (contrato|tipo|produto|parcela) que já tem comissão ADQUIRIDA
+  // de regra exclusiva não ganha outra de outra regra exclusiva (ex.: a regra foi substituída ou reaplicada depois). A
+  // adquirida prevalece; cumulativas continuam somando.
+  const earnedExclusiveSlots = new Map<string, string>();
+  for (const c of existing.values()) {
+    if (!c.sourceKey || !(c.status === "liberada" || c.status === "titulo_gerado" || c.status === "paga") || c.ruleSnapshot?.overridesDefault === false) continue;
+    earnedExclusiveSlots.set(c.sourceKey.split("|").slice(0, 4).join("|"), c.id);
+  }
   const desired = new Map<string, Desired>();
   const seenProducts = new Map<string, number>();
   // Não retroatividade: regras como estavam na data da venda (salvo reaplicação autorizada).
@@ -198,6 +208,11 @@ async function reconcileContract(contract: Contract, ctx: ContractContext): Prom
         for (const spec of planSlots(rule, item, contract, totals, ctx.billings)) {
           const sourceKey = [contract.id, revenueType, productKey, spec.slot, rule.id].join("|");
           const id = commissionIdFor(sourceKey);
+          const earnedId = earnedExclusiveSlots.get([contract.id, revenueType, productKey, spec.slot].join("|"));
+          if (rule.overridesDefault && earnedId && earnedId !== id) {
+            result.skippedDuplicate++;
+            continue;
+          }
           const evaluation = evaluateSlot({ rule, spec, item, contract, billings: ctx.billings, saleDate, now });
           desired.set(id, {
             id,
