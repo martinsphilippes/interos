@@ -1144,6 +1144,30 @@ pelo motor único (`entityType: "conversa"`), as permissões pelo catálogo (`sr
     `/api/chat/{start,messages}`: token HMAC do visitante, limites por IP (hash) e por minuto, e o visitante só vê as
     mensagens do canal `chat` das conversas dele (nota interna e sussurro nunca saem).
 
+## Integração com o ERP Intercert (`src/server/erp/*`, `src/domain/erp/*`, aba Módulos ERP da ficha)
+
+Visão completa, decisões, homologação e ativação gradual em `docs/central-de-produtos.md`. Pontos que valem para quem
+mexer no código:
+
+- **Inerte sem configuração.** `getErpConfig()` devolve `null` sem `ERP_INTERCERT_URL` + `ERP_INTERCERT_AMBIENTE`; toda
+  leitura e toda escrita passam por ele. A aba mostra o que falta; a rotina e o painel de Integrações não fazem nada.
+- **Cliente HTTP único** (`http.ts`): envelopes `{data, meta}` e `{erro}`/`{error}`, `X-Request-Id`, idempotência,
+  assinatura HMAC (`signature.ts`), repetição só em falha temporária, `redirect: "error"`, `setErpFetch` para testes.
+- **Licença = retrato completo** (`changes.ts`): `reviewLicenseChange` (plano puro de `domain/erp/license.ts` +
+  simulação) → `submitLicenseChange` (transação: alteração aberta, versão base, nova versão) → `sendLicenseChange`
+  (marca o envio sob trava e não envia o que foi cancelado) → `finish`/`failed` → `reconcileChange` pelo histórico do
+  ERP. O id da alteração é o `X-Interos-Event-Id`; nova tentativa reenvia o mesmo corpo. Primeira licença exige a
+  leitura do ERP; desligamento exige a simulação.
+- **Concorrência**: uma alteração aberta por empresa; `baseVersion` conferida na transação (`versao_mudou`).
+- **Estados** (`domain/erp/status.ts`): comercial × operacional × sincronização → rótulo principal; a Torre
+  (`domain/erp/tower.ts`) separa módulo desativado, sem movimento e dado indisponível.
+- **Rotina**: passo "ERP Intercert" do agendador de 5 minutos (`sweep.ts`): reenvios só de licença do ambiente
+  configurado e conferência do catálogo a cada 6 horas.
+- **Permissões**: seções `operacao.clientes.erp.ver`, `erp-historico.ver`, `erp-torre.ver`; ações `erp.alterar`,
+  `erp.aprovar`, `erp.provisionar`, `admin.integracoes.erp-catalogo`, `admin.integracoes.erp-reprocessar`.
+- **Testes**: `tests/erp/*.test.ts` (puros e cliente HTTP) e `tests/erp/erp-changes.dbtest.ts` (serviço contra o ERP
+  simulado de `tests/erp/fake-erp.ts`).
+
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.
 - Banco local: Postgres 15+ e `DATABASE_ADMIN_URL=postgres://postgres@127.0.0.1:5432/interos npm run db:local`
