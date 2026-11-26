@@ -176,6 +176,10 @@ export const COLLECTIONS = {
   erpLicenses: "erp_licenses",
   /** Alterações enviadas ao ERP (licença, provisionamento, vínculo): pedido, antes/depois, tentativas e resposta. */
   erpChangeRequests: "erp_change_requests",
+  /** Ficha comercial de cada unidade comercial do catálogo do ERP (id = código da unidade) com as versões de preço. */
+  productModules: "product_modules",
+  /** Pacotes comerciais por segmento, com as versões (módulos incluídos, mensalidade e implantação por vigência). */
+  productPackages: "product_packages",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 

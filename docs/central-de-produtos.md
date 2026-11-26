@@ -255,8 +255,8 @@ eventos desta.
 
 | Fase | Entrega | Depende de |
 | --- | --- | --- |
-| 7 | **Gestão de Produtos** (área própria): produto → módulo → submódulo → recurso, hardware separado; ficha do módulo comercial (descrição, regras, dependências comerciais) | catálogo importado |
-| 8 | **Preços e pacotes versionados**: modelos de preço (fixo, por unidade, por usuário, por faixa, setup), pacotes por segmento com versão, sem cobrança dupla (o que vem no pacote não é cobrado de novo) | 7 |
+| 7 | **Gestão de Produtos** (área própria): produto → módulo → submódulo → recurso, hardware separado; ficha do módulo comercial (descrição, regras, dependências comerciais) — **entregue (seção 16)** | catálogo importado |
+| 8 | **Preços e pacotes versionados**: modelos de preço (fixo, por unidade, por usuário, por faixa, setup), pacotes por segmento com versão, sem cobrança dupla (o que vem no pacote não é cobrado de novo) — **entregue (seção 16)** | 7 |
 | 9 | **Proposta → contrato → aditivo** com módulos: o aceite do aditivo prepara a alteração de licença (revisão e aprovação como hoje) | 8 + circuito de receita existente |
 | 10 | **Cobrança**: mensalidade por módulo no faturamento (boletos Bradesco já existentes), testes que viram contrato, limites e excedentes | 9 |
 | 11 | **Uso e inteligência comercial**: uso por módulo (já lido do ERP) → alertas de baixo uso (risco de cancelamento), módulos usados sem contrato e sugestões de venda; pedidos de módulo vindos do ERP | 7 + uso |
@@ -265,3 +265,43 @@ eventos desta.
 
 Critério de aceite de cada fase: testes de unidade e de banco, verificação de acesso completa, homologação com o ERP de
 homologação e nenhuma alteração irreversível em produção sem validação.
+
+---
+
+## 16. Gestão de Produtos (fases 7 e 8, 26/11/2026)
+
+**Problema.** Os módulos do ERP não tinham camada comercial: não havia onde dizer o que é vendido, por quanto, desde
+quando e em que pacote, nem como evitar cobrar duas vezes um módulo que já vem no pacote.
+
+**Onde.** Administração › Produtos, nas abas **Módulos do ERP**, **Pacotes** e **Simulador de preço** (a aba
+**Produtos** continua o catálogo usado em propostas, contratos e comissões; hardware e serviços seguem lá).
+
+| Aba | O que faz |
+| --- | --- |
+| Módulos do ERP | As 67 unidades comerciais do catálogo agrupadas pelos 53 módulos do ERP, com situação comercial (em definição, à venda, sob consulta, descontinuado), preço vigente e preço agendado. A ficha tem nome comercial, texto para proposta, segmentos, dependências comerciais, observações internas, o histórico de preços (nova versão, cancelamento da que ainda não começou) e o que a unidade inclui, exige e quem depende dela no ERP |
+| Pacotes | Pacotes por segmento com versões (módulos incluídos, mensalidade, implantação, início da vigência, motivo). Novo pacote parte de um pacote de partida do ERP (varejo essencial, moda, supermercado, bebidas, e-commerce, escritório contábil) ou do zero; mostra dependências que faltam, módulos que o ERP ainda não vende e a economia sobre os mesmos módulos avulsos |
+| Simulador | Pacote + módulos avulsos com quantidades, pelo preço vigente na data escolhida, sem cobrança dupla; aponta dependências que faltam (com "Acrescentar") e copia o resumo para a proposta |
+
+**Regras de negócio.**
+
+1. Preço e pacote são **versionados por data**: mudar = nova versão a partir de hoje ou de uma data futura; o passado
+   não muda. Versão que começa hoje ou depois pode ser cancelada (fica no histórico).
+2. Modelos: mensalidade fixa; por quantidade (base com unidades incluídas + valor por unidade adicional, ex.: terminal,
+   usuário, filial); por faixa (o valor da faixa em que a quantidade cai). Implantação é cobrança única.
+3. **Sem cobrança dupla**: o que está no pacote não é cobrado de novo; dentro do pacote só se cobra a quantidade além
+   da incluída. Sem preço vigente, o total aparece como incompleto (nunca se inventa preço).
+4. "À venda" só para módulos que o ERP já vende (homologados). Um módulo à venda sem preço avulso é vendido só em
+   pacote.
+5. Pacote nasce em definição e só vai à venda com versão vigente ou agendada.
+
+**Catálogo.** Enquanto a integração com o ERP não está ligada em produção, a Gestão de Produtos usa o **catálogo de
+referência** (a proposta 2.0.0 do ERP, embutida no INTEROS) e avisa isso na tela. Quando o catálogo oficial for
+importado, ele passa a valer automaticamente; fichas cujo código saiu do catálogo aparecem para revisão.
+
+**Acessos.** Por padrão só administradores veem e alteram. Para a diretoria ou o comercial, libere em Administração ›
+Usuários › Perfis e acessos: "Módulos do ERP", "Pacotes" e "Simulador de preço" (ver) e, se for o caso, editar a
+ficha, criar versões de preço e editar pacotes (as duas últimas são sensíveis).
+
+**Próximo passo (fase 9).** Usar a simulação na proposta e no contrato (guardando a versão de preço e de pacote usada),
+para o aceite preparar a alteração de licença no ERP.
+

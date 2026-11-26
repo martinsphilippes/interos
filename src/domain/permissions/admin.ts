@@ -290,7 +290,31 @@ export const ADMIN = {
         icon: "Package",
         wave: 1,
       },
-      sections: [],
+      // Gestão de Produtos (fases 7 e 8 da Central de Produtos): abas ?aba= da mesma página.
+      sections: [
+        {
+          key: "admin.produtos.modulos.ver",
+          tab: "modulos",
+          label: "Módulos do ERP (ficha comercial e preços)",
+          // Novo: catálogo do ERP por módulo com a ficha comercial, o preço vigente e o histórico de preços.
+          rule: { role: "admin" },
+          viewGuards: [{ guard: "src/server/products/actions.ts#loadUnitDetailAction", label: "O que a unidade inclui e exige no catálogo do ERP" }],
+        },
+        {
+          key: "admin.produtos.pacotes.ver",
+          tab: "pacotes",
+          label: "Pacotes",
+          // Novo: pacotes por segmento com versões (módulos incluídos, mensalidade e implantação por vigência).
+          rule: { role: "admin" },
+        },
+        {
+          key: "admin.produtos.simulador.ver",
+          tab: "simulador",
+          label: "Simulador de preço",
+          // Novo: pacote + módulos avulsos com as quantidades, sem cobrança dupla (cálculo na própria tela).
+          rule: { role: "admin" },
+        },
+      ],
       actions: [
         {
           key: "admin.produtos.criar",
@@ -317,6 +341,37 @@ export const ADMIN = {
           // Hoje: admin/actions.ts:462-464 requireAdmin() (src/server/admin/actions.ts:45-49: user.isAdmin)
           rule: { role: "admin" },
           guards: ["src/server/admin/actions.ts#setProductActive"],
+        },
+        {
+          key: "admin.produtos.modulos.editar",
+          label: "Editar a ficha comercial dos módulos do ERP (nome, texto para proposta, situação, regras)",
+          verb: "editar",
+          // Novo: grava em transação com o antes e o depois na auditoria (product_module.updated).
+          rule: { role: "admin" },
+          guards: ["src/server/products/actions.ts#saveCommercialModuleAction"],
+        },
+        {
+          key: "admin.produtos.modulos.precificar",
+          label: "Criar e cancelar versões de preço dos módulos do ERP",
+          verb: "precificar",
+          // Novo: preço versionado por data de início; versão que já começou não muda (só uma nova a partir de hoje).
+          rule: { role: "admin" },
+          guards: ["src/server/products/actions.ts#addModulePriceAction", "src/server/products/actions.ts#cancelModulePriceAction"],
+          sensitive: true,
+        },
+        {
+          key: "admin.produtos.pacotes.editar",
+          label: "Criar pacotes, editar e criar ou cancelar versões de pacote",
+          verb: "editar",
+          // Novo: pacote nasce em definição; à venda exige versão vigente ou agendada com módulos do catálogo.
+          rule: { role: "admin" },
+          guards: [
+            "src/server/products/actions.ts#createPackageAction",
+            "src/server/products/actions.ts#updatePackageAction",
+            "src/server/products/actions.ts#addPackageVersionAction",
+            "src/server/products/actions.ts#cancelPackageVersionAction",
+          ],
+          sensitive: true,
         },
       ],
       scope: null,
