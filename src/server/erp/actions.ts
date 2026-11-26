@@ -347,7 +347,8 @@ export async function importErpCatalogAction(): Promise<Result<{ status: string;
 export async function reprocessErpChangesAction(): Promise<Result<{ attempted: number; applied: number; failed: number }>> {
   try {
     await requirePermission("admin.integracoes.erp-reprocessar");
-    const res = await processPendingErpChanges(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
+    // Agora, sem esperar a próxima tentativa agendada (mesma chave: o ERP não duplica).
+    const res = await processPendingErpChanges(new Date(), 50, { includeUnscheduled: true });
     revalidatePath("/admin/integracoes");
     return { ok: true, data: res };
   } catch (error) {

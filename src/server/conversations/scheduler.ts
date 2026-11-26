@@ -142,6 +142,12 @@ export async function runCentralSweep(now: Date = new Date()): Promise<CentralSw
     return `${await runDueReportSchedules(t)} envio(s) processado(s)`;
   });
 
+  // ERP Intercert: reenvio das alterações de módulos pendentes e conferência do catálogo (inerte sem a integração).
+  await step(report, "ERP Intercert", async () => {
+    const { runErpSweep } = await import("@/server/erp/sweep");
+    return runErpSweep(now);
+  });
+
   await step(report, "registro da execução", async () => {
     const docs = await list<Settings>(COLLECTIONS.settings, { where: [["key", "==", STATE_SETTING]] });
     const value = { ...(docs[0]?.value ?? {}), lastRunAt: now.toISOString(), lastRunOk: report.steps.every((s) => s.ok) };

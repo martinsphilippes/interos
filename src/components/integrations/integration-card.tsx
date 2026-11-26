@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, CircleDashed, CreditCard, ExternalLink, KeyRound, Mail, MapPin, MessageCircle, PenLine, Phone, Settings2 } from "lucide-react";
+import { Boxes, Bot, CheckCircle2, CircleDashed, CreditCard, ExternalLink, KeyRound, Mail, MapPin, MessageCircle, PenLine, Phone, Settings2 } from "lucide-react";
 import type { IntegrationKey, IntegrationState, IntegrationStatus } from "@/server/integrations/types";
 import { INTEGRATION_CATEGORY_LABELS, INTEGRATION_STATE_LABELS } from "@/server/integrations/types";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ const ICON: Record<IntegrationKey, React.ReactNode> = {
   mapas: <MapPin />,
   sso: <KeyRound />,
   ia: <Bot />,
+  erp: <Boxes />,
 };
 
 export const STATE_TONE: Record<IntegrationState, Tone> = { conectado: "success", nao_conectado: "neutral", verificar: "warning" };

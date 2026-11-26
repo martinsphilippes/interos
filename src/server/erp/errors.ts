@@ -64,8 +64,11 @@ export class ErpError extends Error {
   }
 }
 
-/** Códigos de "a mesma chave ainda está sendo processada": esperar e repetir com a MESMA chave. */
-const IN_PROGRESS_CODES = new Set(["solicitacao_em_andamento", "in_progress"]);
+/**
+ * "Ainda em andamento no ERP": a mesma chave sendo processada, ou outro retrato da mesma empresa sendo aplicado
+ * (`license_busy`). Esperar e repetir com a MESMA chave.
+ */
+const IN_PROGRESS_CODES = new Set(["solicitacao_em_andamento", "in_progress", "license_busy"]);
 const NOT_CONFIGURED_CODES = new Set(["servico_nao_configurado", "integration_not_configured", "not_configured"]);
 
 export function classifyErpError(status: number, code: string): ErpErrorKind {

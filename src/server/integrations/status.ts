@@ -162,6 +162,30 @@ const CATALOG: CatalogEntry[] = [
     docsUrl: "https://docs.anthropic.com/en/api/messages",
     fallback: "Somente regras determinísticas (sem texto gerado por IA).",
   },
+  {
+    key: "erp",
+    name: "ERP Intercert",
+    enables:
+      "Aba Módulos ERP da ficha do cliente: catálogo de módulos, licença por empresa (ativar, desligar, testar, agendar), simulação de impacto, aprovação, histórico, criação ou vínculo da empresa no ERP e Torre de Controle.",
+    requirements: [
+      { label: "Licenças com envio assinado", vars: ["ERP_INTERCERT_URL", "ERP_INTERCERT_AMBIENTE", "ERP_INTERCERT_TOKEN_LICENCAS", "ERP_INTERCERT_SEGREDO_ASSINATURA"], implemented: true },
+      { label: "Licenças só leitura", vars: ["ERP_INTERCERT_URL", "ERP_INTERCERT_AMBIENTE", "ERP_INTERCERT_TOKEN_LICENCAS"], implemented: true },
+    ],
+    optional: [
+      { name: "ERP_INTERCERT_CREDENCIAL_PROVISIONAMENTO", description: "Credencial <id>.<segredo> da API de provisionamento: criar e vincular empresas." },
+      { name: "ERP_INTERCERT_URL_PROVISIONAMENTO", description: "Endereço próprio da API de provisionamento (só se for diferente de ERP_INTERCERT_URL)." },
+      { name: "ERP_INTERCERT_CREDENCIAL_TORRE", description: "Credencial <id>.<segredo> da Torre de Controle (somente leitura)." },
+      { name: "ERP_INTERCERT_URL_TORRE", description: "Endereço próprio da Torre de Controle (só se for diferente de ERP_INTERCERT_URL)." },
+    ],
+    descriptions: {
+      ERP_INTERCERT_URL: "Endereço base do ERP (https://…; http só para localhost).",
+      ERP_INTERCERT_AMBIENTE: "homologacao ou producao (obrigatório). Vínculos, catálogo e histórico ficam separados por ambiente.",
+      ERP_INTERCERT_TOKEN_LICENCAS: "Token do cliente INTEROS na API de licenças e módulos do ERP.",
+      ERP_INTERCERT_SEGREDO_ASSINATURA: "Segredo HMAC que assina o envio da licença (X-Interos-Signature). Sem ele, a aba fica só leitura.",
+    },
+    docsUrl: "https://github.com/martinsphilippes/interos/blob/main/docs/central-de-produtos.md",
+    fallback: "Sem a integração, a aba Módulos ERP explica o que falta e nada é enviado ao ERP: os módulos continuam sendo geridos no próprio ERP.",
+  },
 ];
 
 function hasEnv(name: string): boolean {

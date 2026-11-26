@@ -406,12 +406,17 @@ export async function sendLicenseChange(id: string): Promise<ErpChangeRequest> {
   if (change.status !== "enviando" && change.status !== "falhou") return change;
   if (!change.snapshot || !change.erpCompanyId) throw new ErpChangeBlocked("Esta alteração não tem retrato para enviar.", "estado_invalido");
   const startedAt = nowIso();
+  // Marca o envio sob trava: se a alteração foi cancelada (ou concluída) entre a leitura e aqui, não envia.
+  let proceed = false;
   await docdb.runTransaction(async (tx) => {
+    proceed = false;
     const snap = await txGetOwn(tx, changeRef(id));
     const current = snap ? (snap.data() as unknown as ErpChangeRequest) : null;
     if (!current || (current.status !== "enviando" && current.status !== "falhou")) return;
     tx.update(changeRef(id), { status: "enviando", lastAttemptAt: startedAt, updatedAt: startedAt });
+    proceed = true;
   });
+  if (!proceed) return (await getChange(id)) ?? change;
   try {
     const res = await putLicense(change.erpCompanyId, change.snapshot, { eventId: change.id, actor: actorHeader(change.approval && !change.approval.self ? change.approval.by : change.requestedBy) });
     return await finish(id, res.data, res.requestId);
@@ -590,13 +595,12 @@ export async function cancelLicenseChange(id: string, actor: UserRef, reason: st
     const snap = await txGetOwn(tx, changeRef(id));
     const fresh = snap ? ({ ...(snap.data() as unknown as ErpChangeRequest), id } as ErpChangeRequest) : null;
     if (!fresh || (fresh.status !== "aguardando_aprovacao" && fresh.status !== "falhou")) throw new ErpChangeBlocked("Esta alteração mudou de situação; recarregue.", "estado_invalido");
+    // Leituras antes das escritas (regra da transação).
+    const recSnap = fresh.linkId ? await txGetOwn(tx, licenseRef(fresh.linkId)) : null;
+    const rec = recSnap ? (recSnap.data() as unknown as ErpLicenseRecord) : null;
     const patch = { status: "cancelada" as const, cancelled: { by: actor, at, reason: why }, nextAttemptAt: null, updatedAt: at };
     tx.update(changeRef(id), patch);
-    if (fresh.linkId) {
-      const recSnap = await txGetOwn(tx, licenseRef(fresh.linkId));
-      const rec = recSnap ? (recSnap.data() as unknown as ErpLicenseRecord) : null;
-      if (rec?.openChangeId === id) tx.update(licenseRef(fresh.linkId), { openChangeId: null, updatedAt: at });
-    }
+    if (fresh.linkId && rec?.openChangeId === id) tx.update(licenseRef(fresh.linkId), { openChangeId: null, updatedAt: at });
     out = { ...fresh, ...patch };
   });
   return out as unknown as ErpChangeRequest;
@@ -622,17 +626,29 @@ export async function reconcileChange(change: ErpChangeRequest): Promise<boolean
   }
 }
 
-/** Rotina (a cada 5 min): novas tentativas vencidas e envios interrompidos, com a mesma chave. */
-export async function processPendingErpChanges(now = new Date(), max = 20): Promise<{ attempted: number; applied: number; failed: number }> {
-  if (!getErpConfig()?.licenseToken) return { attempted: 0, applied: 0, failed: 0 };
+/**
+ * Rotina (a cada 5 min): novas tentativas vencidas e envios interrompidos, com a mesma chave. Só alterações de licença
+ * do ambiente configurado (criação de empresa é retomada pela pessoa; outro ambiente nunca é enviado a este ERP).
+ * `includeUnscheduled` (reenvio manual pela administração): todas as que aguardam sincronização, agora, inclusive as
+ * que pararam sem nova tentativa agendada (ex.: credencial recusada, já corrigida).
+ */
+export async function processPendingErpChanges(now = new Date(), max = 20, options: { includeUnscheduled?: boolean } = {}): Promise<{ attempted: number; applied: number; failed: number }> {
+  const config = getErpConfig();
+  if (!config?.licenseToken) return { attempted: 0, applied: 0, failed: 0 };
+  const scope: [string, "==", string][] = [
+    ["kind", "==", "licenca"],
+    ["environment", "==", config.environment],
+  ];
   const [failedList, sending] = await Promise.all([
-    list<ErpChangeRequest>(COLLECTIONS.erpChangeRequests, { where: [["status", "==", "falhou"]] }),
-    list<ErpChangeRequest>(COLLECTIONS.erpChangeRequests, { where: [["status", "==", "enviando"]] }),
+    list<ErpChangeRequest>(COLLECTIONS.erpChangeRequests, { where: [["status", "==", "falhou"], ...scope] }),
+    list<ErpChangeRequest>(COLLECTIONS.erpChangeRequests, { where: [["status", "==", "enviando"], ...scope] }),
   ]);
   const due = [
-    ...failedList.filter((c) => c.nextAttemptAt && Date.parse(c.nextAttemptAt) <= now.getTime()),
+    ...failedList.filter((c) => options.includeUnscheduled || (c.nextAttemptAt !== null && Date.parse(c.nextAttemptAt) <= now.getTime())),
     ...sending.filter((c) => now.getTime() - Date.parse(c.lastAttemptAt ?? c.createdAt) > STUCK_SENDING_MS),
-  ].slice(0, max);
+  ]
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+    .slice(0, max);
   let applied = 0;
   let failedCount = 0;
   for (const change of due) {
