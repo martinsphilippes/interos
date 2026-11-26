@@ -13,7 +13,9 @@ import "server-only";
  * Sem a credencial de uma família, as telas dela mostram "não configurado" e nada é enviado.
  */
 
-export type ErpEnvironment = "homologacao" | "producao";
+import type { ErpEnvironment } from "@/domain/erp/types";
+
+export type { ErpEnvironment };
 export type ErpApi = "licencas" | "provisionamento" | "torre";
 
 export const ERP_ENV_VARS = {
@@ -124,8 +126,3 @@ export function erpIntegrationState(config: ErpConfig | null = getErpConfig()): 
     missing: Array.from(new Set(missing)),
   };
 }
-
-export const ERP_ENVIRONMENT_LABELS: Record<ErpEnvironment, string> = {
-  homologacao: "Homologação",
-  producao: "Produção",
-};
