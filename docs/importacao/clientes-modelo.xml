@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MODELO DE CARGA MASSIVA DE CLIENTES – Interos (versão 1.0)
+  Esquema: docs/importacao/clientes.xsd · valide com:
+    xmllint (opções noout e schema): docs/importacao/clientes.xsd clientes-modelo.xml
+
+  REGRAS DE PREENCHIMENTO
+  - Repita o bloco <cliente> para cada cliente. Apague os 3 exemplos antes de carregar.
+  - Obrigatórios: atributo codigoExterno, razaoSocial, nomeFantasia, status. O resto é opcional:
+    omita a tag (não deixe vazia) quando não tiver o dado.
+  - codigoExterno = código do cliente no sistema antigo. Único no arquivo. É ele que permite
+    reenviar o arquivo corrigido sem duplicar ninguém.
+  - Números SÓ COM DÍGITOS: documento (CPF 11 / CNPJ 14), telefone/whatsapp (DDD + número, 10 ou 11),
+    cep (8), cpf do contato (11). Sem ponto, traço, barra, parênteses ou +55.
+  - Datas no formato AAAA-MM-DD. Valores com ponto decimal: 1250.90 (sem R$ e sem milhar).
+  - Responsáveis são o E-MAIL DE LOGIN do usuário no Interos (o importador converte para o usuário).
+  - Escape de caracteres: & vira &amp;  < vira &lt;  (ex.: "Silva &amp; Filhos Ltda").
+
+  VALORES ACEITOS
+  - status:   lead | prospect | ativo | em_implantacao | inativo | cancelado
+  - segmento: varejo | supermercado | farmacia | restaurante | atacado | loja_de_roupas | autopecas |
+              material_de_construcao | otica | pet_shop | servicos | industria | outro
+  - status do produto: ativo | em_implantacao | suspenso | cancelado
+  - uf: sigla com 2 letras maiúsculas (SP, RJ, MG...)
+  - origem: chave da origem de lead cadastrada no Interos (ex.: indicacao, site, google, legado)
+  - tags: até 20 por cliente, até 40 caracteres cada
+  - contato: atributos principal="true|false" e decisor="true|false" (no máximo 1 principal por cliente)
+  - produto/nome: nome exatamente igual ao do catálogo (Admin › Produtos)
+-->
+<cargaClientes versao="1.0" origem="sistema-legado" geradoEm="2026-11-26T09:00:00-03:00">
+
+  <!-- EXEMPLO 1: cliente ATIVO completo (com contatos e produtos contratados) -->
+  <cliente codigoExterno="LEG-000123">
+    <razaoSocial>Supermercado Bom Preço Ltda</razaoSocial>
+    <nomeFantasia>Bom Preço</nomeFantasia>
+    <documento>11222333000181</documento>
+    <segmento>supermercado</segmento>
+    <status>ativo</status>
+    <origem>legado</origem>
+    <telefone>1133334444</telefone>
+    <whatsapp>11999998888</whatsapp>
+    <email>financeiro@bompreco.com.br</email>
+    <site>https://www.bompreco.com.br</site>
+    <clienteDesde>2023-03-15</clienteDesde>
+    <endereco>
+      <logradouro>Avenida Paulista</logradouro>
+      <numero>1000</numero>
+      <complemento>Loja 2</complemento>
+      <bairro>Bela Vista</bairro>
+      <cidade>São Paulo</cidade>
+      <uf>SP</uf>
+      <cep>01310100</cep>
+    </endereco>
+    <responsaveis>
+      <comercial>vendedor@suaempresa.com.br</comercial>
+      <cs>cs@suaempresa.com.br</cs>
+      <implantacao>implantacao@suaempresa.com.br</implantacao>
+    </responsaveis>
+    <tags>
+      <tag>rede</tag>
+      <tag>3 lojas</tag>
+    </tags>
+    <observacoes>Cliente migrado do sistema antigo. Fecha a folha no dia 25.</observacoes>
+    <optOutComunicacao>
+      <whatsapp>false</whatsapp>
+      <email>false</email>
+    </optOutComunicacao>
+    <contatos>
+      <contato principal="true" decisor="true">
+        <nome>Maria Oliveira</nome>
+        <cargo>Sócia-diretora</cargo>
+        <telefone>1133334445</telefone>
+        <whatsapp>11988887777</whatsapp>
+        <email>maria@bompreco.com.br</email>
+        <cpf>12345678909</cpf>
+      </contato>
+      <contato principal="false" decisor="false">
+        <nome>João Souza</nome>
+        <cargo>Gerente de TI</cargo>
+        <whatsapp>11977776666</whatsapp>
+        <email>ti@bompreco.com.br</email>
+      </contato>
+    </contatos>
+    <produtos>
+      <produto>
+        <nome>ERP Varejo</nome>
+        <plano>Profissional</plano>
+        <quantidade>3</quantidade>
+        <valorSetup>1500.00</valorSetup>
+        <valorMensal>890.00</valorMensal>
+        <valorHardware>0.00</valorHardware>
+        <status>ativo</status>
+        <inicio>2023-04-01</inicio>
+      </produto>
+      <produto>
+        <nome>TEF</nome>
+        <quantidade>6</quantidade>
+        <valorMensal>45.00</valorMensal>
+        <status>cancelado</status>
+        <inicio>2023-04-01</inicio>
+        <cancelamento>2025-08-31</cancelamento>
+        <motivoCancelamento>Trocou de adquirente.</motivoCancelamento>
+      </produto>
+    </produtos>
+  </cliente>
+
+  <!-- EXEMPLO 2: PROSPECT (em negociação, sem produtos) -->
+  <cliente codigoExterno="LEG-000124">
+    <razaoSocial>Farmácia Saúde &amp; Vida Eireli</razaoSocial>
+    <nomeFantasia>Saúde &amp; Vida</nomeFantasia>
+    <documento>44555666000181</documento>
+    <segmento>farmacia</segmento>
+    <status>prospect</status>
+    <origem>indicacao</origem>
+    <whatsapp>31988776655</whatsapp>
+    <email>contato@saudevida.com.br</email>
+    <endereco>
+      <cidade>Belo Horizonte</cidade>
+      <uf>MG</uf>
+    </endereco>
+    <responsaveis>
+      <comercial>vendedor@suaempresa.com.br</comercial>
+    </responsaveis>
+    <contatos>
+      <contato principal="true" decisor="true">
+        <nome>Carlos Lima</nome>
+        <cargo>Proprietário</cargo>
+        <whatsapp>31988776655</whatsapp>
+      </contato>
+    </contatos>
+  </cliente>
+
+  <!-- EXEMPLO 3: LEAD pessoa física (mínimo + CPF) -->
+  <cliente codigoExterno="LEG-000125">
+    <razaoSocial>Ana Paula Ferreira</razaoSocial>
+    <nomeFantasia>Ateliê da Ana</nomeFantasia>
+    <documento>98765432100</documento>
+    <segmento>loja_de_roupas</segmento>
+    <status>lead</status>
+    <telefone>4133221100</telefone>
+  </cliente>
+
+</cargaClientes>

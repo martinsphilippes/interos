@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Esquema da carga massiva de clientes do Interos (versão 1.0).
+  Espelha as validações do cadastro (src/server/clients/schemas.ts): tamanhos, CNPJ/CPF, telefones,
+  CEP, UF, e-mail, segmentos e status. Valide antes de enviar:
+    xmllint (opções noout e schema): docs/importacao/clientes.xsd meu-arquivo.xml
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+
+  <!-- ===== Tipos simples ===== -->
+  <xs:simpleType name="Texto160"><xs:restriction base="xs:string"><xs:minLength value="2"/><xs:maxLength value="160"/></xs:restriction></xs:simpleType>
+  <xs:simpleType name="Texto120"><xs:restriction base="xs:string"><xs:minLength value="2"/><xs:maxLength value="120"/></xs:restriction></xs:simpleType>
+  <xs:simpleType name="Texto80"><xs:restriction base="xs:string"><xs:maxLength value="80"/></xs:restriction></xs:simpleType>
+  <xs:simpleType name="Texto60"><xs:restriction base="xs:string"><xs:maxLength value="60"/></xs:restriction></xs:simpleType>
+  <xs:simpleType name="Texto2000"><xs:restriction base="xs:string"><xs:maxLength value="2000"/></xs:restriction></xs:simpleType>
+
+  <!-- Só dígitos: CPF (11) ou CNPJ (14). Pontuação deve ser removida antes. -->
+  <xs:simpleType name="Documento"><xs:restriction base="xs:string"><xs:pattern value="\d{11}|\d{14}"/></xs:restriction></xs:simpleType>
+  <xs:simpleType name="Cpf"><xs:restriction base="xs:string"><xs:pattern value="\d{11}"/></xs:restriction></xs:simpleType>
+  <!-- DDD + número, só dígitos: fixo (10) ou celular (11). -->
+  <xs:simpleType name="Telefone"><xs:restriction base="xs:string"><xs:pattern value="\d{10,11}"/></xs:restriction></xs:simpleType>
+  <xs:simpleType name="Cep"><xs:restriction base="xs:string"><xs:pattern value="\d{8}"/></xs:restriction></xs:simpleType>
+  <xs:simpleType name="Email"><xs:restriction base="xs:string"><xs:pattern value="[^\s@]+@[^\s@]+\.[^\s@]+"/></xs:restriction></xs:simpleType>
+  <xs:simpleType name="Dinheiro"><xs:restriction base="xs:decimal"><xs:minInclusive value="0"/><xs:fractionDigits value="2"/></xs:restriction></xs:simpleType>
+
+  <xs:simpleType name="Uf">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="AC"/><xs:enumeration value="AL"/><xs:enumeration value="AP"/><xs:enumeration value="AM"/>
+      <xs:enumeration value="BA"/><xs:enumeration value="CE"/><xs:enumeration value="DF"/><xs:enumeration value="ES"/>
+      <xs:enumeration value="GO"/><xs:enumeration value="MA"/><xs:enumeration value="MT"/><xs:enumeration value="MS"/>
+      <xs:enumeration value="MG"/><xs:enumeration value="PA"/><xs:enumeration value="PB"/><xs:enumeration value="PR"/>
+      <xs:enumeration value="PE"/><xs:enumeration value="PI"/><xs:enumeration value="RJ"/><xs:enumeration value="RN"/>
+      <xs:enumeration value="RS"/><xs:enumeration value="RO"/><xs:enumeration value="RR"/><xs:enumeration value="SC"/>
+      <xs:enumeration value="SP"/><xs:enumeration value="SE"/><xs:enumeration value="TO"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Segmento">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="varejo"/><xs:enumeration value="supermercado"/><xs:enumeration value="farmacia"/>
+      <xs:enumeration value="restaurante"/><xs:enumeration value="atacado"/><xs:enumeration value="loja_de_roupas"/>
+      <xs:enumeration value="autopecas"/><xs:enumeration value="material_de_construcao"/><xs:enumeration value="otica"/>
+      <xs:enumeration value="pet_shop"/><xs:enumeration value="servicos"/><xs:enumeration value="industria"/>
+      <xs:enumeration value="outro"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="StatusCliente">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="lead"/><xs:enumeration value="prospect"/><xs:enumeration value="ativo"/>
+      <xs:enumeration value="em_implantacao"/><xs:enumeration value="inativo"/><xs:enumeration value="cancelado"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="StatusProduto">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="ativo"/><xs:enumeration value="em_implantacao"/>
+      <xs:enumeration value="suspenso"/><xs:enumeration value="cancelado"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Tag"><xs:restriction base="xs:string"><xs:minLength value="1"/><xs:maxLength value="40"/></xs:restriction></xs:simpleType>
+
+  <!-- ===== Tipos compostos ===== -->
+  <xs:complexType name="Endereco">
+    <xs:all>
+      <xs:element name="logradouro" minOccurs="0"><xs:simpleType><xs:restriction base="xs:string"><xs:maxLength value="160"/></xs:restriction></xs:simpleType></xs:element>
+      <xs:element name="numero" minOccurs="0"><xs:simpleType><xs:restriction base="xs:string"><xs:maxLength value="20"/></xs:restriction></xs:simpleType></xs:element>
+      <xs:element name="complemento" type="Texto80" minOccurs="0"/>
+      <xs:element name="bairro" type="Texto80" minOccurs="0"/>
+      <xs:element name="cidade" type="Texto80" minOccurs="0"/>
+      <xs:element name="uf" type="Uf" minOccurs="0"/>
+      <xs:element name="cep" type="Cep" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <xs:complexType name="Responsaveis">
+    <xs:all>
+      <xs:element name="comercial" type="Email" minOccurs="0"/>
+      <xs:element name="cs" type="Email" minOccurs="0"/>
+      <xs:element name="implantacao" type="Email" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <xs:complexType name="OptOut">
+    <xs:all>
+      <xs:element name="whatsapp" type="xs:boolean" minOccurs="0"/>
+      <xs:element name="email" type="xs:boolean" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <xs:complexType name="Contato">
+    <xs:all>
+      <xs:element name="nome" type="Texto120"/>
+      <xs:element name="cargo" type="Texto80" minOccurs="0"/>
+      <xs:element name="telefone" type="Telefone" minOccurs="0"/>
+      <xs:element name="whatsapp" type="Telefone" minOccurs="0"/>
+      <xs:element name="email" type="Email" minOccurs="0"/>
+      <xs:element name="cpf" type="Cpf" minOccurs="0"/>
+    </xs:all>
+    <xs:attribute name="principal" type="xs:boolean" default="false"/>
+    <xs:attribute name="decisor" type="xs:boolean" default="false"/>
+  </xs:complexType>
+
+  <xs:complexType name="Produto">
+    <xs:all>
+      <!-- Nome exato do produto no catálogo (Admin › Produtos). -->
+      <xs:element name="nome" type="Texto120"/>
+      <xs:element name="plano" type="Texto60" minOccurs="0"/>
+      <xs:element name="quantidade" minOccurs="0"><xs:simpleType><xs:restriction base="xs:positiveInteger"><xs:maxInclusive value="999"/></xs:restriction></xs:simpleType></xs:element>
+      <xs:element name="valorSetup" type="Dinheiro" minOccurs="0"/>
+      <xs:element name="valorMensal" type="Dinheiro" minOccurs="0"/>
+      <xs:element name="valorHardware" type="Dinheiro" minOccurs="0"/>
+      <xs:element name="status" type="StatusProduto" minOccurs="0"/>
+      <xs:element name="inicio" type="xs:date" minOccurs="0"/>
+      <xs:element name="cancelamento" type="xs:date" minOccurs="0"/>
+      <xs:element name="motivoCancelamento" type="Texto2000" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+
+  <xs:complexType name="Cliente">
+    <xs:sequence>
+      <xs:element name="razaoSocial" type="Texto160"/>
+      <xs:element name="nomeFantasia" type="Texto120"/>
+      <xs:element name="documento" type="Documento" minOccurs="0"/>
+      <xs:element name="segmento" type="Segmento" minOccurs="0"/>
+      <xs:element name="status" type="StatusCliente"/>
+      <xs:element name="origem" type="Texto60" minOccurs="0"/>
+      <xs:element name="telefone" type="Telefone" minOccurs="0"/>
+      <xs:element name="whatsapp" type="Telefone" minOccurs="0"/>
+      <xs:element name="email" type="Email" minOccurs="0"/>
+      <xs:element name="site" minOccurs="0"><xs:simpleType><xs:restriction base="xs:string"><xs:maxLength value="200"/></xs:restriction></xs:simpleType></xs:element>
+      <xs:element name="clienteDesde" type="xs:date" minOccurs="0"/>
+      <xs:element name="endereco" type="Endereco" minOccurs="0"/>
+      <xs:element name="responsaveis" type="Responsaveis" minOccurs="0"/>
+      <xs:element name="tags" minOccurs="0">
+        <xs:complexType><xs:sequence><xs:element name="tag" type="Tag" minOccurs="0" maxOccurs="20"/></xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="observacoes" type="Texto2000" minOccurs="0"/>
+      <xs:element name="optOutComunicacao" type="OptOut" minOccurs="0"/>
+      <xs:element name="contatos" minOccurs="0">
+        <xs:complexType><xs:sequence><xs:element name="contato" type="Contato" minOccurs="0" maxOccurs="unbounded"/></xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="produtos" minOccurs="0">
+        <xs:complexType><xs:sequence><xs:element name="produto" type="Produto" minOccurs="0" maxOccurs="unbounded"/></xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence>
+    <!-- Código do cliente no sistema de origem: chave para reimportar sem duplicar. -->
+    <xs:attribute name="codigoExterno" use="required">
+      <xs:simpleType><xs:restriction base="xs:string"><xs:minLength value="1"/><xs:maxLength value="60"/></xs:restriction></xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+
+  <!-- ===== Raiz ===== -->
+  <xs:element name="cargaClientes">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="cliente" type="Cliente" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="versao" type="xs:string" use="required" fixed="1.0"/>
+      <xs:attribute name="origem" type="Texto60" use="optional"/>
+      <xs:attribute name="geradoEm" type="xs:dateTime" use="optional"/>
+    </xs:complexType>
+    <xs:unique name="codigoExternoUnico">
+      <xs:selector xpath="cliente"/>
+      <xs:field xpath="@codigoExterno"/>
+    </xs:unique>
+    <xs:unique name="documentoUnico">
+      <xs:selector xpath="cliente"/>
+      <xs:field xpath="documento"/>
+    </xs:unique>
+  </xs:element>
+</xs:schema>
