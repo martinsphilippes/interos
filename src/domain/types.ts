@@ -71,7 +71,13 @@ export const COLLECTIONS = {
   bonusResults: "bonus_results",
   bonusBlocks: "bonus_blocks",
   commissionRules: "commission_rules",
+  /** Versões completas de cada regra de comissão (histórico e não retroatividade). */
+  commissionRuleVersions: "commission_rule_versions",
   commissions: "commissions",
+  /** Planos comerciais (ex.: Star) vendidos sobre um produto; escolhidos em cada item da proposta. */
+  commercialPlans: "commercial_plans",
+  /** Fechamento mensal da remuneração variável (comissões + bônus + prêmios) por colaborador. */
+  variablePayClosings: "variable_pay_closings",
   gamificationPoints: "gamification_points",
   gamificationCampaigns: "gamification_campaigns",
   achievements: "achievements",
@@ -533,6 +539,9 @@ export interface OpportunityProduct {
   setupValue: number;
   monthlyValue: number;
   hardwareValue: number;
+  /** Plano comercial escolhido (commercial_plans). */
+  planId?: string;
+  planName?: string;
 }
 
 export interface Opportunity extends BaseEntity {
@@ -748,6 +757,9 @@ export interface ProposalItem {
   hardwareValue: number;
   discountPct: number;
   since?: ItemSince;
+  /** Plano comercial do item (commercial_plans), quando o produto é vendido por plano. */
+  planId?: string;
+  planName?: string;
 }
 
 export interface Proposal extends BaseEntity {
@@ -1878,9 +1890,22 @@ export type CommissionRevenueType = "setup" | "recorrencia" | "hardware";
 /** Abrangência da regra (precedência: contrato > vendedor > produto > padrão). Regras antigas (sem campo) = "padrao". */
 export type CommissionRuleScope = "padrao" | "vendedor" | "contrato";
 /** Quando a comissão fica elegível. Regras antigas derivam do `releaseCondition` (ver src/server/commissions/rules.ts). */
-export type CommissionTrigger = "venda" | "contrato_assinado" | "primeiro_pagamento" | "pagamento" | "permanencia" | "pagamento_e_permanencia" | "mensalidade_n";
+export type CommissionTrigger = "venda" | "contrato_assinado" | "primeiro_pagamento" | "pagamento" | "permanencia" | "pagamento_e_permanencia" | "mensalidade_n" | "faturamento";
 /** Base de cálculo: valor contratado (itens líquidos do contrato) ou valor efetivamente recebido na cobrança. */
 export type CommissionBaseSource = "contratado" | "recebido";
+/**
+ * Natureza da base (motor v3): bruto (antes do desconto do item), líquido (depois do desconto e das deduções da regra)
+ * ou valor fixo de referência (por unidade). Ausente = líquido sem deduções (comportamento anterior).
+ */
+export type CommissionBaseKind = "bruto" | "liquido" | "referencia";
+/** Dedução aplicada à base líquida (impostos, taxas, descontos): percentual da base ou valor fixo por parcela. */
+export interface CommissionDeduction {
+  label: string;
+  mode: "percentual" | "valor";
+  value: number;
+}
+/** Combinação da regra com as de prioridade menor: exclusiva (substitui) ou cumulativa (soma). */
+export type CommissionAccumulation = "exclusiva" | "cumulativa";
 
 export interface CommissionRule extends BaseEntity {
   name: string;
@@ -1919,6 +1944,77 @@ export interface CommissionRule extends BaseEntity {
   reason?: string;
   approvedBy?: string;
   updatedBy?: string;
+  // Motor v3 — todos opcionais: regras anteriores continuam com o mesmo resultado.
+  /** Código livre e único da regra (ex.: COM-ERP-STAR-03). */
+  code?: string;
+  description?: string;
+  /** Plano comercial (commercial_plans) exigido no item. */
+  planId?: string;
+  /** Prioridade (menor = avaliada antes). Ausente = padrão pela especificidade (ver rules.ts#defaultPriority). */
+  priority?: number;
+  baseKind?: CommissionBaseKind;
+  deductions?: CommissionDeduction[];
+  /** Base "referencia": valor de referência por unidade. */
+  referenceValue?: number;
+  /** Teto da base de cálculo (por parcela/item): base = min(base elegível, teto). */
+  baseCap?: number;
+  /** Teto do valor final da comissão (por parcela/item), independente do teto da base. */
+  amountCap?: number;
+  /** Recorrência: mensalidades exatas que geram comissão (ex.: [1, 3, 6]); substitui a faixa inicial + competências. */
+  installments?: number[];
+  /** Contrato cancelado: comissões já elegíveis e ainda não pagas desta regra são estornadas. */
+  reverseOnCancel?: boolean;
+  /** Versão atual (commission_rule_versions). Ausente = regra anterior ao versionamento (vale para todas as vendas). */
+  version?: number;
+}
+
+/**
+ * Versão completa de uma regra de comissão. A regra aplicada a uma venda é a última versão com `effectiveFrom` até a
+ * data da venda; versões `retroactive` (reaplicação autorizada) valem também para as vendas anteriores — sempre só para
+ * comissões ainda não adquiridas (o motor nunca muda comissão elegível, paga, estornada ou cancelada).
+ */
+export interface CommissionRuleVersion extends BaseEntity {
+  ruleId: string;
+  version: number;
+  /** Regra inteira como ficou nesta versão. */
+  rule: Omit<CommissionRule, "id" | "organizationId" | "createdAt" | "updatedAt">;
+  /** A partir de quando vale (ISO; comparado com a data da venda). */
+  effectiveFrom: string;
+  retroactive: boolean;
+  reason?: string;
+  changedBy: string;
+  changedByName?: string;
+  /** O que mudou em relação à versão anterior (rótulos de negócio). */
+  summary?: string;
+}
+
+/**
+ * Fechamento da remuneração variável de uma competência (conferência antes do pagamento): valores congelados por
+ * colaborador. Refechar cria uma nova versão (`vpc_<AAAA-MM>_v<n>`); a tela compara o atual com o último fechamento.
+ */
+export interface VariablePayClosing extends BaseEntity {
+  competence: string;
+  version: number;
+  lines: { userId: string; userName: string; commissions: number; bonus: number; prizes: number; total: number }[];
+  total: number;
+  closedBy: string;
+  closedByName?: string;
+  notes?: string;
+}
+
+/** Plano comercial de um produto (ex.: ERP › Star): escolhido em cada item da proposta e usado pelas regras de comissão. */
+export interface CommercialPlan extends BaseEntity {
+  code: string;
+  name: string;
+  /** Produto ao qual o plano pertence (ausente = plano que vale para qualquer produto). */
+  productId?: string;
+  description?: string;
+  /** Preços de referência (sugeridos na proposta). */
+  setupPrice?: number;
+  monthlyPrice?: number;
+  active: boolean;
+  order: number;
+  updatedBy?: string;
 }
 
 /**
@@ -1955,6 +2051,18 @@ export interface CommissionRuleSnapshot {
   reason?: string;
   /** Origem da regra: documento em commission_rules ou padrão do cadastro do produto. */
   source: "regra" | "produto";
+  // Motor v3 (opcionais nas comissões antigas).
+  code?: string;
+  version?: number;
+  priority?: number;
+  planId?: string;
+  baseKind?: CommissionBaseKind;
+  deductions?: CommissionDeduction[];
+  referenceValue?: number;
+  baseCap?: number;
+  amountCap?: number;
+  installments?: number[];
+  reverseOnCancel?: boolean;
 }
 
 export interface CommissionHistoryEntry {
@@ -2011,6 +2119,9 @@ export interface Commission extends BaseEntity {
   /** Título negativo que registra o estorno de uma comissão já paga. */
   reversalPayableId?: string;
   history?: CommissionHistoryEntry[];
+  /** Plano comercial do item que gerou a comissão. */
+  planId?: string;
+  planName?: string;
 }
 
 // ---------------------------------------------------------------------------

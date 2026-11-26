@@ -5,12 +5,12 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BadgePercent } from "lucide-react";
 import type { CommissionRow } from "@/server/commissions/queries";
 import { COMMISSION_REVENUE_LABELS } from "@/domain/commissions";
-import { formatCompetence, formatCurrency } from "@/lib/format";
+import { formatCompetence, formatCurrency, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination, paginate } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CommissionStatusBadge } from "./commission-ui";
+import { CommissionDisplayBadge } from "./commission-ui";
 
 /**
  * Lista de comissões: tabela (desktop) ou cards (celular). Selecionar grava ?comissao=<id> na URL e o servidor
@@ -46,10 +46,12 @@ export function CommissionsTable({ rows, selectedId, showSeller }: { rows: Commi
               </span>
               <span className="truncate text-xs text-muted">
                 {r.code} · {r.slotLabel} · {r.productName}
+                {r.planName ? ` · plano ${r.planName}` : ""}
                 {showSeller ? ` · ${r.userName}` : ""}
               </span>
+              {r.ruleName || r.paymentDueAt || r.paidAt ? <span className="truncate text-xs text-muted">{[r.ruleName ? `Regra: ${r.ruleName}${r.ruleVersion ? ` v${r.ruleVersion}` : ""}` : null, paymentText(r)].filter(Boolean).join(" · ")}</span> : null}
               <span className="flex flex-wrap items-center gap-1.5">
-                <CommissionStatusBadge status={r.status} />
+                <CommissionDisplayBadge status={r.status} display={r.displayStatus} />
                 <span className="text-xs text-muted">{formatCompetence(r.competence)}</span>
               </span>
             </button>
@@ -64,8 +66,10 @@ export function CommissionsTable({ rows, selectedId, showSeller }: { rows: Commi
               <TableHead>Cliente / contrato</TableHead>
               {showSeller ? <TableHead className="hidden 2xl:table-cell">Vendedor</TableHead> : null}
               <TableHead className="hidden 2xl:table-cell">Competência</TableHead>
+              <TableHead className="hidden xl:table-cell">Regra aplicada</TableHead>
               <TableHead className="text-right">Base</TableHead>
               <TableHead className="text-right">Valor</TableHead>
+              <TableHead className="hidden lg:table-cell">Pagamento</TableHead>
               <TableHead>Situação</TableHead>
             </TableRow>
           </TableHeader>
@@ -92,17 +96,22 @@ export function CommissionsTable({ rows, selectedId, showSeller }: { rows: Commi
                 <TableCell className="max-w-[220px]">
                   <span className="block truncate">{r.clientName}</span>
                   <span className="block truncate text-xs text-muted">
-                    {[r.contractNumber, r.productName].filter(Boolean).join(" · ")}
+                    {[r.contractNumber, r.productName, r.planName ? `plano ${r.planName}` : null].filter(Boolean).join(" · ")}
                     {showSeller ? <span className="2xl:hidden"> · {r.userName}</span> : null}
                     <span className="2xl:hidden"> · {formatCompetence(r.competence)}</span>
                   </span>
                 </TableCell>
                 {showSeller ? <TableCell className="hidden whitespace-nowrap text-sm 2xl:table-cell">{r.userName}</TableCell> : null}
                 <TableCell className="hidden whitespace-nowrap text-sm 2xl:table-cell">{formatCompetence(r.competence)}</TableCell>
+                <TableCell className="hidden max-w-[200px] xl:table-cell">
+                  <span className="block truncate text-sm">{r.ruleName ?? "—"}</span>
+                  {r.ruleCode || r.ruleVersion ? <span className="block truncate text-xs text-muted">{[r.ruleCode, r.ruleVersion ? `v${r.ruleVersion}` : null].filter(Boolean).join(" · ")}</span> : null}
+                </TableCell>
                 <TableCell className="whitespace-nowrap text-right tabular-nums text-muted">{formatCurrency(r.baseAmount)}</TableCell>
                 <TableCell className="whitespace-nowrap text-right font-semibold tabular-nums">{formatCurrency(r.amount)}</TableCell>
+                <TableCell className="hidden whitespace-nowrap text-xs text-muted lg:table-cell">{paymentText(r) ?? "—"}</TableCell>
                 <TableCell>
-                  <CommissionStatusBadge status={r.status} />
+                  <CommissionDisplayBadge status={r.status} display={r.displayStatus} />
                 </TableCell>
               </TableRow>
             ))}
@@ -112,4 +121,11 @@ export function CommissionsTable({ rows, selectedId, showSeller }: { rows: Commi
       {rows.length > pageSize ? <Pagination className="border-t border-border px-4 py-3" page={page} pageSize={pageSize} total={rows.length} onPageChange={setPage} /> : null}
     </div>
   );
+}
+
+/** "pago em 10/03/2026" ou "previsto para 10/03/2026" (vencimento do título); sem título, nada. */
+function paymentText(r: CommissionRow): string | undefined {
+  if (r.paidAt && r.displayStatus === "paga") return `pago em ${formatDate(r.paidAt)}`;
+  if (r.paymentDueAt) return `previsto ${formatDate(r.paymentDueAt)}`;
+  return undefined;
 }

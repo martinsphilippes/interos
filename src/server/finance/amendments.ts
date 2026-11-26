@@ -81,7 +81,7 @@ export function readjustItems(items: ProposalItem[], percent: number): ProposalI
 function normalizeItems(items: NonNullable<AmendmentInput["items"]>, previous: ProposalItem[]): ProposalItem[] {
   return items.map((i) => {
     const prior = previous.find((p) => p.productId === i.productId && p.since);
-    return { productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: round2(i.setupValue), monthlyValue: round2(i.monthlyValue), hardwareValue: round2(i.hardwareValue), discountPct: i.discountPct, ...(prior?.since ? { since: prior.since } : {}) };
+    return { productId: i.productId, productName: i.productName, quantity: i.quantity, setupValue: round2(i.setupValue), monthlyValue: round2(i.monthlyValue), hardwareValue: round2(i.hardwareValue), discountPct: i.discountPct, ...(i.planId ? { planId: i.planId, planName: i.planName } : {}), ...(prior?.since ? { since: prior.since } : {}) };
   });
 }
 

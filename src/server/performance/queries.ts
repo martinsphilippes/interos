@@ -130,7 +130,8 @@ export interface SalesPerformance {
   minimumWage: number;
 }
 
-async function getSalesPerformance(userId: string, comp: string): Promise<SalesPerformance> {
+/** Vendas do mês de um colaborador: comissão, regras e prêmios de meta (usado também pela Remuneração variável). */
+export async function getSalesPerformance(userId: string, comp: string): Promise<SalesPerformance> {
   const [summary, rules, settings] = await Promise.all([getCommissionSummary(userId, comp), listActiveCommissionRules(userId), getSalesPrizeSettings()]);
   const spec = { setup: settings.adesao, recorrencia: settings.recorrencia, hardware: settings.hardware } as const;
   const prizes: SalesPrizeLine[] = REVENUE_TYPES.map((type) => {

@@ -9,6 +9,7 @@ import "server-only";
  * e a Agenda têm a visão "Minha" ou "Equipe" (padrão: gestor = ele + liderados diretos; diretoria/admin = todo o time
  * de vendas), sempre dentro do escopo efetivo da tela.
  */
+import { listPlanOptions, plansForProduct, type PlanOption } from "@/server/plans/queries";
 import { getById, getManyByIds, list, stripUndefined } from "@/server/db";
 import { ORG_ID } from "@/server/db";
 import type { ReadjustmentIndexOption } from "@/domain/readjustment";
@@ -85,6 +86,8 @@ export interface ProductOption {
   setupPrice: number;
   monthlyPrice: number;
   hardwarePrice: number;
+  /** Planos comerciais ativos do produto (vazio = vendido sem plano). */
+  plans?: PlanOption[];
 }
 
 export interface ClientOptionLite {
@@ -241,11 +244,11 @@ export async function listOpportunities(user: CurrentUser, screen: OpportunitySc
 }
 
 export async function listProductOptions(): Promise<ProductOption[]> {
-  const products = await list<Product>(COLLECTIONS.products);
+  const [products, plans] = await Promise.all([list<Product>(COLLECTIONS.products), listPlanOptions()]);
   return products
     .filter((p) => p.active)
     .sort((a, b) => a.order - b.order)
-    .map((p) => ({ id: p.id, name: p.name, category: p.category, setupPrice: p.setupPrice, monthlyPrice: p.monthlyPrice, hardwarePrice: p.hardwarePrice }));
+    .map((p) => ({ id: p.id, name: p.name, category: p.category, setupPrice: p.setupPrice, monthlyPrice: p.monthlyPrice, hardwarePrice: p.hardwarePrice, plans: plansForProduct(plans, p.id) }));
 }
 
 export async function getSalesFormOptions(): Promise<SalesFormOptions> {

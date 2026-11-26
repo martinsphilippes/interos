@@ -9,11 +9,11 @@ import { emitEvent } from "@/server/events";
 import { auditChanges, describeChanges, hasChanges } from "@/server/audit";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { COMMISSION_PENDING_STATUSES, COMMISSION_STATUS_LABELS } from "@/domain/commissions";
-import { COLLECTIONS, type Commission, type CommissionRule, type Contract, type Payable, type Product, type Settings, type User, type UserRef } from "@/domain/types";
+import { COLLECTIONS, type Commission, type CommercialPlan, type CommissionRule, type CommissionRuleVersion, type Contract, type Payable, type Product, type Settings, type User, type UserRef } from "@/domain/types";
 import { SETTING_DESCRIPTIONS } from "@/server/admin/schemas";
 import { reconcileCommissions } from "./engine";
 import { cancelPayable, commissionPayableSchedule, ensurePayableForCommission, getCommissionPaymentSettings } from "./payables";
-import { legacyReleaseCondition } from "./rules";
+import { ruleFromInput } from "./rules";
 import type { RuleInput } from "./schemas";
 import { assignPayableCode, cleanPatch, deleteField, historyEntry, transitionCommission } from "./store";
 
@@ -37,6 +37,17 @@ const RULE_FIELDS = [
   "overridesDefault",
   "reason",
   "active",
+  "code",
+  "description",
+  "planId",
+  "priority",
+  "baseKind",
+  "deductions",
+  "referenceValue",
+  "baseCap",
+  "amountCap",
+  "installments",
+  "reverseOnCancel",
 ] as const satisfies readonly (keyof CommissionRule)[];
 
 export const RULE_FIELD_LABELS: Record<string, string> = {
@@ -59,6 +70,17 @@ export const RULE_FIELD_LABELS: Record<string, string> = {
   overridesDefault: "Substitui a padrão",
   reason: "Motivo",
   active: "Ativa",
+  code: "Código",
+  description: "Descrição",
+  planId: "Plano",
+  priority: "Prioridade",
+  baseKind: "Base de cálculo",
+  deductions: "Deduções",
+  referenceValue: "Valor de referência",
+  baseCap: "Teto da base",
+  amountCap: "Teto da comissão",
+  installments: "Mensalidades comissionáveis",
+  reverseOnCancel: "Estorna no cancelamento",
 };
 
 async function loadRule(id: string): Promise<CommissionRule> {
@@ -76,11 +98,49 @@ async function recalcAfterRuleChange(rule: Pick<CommissionRule, "contractId" | "
   }
 }
 
-export async function saveCommissionRule(input: RuleInput, actor: UserRef): Promise<{ rule: CommissionRule; created: boolean }> {
-  const [contract, seller, product] = await Promise.all([
+/** Grava a versão `n` da regra (histórico completo; o motor aplica a vigente na data da venda). Idempotente pelo id. */
+async function writeRuleVersion(rule: CommissionRule, n: number, opts: { effectiveFrom: string; retroactive: boolean; reason?: string; summary?: string; actor: UserRef }): Promise<void> {
+  const { id: _id, organizationId: _org, createdAt: _c, updatedAt: _u, ...snapshot } = rule;
+  void _id;
+  void _org;
+  void _c;
+  void _u;
+  await createIfAbsent<CommissionRuleVersion>(COLLECTIONS.commissionRuleVersions, `crv_${rule.id}_${n}`, {
+    ruleId: rule.id,
+    version: n,
+    rule: { ...snapshot, version: n },
+    effectiveFrom: opts.effectiveFrom,
+    retroactive: opts.retroactive,
+    reason: opts.reason,
+    summary: opts.summary,
+    changedBy: opts.actor.id,
+    changedByName: opts.actor.name,
+    createdBy: opts.actor.id,
+  } as Omit<CommissionRuleVersion, "id" | "organizationId" | "createdAt" | "updatedAt">);
+}
+
+/**
+ * Regra anterior ao versionamento: antes da 1ª alteração registra a versão 1 como ela estava, valendo para todas as
+ * vendas anteriores (era o comportamento dela) — assim a alteração não alcança essas vendas.
+ */
+async function ensureBaselineVersion(before: CommissionRule, actor: UserRef): Promise<number> {
+  if (before.version) return before.version;
+  await writeRuleVersion(before, 1, { effectiveFrom: before.createdAt, retroactive: true, reason: "Versão inicial (regra anterior ao histórico de versões)", actor });
+  return 1;
+}
+
+export interface SaveRuleOptions {
+  /** Aplicar a nova versão também às comissões pendentes de vendas anteriores (permissão própria, checada na action). */
+  applyToPending?: boolean;
+}
+
+export async function saveCommissionRule(input: RuleInput, actor: UserRef, options: SaveRuleOptions = {}): Promise<{ rule: CommissionRule; created: boolean }> {
+  const [contract, seller, product, plan, sameCode] = await Promise.all([
     input.scope === "contrato" && input.contractId ? getById<Contract>(COLLECTIONS.contracts, input.contractId) : Promise.resolve(null),
     input.scope === "vendedor" && input.userId ? getById<User>(COLLECTIONS.users, input.userId) : Promise.resolve(null),
     input.productId ? getById<Product>(COLLECTIONS.products, input.productId) : Promise.resolve(null),
+    input.planId ? getById<CommercialPlan>(COLLECTIONS.commercialPlans, input.planId) : Promise.resolve(null),
+    input.code ? list<CommissionRule>(COLLECTIONS.commissionRules, { where: [["code", "==", input.code]] }) : Promise.resolve([]),
   ]);
   if (input.scope === "contrato") {
     if (!contract) throw new Error("Contrato da exceção não encontrado");
@@ -89,63 +149,55 @@ export async function saveCommissionRule(input: RuleInput, actor: UserRef): Prom
   }
   if (input.scope === "vendedor" && !seller) throw new Error("Vendedor não encontrado");
   if (input.productId && !product) throw new Error("Produto não encontrado");
+  if (input.planId && !plan) throw new Error("Plano não encontrado");
+  if (plan?.productId && input.productId && plan.productId !== input.productId) throw new Error(`O plano ${plan.name} pertence a outro produto`);
+  if (sameCode.some((r) => r.id !== input.id)) throw new Error(`Já existe uma regra com o código ${input.code}`);
 
-  const data: Omit<CommissionRule, "id" | "organizationId" | "createdAt" | "updatedAt"> = {
-    name: input.name,
-    scope: input.scope,
-    userId: input.scope === "vendedor" ? input.userId : undefined,
-    contractId: input.scope === "contrato" ? input.contractId : undefined,
-    clientId: contract?.clientId,
-    revenueType: input.revenueType,
-    productId: input.productId,
-    productCategory: input.productCategory,
-    mode: input.mode,
-    value: input.value,
-    releaseCondition: legacyReleaseCondition(input.revenueType, input.trigger),
-    trigger: input.trigger,
-    baseSource: input.baseSource,
-    minTenureDays: input.minTenureDays,
-    recurringCompetences: input.revenueType === "recorrencia" ? input.recurringCompetences : null,
-    releaseInstallment: input.revenueType === "recorrencia" ? input.releaseInstallment : undefined,
-    validFrom: input.scope === "contrato" ? undefined : input.validFrom,
-    validTo: input.scope === "contrato" ? undefined : input.validTo,
-    overridesDefault: input.overridesDefault,
-    reason: input.reason,
-    active: input.active,
-  };
+  const data = ruleFromInput(input, { clientId: contract?.clientId });
+  const now = nowIso();
+  const retroactive = Boolean(options.applyToPending);
 
   if (input.id) {
     const before = await loadRule(input.id);
-    const next = { ...before, ...data, updatedBy: actor.id, approvedBy: input.scope === "contrato" ? actor.id : before.approvedBy };
-    const audit = auditChanges<CommissionRule>(before, next, RULE_FIELDS, input.reason);
-    if (!hasChanges(audit)) return { rule: before, created: false };
+    const draft = { ...before, ...data, updatedBy: actor.id, approvedBy: input.scope === "contrato" ? actor.id : before.approvedBy };
+    const audit = auditChanges<CommissionRule>(before, draft, RULE_FIELDS, input.reason);
+    if (!hasChanges(audit) && !retroactive) return { rule: before, created: false };
+    const current = await ensureBaselineVersion(before, actor);
+    const next: CommissionRule = { ...draft, version: current + 1 };
     // Campos que deixaram de existir (ex.: produto removido) precisam sumir do documento.
     const cleared: Record<string, unknown> = {};
     for (const f of RULE_FIELDS) if (next[f] === undefined && before[f] !== undefined) cleared[f] = deleteField();
     const { id: _omit, ...fields } = next;
     void _omit;
-    await col(COLLECTIONS.commissionRules).doc(before.id).update(cleanPatch({ ...fields, ...cleared, updatedAt: nowIso() }));
-    await emitRuleEvent("updated", next, audit, actor);
+    await col(COLLECTIONS.commissionRules).doc(before.id).update(cleanPatch({ ...fields, ...cleared, updatedAt: now }));
+    const summary = describeChanges(audit, RULE_FIELD_LABELS);
+    await writeRuleVersion({ ...next, updatedAt: now }, current + 1, { effectiveFrom: now, retroactive, reason: input.reason, summary, actor });
+    await emitRuleEvent("updated", next, audit, actor, retroactive);
     await recalcAfterRuleChange(before.scope === "contrato" || next.scope === "contrato" ? { scope: "contrato", contractId: next.contractId ?? before.contractId } : next, actor);
     return { rule: next, created: false };
   }
-  const rule = await create<CommissionRule>(COLLECTIONS.commissionRules, { ...data, createdBy: actor.id, approvedBy: input.scope === "contrato" ? actor.id : undefined });
-  await emitRuleEvent("created", rule, auditChanges<CommissionRule>(null, rule, RULE_FIELDS, input.reason), actor);
+  const rule = await create<CommissionRule>(COLLECTIONS.commissionRules, { ...data, version: 1, createdBy: actor.id, approvedBy: input.scope === "contrato" ? actor.id : undefined });
+  await writeRuleVersion(rule, 1, { effectiveFrom: rule.createdAt, retroactive, reason: input.reason, summary: "Regra criada", actor });
+  await emitRuleEvent("created", rule, auditChanges<CommissionRule>(null, rule, RULE_FIELDS, input.reason), actor, retroactive);
   await recalcAfterRuleChange(rule, actor);
   return { rule, created: true };
 }
 
-export async function setCommissionRuleActive(id: string, active: boolean, reason: string, actor: UserRef): Promise<CommissionRule> {
+export async function setCommissionRuleActive(id: string, active: boolean, reason: string, actor: UserRef, options: SaveRuleOptions = {}): Promise<CommissionRule> {
   const before = await loadRule(id);
   if (before.active === active) return before;
-  const next = { ...before, active, updatedBy: actor.id };
-  await update<CommissionRule>(COLLECTIONS.commissionRules, id, { active, updatedBy: actor.id });
-  await emitRuleEvent(active ? "activated" : "deactivated", next, auditChanges<CommissionRule>(before, next, ["active"], reason), actor);
+  const now = nowIso();
+  const current = await ensureBaselineVersion(before, actor);
+  const next = { ...before, active, updatedBy: actor.id, version: current + 1 };
+  await update<CommissionRule>(COLLECTIONS.commissionRules, id, { active, updatedBy: actor.id, version: current + 1 });
+  const audit = auditChanges<CommissionRule>(before, next, ["active"], reason);
+  await writeRuleVersion({ ...next, updatedAt: now }, current + 1, { effectiveFrom: now, retroactive: Boolean(options.applyToPending), reason, summary: active ? "Regra reativada" : "Regra desativada", actor });
+  await emitRuleEvent(active ? "activated" : "deactivated", next, audit, actor, Boolean(options.applyToPending));
   await recalcAfterRuleChange(next, actor);
   return next;
 }
 
-async function emitRuleEvent(action: "created" | "updated" | "activated" | "deactivated", rule: CommissionRule, audit: ReturnType<typeof auditChanges>, actor: UserRef): Promise<void> {
+async function emitRuleEvent(action: "created" | "updated" | "activated" | "deactivated", rule: CommissionRule, audit: ReturnType<typeof auditChanges>, actor: UserRef, retroactive = false): Promise<void> {
   const verb = { created: "criada", updated: "alterada", activated: "reativada", deactivated: "desativada" }[action];
   const kind = rule.scope === "contrato" ? "Exceção de comissão" : "Regra de comissão";
   await emitEvent({
@@ -154,9 +206,9 @@ async function emitRuleEvent(action: "created" | "updated" | "activated" | "deac
     clientId: rule.clientId,
     entity: { type: "commission_rule", id: rule.id },
     title: `${kind} ${verb}: ${rule.name}`,
-    description: action === "created" ? audit.reason : [describeChanges(audit, RULE_FIELD_LABELS), audit.reason ? `motivo: ${audit.reason}` : null].filter(Boolean).join(" · "),
+    description: [action === "created" ? audit.reason : describeChanges(audit, RULE_FIELD_LABELS), action !== "created" && audit.reason ? `motivo: ${audit.reason}` : null, `versão ${rule.version ?? 1}`, retroactive ? "reaplicada às comissões pendentes de vendas anteriores" : "vale para vendas a partir de agora"].filter(Boolean).join(" · "),
     department: "financeiro",
-    payload: { ruleId: rule.id, action, scope: rule.scope ?? "padrao", contractId: rule.contractId, userId: rule.userId, ...audit },
+    payload: { ruleId: rule.id, action, scope: rule.scope ?? "padrao", contractId: rule.contractId, userId: rule.userId, version: rule.version ?? 1, retroactive, ...audit },
     timeline: false,
   });
 }
@@ -217,6 +269,26 @@ async function emitCommission(type: "commission.reversed" | "commission.cancelle
  * - elegível/título gerado → título em aberto cancelado e comissão "estornada";
  * - ainda não adquirida (prevista, carência, aguardando, bloqueada) → "cancelada".
  */
+/**
+ * Contrato cancelado (COM: estorno conforme configuração): comissões ADQUIRIDAS (elegível, título gerado ou paga) cuja
+ * regra congelada tem `reverseOnCancel` são estornadas pelo mesmo caminho do estorno manual (título não pago é
+ * cancelado; paga vira título negativo a recuperar). Idempotente: estornadas/canceladas são ignoradas.
+ */
+export async function reverseCommissionsOnContractCancel(contractId: string, reason: string, actor: UserRef): Promise<string[]> {
+  const list_ = await list<Commission>(COLLECTIONS.commissions, { where: [["contractId", "==", contractId]] });
+  const targets = list_.filter((c) => c.ruleSnapshot?.reverseOnCancel && (c.status === "liberada" || c.status === "titulo_gerado" || c.status === "paga"));
+  const done: string[] = [];
+  for (const c of targets) {
+    try {
+      await reverseCommission(c.id, `Contrato cancelado (regra "${c.ruleSnapshot?.name ?? ""}" estorna no cancelamento): ${reason}`, actor);
+      done.push(c.id);
+    } catch (error) {
+      console.error(`[comissoes] estorno no cancelamento falhou para ${c.id}`, error);
+    }
+  }
+  return done;
+}
+
 export async function reverseCommission(id: string, reason: string, actor: UserRef): Promise<{ status: Commission["status"]; reversalPayableId?: string }> {
   const trimmed = reason.trim();
   const c = await loadCommission(id);

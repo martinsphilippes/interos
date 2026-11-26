@@ -13,7 +13,9 @@ import {
   COMMISSION_STATUS_LABELS,
   COMMISSION_STATUSES,
   PAYABLE_STATUSES,
+  commissionDisplayStatus,
   commissionSlotLabel,
+  type CommissionDisplayStatus,
   payableCategoryLabel,
 } from "@/domain/commissions";
 import {
@@ -24,6 +26,8 @@ import {
   type CommissionCalcStep,
   type CommissionRule,
   type CommissionRuleSnapshot,
+  type CommissionRuleVersion,
+  type CommercialPlan,
   type CommissionStatus,
   type Contract,
   type CurrentUser,
@@ -49,7 +53,12 @@ import {
   type CommissionVisibility,
   type PayableCapabilities,
 } from "./access";
-import { describeSnapshot, isLegacyRule, ruleScope, snapshotRule } from "./rules";
+import { describeSnapshot, effectivePriority, isLegacyRule, ruleScope, snapshotRule } from "./rules";
+
+/** Serviço comercializado (COM.06): categoria serviço/consultoria ou natureza fiscal "serviço". */
+export function isService(p: Pick<Product, "category" | "fiscal">): boolean {
+  return p.category === "servico" || p.category === "consultoria" || p.fiscal?.nature === "servico";
+}
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
@@ -124,6 +133,15 @@ export interface CommissionRow {
   expectedAt?: string;
   /** Texto da previsão: "vencimento da 3ª mensalidade". */
   expectedLabel?: string;
+  // Controle (comissões v3)
+  planName?: string;
+  ruleCode?: string;
+  ruleVersion?: number;
+  /** Status como o comercial lê (Prevista, Aguardando condição, Liberada, Aprovada, Paga, Cancelada, Estornada). */
+  displayStatus: CommissionDisplayStatus;
+  /** Data prevista para pagamento (vencimento do título) e data efetiva. */
+  paymentDueAt?: string;
+  paidAt?: string;
 }
 
 export interface TraceLink {
@@ -186,6 +204,7 @@ const competenceLabel = (c: string) => {
 
 function toRow(c: Commission, users: Map<string, User>, clients: Map<string, Client>, contracts: Map<string, Contract>, payables: Map<string, Payable>): CommissionRow {
   const contract = c.contractId ? contracts.get(c.contractId) : undefined;
+  const payable = c.payableId ? payables.get(c.payableId) : undefined;
   return {
     id: c.id,
     code: c.code ?? c.id,
@@ -211,6 +230,12 @@ function toRow(c: Commission, users: Map<string, User>, clients: Map<string, Cli
     createdAt: c.createdAt,
     expectedAt: c.expectedAt,
     expectedLabel: expectedLabelOf(c),
+    planName: c.planName ?? contract?.items.find((i) => i.productId === c.productId)?.planName,
+    ruleCode: c.ruleSnapshot?.code,
+    ruleVersion: c.ruleSnapshot?.version,
+    displayStatus: commissionDisplayStatus(c.status, payable?.status),
+    paymentDueAt: payable && payable.status !== "cancelado" ? payable.dueDate : undefined,
+    paidAt: payable?.paidAt ?? c.paidAt,
   };
 }
 
@@ -452,6 +477,16 @@ export interface RuleRow {
   legacy: boolean;
   updatedAt: string;
   updatedBy?: string;
+  // Motor v3
+  code?: string;
+  /** Descrição livre cadastrada na regra. */
+  notes?: string;
+  planLabel?: string;
+  /** Prioridade efetiva e se é a automática (pela especificidade). */
+  priority: number;
+  priorityAuto: boolean;
+  version: number;
+  versions: { version: number; at: string; by?: string; summary?: string; reason?: string; retroactive: boolean }[];
   /** Valores do formulário de edição. */
   form: {
     id: string;
@@ -474,6 +509,17 @@ export interface RuleRow {
     overridesDefault: boolean;
     reason?: string;
     active: boolean;
+    code?: string;
+    description?: string;
+    planId?: string;
+    priority: number | null;
+    baseKind: "liquido" | "bruto" | "referencia";
+    deductions: { label: string; mode: "percentual" | "valor"; value: number }[];
+    referenceValue: number | null;
+    baseCap: number | null;
+    amountCap: number | null;
+    installments: number[];
+    reverseOnCancel: boolean;
   };
   commissions: number;
 }
@@ -482,16 +528,24 @@ export interface RulesWorkspace {
   rules: RuleRow[];
   productDefaults: { id: string; name: string; setupPct: number; recurringPct: number; hardwarePct: number; recurringReleaseInstallment: number }[];
   history: HistoryItem[];
-  options: { sellers: Opt[]; contracts: Opt[]; products: Opt[]; categories: Opt[] };
+  options: {
+    sellers: Opt[];
+    contracts: Opt[];
+    /** Produtos (software/hardware) e serviços (categoria serviço/consultoria ou natureza fiscal "serviço") separados. */
+    products: Opt[];
+    services: Opt[];
+    categories: Opt[];
+    plans: (Opt & { productId?: string })[];
+  };
   paymentDay: number;
   /** Alterar regras (financeiro.comissoes.regras.editar). */
   canManage: boolean;
-  can: { edit: boolean; toggle: boolean; exception: boolean; configure: boolean };
+  can: { edit: boolean; toggle: boolean; exception: boolean; configure: boolean; simulate: boolean; reapply: boolean };
   selectedId?: string;
 }
 
 export async function getRulesWorkspace(viewer: CurrentUser, selectedId?: string): Promise<RulesWorkspace> {
-  const [rules, users, contracts, products, events, commissions, settings] = await Promise.all([
+  const [rules, users, contracts, products, events, commissions, settings, versions, plans] = await Promise.all([
     list<CommissionRule>(COLLECTIONS.commissionRules),
     list<User>(COLLECTIONS.users),
     list<Contract>(COLLECTIONS.contracts),
@@ -499,7 +553,12 @@ export async function getRulesWorkspace(viewer: CurrentUser, selectedId?: string
     list<DomainEvent>(COLLECTIONS.events, { where: [["type", "==", "commission_rule.changed"]] }),
     list<Commission>(COLLECTIONS.commissions),
     getCommissionPaymentSettings(),
+    list<CommissionRuleVersion>(COLLECTIONS.commissionRuleVersions),
+    list<CommercialPlan>(COLLECTIONS.commercialPlans),
   ]);
+  const planById = new Map(plans.map((p) => [p.id, p]));
+  const versionsByRule = new Map<string, CommissionRuleVersion[]>();
+  for (const v of versions) versionsByRule.set(v.ruleId, [...(versionsByRule.get(v.ruleId) ?? []), v]);
   const userById = new Map(users.map((u) => [u.id, u]));
   const contractById = new Map(contracts.map((c) => [c.id, c]));
   const productById = new Map(products.map((p) => [p.id, p]));
@@ -535,6 +594,15 @@ export async function getRulesWorkspace(viewer: CurrentUser, selectedId?: string
       legacy: isLegacyRule(r),
       updatedAt: r.updatedAt,
       updatedBy: r.updatedBy ? userById.get(r.updatedBy)?.name : undefined,
+      code: r.code,
+      notes: r.description,
+      planLabel: r.planId ? (planById.get(r.planId)?.name ?? "Plano removido") : undefined,
+      priority: effectivePriority(r),
+      priorityAuto: typeof r.priority !== "number",
+      version: r.version ?? 1,
+      versions: (versionsByRule.get(r.id) ?? [])
+        .sort((a, b) => b.version - a.version)
+        .map((v) => ({ version: v.version, at: v.createdAt, by: v.changedByName, summary: v.summary, reason: v.reason, retroactive: v.retroactive })),
       form: {
         id: r.id,
         name: r.name,
@@ -556,12 +624,23 @@ export async function getRulesWorkspace(viewer: CurrentUser, selectedId?: string
         overridesDefault: snap.overridesDefault,
         reason: r.reason,
         active: r.active,
+        code: r.code,
+        description: r.description,
+        planId: r.planId,
+        priority: typeof r.priority === "number" ? r.priority : null,
+        baseKind: r.baseKind ?? "liquido",
+        deductions: r.deductions ?? [],
+        referenceValue: r.referenceValue ?? null,
+        baseCap: r.baseCap ?? null,
+        amountCap: r.amountCap ?? null,
+        installments: r.installments ?? [],
+        reverseOnCancel: Boolean(r.reverseOnCancel),
       },
       commissions: usage.get(r.id) ?? 0,
     };
   });
   const scopeOrder = { contrato: 0, vendedor: 1, padrao: 2 } as const;
-  rows.sort((a, b) => scopeOrder[a.scope] - scopeOrder[b.scope] || Number(b.active) - Number(a.active) || a.name.localeCompare(b.name, "pt-BR"));
+  rows.sort((a, b) => scopeOrder[a.scope] - scopeOrder[b.scope] || Number(b.active) - Number(a.active) || a.priority - b.priority || a.name.localeCompare(b.name, "pt-BR"));
 
   const history: HistoryItem[] = events
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
@@ -583,8 +662,13 @@ export async function getRulesWorkspace(viewer: CurrentUser, selectedId?: string
     options: {
       sellers: sellers.sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
       contracts: contractOpts,
-      products: products.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name })),
+      products: products.filter((p) => p.active && !isService(p)).map((p) => ({ value: p.id, label: p.name })),
+      services: products.filter((p) => p.active && isService(p)).map((p) => ({ value: p.id, label: p.name })),
       categories: Object.entries(PRODUCT_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),
+      plans: plans
+        .filter((p) => p.active)
+        .sort((a, b) => a.order - b.order)
+        .map((p) => ({ value: p.id, label: `${p.name}${p.productId ? ` · ${productById.get(p.productId)?.name ?? ""}` : ""}`, productId: p.productId })),
     },
     paymentDay: settings.diaPagamento,
     canManage: can(viewer, "financeiro.comissoes.regras.editar"),
@@ -593,6 +677,8 @@ export async function getRulesWorkspace(viewer: CurrentUser, selectedId?: string
       toggle: can(viewer, "financeiro.comissoes.regras.ativar"),
       exception: can(viewer, "financeiro.comissoes.regras.criar-excecao"),
       configure: can(viewer, "financeiro.comissoes.regras.configurar"),
+      simulate: can(viewer, "financeiro.comissoes.regras.simular"),
+      reapply: can(viewer, "financeiro.comissoes.regras.reaplicar"),
     },
     selectedId,
   };

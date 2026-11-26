@@ -290,8 +290,37 @@ export const ADMIN = {
         icon: "Package",
         wave: 1,
       },
-      sections: [],
+      sections: [
+        {
+          key: "admin.produtos.planos.ver",
+          label: "Planos comerciais",
+          // Novo (comissões v3, COM.07): planos por produto (ex.: Star), escolhidos na proposta e usados pelas regras
+          // de comissão por plano. Mesmo público do catálogo.
+          rule: { role: "admin" },
+        },
+      ],
       actions: [
+        {
+          key: "admin.produtos.planos.criar",
+          label: "Criar plano comercial",
+          verb: "criar",
+          rule: { role: "admin" },
+          guards: ["src/server/plans/actions.ts#savePlanAction?sem id"],
+        },
+        {
+          key: "admin.produtos.planos.editar",
+          label: "Editar plano comercial",
+          verb: "editar",
+          rule: { role: "admin" },
+          guards: ["src/server/plans/actions.ts#savePlanAction?com id"],
+        },
+        {
+          key: "admin.produtos.planos.ativar",
+          label: "Ativar/desativar plano comercial",
+          verb: "ativar",
+          rule: { role: "admin" },
+          guards: ["src/server/plans/actions.ts#setPlanActiveAction"],
+        },
         {
           key: "admin.produtos.criar",
           label: "Criar produto",

@@ -568,6 +568,36 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   (`initFrom`). Usada por VEN, CT, PR, COM e PAG; formatos antigos preservados, sem renumerar documentos.
   `verify.ts` confere que nenhum contador fica abaixo do maior número existente.
 
+## Regras de comissão v3, planos e remuneração variável
+- **Regra** (`commission_rules`, campos novos opcionais): código, descrição, plano (`planId`), prioridade explícita,
+  base bruta/líquida (deduções % ou R$)/referência fixa, **teto da base** e **teto do valor final** (independentes),
+  mensalidades exatas (`installments`, ex.: [1, 3, 6] — nunca "todas" por padrão), gatilho `faturamento` (gera na
+  emissão da cobrança) além dos de pagamento, e `reverseOnCancel`. Sequência da base em `rules.ts#evaluateSlot`:
+  contratado/recebido → natureza (`shapeBase`) → teto da base → % ou valor → teto da comissão; tudo na memória de cálculo.
+- **Prioridade** (`effectivePriority`): explícita ou automática pela especificidade — contrato 0 > vendedor + produto/
+  serviço/plano 10 > vendedor 15 > plano 20 > produto/serviço 30 > categoria 35 > geral 40 > `Product.commission`. A
+  primeira **exclusiva** encerra; **cumulativas** (`overridesDefault: false`) somam. Regras antigas mantêm o resultado
+  (hash das 407 comissões do seed idêntico antes/depois).
+- **Serviço** = produto da categoria `servico`/`consultoria` ou natureza fiscal `servico` (`isService`). **Plano** =
+  `commercial_plans` (Admin › Produtos › Planos), escolhido no item da proposta/venda (`planId`/`planName` em
+  `OpportunityProduct`/`ProposalItem`, preservados no contrato, aditivos e edição de itens).
+- **Versões / não retroatividade**: salvar/ativar grava `commission_rule_versions` (`crv_<regra>_<n>`, regra inteira,
+  quem, motivo, resumo de → para). O motor aplica a versão vigente na **data da venda** (`rulesAsOf`); regra anterior ao
+  versionamento ganha a v1 retroativa na 1ª alteração. Reaplicar às pendentes de vendas anteriores
+  (`financeiro.comissoes.regras.reaplicar`, diretoria) grava a versão `retroactive`. Elegíveis, pagas, estornadas e
+  canceladas nunca mudam; o estorno no cancelamento segue a versão em que a comissão nasceu.
+- **Simulador**: `simulate.ts` (puro, mesmo motor) + `simulation.ts`/`simulateCommissionAction`; simula também o rascunho
+  em edição. Mostra regra aplicada, base, %, tetos, valor e as regras que casaram mas perderam na prioridade.
+- **Controle**: status exibidos `commissionDisplayStatus` (Prevista, Aguardando condição, Liberada, Aprovada = título
+  aprovado/a pagar, Paga, Cancelada, Estornada, Bloqueada) sem status gravado novo; colunas plano, regra/versão e datas
+  prevista/efetiva de pagamento.
+- **Remuneração variável** (`/financeiro/remuneracao-variavel`, `src/server/variable-pay/*`, puro em
+  `src/domain/variable-pay.ts`): por colaborador e competência, comissões adquiridas + bônus (apurado ou projeção) +
+  prêmios de vendas, com pendentes e alertas. "Fechar competência" congela em `variable_pay_closings`
+  (`vpc_<AAAA-MM>_v<n>`) e a tela mostra o que mudou depois. Escopo = o de Comissões. Atalhos no Painel de Vendas.
+- Testes: `tests/commissions/rules-v3.test.ts` (COM.01–08, combinação, prioridade, versões, formulário, status),
+  `variable-pay.test.ts` e `rules-versions.dbtest.ts` (serviço + motor no banco).
+
 ## Autorização (catálogo, precedência, escopo, invariantes, helpers)
 Um só mecanismo: `session.ts` continua o único ponto de identidade (papéis de `ROLE_KEYS`, sessão por cookie) e as
 permissões são uma camada sobre ele; não há segundo sistema de usuários, de permissões nem de menu. O frontend só

@@ -15,6 +15,8 @@ import { addPayableAttachment, approvePayable, cancelPayable, createManualPayabl
 import { getSupplier, saveSupplier, setSupplierActive } from "./suppliers";
 import { assertCommissionAccess, assertCreditorInScope, assertPayableAccess, isCommissionPayable } from "./access";
 import { ruleScope } from "./rules";
+import { runCommissionSimulation } from "./simulation";
+import type { SimulationResult } from "./simulate";
 import {
   cancelPayableSchema,
   commissionIdSchema,
@@ -29,6 +31,7 @@ import {
   ruleActiveSchema,
   ruleInputSchema,
   schedulePayableSchema,
+  simulationSchema,
   updatePayableSchema,
   zodMessage,
 } from "./schemas";
@@ -62,6 +65,24 @@ function rawId(input: unknown): boolean {
 // ---------------------------------------------------------------------------
 
 const EXCEPTION_DENIED = "Seu perfil não cria nem altera exceções de comissão por contrato";
+const REAPPLY_DENIED = "Seu perfil não reaplica regras às comissões de vendas anteriores";
+
+/**
+ * Simulador (tela de regras): valores digitados × regras vigentes (+ rascunho em edição, se houver). Só leitura: não
+ * grava nada. O rascunho inválido devolve a mensagem do formulário.
+ */
+export async function simulateCommissionAction(input: unknown): Promise<ActionResult<SimulationResult & { draftRuleId?: string }>> {
+  try {
+    await requirePermission("financeiro.comissoes.regras.simular");
+    const raw = (input && typeof input === "object" ? input : {}) as { simulation?: unknown; draft?: unknown };
+    const simulation = simulationSchema.parse(raw.simulation ?? {});
+    const draft = raw.draft ? ruleInputSchema.parse(raw.draft) : undefined;
+    const result = await runCommissionSimulation(simulation, draft);
+    return { ok: true, data: result };
+  } catch (error) {
+    return fail(error, "Não foi possível simular a comissão");
+  }
+}
 
 export async function saveCommissionRuleAction(input: unknown): Promise<ActionResult<{ id: string; created: boolean }>> {
   try {
@@ -72,7 +93,9 @@ export async function saveCommissionRuleAction(input: unknown): Promise<ActionRe
     if (data.scope === "contrato" || (existing && ruleScope(existing) === "contrato")) await requirePermission("financeiro.comissoes.regras.criar-excecao", EXCEPTION_DENIED);
     // Ativar/desativar pela edição exige a permissão própria.
     if (existing && existing.active !== data.active && !can(user, "financeiro.comissoes.regras.ativar")) throw new PermissionError("Seu perfil não ativa nem desativa regras de comissão");
-    const { rule, created } = await saveCommissionRule(data, actorOf(user));
+    // Reaplicar às comissões pendentes de vendas anteriores (retroativo) exige autorização expressa.
+    if (data.applyToPending) await requirePermission("financeiro.comissoes.regras.reaplicar", REAPPLY_DENIED);
+    const { rule, created } = await saveCommissionRule(data, actorOf(user), { applyToPending: data.applyToPending });
     revalidateCommissions();
     return { ok: true, data: { id: rule.id, created } };
   } catch (error) {
@@ -86,7 +109,8 @@ export async function setCommissionRuleActiveAction(input: unknown): Promise<Act
     const data = ruleActiveSchema.parse(input);
     const existing = await getById<CommissionRule>(COLLECTIONS.commissionRules, data.id);
     if (existing && ruleScope(existing) === "contrato") await requirePermission("financeiro.comissoes.regras.criar-excecao", EXCEPTION_DENIED);
-    const rule = await setCommissionRuleActive(data.id, data.active, data.reason, actorOf(user));
+    if (data.applyToPending) await requirePermission("financeiro.comissoes.regras.reaplicar", REAPPLY_DENIED);
+    const rule = await setCommissionRuleActive(data.id, data.active, data.reason, actorOf(user), { applyToPending: data.applyToPending });
     revalidateCommissions();
     return { ok: true, data: { active: rule.active } };
   } catch (error) {

@@ -97,6 +97,7 @@ function normalizeLines(lines: OpportunityProduct[]): OpportunityProduct[] {
     setupValue: round2(l.setupValue),
     monthlyValue: round2(l.monthlyValue),
     hardwareValue: round2(l.hardwareValue),
+    ...(l.planId ? { planId: l.planId, planName: l.planName } : {}),
   }));
 }
 

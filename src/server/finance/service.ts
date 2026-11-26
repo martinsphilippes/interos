@@ -514,6 +514,7 @@ export async function updateContractItems(contractId: string, items: ContractIte
     monthlyValue: round2(i.monthlyValue),
     hardwareValue: round2(i.hardwareValue),
     discountPct: i.discountPct,
+    ...(i.planId ? { planId: i.planId, planName: i.planName } : {}),
   }));
   const totals = proposalTotals(normalized);
   const version = await versionPatchIfSent(contract, actor, "Itens alterados");

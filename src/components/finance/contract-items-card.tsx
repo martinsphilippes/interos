@@ -39,9 +39,9 @@ const num = (v: string) => {
 };
 
 /** Linha em edição: campos numéricos como texto (permite digitar "12,5" sem perder a vírgula). */
-export type EditRow = { productId: string; productName: string; quantity: string; setupValue: string; monthlyValue: string; hardwareValue: string; discountPct: string };
+export type EditRow = { productId: string; productName: string; quantity: string; setupValue: string; monthlyValue: string; hardwareValue: string; discountPct: string; planId?: string; planName?: string };
 const NUMERIC = ["quantity", "setupValue", "monthlyValue", "hardwareValue", "discountPct"] as const;
-export const toEdit = (i: ProposalItem): EditRow => ({ productId: i.productId, productName: i.productName, quantity: String(i.quantity), setupValue: String(i.setupValue).replace(".", ","), monthlyValue: String(i.monthlyValue).replace(".", ","), hardwareValue: String(i.hardwareValue).replace(".", ","), discountPct: String(i.discountPct).replace(".", ",") });
+export const toEdit = (i: ProposalItem): EditRow => ({ productId: i.productId, productName: i.productName, quantity: String(i.quantity), setupValue: String(i.setupValue).replace(".", ","), monthlyValue: String(i.monthlyValue).replace(".", ","), hardwareValue: String(i.hardwareValue).replace(".", ","), discountPct: String(i.discountPct).replace(".", ","), ...(i.planId ? { planId: i.planId, planName: i.planName } : {}) });
 export const fromEdit = (r: EditRow): ProposalItem => ({
   productId: r.productId,
   productName: r.productName,
@@ -50,6 +50,7 @@ export const fromEdit = (r: EditRow): ProposalItem => ({
   monthlyValue: num(r.monthlyValue),
   hardwareValue: num(r.hardwareValue),
   discountPct: Math.min(100, Math.max(0, num(r.discountPct))),
+  ...(r.planId ? { planId: r.planId, planName: r.planName } : {}),
 });
 
 const FIELD_LABEL: Record<(typeof NUMERIC)[number], string> = { quantity: "Quantidade", setupValue: "Adesão", monthlyValue: "Mensalidade", hardwareValue: "Hardware", discountPct: "Desconto (%)" };

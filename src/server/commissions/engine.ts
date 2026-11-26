@@ -32,13 +32,14 @@ import {
   type Commission,
   type CommissionHistoryEntry,
   type CommissionRule,
+  type CommissionRuleVersion,
   type CommissionStatus,
   type Contract,
   type Opportunity,
   type Product,
   type UserRef,
 } from "@/domain/types";
-import { evaluateSlot, planSlots, resolveRules, type SlotEvaluation } from "./rules";
+import { evaluateSlot, planSlots, resolveRules, rulesAsOf, type SlotEvaluation } from "./rules";
 import { assignCommissionCode, commissionIdFor, deleteField, historyEntry, SYSTEM_ACTOR, transitionCommission } from "./store";
 import { ensurePayableForCommission, getCommissionPaymentSettings } from "./payables";
 
@@ -101,8 +102,9 @@ export async function reconcileCommissions(options: ReconcileOptions = {}): Prom
   const contracts = all.filter(isCommissionable).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   if (contracts.length === 0) return result;
   const ids = contracts.map((c) => c.id);
-  const [rules, products, billings, commissions, opps, settings] = await Promise.all([
+  const [rules, versions, products, billings, commissions, opps, settings] = await Promise.all([
     list<CommissionRule>(COLLECTIONS.commissionRules),
+    list<CommissionRuleVersion>(COLLECTIONS.commissionRuleVersions),
     list<Product>(COLLECTIONS.products),
     list<Billing>(COLLECTIONS.billing, { where: [["contractId", "in", ids]] }),
     list<Commission>(COLLECTIONS.commissions, { where: [["contractId", "in", ids]] }),
@@ -114,6 +116,7 @@ export async function reconcileCommissions(options: ReconcileOptions = {}): Prom
     try {
       await reconcileContract(contract, {
         rules,
+        versions,
         products: productById,
         billings: billings.filter((b) => b.contractId === contract.id),
         commissions: commissions.filter((c) => c.contractId === contract.id),
@@ -136,6 +139,8 @@ export async function reconcileCommissions(options: ReconcileOptions = {}): Prom
 
 interface ContractContext {
   rules: CommissionRule[];
+  /** Versões das regras (commission_rules_versions): a regra aplicada é a vigente na data da venda. */
+  versions: CommissionRuleVersion[];
   products: Map<string, Product>;
   billings: Billing[];
   commissions: Commission[];
@@ -176,6 +181,8 @@ async function reconcileContract(contract: Contract, ctx: ContractContext): Prom
   const legacyEarned = new Set(legacy.filter((c) => c.status === "liberada" || c.status === "titulo_gerado" || c.status === "paga").map((c) => `${c.productId}|${c.revenueType}`));
   const desired = new Map<string, Desired>();
   const seenProducts = new Map<string, number>();
+  // Não retroatividade: regras como estavam na data da venda (salvo reaplicação autorizada).
+  const rulesForSale = rulesAsOf(ctx.rules, ctx.versions, saleDate);
   for (const item of items) {
     const occurrence = (seenProducts.get(item.productId) ?? 0) + 1;
     seenProducts.set(item.productId, occurrence);
@@ -186,7 +193,7 @@ async function reconcileContract(contract: Contract, ctx: ContractContext): Prom
         result.skippedLegacy++;
         continue;
       }
-      const applicable = resolveRules(ctx.rules, { contractId: contract.id, sellerId, productId: item.productId, productCategory: product?.category, revenueType, saleDate: dateKey(saleDate) }, product);
+      const applicable = resolveRules(rulesForSale, { contractId: contract.id, sellerId, productId: item.productId, productCategory: product?.category, planId: item.planId, revenueType, saleDate: dateKey(saleDate) }, product);
       for (const rule of applicable) {
         for (const spec of planSlots(rule, item, contract, totals, ctx.billings)) {
           const sourceKey = [contract.id, revenueType, productKey, spec.slot, rule.id].join("|");
@@ -205,6 +212,7 @@ async function reconcileContract(contract: Contract, ctx: ContractContext): Prom
               opportunityId: contract.opportunityId,
               productId: item.productId,
               productName: item.productName,
+              ...(item.planId ? { planId: item.planId, planName: item.planName } : {}),
               revenueType,
               baseAmount: evaluation.base,
               amount: evaluation.amount,

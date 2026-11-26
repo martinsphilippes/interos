@@ -152,7 +152,7 @@ export function estimateCommission(rules: CommissionRuleView[], input: { setup: 
 export function describeRule(rule: CommissionRuleView): string {
   const value = rule.mode === "percentual" ? `${String(rule.value).replace(".", ",")}%` : `R$ ${String(rule.value).replace(".", ",")} por unidade`;
   if (rule.trigger) {
-    const trigger = { venda: "na venda", contrato_assinado: "na assinatura", primeiro_pagamento: "no 1º pagamento", pagamento: "no recebimento", permanencia: "após a carência", pagamento_e_permanencia: "no recebimento + carência", mensalidade_n: `na ${rule.releaseInstallment ?? 3}ª mensalidade paga` }[rule.trigger];
+    const trigger = { venda: "na venda", contrato_assinado: "na assinatura", primeiro_pagamento: "no 1º pagamento", pagamento: "no recebimento", permanencia: "após a carência", pagamento_e_permanencia: "no recebimento + carência", mensalidade_n: `na ${rule.releaseInstallment ?? 3}ª mensalidade paga`, faturamento: "no faturamento" }[rule.trigger];
     const recurring =
       rule.revenueType === "recorrencia"
         ? `${(rule.releaseInstallment ?? 1) > 1 && rule.trigger !== "mensalidade_n" ? ` · a partir da ${rule.releaseInstallment}ª mensalidade` : ""}${rule.recurringCompetences === null || rule.recurringCompetences === undefined ? " · enquanto ativo" : ` · ${rule.recurringCompetences} competência(s)`}`

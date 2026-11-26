@@ -110,6 +110,8 @@ export const contractItemSchema = z.object({
   monthlyValue: money("Mensalidade"),
   hardwareValue: money("Hardware"),
   discountPct: z.number("Desconto inválido").min(0, "Desconto não pode ser negativo").max(100, "Desconto máximo é 100%"),
+  planId: z.string().trim().max(60).optional().or(z.literal("").transform(() => undefined)),
+  planName: z.string().trim().max(80, "Nome do plano muito longo").optional().or(z.literal("").transform(() => undefined)),
 });
 export type ContractItemInput = z.input<typeof contractItemSchema>;
 

@@ -19,10 +19,13 @@ export interface EditableLine {
   monthlyValue: number;
   hardwareValue: number;
   discountPct: number;
+  /** Plano comercial do item (usado pelas regras de comissão por plano). */
+  planId?: string;
+  planName?: string;
 }
 
 let seq = 0;
-export function toEditableLines(lines: { productId: string; productName: string; quantity: number; setupValue: number; monthlyValue: number; hardwareValue: number; discountPct?: number }[]): EditableLine[] {
+export function toEditableLines(lines: { productId: string; productName: string; quantity: number; setupValue: number; monthlyValue: number; hardwareValue: number; discountPct?: number; planId?: string; planName?: string }[]): EditableLine[] {
   return lines.map((l) => ({ ...l, discountPct: l.discountPct ?? 0, key: `l${++seq}` }));
 }
 
@@ -87,13 +90,17 @@ export function ProductsEditor({ lines, onChange, products, withDiscount, disabl
           return (
             <li key={line.key} className="rounded-lg border border-border bg-surface-muted p-3">
               <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium">{line.productName}</p>
+                <p className="text-sm font-medium">
+                  {line.productName}
+                  {line.planName && !(products.find((p) => p.id === line.productId)?.plans?.length) ? <span className="ml-1.5 text-xs font-normal text-muted">plano {line.planName}</span> : null}
+                </p>
                 {!disabled ? (
                   <Button variant="ghost" size="icon" className="-mr-1 -mt-1 size-9 text-muted hover:text-danger" onClick={() => onChange(lines.filter((l) => l.key !== line.key))} aria-label={`Remover ${line.productName}`}>
                     <Trash2 />
                   </Button>
                 ) : null}
               </div>
+              <PlanPicker line={line} plans={products.find((p) => p.id === line.productId)?.plans ?? []} disabled={disabled} onChange={(next) => patch(line.key, next)} />
               <div className={cn("mt-2 grid grid-cols-2 gap-2", withDiscount ? "sm:grid-cols-5" : "sm:grid-cols-4")}>
                 <LineField label="Qtd.">
                   <Input type="number" inputMode="numeric" min={1} step={1} value={line.quantity} disabled={disabled} onChange={(e) => changeQuantity(line, e.target.value)} />
@@ -137,6 +144,43 @@ export function ProductsEditor({ lines, onChange, products, withDiscount, disabl
         {withDiscount ? <Total label="Descontos" value={totals.discountTotal} /> : <Total label="1º ano" value={totals.setupTotal + totals.monthlyTotal * 12 + totals.hardwareTotal} />}
       </dl>
     </div>
+  );
+}
+
+/**
+ * Plano do item (só quando o produto tem planos ativos). Escolher um plano aplica os preços de referência dele (quando
+ * cadastrados) × quantidade; os valores continuam editáveis.
+ */
+function PlanPicker({ line, plans, disabled, onChange }: { line: EditableLine; plans: NonNullable<ProductOption["plans"]>; disabled?: boolean; onChange: (next: Partial<EditableLine>) => void }) {
+  if (plans.length === 0) return null;
+  const known = plans.some((p) => p.id === line.planId);
+  return (
+    <label className="mt-2 flex flex-col gap-1 sm:max-w-xs">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-muted">Plano</span>
+      <Select
+        value={line.planId ?? ""}
+        disabled={disabled}
+        onChange={(e) => {
+          const plan = plans.find((p) => p.id === e.target.value);
+          if (!plan) return onChange({ planId: undefined, planName: undefined });
+          const q = Math.max(1, line.quantity);
+          onChange({
+            planId: plan.id,
+            planName: plan.name,
+            ...(plan.setupPrice !== undefined ? { setupValue: Math.round(plan.setupPrice * q * 100) / 100 } : {}),
+            ...(plan.monthlyPrice !== undefined ? { monthlyValue: Math.round(plan.monthlyPrice * q * 100) / 100 } : {}),
+          });
+        }}
+        placeholder="Sem plano"
+      >
+        {plans.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+        {line.planId && !known ? <option value={line.planId}>{line.planName ?? "Plano inativo"}</option> : null}
+      </Select>
+    </label>
   );
 }
 

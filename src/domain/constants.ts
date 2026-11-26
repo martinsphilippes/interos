@@ -430,6 +430,8 @@ export const EVENT_TYPES = [
   "commission.reversed",
   "commission.updated",
   "commission_rule.changed",
+  "commercial_plan.changed",
+  "variable_pay.closed",
   "payable.created",
   "payable.approved",
   "payable.scheduled",

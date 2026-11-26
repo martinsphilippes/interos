@@ -31,7 +31,7 @@ describe("modo restrito — resolução", () => {
     const base = defaultPermissionsFor("gestor", "vendas");
     for (const key of keysOf("vendas")) expect(perms.has(key), key).toBe(base.has(key));
     expect(base.has("financeiro.acessar") || base.has("cs.acessar") || base.has("operacao.acessar")).toBe(true);
-    for (const key of [...keysOf("financeiro"), ...keysOf("cs"), ...keysOf("operacao"), ...keysOf("admin")].filter((k) => k !== "financeiro.comissoes.ver" && !k.startsWith("financeiro.comissoes."))) {
+    for (const key of [...keysOf("financeiro"), ...keysOf("cs"), ...keysOf("operacao"), ...keysOf("admin")].filter((k) => k !== "financeiro.comissoes.ver" && !k.startsWith("financeiro.comissoes.") && !k.startsWith("financeiro.remuneracao-variavel."))) {
       expect(perms.has(key), key).toBe(false);
     }
   });

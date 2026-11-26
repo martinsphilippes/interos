@@ -1066,6 +1066,28 @@ export const FINANCEIRO = {
           rule: { any: [{ director: true }, { managerOf: "financeiro" }] },
           guards: ["src/server/commissions/actions.ts#saveCommissionPaymentDayAction"],
         },
+        {
+          key: "financeiro.comissoes.regras.simular",
+          label: "Simular comissão (regras vigentes e rascunho)",
+          verb: "simular",
+          // Novo (motor v3): simulador da tela de regras. Só leitura; quem vê as regras simula.
+          rule: { can: "financeiro.comissoes.regras.ver" },
+          guards: ["src/server/commissions/actions.ts#simulateCommissionAction"],
+        },
+        {
+          key: "financeiro.comissoes.regras.reaplicar",
+          label: "Reaplicar regra às comissões pendentes de vendas anteriores",
+          verb: "reaplicar",
+          // Novo (motor v3): sem esta chave, alterar uma regra só vale para vendas a partir da alteração (não
+          // retroatividade). Autorização expressa: diretoria e administrador.
+          rule: { director: true },
+          guards: [],
+          checkedIn: [
+            "src/server/commissions/actions.ts#saveCommissionRuleAction?applyToPending=true",
+            "src/server/commissions/actions.ts#setCommissionRuleActiveAction?applyToPending=true",
+          ],
+          sensitive: true,
+        },
       ],
       scope: {
         entity: "commission",
@@ -1114,6 +1136,56 @@ export const FINANCEIRO = {
       },
     },
     {
+      key: "financeiro.remuneracao-variavel",
+      module: "financeiro",
+      label: "Remuneração variável",
+      // Novo (comissões v3): visão única por colaborador e competência — comissões + bônus + prêmios de vendas — para
+      // conferir antes de pagar. Mesmo público e mesmo escopo de Comissões (o próprio, a equipe ou todos).
+      description: "Comissões, bônus e prêmios de vendas por colaborador e competência, com fechamento para conferência antes do pagamento.",
+      routes: ["/financeiro/remuneracao-variavel"],
+      modules: ["financeiro", "vendas"],
+      rule: "all",
+      nav: {
+        menu: "financeiro",
+        href: "/financeiro/remuneracao-variavel",
+        order: 9,
+        label: "Remuneração variável",
+        icon: "Wallet",
+        wave: 5,
+        rule: { can: "financeiro.acessar" },
+      },
+      sections: [],
+      actions: [
+        {
+          key: "financeiro.remuneracao-variavel.fechar",
+          label: "Fechar a competência da remuneração variável (congelar valores)",
+          verb: "fechar",
+          rule: { any: [{ director: true }, { managerOf: "financeiro" }] },
+          guards: ["src/server/variable-pay/actions.ts#closeVariablePayAction"],
+          sensitive: true,
+        },
+      ],
+      scope: {
+        entity: "commission (agregado por colaborador)",
+        ownerFields: ["userId"],
+        allowed: ["meus", "equipe", "departamento", "empresa"],
+        defaultByRole: {
+          admin: "empresa",
+          diretoria: "empresa",
+          gestor: "equipe",
+          marketing: "meus",
+          vendas: "meus",
+          financeiro: "empresa",
+          implantacao: "meus",
+          cs: "meus",
+          suporte: "meus",
+          colaborador: "meus",
+        },
+        sameAs: "financeiro.comissoes",
+        applyAt: ["src/server/variable-pay/queries.ts#getVariablePayData (commissionVisibility)"],
+      },
+    },
+    {
       key: "financeiro.contas-a-pagar",
       module: "financeiro",
       label: "Contas a Pagar",
@@ -1133,7 +1205,7 @@ export const FINANCEIRO = {
         // roles ['diretoria', 'gestor', 'financeiro'] (admin sempre vê) em layout.tsx:13 / menu/page.tsx:18
         menu: "financeiro",
         href: "/financeiro/contas-a-pagar",
-        order: 9,
+        order: 10,
         label: "Contas a Pagar",
         icon: "HandCoins",
         wave: 5,

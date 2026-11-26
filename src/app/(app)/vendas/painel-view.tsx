@@ -1,6 +1,7 @@
 import { AlarmClock, CalendarX2, CircleDollarSign, Gauge, PauseCircle, Percent, Receipt, Target, Trophy } from "lucide-react";
 import type { CurrentUser } from "@/domain/types";
-import { can } from "@/server/auth/session";
+import Link from "next/link";
+import { can, canSeeHref } from "@/server/auth/session";
 import { getSalesOverview } from "@/server/sales/queries";
 import { formatCompetence, formatCurrency, formatDateTime, formatNumber, formatPercent } from "@/lib/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,6 +37,11 @@ export async function SalesPanelView({ user, escopo, sections }: { user: Current
   const { stats, commission } = data;
   const team = data.scope.kind === "equipe";
   const canDrill = can(user, "vendas.oportunidades.ver");
+  // Atalhos da gestão comercial para a tela única de regras (Financeiro › Comissões › Regras) e a remuneração variável.
+  const shortcuts = [
+    { href: "/financeiro/comissoes/regras", label: "Regras de comissão" },
+    { href: "/financeiro/remuneracao-variavel", label: "Remuneração variável" },
+  ].filter((l) => canSeeHref(user, l.href));
 
   const drill = (params: Record<string, string>) => {
     if (!canDrill) return undefined;
@@ -119,6 +125,15 @@ export async function SalesPanelView({ user, escopo, sections }: { user: Current
                   </div>
                 </dl>
                 <p className="mt-2 text-xs text-muted">Prevista: adesão/hardware aguardando pagamento. Futura: recorrência liberada na parcela definida na regra.</p>
+                {shortcuts.length ? (
+                  <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                    {shortcuts.map((l) => (
+                      <Link key={l.href} href={l.href} className="font-medium text-brand-fg hover:underline">
+                        {l.label} →
+                      </Link>
+                    ))}
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           </div>

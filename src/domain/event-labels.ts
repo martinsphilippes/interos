@@ -143,6 +143,8 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   "commission.reversed": "Comissão estornada",
   "commission.updated": "Comissão atualizada",
   "commission_rule.changed": "Regra de comissão alterada",
+  "commercial_plan.changed": "Plano comercial alterado",
+  "variable_pay.closed": "Remuneração variável fechada",
   "payable.created": "Título a pagar criado",
   "payable.approved": "Título a pagar aprovado",
   "payable.scheduled": "Título programado para pagamento",

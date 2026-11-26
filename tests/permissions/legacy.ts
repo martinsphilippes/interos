@@ -57,10 +57,20 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "marketing.leads.consentimento.remover",
   // Documentos do cliente enviados ao INTEROS (Clientes 360º › Documentos): remover de qualquer pessoa (gestores).
   "operacao.clientes.documentos.remover",
+  // Comissões v3: simulador e reaplicação retroativa das regras; Remuneração variável (tela nova de Financeiro, item
+  // novo no menu depois de Comissões); planos comerciais (seção nova em Administração › Produtos).
+  "financeiro.comissoes.regras.simular",
+  "financeiro.comissoes.regras.reaplicar",
+  "financeiro.remuneracao-variavel.ver",
+  "financeiro.remuneracao-variavel.fechar",
+  "admin.produtos.planos.ver",
+  "admin.produtos.planos.criar",
+  "admin.produtos.planos.editar",
+  "admin.produtos.planos.ativar",
 ];
 
 /** Rotas de telas novas em módulos antigos (itens de menu criados depois do T0). */
-export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento", "/estoque", "/compras"];
+export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento", "/estoque", "/compras", "/financeiro/remuneracao-variavel"];
 
 /** A chave (ou tela) pertence a um módulo criado depois do T0 (ou é uma chave nova)? */
 export function isAfterT0Key(key: string): boolean {

@@ -8,6 +8,7 @@ import {
   type AutomationRule,
   type BonusRule,
   type Campaign,
+  type CommercialPlan,
   type CommissionRule,
   type ImplementationPhase,
   type ImplementationTemplate,
@@ -467,6 +468,45 @@ function sellerCommissionRules(ctx: SeedContext): (SeedDoc<CommissionRule> & { i
   ];
 }
 
+/**
+ * Plano comercial de demonstração (COM.07) e a regra do exemplo do pedido de comissões v3, INATIVA (ativar só depois
+ * de conferir os valores reais na tela): ERP + plano Star + vendedor + pagamento da 3ª mensalidade + valor líquido +
+ * teto da base de R$ 100 + 25% → R$ 25 por contrato.
+ */
+const COMMERCIAL_PLANS: (SeedDoc<CommercialPlan> & { id: string })[] = [
+  { id: "plan_erp_star", code: "STAR", name: "Star", productId: PRODUCT_IDS.erpIntersys, description: "Plano de demonstração (exemplo das regras de comissão por plano)", active: true, order: 1 },
+];
+
+function exampleCommissionRules(ctx: SeedContext): (SeedDoc<CommissionRule> & { id: string })[] {
+  return [
+    {
+      id: "comm_rule_exemplo_star_3a",
+      name: "Exemplo — ERP Star, 3ª mensalidade paga, 25% sobre o líquido (teto da base R$ 100)",
+      code: "COM-EXEMPLO-STAR-03",
+      description: "Regra de exemplo do documento de regras de comissão. Inativa: revise os valores e ative pela tela.",
+      scope: "vendedor",
+      userId: ctx.users.vinicius.id,
+      productId: PRODUCT_IDS.erpIntersys,
+      planId: "plan_erp_star",
+      revenueType: "recorrencia",
+      mode: "percentual",
+      value: 25,
+      releaseCondition: "parcela",
+      releaseInstallment: 3,
+      installments: [3],
+      trigger: "pagamento",
+      baseSource: "contratado",
+      baseKind: "liquido",
+      baseCap: 100,
+      recurringCompetences: null,
+      minTenureDays: 0,
+      overridesDefault: true,
+      active: false,
+      createdBy: ctx.users.karem.id,
+    },
+  ];
+}
+
 const TIERS = [
   { minAttainment: 1, payoutPct: 100, label: "Meta batida" },
   { minAttainment: 0.9, payoutPct: 70, label: "90–99%" },
@@ -697,6 +737,8 @@ export async function seedCatalog(ctx: SeedContext): Promise<void> {
 
   for (const { id, ...r } of COMMISSION_RULES) store.add(COLLECTIONS.commissionRules, id, { ...r, createdAt });
   for (const { id, ...r } of sellerCommissionRules(ctx)) store.add(COLLECTIONS.commissionRules, id, { ...r, createdAt: daysAgo(200), updatedAt: daysAgo(200) });
+  for (const { id, ...r } of exampleCommissionRules(ctx)) store.add(COLLECTIONS.commissionRules, id, { ...r, createdAt });
+  for (const { id, ...p } of COMMERCIAL_PLANS) store.add(COLLECTIONS.commercialPlans, id, { ...p, createdAt });
   for (const { id, ...r } of BONUS_RULES) store.add(COLLECTIONS.bonusRules, id, { ...r, createdAt });
   for (const { id, ...r } of AUTOMATION_RULES) store.add(COLLECTIONS.automationRules, id, { ...r, createdAt });
   for (const { id, ...a } of ARTICLES) store.add(COLLECTIONS.knowledgeArticles, id, { ...a, createdAt: daysAgo(120) });

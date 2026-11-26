@@ -90,6 +90,9 @@ export interface EffectiveContractItem {
   discountPct: number;
   /** Item incluído por aditivo: parcelas a partir das quais ele é cobrado (motor de comissões). */
   since?: ItemSince;
+  /** Plano comercial do item (regras de comissão por plano). */
+  planId?: string;
+  planName?: string;
 }
 
 /** Aplica o desconto de um item de contrato/proposta (mesma regra de netItem em components/sales/model). */
@@ -108,6 +111,7 @@ export function netContractItem(item: ProposalItem): EffectiveContractItem {
     grossHardwareValue: Number(item.hardwareValue) || 0,
     discountPct: pct,
     ...(item.since ? { since: item.since } : {}),
+    ...(item.planId ? { planId: item.planId, planName: item.planName } : {}),
   };
 }
 

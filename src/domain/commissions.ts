@@ -3,6 +3,7 @@
  * serviços, pelas telas do Financeiro e pelos relatórios, para que o texto exibido seja o mesmo em todo lugar.
  */
 import type {
+  CommissionBaseKind,
   CommissionBaseSource,
   CommissionRevenueType,
   CommissionRuleScope,
@@ -60,6 +61,7 @@ export const COMMISSION_TRIGGER_LABELS: Record<CommissionTrigger, string> = {
   permanencia: "Após a carência (permanência)",
   pagamento_e_permanencia: "Recebimento + carência",
   mensalidade_n: "Na N-ésima mensalidade paga",
+  faturamento: "No faturamento da cobrança",
 };
 
 /** Gatilho por extenso com o número da mensalidade ("Na 3ª mensalidade paga"). */
@@ -68,6 +70,52 @@ export function commissionTriggerText(trigger: CommissionTrigger, releaseInstall
 }
 
 export const COMMISSION_BASE_LABELS: Record<CommissionBaseSource, string> = { contratado: "Valor contratado", recebido: "Valor recebido" };
+
+export const COMMISSION_BASE_KINDS: CommissionBaseKind[] = ["liquido", "bruto", "referencia"];
+export const COMMISSION_BASE_KIND_LABELS: Record<CommissionBaseKind, string> = { bruto: "Valor bruto", liquido: "Valor líquido", referencia: "Valor fixo de referência" };
+
+/**
+ * Status exibidos no controle de comissões (pedido do comercial). Derivados dos status gravados — sem status duplicado:
+ * "Aprovada" = título da comissão aprovado/programado em Contas a Pagar; "Aguardando condição" = carência ou recebimento.
+ */
+export type CommissionDisplayStatus = "prevista" | "aguardando_condicao" | "liberada" | "aprovada" | "paga" | "cancelada" | "estornada" | "bloqueada";
+export const COMMISSION_DISPLAY_STATUSES: CommissionDisplayStatus[] = ["prevista", "aguardando_condicao", "liberada", "aprovada", "paga", "cancelada", "estornada", "bloqueada"];
+export const COMMISSION_DISPLAY_LABELS: Record<CommissionDisplayStatus, string> = {
+  prevista: "Prevista",
+  aguardando_condicao: "Aguardando condição de liberação",
+  liberada: "Liberada",
+  aprovada: "Aprovada",
+  paga: "Paga",
+  cancelada: "Cancelada",
+  estornada: "Estornada",
+  bloqueada: "Bloqueada",
+};
+export const COMMISSION_DISPLAY_VARIANT: Record<CommissionDisplayStatus, Variant> = {
+  prevista: "muted",
+  aguardando_condicao: "warning",
+  liberada: "brand",
+  aprovada: "info",
+  paga: "success",
+  cancelada: "muted",
+  estornada: "danger",
+  bloqueada: "danger",
+};
+/** Status gravado (+ status do título, quando houver) → status exibido. */
+export function commissionDisplayStatus(status: CommissionStatus, payableStatus?: PayableStatus): CommissionDisplayStatus {
+  switch (status) {
+    case "prevista":
+      return "prevista";
+    case "em_carencia":
+    case "aguardando_recebimento":
+      return "aguardando_condicao";
+    case "liberada":
+      return "liberada";
+    case "titulo_gerado":
+      return payableStatus === "aprovado" || payableStatus === "a_pagar" ? "aprovada" : payableStatus === "pago" ? "paga" : "liberada";
+    default:
+      return status;
+  }
+}
 
 export const COMMISSION_SCOPE_LABELS: Record<CommissionRuleScope | "produto", string> = { padrao: "Padrão", vendedor: "Por vendedor", contrato: "Exceção por contrato", produto: "Padrão do produto" };
 

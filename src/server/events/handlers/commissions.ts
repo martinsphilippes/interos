@@ -9,7 +9,8 @@ import { COLLECTIONS, type Billing, type DomainEvent } from "@/domain/types";
  * - contract.signed    → libera o gatilho "contrato assinado";
  * - payment.approved   → gera/atualiza a comissão da parcela/competência paga (em carência ou Elegível → título);
  * - payment.overdue    → comissões que dependem da cobrança vencida ficam "aguardando recebimento";
- * - contract.cancelled → o que não foi adquirido vira cancelada (nada futuro é gerado);
+ * - contract.cancelled → o que não foi adquirido vira cancelada (nada futuro é gerado); o já adquirido de regras com
+ *   "estornar no cancelamento" é estornado (reverseCommissionsOnContractCancel);
  * - financial.released → início do contrato conhecido: conta a carência.
  *
  * A venda ganha (opportunity.won) gera as previstas pelo handler de Vendas (processWonOpportunity →
@@ -52,7 +53,12 @@ export function registerCommissionHandlers(registerHandler: typeof RegisterFn): 
     await reconcile(await billingContractId(event), event);
   });
   registerHandler("contract.cancelled", async function commissionsOnContractCancelled(event) {
-    await reconcile(contractIdOf(event), event);
+    const contractId = contractIdOf(event);
+    await reconcile(contractId, event);
+    // Regras com "estornar no cancelamento": comissões já adquiridas também são estornadas (paga → título a recuperar).
+    if (!contractId) return;
+    const { reverseCommissionsOnContractCancel } = await import("@/server/commissions/service");
+    await reverseCommissionsOnContractCancel(contractId, typeof event.payload.reason === "string" ? event.payload.reason : "contrato cancelado", { id: event.actorId, name: event.actorName });
   });
   registerHandler("financial.released", async function commissionsOnFinancialReleased(event) {
     await reconcile(contractIdOf(event), event);

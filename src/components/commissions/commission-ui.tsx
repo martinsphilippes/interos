@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { ArrowRight, CircleDot } from "lucide-react";
 import type { CommissionCalcStep, CommissionStatus, PayableStatus } from "@/domain/types";
-import { COMMISSION_STATUS_LABELS, COMMISSION_STATUS_VARIANT, PAYABLE_STATUS_LABELS, PAYABLE_STATUS_VARIANT } from "@/domain/commissions";
+import { COMMISSION_DISPLAY_LABELS, COMMISSION_DISPLAY_VARIANT, COMMISSION_STATUS_LABELS, COMMISSION_STATUS_VARIANT, PAYABLE_STATUS_LABELS, PAYABLE_STATUS_VARIANT, type CommissionDisplayStatus } from "@/domain/commissions";
 import type { HistoryItem, TraceLink } from "@/server/commissions/queries";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,15 @@ export function CommissionStatusBadge({ status, size = "sm" }: { status: Commiss
   return (
     <Badge variant={COMMISSION_STATUS_VARIANT[status]} size={size}>
       {COMMISSION_STATUS_LABELS[status]}
+    </Badge>
+  );
+}
+
+/** Status exibido no controle (Prevista, Aguardando condição, Liberada, Aprovada, Paga…); o status técnico vai no title. */
+export function CommissionDisplayBadge({ status, display, size = "sm" }: { status: CommissionStatus; display: CommissionDisplayStatus; size?: "sm" | "md" }) {
+  return (
+    <Badge variant={COMMISSION_DISPLAY_VARIANT[display]} size={size} title={COMMISSION_STATUS_LABELS[status]}>
+      {COMMISSION_DISPLAY_LABELS[display]}
     </Badge>
   );
 }
@@ -127,7 +136,10 @@ export function ReasonDialog({
   destructive,
   pending,
   onConfirm,
+  extra,
 }: {
+  /** Controles adicionais abaixo do motivo (ex.: reaplicar às pendentes). */
+  extra?: React.ReactNode;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -155,6 +167,7 @@ export function ReasonDialog({
           <FormField label={label} htmlFor={`${id}-reason`} required hint="Mínimo de 5 caracteres; fica registrado no histórico e na auditoria">
             <Textarea id={`${id}-reason`} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={placeholder} />
           </FormField>
+          {extra ? <div className="mt-3">{extra}</div> : null}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>

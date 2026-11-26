@@ -8,13 +8,16 @@ import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { ProductsWorkspace } from "@/components/admin/products-workspace";
+import { PlansCard } from "@/components/admin/plans-card";
+import { listPlans } from "@/server/plans/queries";
 
 export const metadata: Metadata = { title: "Produtos" };
 
 export default async function ProdutosPage() {
   const user = await requireScreen("admin.produtos");
   const permissions = { create: can(user, "admin.produtos.criar"), edit: can(user, "admin.produtos.editar"), toggle: can(user, "admin.produtos.ativar") };
-  const { products, templates } = await listProductsForAdmin();
+  const seePlans = can(user, "admin.produtos.planos.ver");
+  const [{ products, templates }, plans] = await Promise.all([listProductsForAdmin(), seePlans ? listPlans() : Promise.resolve([])]);
 
   const active = products.filter((p) => p.active);
   const recurring = active.filter((p) => p.billingType !== "unico");
@@ -36,6 +39,13 @@ export default async function ProdutosPage() {
       <Suspense fallback={null}>
         <ProductsWorkspace products={products} templates={templates} permissions={permissions} />
       </Suspense>
+      {seePlans ? (
+        <PlansCard
+          plans={plans}
+          products={products.filter((p) => p.active).map((p) => ({ id: p.id, name: p.name }))}
+          can={{ create: can(user, "admin.produtos.planos.criar"), edit: can(user, "admin.produtos.planos.editar"), toggle: can(user, "admin.produtos.planos.ativar") }}
+        />
+      ) : null}
     </PageContainer>
   );
 }

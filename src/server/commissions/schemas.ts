@@ -8,9 +8,17 @@ import { PRODUCT_CATEGORIES } from "@/domain/constants";
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}/, "Data inválida");
 const optionalText = (max: number) => z.string().trim().max(max, `Máximo de ${max} caracteres`).optional().or(z.literal("").transform(() => undefined));
 
-export const COMMISSION_TRIGGERS = ["venda", "contrato_assinado", "primeiro_pagamento", "pagamento", "permanencia", "pagamento_e_permanencia", "mensalidade_n"] as const;
-/** Recorrência: cada competência depende do recebimento da mensalidade correspondente (a partir da N-ésima). */
-export const RECURRING_TRIGGERS = ["pagamento", "pagamento_e_permanencia", "mensalidade_n"] as const;
+export const COMMISSION_TRIGGERS = ["venda", "contrato_assinado", "primeiro_pagamento", "pagamento", "permanencia", "pagamento_e_permanencia", "mensalidade_n", "faturamento"] as const;
+/** Recorrência: cada competência depende do recebimento (ou do faturamento) da mensalidade correspondente. */
+export const RECURRING_TRIGGERS = ["pagamento", "pagamento_e_permanencia", "mensalidade_n", "faturamento"] as const;
+
+const money = (label: string) => z.number(`${label} inválido`).positive(`${label} deve ser maior que zero`).max(10_000_000, `${label} muito alto`);
+
+export const deductionSchema = z.object({
+  label: z.string().trim().min(2, "Dê um nome à dedução (ex.: ISS)").max(60, "Nome da dedução muito longo"),
+  mode: z.enum(["percentual", "valor"], { message: "Tipo de dedução inválido" }),
+  value: z.number("Informe o valor da dedução").positive("A dedução deve ser maior que zero").max(1_000_000, "Dedução muito alta"),
+});
 
 export const ruleInputSchema = z
   .object({
@@ -35,8 +43,36 @@ export const ruleInputSchema = z
     overridesDefault: z.boolean("Informe se a regra substitui a padrão"),
     reason: optionalText(500),
     active: z.boolean().default(true),
+    // Motor v3
+    code: z
+      .string()
+      .trim()
+      .max(40, "Código muito longo (máx. 40)")
+      .regex(/^[A-Za-z0-9._-]*$/, "Código: use letras, números, ponto, hífen ou sublinhado")
+      .optional()
+      .transform((v) => (v ? v.toUpperCase() : undefined)),
+    description: optionalText(500),
+    planId: optionalText(60),
+    /** null/ausente = prioridade automática pela especificidade. */
+    priority: z.number("Prioridade inválida").int("Use um número inteiro").min(0, "Prioridade mínima é 0").max(999, "Prioridade máxima é 999").nullable().optional(),
+    baseKind: z.enum(["liquido", "bruto", "referencia"], { message: "Base de cálculo inválida" }).default("liquido"),
+    deductions: z.array(deductionSchema).max(10, "Máximo de 10 deduções").default([]),
+    referenceValue: money("Valor de referência").nullable().optional(),
+    baseCap: money("Teto da base").nullable().optional(),
+    amountCap: money("Teto da comissão").nullable().optional(),
+    installments: z.array(z.number().int("Mensalidade inválida").min(1, "Mensalidade mínima: 1ª").max(120, "Mensalidade máxima: 120ª")).max(60, "Máximo de 60 mensalidades").default([]),
+    reverseOnCancel: z.boolean().default(false),
+    /** Reaplicar a nova versão às comissões ainda não adquiridas de vendas anteriores (exige permissão própria). */
+    applyToPending: z.boolean().default(false),
   })
   .superRefine((v, ctx) => {
+    if (v.baseKind === "referencia" && !v.referenceValue) ctx.addIssue({ code: "custom", path: ["referenceValue"], message: "Informe o valor fixo de referência" });
+    if (v.baseKind === "referencia" && v.mode !== "percentual") ctx.addIssue({ code: "custom", path: ["mode"], message: "Base de referência só faz sentido com percentual" });
+    if (v.baseKind !== "liquido" && v.deductions.length > 0) ctx.addIssue({ code: "custom", path: ["deductions"], message: "Deduções só se aplicam à base líquida" });
+    if (v.mode === "valor" && v.baseCap) ctx.addIssue({ code: "custom", path: ["baseCap"], message: "Teto da base só se aplica a comissão percentual" });
+    if (v.trigger === "faturamento" && v.baseSource === "recebido") ctx.addIssue({ code: "custom", path: ["trigger"], message: "No faturamento ainda não há valor recebido: use a base contratada" });
+    if (v.installments.length > 0 && v.revenueType !== "recorrencia") ctx.addIssue({ code: "custom", path: ["installments"], message: "Mensalidades específicas só valem para recorrência" });
+    if (v.installments.length > 0 && v.trigger === "mensalidade_n") ctx.addIssue({ code: "custom", path: ["trigger"], message: "Com mensalidades específicas, escolha gerar no faturamento ou após o pagamento" });
     if (v.scope === "vendedor" && !v.userId) ctx.addIssue({ code: "custom", path: ["userId"], message: "Escolha o vendedor da regra" });
     if (v.scope === "contrato" && !v.contractId) ctx.addIssue({ code: "custom", path: ["contractId"], message: "Escolha o contrato da exceção" });
     if (v.scope === "contrato" && (v.reason?.length ?? 0) < 10) ctx.addIssue({ code: "custom", path: ["reason"], message: "Exceção por contrato exige o motivo (mín. 10 caracteres)" });
@@ -53,7 +89,27 @@ export const ruleActiveSchema = z.object({
   id: z.string().trim().min(1, "Regra inválida"),
   active: z.boolean(),
   reason: z.string().trim().min(5, "Informe o motivo (mín. 5 caracteres)").max(500, "Motivo muito longo"),
+  applyToPending: z.boolean().default(false),
 });
+
+const simMoney = (label: string) => z.number(`${label} inválido`).min(0, `${label} não pode ser negativo`).max(100_000_000, `${label} muito alto`).optional();
+
+/** Entrada do simulador de comissões (valores digitados; regras vêm do banco + o rascunho em edição). */
+export const simulationSchema = z.object({
+  sellerId: optionalText(60),
+  productId: optionalText(60),
+  planId: optionalText(60),
+  saleValue: simMoney("Valor da venda"),
+  setupValue: simMoney("Valor da adesão"),
+  monthlyValue: simMoney("Valor da mensalidade"),
+  receivedValue: simMoney("Valor líquido"),
+  installment: z.number("Mensalidade inválida").int("Use um número inteiro").min(1, "Mínimo: 1ª mensalidade").max(120, "Máximo: 120ª mensalidade").default(1),
+  quantity: z.number("Quantidade inválida").int("Use um número inteiro").min(1, "Quantidade mínima 1").max(10_000).default(1),
+  discountPct: z.number("Desconto inválido").min(0).max(100, "Desconto máximo 100%").default(0),
+  saleDate: isoDay.optional().or(z.literal("").transform(() => undefined)),
+  event: z.enum(["pago", "faturado"]).default("pago"),
+});
+export type SimulationFormInput = z.input<typeof simulationSchema>;
 
 export const paymentDaySchema = z.object({ diaPagamento: z.number("Dia inválido").int("Use um dia inteiro").min(1, "Dia mínimo é 1").max(28, "Dia máximo é 28") });
 

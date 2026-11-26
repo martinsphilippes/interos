@@ -70,6 +70,8 @@ export const productLineSchema = z.object({
   setupValue: money("Valor de adesão"),
   monthlyValue: money("Mensalidade"),
   hardwareValue: money("Valor de hardware"),
+  planId: z.string().trim().max(60).optional().or(z.literal("").transform(() => undefined)),
+  planName: z.string().trim().max(80, "Nome do plano muito longo").optional().or(z.literal("").transform(() => undefined)),
 });
 export type ProductLineInput = z.input<typeof productLineSchema>;
 

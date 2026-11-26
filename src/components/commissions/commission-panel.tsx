@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataList } from "@/components/ui/data-list";
 import { useFinanceAction } from "@/components/finance/use-finance-action";
-import { CalcMemory, CommissionStatusBadge, HistoryList, ReasonDialog, TraceChain } from "./commission-ui";
+import { CalcMemory, CommissionDisplayBadge, HistoryList, ReasonDialog, TraceChain } from "./commission-ui";
 
 type Dialog = null | "reverse" | "block" | "unblock";
 
@@ -41,7 +41,7 @@ export function CommissionPanel({ c, can }: { c: CommissionDetail; can: Commissi
         <CardHeader className="gap-1">
           <CardTitle className="flex flex-wrap items-center gap-2">
             <span data-testid="commission-code">{c.code}</span>
-            <CommissionStatusBadge status={c.status} size="md" />
+            <CommissionDisplayBadge status={c.status} display={c.displayStatus} size="md" />
           </CardTitle>
           <p className="text-sm text-muted">
             {COMMISSION_REVENUE_LABELS[c.revenueType]} · {c.slotLabel} · {c.productName}
@@ -56,8 +56,13 @@ export function CommissionPanel({ c, can }: { c: CommissionDetail; can: Commissi
             items={[
               { label: "Vendedor", value: c.userName },
               { label: "Cliente", value: c.clientName, href: `/clientes/${c.clientId}?aba=financeiro` },
+              ...(c.planName ? [{ label: "Plano", value: c.planName }] : []),
+              { label: "Regra aplicada", value: c.ruleName ? `${c.ruleName}${c.ruleCode ? ` (${c.ruleCode})` : ""}${c.ruleVersion ? ` · versão ${c.ruleVersion}` : ""}` : undefined },
               { label: "Base", value: formatCurrency(c.baseAmount) },
               { label: "Competência", value: formatCompetence(c.competence) },
+              { label: "Gerada em", value: formatDate(c.createdAt) },
+              ...(c.paymentDueAt && !c.paidAt ? [{ label: "Pagamento previsto", value: formatDate(c.paymentDueAt) }] : []),
+              ...(c.paidAt ? [{ label: "Pago em", value: formatDate(c.paidAt) }] : []),
               { label: c.status === "em_carencia" ? "Elegível em" : "Elegível desde", value: c.eligibleAt ? formatDate(c.eligibleAt) : undefined },
               ...((c.status === "prevista" || c.status === "aguardando_recebimento") && c.expectedAt ? [{ label: "Previsão", value: `${formatDate(c.expectedAt)}${c.expectedLabel ? ` · ${c.expectedLabel}` : ""}` }] : []),
               ...(c.cancelReason ? [{ label: "Motivo do cancelamento", value: c.cancelReason }] : []),
