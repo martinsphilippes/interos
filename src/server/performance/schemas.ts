@@ -334,6 +334,8 @@ export const campaignInputSchema = z
     eventType: z.string().trim().optional(),
     target: z.number("Informe a meta").positive("A meta deve ser maior que zero"),
     prize: z.string().trim().max(300, "Prêmio muito longo (máx. 300)").optional(),
+    prizeAmount: z.number("Valor do prêmio inválido").min(0, "O valor do prêmio não pode ser negativo").max(1_000_000, "Valor do prêmio muito alto").nullable().optional(),
+    prizeWinners: z.number("Quantidade de ganhadores inválida").int("Use um número inteiro").min(1, "Mínimo de 1 ganhador").max(200, "Máximo de 200 ganhadores").nullable().optional(),
     participantIds: z.array(z.string().trim().min(1)).max(200),
     status: z.enum(["planejada", "ativa", "encerrada"], { message: "Status inválido" }),
   })

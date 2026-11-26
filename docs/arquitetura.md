@@ -593,7 +593,9 @@ export async function createTask(input: unknown): Promise<ActionResult<{ id: str
   prevista/efetiva de pagamento.
 - **Remuneração variável** (`/financeiro/remuneracao-variavel`, `src/server/variable-pay/*`, puro em
   `src/domain/variable-pay.ts`): por colaborador e competência, comissões adquiridas + bônus (apurado ou projeção) +
-  prêmios de vendas, com pendentes e alertas. "Fechar competência" congela em `variable_pay_closings`
+  prêmios (metas de vendas + campanhas com `prizeAmount` em R$ que terminam na competência; ganha quem bateu a meta ou
+  os `prizeWinners` primeiros — `campaignPrizeWinners`; campanha ainda não terminada entra com alerta "em apuração"),
+  com pendentes e alertas. "Fechar competência" congela em `variable_pay_closings`
   (`vpc_<AAAA-MM>_v<n>`) e a tela mostra o que mudou depois. Escopo = o de Comissões. Atalhos no Painel de Vendas.
 - Testes: `tests/commissions/rules-v3.test.ts` (COM.01–08, combinação, prioridade, versões, formulário, status),
   `variable-pay.test.ts` e `rules-versions.dbtest.ts` (serviço + motor no banco).

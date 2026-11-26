@@ -4,7 +4,7 @@ import type { Ranking, RankingRow } from "@/server/performance/ranking";
 import type { AchievementCard, CampaignProgress } from "@/server/performance/queries";
 import { POINT_RULES, type GamificationLevel } from "@/server/performance/schemas";
 import { DEPARTMENT_KEYS, DEPARTMENT_LABELS } from "@/domain/constants";
-import { formatDate, formatNumber, formatPercent } from "@/lib/format";
+import { formatCurrency, formatDate, formatNumber, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -192,7 +192,11 @@ export function ActiveCampaigns({ items, today }: { items: CampaignProgress[]; t
               <div className="shrink-0 border-l border-border pl-3 text-right text-xs">
                 <p className="text-muted">Termina em</p>
                 <p className="font-medium">{left} dia(s)</p>
-                {c.campaign.prize ? <p className="max-w-[110px] truncate font-semibold text-success-fg" title={c.campaign.prize}>{c.campaign.prize}</p> : null}
+                {c.campaign.prize || c.campaign.prizeAmount ? (
+                  <p className="max-w-[110px] truncate font-semibold text-success-fg" title={c.campaign.prize}>
+                    {c.campaign.prizeAmount ? formatCurrency(c.campaign.prizeAmount) : c.campaign.prize}
+                  </p>
+                ) : null}
               </div>
             </Link>
           </li>

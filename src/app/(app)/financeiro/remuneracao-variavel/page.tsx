@@ -33,7 +33,7 @@ export default async function VariablePayPage({ searchParams }: { searchParams: 
         <StatCard label="Total a pagar" value={formatCurrency(data.totals.total)} icon={<Wallet />} tone="brand" hint={`${formatNumber(data.totals.people)} colaborador(es)`} compact />
         <StatCard label="Comissões adquiridas" value={formatCurrency(data.totals.commissions)} icon={<BadgePercent />} tone="success" hint={`+ ${formatCurrency(data.totals.potential)} pendentes`} href="/financeiro/comissoes" compact />
         <StatCard label="Bônus" value={formatCurrency(data.totals.bonus)} icon={<Award />} tone="info" href="/performance/bonus" compact />
-        <StatCard label="Prêmios de vendas" value={formatCurrency(data.totals.prizes)} icon={<Gift />} tone="neutral" hint="metas do mês batidas" compact />
+        <StatCard label="Prêmios" value={formatCurrency(data.totals.prizes)} icon={<Gift />} tone="neutral" hint="metas de vendas e campanhas" compact />
       </div>
       <VariablePayView data={data} />
     </PageContainer>

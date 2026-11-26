@@ -9,7 +9,7 @@ import { CAMPAIGN_EVENT_OPTIONS, CAMPAIGN_STATUS_LABELS, CAMPAIGN_STATUS_TONES, 
 import { formatKpiValue } from "@/server/kpis/schemas";
 import { DEPARTMENT_KEYS, DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
 import type { GamificationCampaign } from "@/domain/types";
-import { formatDateKey, formatPercent } from "@/lib/format";
+import { formatCurrency, formatDateKey, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,8 @@ interface FormState {
   eventType: string;
   target: string;
   prize: string;
+  prizeAmount: string;
+  prizeWinners: string;
   participantIds: string[];
   status: GamificationCampaign["status"];
 }
@@ -47,7 +49,7 @@ interface FormState {
 const dayKey = (iso: string) => iso.slice(0, 10);
 
 function toForm(c: GamificationCampaign | null, today: string): FormState {
-  if (!c) return { name: "", description: "", startDate: today, endDate: today, departments: [], metricKind: "evento", kpiKey: "", eventType: "", target: "", prize: "", participantIds: [], status: "planejada" };
+  if (!c) return { name: "", description: "", startDate: today, endDate: today, departments: [], metricKind: "evento", kpiKey: "", eventType: "", target: "", prize: "", prizeAmount: "", prizeWinners: "", participantIds: [], status: "planejada" };
   return {
     id: c.id,
     name: c.name,
@@ -60,6 +62,8 @@ function toForm(c: GamificationCampaign | null, today: string): FormState {
     eventType: c.metric.kind === "evento" ? c.metric.eventType : "",
     target: String(c.target).replace(".", ","),
     prize: c.prize ?? "",
+    prizeAmount: c.prizeAmount ? String(c.prizeAmount).replace(".", ",") : "",
+    prizeWinners: c.prizeWinners ? String(c.prizeWinners) : "",
     participantIds: c.participantIds,
     status: c.status,
   };
@@ -129,7 +133,9 @@ function CampaignCard({ item, canEdit, canDelete, onEdit, onDelete }: { item: Ca
         </div>
         <div className="flex items-center gap-1.5">
           <Gift className="size-4 shrink-0 text-muted" aria-hidden />
-          <dd>{c.prize || "Sem prêmio definido"}</dd>
+          <dd>
+            {[c.prize, c.prizeAmount ? `${formatCurrency(c.prizeAmount)} por ganhador${c.prizeWinners ? ` (até ${c.prizeWinners})` : ""}` : null].filter(Boolean).join(" · ") || "Sem prêmio definido"}
+          </dd>
         </div>
       </dl>
       <div>
@@ -224,6 +230,8 @@ export function CampaignsWorkspace({
       eventType: form.metricKind === "evento" ? form.eventType : undefined,
       target: parseNumber(form.target),
       prize: form.prize || undefined,
+      prizeAmount: form.prizeAmount.trim() ? parseNumber(form.prizeAmount) : null,
+      prizeWinners: form.prizeWinners.trim() ? Math.floor(parseNumber(form.prizeWinners)) : null,
       participantIds: form.participantIds,
       status: form.status,
     };
@@ -355,9 +363,17 @@ export function CampaignsWorkspace({
                     <Select value={form.status} onChange={(e) => patch({ status: e.target.value as GamificationCampaign["status"] })} options={Object.entries(CAMPAIGN_STATUS_LABELS).map(([value, label]) => ({ value, label }))} />
                   </FormField>
                 </div>
-                <FormField label="Prêmio">
+                <FormField label="Prêmio (descrição)">
                   <Input value={form.prize} onChange={(e) => patch({ prize: e.target.value })} placeholder="Ex.: folga no dia do aniversário" />
                 </FormField>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField label="Valor em R$ por ganhador" hint="Entra na Remuneração variável do mês em que a campanha termina. Vazio = prêmio não financeiro.">
+                    <Input inputMode="decimal" value={form.prizeAmount} onChange={(e) => patch({ prizeAmount: e.target.value })} placeholder="Ex.: 300" />
+                  </FormField>
+                  <FormField label="Quantos ganham" hint="Os N primeiros que baterem a meta. Vazio = todos que baterem.">
+                    <Input inputMode="numeric" value={form.prizeWinners} onChange={(e) => patch({ prizeWinners: e.target.value })} disabled={!form.prizeAmount.trim()} placeholder="Todos" />
+                  </FormField>
+                </div>
                 <FormField label="Participantes" hint="Sem seleção, participam todos os colaboradores ativos dos departamentos escolhidos.">
                   {eligibleUsers.length === 0 ? (
                     <p className="text-xs text-muted">Escolha os departamentos para listar as pessoas.</p>

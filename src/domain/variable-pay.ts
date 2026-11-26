@@ -26,6 +26,17 @@ export interface VariablePayPrizeInput {
   amount: number;
   /** Descrição de cada prêmio ganho ("Meta de adesão/setup batida"). */
   items: string[];
+  /** Prêmio ainda em apuração (campanha que termina na competência mas não acabou). */
+  provisional?: boolean;
+}
+
+/**
+ * Ganhadores de uma campanha com prêmio em R$: quem bateu a meta, na ordem do ranking (atingimento), limitado aos N
+ * primeiros quando a campanha define `prizeWinners`. Empate na última vaga: entra quem está antes na ordem do ranking.
+ */
+export function campaignPrizeWinners(rows: { userId: string; attainment: number | null; reached: boolean }[], winners?: number): string[] {
+  const reached = rows.filter((r) => r.reached).sort((a, b) => (b.attainment ?? 0) - (a.attainment ?? 0));
+  return (winners && winners > 0 ? reached.slice(0, winners) : reached).map((r) => r.userId);
 }
 
 export interface VariablePayPerson {
@@ -69,6 +80,7 @@ export interface VariablePayTotals {
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const PROVISIONAL = "Prêmio de campanha em apuração: a campanha ainda não terminou";
 const EARNED: readonly CommissionStatus[] = ["liberada", "titulo_gerado", "paga"];
 const PENDING: readonly CommissionStatus[] = ["prevista", "em_carencia", "aguardando_recebimento"];
 
@@ -118,6 +130,7 @@ export function buildVariablePayLines(input: {
     if (p.amount <= 0) continue;
     const l = line(p.userId);
     l.prizes = { amount: r2(l.prizes.amount + p.amount), items: [...l.prizes.items, ...p.items] };
+    if (p.provisional && !l.alerts.includes(PROVISIONAL)) l.alerts.push(PROVISIONAL);
   }
   const closedById = new Map((input.closed ?? []).map((c) => [c.userId, c]));
   for (const c of input.closed ?? []) line(c.userId);

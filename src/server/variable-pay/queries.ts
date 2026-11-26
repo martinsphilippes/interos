@@ -2,18 +2,18 @@ import "server-only";
 /**
  * Remuneração variável (leitura): por colaborador e competência, comissões (motor de comissões) + bônus (gravado no
  * fechamento do Bônus ou, com o mês aberto, a projeção do mesmo cálculo) + prêmios de vendas (setting premios_vendas,
- * metas batidas). Visibilidade = a das comissões (o próprio, a equipe ou todos — commissionVisibility).
+ * metas batidas) + prêmios em R$ de campanhas de gamificação que terminam na competência. Visibilidade = a das comissões (o próprio, a equipe ou todos — commissionVisibility).
  */
 import { list } from "@/server/db";
 import { can } from "@/server/auth/permissions";
 import { commissionAllowed, commissionVisibility, type CommissionVisibility } from "@/server/commissions/access";
 import { computeBonusForUsers } from "@/server/performance/bonus";
-import { getSalesPerformance } from "@/server/performance/queries";
-import { currentMonthKey, monthPeriod } from "@/server/kpis/period";
+import { getCampaignsProgress, getSalesPerformance } from "@/server/performance/queries";
+import { currentMonthKey, localDayKey, monthPeriod } from "@/server/kpis/period";
 import { COMMISSION_REVENUE_LABELS } from "@/domain/commissions";
 import { DEPARTMENT_LABELS, type DepartmentKey } from "@/domain/constants";
 import { COLLECTIONS, type BonusResult, type Commission, type CurrentUser, type User, type VariablePayClosing } from "@/domain/types";
-import { buildVariablePayLines, type VariablePayBonusInput, type VariablePayLine, type VariablePayPrizeInput, type VariablePayTotals } from "@/domain/variable-pay";
+import { buildVariablePayLines, campaignPrizeWinners, type VariablePayBonusInput, type VariablePayLine, type VariablePayPrizeInput, type VariablePayTotals } from "@/domain/variable-pay";
 
 export interface VariablePayData {
   competence: string;
@@ -64,6 +64,18 @@ export async function computeVariablePay(competence: string, allowed: (userId: s
       return { userId: u.id, amount: earned.reduce((s, p) => s + p.prize, 0), items: earned.map((p) => `Meta de ${COMMISSION_REVENUE_LABELS[p.type].toLowerCase()} batida`) };
     }),
   );
+
+  // Prêmios de campanhas com valor em R$: contam no mês em que a campanha termina; ganha quem bateu a meta (ou os N
+  // primeiros). Campanha que ainda não acabou entra como apuração provisória (alerta).
+  const now = new Date().toISOString();
+  const campaigns = (await getCampaignsProgress("")).filter((c) => c.campaign.prizeAmount && c.campaign.prizeAmount > 0 && localDayKey(c.campaign.endDate).slice(0, 7) === competence);
+  for (const c of campaigns) {
+    const provisional = c.campaign.status !== "encerrada" && c.campaign.endDate > now;
+    for (const userId of campaignPrizeWinners(c.participants, c.campaign.prizeWinners)) {
+      if (!ids.has(userId)) continue;
+      prizes.push({ userId, amount: c.campaign.prizeAmount!, items: [`Campanha "${c.campaign.name}"`], provisional });
+    }
+  }
 
   const closing = closings.sort((a, b) => b.version - a.version)[0];
   const { lines, totals } = buildVariablePayLines({

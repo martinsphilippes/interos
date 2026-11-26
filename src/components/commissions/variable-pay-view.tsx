@@ -138,7 +138,7 @@ export function VariablePayView({ data }: { data: VariablePayData }) {
         </CardContent>
       </Card>
       <p className="text-xs text-muted">
-        Comissões pela competência da cobrança · bônus: valor apurado no fechamento de <Link href="/performance/bonus" className="underline">Bônus e Premiação</Link> ou, com o mês aberto, a projeção do mesmo cálculo · prêmios: metas de vendas do mês (Administração › Configurações › Gamificação e prêmios). Prêmios de campanhas de gamificação são descritivos e não entram no total.
+        Comissões pela competência da cobrança · bônus: valor apurado no fechamento de <Link href="/performance/bonus" className="underline">Bônus e Premiação</Link> ou, com o mês aberto, a projeção do mesmo cálculo · prêmios: metas de vendas do mês (Administração › Configurações › Gamificação e prêmios) e campanhas com valor em R$ que terminam na competência (<Link href="/performance/campanhas" className="underline">Campanhas</Link>; prêmio só descritivo não entra).
       </p>
       {closing ? <CloseDialog data={data} onClose={() => setClosing(false)} /> : null}
     </div>

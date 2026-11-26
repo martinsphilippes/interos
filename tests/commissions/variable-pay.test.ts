@@ -1,6 +1,6 @@
 /** Remuneração variável (src/domain/variable-pay.ts): soma por colaborador, pendentes, bônus, prêmios, fechamento e alertas. */
 import { describe, expect, it } from "vitest";
-import { buildVariablePayLines } from "@/domain/variable-pay";
+import { buildVariablePayLines, campaignPrizeWinners } from "@/domain/variable-pay";
 
 const people = [
   { id: "ana", name: "Ana", department: "Vendas" },
@@ -81,5 +81,31 @@ describe("buildVariablePayLines", () => {
     expect(lines.map((l) => l.userId)).toEqual(["bruno", "ana"]);
     expect(totals.people).toBe(2);
     expect(totals.commissions).toBe(100);
+  });
+
+  it("prêmio de campanha em apuração soma e avisa", () => {
+    const { lines } = buildVariablePayLines({ people, commissions: [], bonuses: [], prizes: [{ userId: "ana", amount: 300, items: ['Campanha "SLA"'], provisional: true }] });
+    expect(lines[0].prizes.amount).toBe(300);
+    expect(lines[0].alerts.join(" ")).toContain("em apuração");
+  });
+});
+
+describe("campaignPrizeWinners", () => {
+  const rows = [
+    { userId: "a", attainment: 1.2, reached: true },
+    { userId: "b", attainment: 0.8, reached: false },
+    { userId: "c", attainment: 1.5, reached: true },
+    { userId: "d", attainment: 1.0, reached: true },
+    { userId: "e", attainment: null, reached: false },
+  ];
+  it("sem limite: todos que bateram a meta, na ordem do ranking", () => {
+    expect(campaignPrizeWinners(rows)).toEqual(["c", "a", "d"]);
+  });
+  it("com limite: só os N primeiros", () => {
+    expect(campaignPrizeWinners(rows, 2)).toEqual(["c", "a"]);
+    expect(campaignPrizeWinners(rows, 10)).toEqual(["c", "a", "d"]);
+  });
+  it("ninguém bateu: ninguém ganha", () => {
+    expect(campaignPrizeWinners(rows.map((r) => ({ ...r, reached: false })), 3)).toEqual([]);
   });
 });

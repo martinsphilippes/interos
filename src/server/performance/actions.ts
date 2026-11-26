@@ -266,6 +266,8 @@ export async function upsertCampaign(input: CampaignInput): Promise<ActionResult
       metric: data.metricKind === "kpi" ? { kind: "kpi", kpiKey: data.kpiKey! } : { kind: "evento", eventType: data.eventType as EventType },
       target: data.target,
       prize: data.prize || undefined,
+      prizeAmount: data.prizeAmount && data.prizeAmount > 0 ? data.prizeAmount : undefined,
+      prizeWinners: data.prizeAmount && data.prizeWinners ? data.prizeWinners : undefined,
       participantIds: Array.from(new Set(data.participantIds)),
       status: data.status,
       ownerId: user.id,
@@ -284,7 +286,7 @@ export async function upsertCampaign(input: CampaignInput): Promise<ActionResult
       actor: actorOf(user),
       entity: { type: "gamification_campaign", id },
       title: `${data.id ? "Campanha atualizada" : "Campanha criada"}: ${data.name}`,
-      description: `${data.startDate} a ${data.endDate} · meta ${data.target}${data.prize ? ` · prêmio: ${data.prize}` : ""}`,
+      description: `${data.startDate} a ${data.endDate} · meta ${data.target}${data.prize ? ` · prêmio: ${data.prize}` : ""}${data.prizeAmount ? ` · R$ ${data.prizeAmount.toFixed(2).replace(".", ",")} por ganhador${data.prizeWinners ? ` (até ${data.prizeWinners})` : ""}` : ""}`,
       payload: { kind: data.id ? "atualizada" : "criada", status: data.status, departments: data.departments, metric: fields.metric, target: data.target },
       timeline: false,
     });

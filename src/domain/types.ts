@@ -2297,6 +2297,10 @@ export interface GamificationCampaign extends BaseEntity {
   metric: { kind: "kpi"; kpiKey: string } | { kind: "evento"; eventType: EventType };
   target: number;
   prize?: string;
+  /** Valor do prêmio em R$ por ganhador (entra na Remuneração variável do mês em que a campanha termina). */
+  prizeAmount?: number;
+  /** Quantos ganham: os N primeiros que baterem a meta (ausente = todos que baterem). */
+  prizeWinners?: number;
   participantIds: string[];
   status: "planejada" | "ativa" | "encerrada";
   ownerId: string;
