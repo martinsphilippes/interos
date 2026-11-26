@@ -423,6 +423,13 @@ export const EVENT_TYPES = [
   "user.deleted",
   "department.updated",
   "product.updated",
+  "product_module.updated",
+  "product_price.created",
+  "product_price.cancelled",
+  "product_package.created",
+  "product_package.updated",
+  "product_package.version_created",
+  "product_package.version_cancelled",
   // consolidação das telas conceituais
   "support.ticket.transferred",
   "knowledge.article.created",

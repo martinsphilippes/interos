@@ -66,6 +66,13 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "operacao.clientes.erp.provisionar",
   // Documentos do cliente: editar nome e categoria de qualquer documento da aba.
   "operacao.clientes.documentos.editar",
+  // Gestão de Produtos (fases 7 e 8): abas Módulos, Pacotes e Simulador em Administração › Produtos.
+  "admin.produtos.modulos.ver",
+  "admin.produtos.pacotes.ver",
+  "admin.produtos.simulador.ver",
+  "admin.produtos.modulos.editar",
+  "admin.produtos.modulos.precificar",
+  "admin.produtos.pacotes.editar",
   "admin.integracoes.erp-catalogo",
   "admin.integracoes.erp-reprocessar",
 ];

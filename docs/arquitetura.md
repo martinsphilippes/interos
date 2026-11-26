@@ -1174,6 +1174,39 @@ mexer no código:
 - **Testes**: `tests/erp/*.test.ts` (puros e cliente HTTP) e `tests/erp/erp-changes.dbtest.ts` (serviço contra o ERP
   simulado de `tests/erp/fake-erp.ts`).
 
+## Gestão de Produtos (`src/server/products/*`, `src/domain/products/*`, abas de /admin/produtos)
+
+Camada comercial por cima do catálogo do ERP (fases 7 e 8 da Central de Produtos; visão de negócio em
+`docs/central-de-produtos.md`, seção 16).
+
+- **Catálogo em uso.** `getCommercialCatalog()` usa o catálogo do ERP importado no ambiente configurado; sem a
+  integração ligada, usa o **catálogo de referência** embutido (`src/server/products/catalog-reference.json`, cópia
+  enxuta do catálogo v2 que o ERP publicou como proposta, só no servidor). A tela sempre diz qual está em uso. Os
+  códigos são os do ERP: fichas, preços e pacotes continuam valendo quando o catálogo oficial chegar; ficha com código
+  que saiu do catálogo aparece como "fora do catálogo" para revisão.
+- **Coleções.** `product_modules` (id = código da unidade comercial; ficha + versões de preço embutidas) e
+  `product_packages` (pacote + versões embutidas). Migration `20261126120000_gestao_produtos.sql`.
+- **Versões (preço e pacote).** Nunca reescritas: nova versão começa hoje ou depois e depois do início da última ativa
+  (linha do tempo simples); `validTo` é derivado da próxima (`withValidity`). Só se cancela versão que começa hoje ou
+  depois (fica no histórico; a anterior volta a valer). Toda gravação lê e escreve o documento dentro de
+  `runTransaction` (a leitura trava o documento): duas versões para a mesma data ao mesmo tempo, uma vale.
+- **Modelos de preço.** fixo; por quantidade (base com N incluídas + valor por unidade adicional); por faixa (valor da
+  faixa em que a quantidade cai). Implantação é cobrança única. Valores em reais com 2 casas (`money`).
+- **Sem cobrança dupla** (`quote`, roda na tela e no servidor): unidade do pacote não é cobrada de novo; dentro do
+  pacote só a quantidade além da incluída (por quantidade: unidades adicionais; por faixa: diferença para a 1ª faixa);
+  sem ficha "à venda" ou sem preço vigente = linha "sem preço" e total incompleto (nunca se inventa preço); não
+  homologada ou descontinuada = indisponível; dependências técnicas e comerciais que faltam são apontadas, não
+  incluídas sozinhas.
+- **Regras de gravação.** "À venda" só para unidade que o ERP vende (`isUnitSellable`); dependência comercial só de
+  unidade do catálogo e nunca dela mesma; pacote nasce em definição, nome único (sem acento e caixa) e só com unidades
+  do catálogo; "à venda" exige versão vigente ou agendada sem código fora do catálogo.
+- **Acessos.** Abas por seção (`admin.produtos.modulos.ver`, `.pacotes.ver`, `.simulador.ver`) e ações
+  `admin.produtos.modulos.editar` (ficha), `admin.produtos.modulos.precificar` (versões de preço, sensível) e
+  `admin.produtos.pacotes.editar` (pacotes, sensível). Padrão: administrador; libere por perfil (ex.: diretoria vê e
+  simula).
+- **Auditoria.** Eventos `product_module.updated`, `product_price.created/cancelled`, `product_package.created/updated`
+  e `product_package.version_created/version_cancelled`, com o antes e o depois em `payload.changes`.
+
 ## Qualidade
 - `npm run lint && npm run typecheck && npm test && npm run check:access && npm run build` devem passar antes de considerar uma entrega pronta.
 - Banco local: Postgres 15+ e `DATABASE_ADMIN_URL=postgres://postgres@127.0.0.1:5432/interos npm run db:local`
