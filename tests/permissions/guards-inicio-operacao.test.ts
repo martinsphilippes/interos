@@ -112,10 +112,12 @@ describe("permissões padrão ≡ comportamento anterior", () => {
     }
   });
 
-  it("Clientes 360º: todas as seções e ações liberadas para todos", () => {
+  it("Clientes 360º: todas as seções e ações anteriores liberadas para todos; Módulos ERP (nova) começa com diretoria e administrador", () => {
     for (const u of ALL_USERS) {
       const cu = asCurrentUser(u);
-      expect(Object.values(clientSectionAccess(cu)).every(Boolean), label(u)).toBe(true);
+      const { erp, ...previous } = clientSectionAccess(cu);
+      expect(Object.values(previous).every(Boolean), label(u)).toBe(true);
+      expect(erp, label(u)).toBe(u.role === "admin" || u.role === "diretoria");
       expect(Object.values(clientCapabilities(cu)).every(Boolean), label(u)).toBe(true);
     }
   });

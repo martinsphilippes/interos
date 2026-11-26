@@ -16,6 +16,7 @@ export const CLIENT_TABS = [
   { key: "comercial", label: "Comercial" },
   { key: "implantacao", label: "Implantação" },
   { key: "cs", label: "CS" },
+  { key: "erp", label: "Módulos ERP" },
 ] as const;
 
 export type ClientTab = (typeof CLIENT_TABS)[number]["key"];

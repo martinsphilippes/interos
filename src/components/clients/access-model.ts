@@ -40,6 +40,7 @@ export const ALL_CLIENT_SECTIONS: ClientSectionAccess = {
   comercial: true,
   implantacao: true,
   cs: true,
+  erp: true,
 };
 
 export const ALL_CLIENT_CAPABILITIES: ClientCapabilities = {

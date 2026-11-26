@@ -353,6 +353,45 @@ export const OPERACAO = {
           // painel negadas pelas actions de CS (requireCsUser)
           rule: "all",
         },
+        {
+          key: "operacao.clientes.erp.ver",
+          tab: "erp",
+          label: "Módulos ERP (catálogo, estado da empresa no ERP Intercert e vínculo)",
+          // Novo (ativação gradual: começa com diretoria e administrador; libere por perfil). Lê o ERP pelo contrato
+          // (licença v2 + estado operacional v1), sem gravar nada.
+          rule: { director: true },
+          viewGuards: [
+            {
+              guard: "src/server/erp/actions.ts#refreshErpStateAction",
+              label: "Recarregar o estado da empresa no ERP",
+              recordCondition: "cliente no escopo da tela",
+            },
+            {
+              guard: "src/server/erp/actions.ts#loadErpUsageAction",
+              label: "Consultar o uso da empresa no ERP (últimos 30 dias, por unidade, e limites)",
+              recordCondition: "cliente no escopo da tela",
+            },
+          ],
+        },
+        {
+          key: "operacao.clientes.erp-historico.ver",
+          label: "Módulos ERP › Histórico e auditoria das alterações (quem, quando, motivo, antes e depois)",
+          // Novo: lista as alterações enviadas ao ERP (erp_change_requests) com a referência da operação no ERP.
+          rule: { director: true },
+        },
+        {
+          key: "operacao.clientes.erp-torre.ver",
+          label: "Módulos ERP › Torre de Controle (indicadores da empresa no ERP)",
+          // Novo: dados de negócio do cliente (receita, estoque, financeiro) lidos da Torre do ERP.
+          rule: { director: true },
+          viewGuards: [
+            {
+              guard: "src/server/erp/actions.ts#loadErpTowerAction",
+              label: "Consultar os indicadores da Torre de Controle no ERP",
+              recordCondition: "cliente no escopo da tela",
+            },
+          ],
+        },
       ],
       actions: [
         {
@@ -441,6 +480,47 @@ export const OPERACAO = {
           // Recomendação (não padrão): AND com vendas.oportunidades.criar.
           rule: "all",
           guards: ["src/server/clients/actions.ts#createUpsellOpportunity"],
+          sensitive: true,
+        },
+        {
+          key: "operacao.clientes.erp.alterar",
+          label: "Módulos ERP: preparar, simular e enviar alterações (ativar, desligar, agendar, teste), tentar de novo e cancelar",
+          verb: "alterar",
+          // Novo. Desligamento com pendência no ERP, cascata ou passagem para "aplicado" exige também
+          // operacao.clientes.erp.aprovar (sem ela, fica aguardando aprovação).
+          rule: { role: "admin" },
+          guards: [
+            "src/server/erp/actions.ts#reviewErpChangesAction",
+            "src/server/erp/actions.ts#submitErpChangesAction",
+            "src/server/erp/actions.ts#retryErpChangeAction",
+            "src/server/erp/actions.ts#cancelErpChangeAction",
+          ],
+          recordCondition: "Cliente no escopo da tela e vinculado a uma empresa no ERP deste ambiente.",
+          sensitive: true,
+        },
+        {
+          key: "operacao.clientes.erp.aprovar",
+          label: "Módulos ERP: aprovar desligamentos que exigem aprovação (pendências no ERP, cascata, somente leitura ou contrato aplicado)",
+          verb: "aprovar",
+          // Novo. Quem pediu não aprova o próprio pedido; quem tem esta chave e pede, segue direto (registrado).
+          rule: { role: "admin" },
+          guards: ["src/server/erp/actions.ts#approveErpChangeAction"],
+          checkedIn: ["src/server/erp/actions.ts#submitErpChangesAction"],
+          sensitive: true,
+        },
+        {
+          key: "operacao.clientes.erp.provisionar",
+          label: "Módulos ERP: criar a empresa no ERP, vincular empresa existente e retomar a implantação",
+          verb: "provisionar",
+          // Novo: cria a empresa contratante no ERP (administrador inicial e convite) ou grava o vínculo conferido.
+          rule: { role: "admin" },
+          guards: [
+            "src/server/erp/actions.ts#findErpCompanyAction",
+            "src/server/erp/actions.ts#linkErpCompanyAction",
+            "src/server/erp/actions.ts#provisionErpCompanyAction",
+            "src/server/erp/actions.ts#resumeErpProvisioningAction",
+          ],
+          recordCondition: "Cliente no escopo da tela; uma empresa do ERP por cliente.",
           sensitive: true,
         },
       ],

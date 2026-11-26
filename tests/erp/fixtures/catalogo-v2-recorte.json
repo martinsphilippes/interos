@@ -1,0 +1,3509 @@
+{
+"catalog": "catalogo-modulos-erp-v2",
+"catalogVersion": "2.0.0-proposta",
+"status": "proposta — aguarda validação do titular antes de substituir o catálogo v1 em runtime",
+"product": {
+"code": "ERP",
+"name": "ERP Intercert",
+"slug": "erp_intercert"
+},
+"v1Compatibility": {
+"unitsByV1Key": {
+"cadastros.clientes": "01.02",
+"cadastros.fornecedores": "01.03",
+"cadastros.produtos": "01.04",
+"caixa.operacao": "07.02",
+"compras.aprovacoes": "05.05",
+"compras.cotacoes": "05.02",
+"compras.nota_a_confirmar": "05.19",
+"compras.pedidos": "05.04",
+"compras.precificacao": "05.20",
+"compras.recebimento": "05.06",
+"compras.reposicao": "05.08",
+"ecommerce.banco": "36.17",
+"implantacao.importacao": "24.13",
+"pdv.recebimento_crediario": "07.27",
+"produtos.balanca": "46.01",
+"vendas.pdv": "07.01"
+},
+"v1KeysWithoutV2Unit": []
+},
+"items": [
+{
+"code": "01",
+"level": "module",
+"name": "CADASTROS BÁSICOS",
+"description": "CADASTROS BÁSICOS",
+"parent": null,
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao",
+"cadastros.clientes",
+"cadastros.fornecedores",
+"cadastros.produtos",
+"vendas.comissoes",
+"tec.financeiro",
+"tec.precos"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "01.01",
+"level": "submodule",
+"name": "Cadastro de empresas e filiais",
+"description": "Cadastro de empresas e filiais",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Empresa e filiais com CRUD, situação, depósitos e usuários"
+},
+{
+"code": "01.02",
+"level": "submodule",
+"name": "Cadastro de clientes",
+"description": "Cadastro de clientes",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.clientes"
+],
+"commercialUnit": "01.02",
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [
+"customer.credit_limit"
+],
+"notes": "CPF/CNPJ único, crédito, consulta CNPJ, ficha e histórico"
+},
+{
+"code": "01.03",
+"level": "submodule",
+"name": "Cadastro de fornecedores",
+"description": "Cadastro de fornecedores",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.fornecedores"
+],
+"commercialUnit": "01.03",
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Fornecedor com bloqueio, produtos por fornecedor, consulta CNPJ"
+},
+{
+"code": "01.04",
+"level": "submodule",
+"name": "Cadastro de produtos",
+"description": "Cadastro de produtos",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.produtos"
+],
+"commercialUnit": "01.04",
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Produto com SKU/variações, preços, custos, imagem e importação"
+},
+{
+"code": "01.05",
+"level": "submodule",
+"name": "Cadastro de serviços",
+"description": "Cadastro de serviços",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.produtos"
+],
+"commercialUnit": null,
+"includedIn": "01.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Serviço é tipo de produto: LC116, ISS, código municipal"
+},
+{
+"code": "01.06",
+"level": "submodule",
+"name": "Categorias e subcategorias",
+"description": "Categorias e subcategorias",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.produtos"
+],
+"commercialUnit": null,
+"includedIn": "01.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Categoria com pai (subcategorias) e checagem de ciclo"
+},
+{
+"code": "01.07",
+"level": "submodule",
+"name": "Cadastro de marcas",
+"description": "Cadastro de marcas",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.produtos"
+],
+"commercialUnit": null,
+"includedIn": "01.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Marcas com ativo/inativo"
+},
+{
+"code": "01.08",
+"level": "submodule",
+"name": "Unidades de medida",
+"description": "Unidades de medida",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.produtos"
+],
+"commercialUnit": null,
+"includedIn": "01.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Unidades com casas decimais e conversões"
+},
+{
+"code": "01.09",
+"level": "submodule",
+"name": "Cadastro de vendedores",
+"description": "Cadastro de vendedores",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.comissoes"
+],
+"commercialUnit": null,
+"includedIn": "06.12",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Vendedor (com ou sem login) com comissão por categoria"
+},
+{
+"code": "01.10",
+"level": "submodule",
+"name": "Cadastro de transportadoras",
+"description": "Cadastro de transportadoras",
+"parent": "01",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.fornecedores"
+],
+"commercialUnit": null,
+"includedIn": "01.03",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Só marca \"É transportador\" no fornecedor; sem cadastro próprio"
+},
+{
+"code": "01.11",
+"level": "submodule",
+"name": "Cadastro de entregadores",
+"description": "Cadastro de entregadores",
+"parent": "01",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Entregador só citado em texto da loja; sem cadastro"
+},
+{
+"code": "01.12",
+"level": "submodule",
+"name": "Formas de pagamento",
+"description": "Formas de pagamento",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "RECURSO_COMPARTILHADO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"tec.financeiro"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Meios de pagamento com taxa, prazo, parcelas, bandeira"
+},
+{
+"code": "01.13",
+"level": "submodule",
+"name": "Tabelas de preços",
+"description": "Tabelas de preços",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "RECURSO_COMPARTILHADO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"tec.precos"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Tabelas com vigência, atacado, desconto máximo e histórico"
+},
+{
+"code": "01.14",
+"level": "submodule",
+"name": "Cadastro de representantes",
+"description": "Cadastro de representantes",
+"parent": "01",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.comissoes"
+],
+"commercialUnit": null,
+"includedIn": "06.12",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Representante = vendedor sem acesso; força externa só planejada"
+},
+{
+"code": "01.15",
+"level": "submodule",
+"name": "Cadastro de fabricantes",
+"description": "Cadastro de fabricantes",
+"parent": "01",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem fabricante; só marca"
+},
+{
+"code": "01.16",
+"level": "submodule",
+"name": "Cadastro de parceiros",
+"description": "Cadastro de parceiros",
+"parent": "01",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem parceiros genéricos (cert_network_nodes é só a rede)"
+},
+{
+"code": "01.17",
+"level": "submodule",
+"name": "Cadastro de contatos",
+"description": "Cadastro de contatos",
+"parent": "01",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.clientes"
+],
+"commercialUnit": null,
+"includedIn": "01.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Contatos como lista no cliente/fornecedor; sem cadastro próprio"
+},
+{
+"code": "01.18",
+"level": "submodule",
+"name": "Cadastro de endereços",
+"description": "Cadastro de endereços",
+"parent": "01",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.clientes"
+],
+"commercialUnit": null,
+"includedIn": "01.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Vários endereços no cadastro; CEP só no checkout da loja"
+},
+{
+"code": "01.19",
+"level": "submodule",
+"name": "Campos personalizados",
+"description": "Campos personalizados",
+"parent": "01",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "PLA-22 campos personalizados documentado; sem código"
+},
+{
+"code": "01.20",
+"level": "submodule",
+"name": "Cadastro de condições comerciais",
+"description": "Cadastro de condições comerciais",
+"parent": "01",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_COMPARTILHADO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"tec.financeiro"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Condições de pagamento e limite por cliente; sem condição comercial"
+},
+{
+"code": "01.21",
+"level": "submodule",
+"name": "Consulta de CNPJ (BrasilAPI) nos cadastros",
+"description": "Consulta de CNPJ (BrasilAPI) nos cadastros",
+"parent": "01",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.clientes"
+],
+"commercialUnit": null,
+"includedIn": "01.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Clientes, fornecedores e clientes contábeis"
+},
+{
+"code": "05",
+"level": "module",
+"name": "GESTÃO DE COMPRAS",
+"description": "GESTÃO DE COMPRAS",
+"parent": null,
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.aprovacoes",
+"compras.cotacoes",
+"compras.pedidos",
+"compras.recebimento",
+"compras.reposicao",
+"cadastros.fornecedores",
+"compras.nota_a_confirmar",
+"compras.precificacao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "05.01",
+"level": "submodule",
+"name": "Solicitação de compra",
+"description": "Solicitação de compra",
+"parent": "05",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.aprovacoes"
+],
+"commercialUnit": null,
+"includedIn": "05.05",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Solicitação só nasce de pedidos enviados à aprovação"
+},
+{
+"code": "05.02",
+"level": "submodule",
+"name": "Cotação com fornecedores",
+"description": "Cotação com fornecedores",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.cotacoes"
+],
+"commercialUnit": "05.02",
+"includedIn": null,
+"dependencies": {
+"required": [
+"05.04"
+],
+"optional": []
+},
+"permissions": [],
+"notes": "Cotação com vários fornecedores, propostas e CSV"
+},
+{
+"code": "05.03",
+"level": "submodule",
+"name": "Comparação de cotações",
+"description": "Comparação de cotações",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.cotacoes"
+],
+"commercialUnit": null,
+"includedIn": "05.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Mapa comparativo e seleção por item"
+},
+{
+"code": "05.04",
+"level": "submodule",
+"name": "Pedido de compra",
+"description": "Pedido de compra",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.pedidos"
+],
+"commercialUnit": "05.04",
+"includedIn": null,
+"dependencies": {
+"required": [
+"01.03",
+"01.04"
+],
+"optional": [
+"05.05",
+"05.06"
+]
+},
+"permissions": [],
+"notes": "Fluxo completo; corridas residuais documentadas em docs/pendencias-externas.md:26"
+},
+{
+"code": "05.05",
+"level": "submodule",
+"name": "Aprovação de compras",
+"description": "Aprovação de compras",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.aprovacoes"
+],
+"commercialUnit": "05.05",
+"includedIn": null,
+"dependencies": {
+"required": [
+"05.04"
+],
+"optional": []
+},
+"permissions": [
+"purchase.approve"
+],
+"notes": "Alçadas, etapas, aprovar/ajustar/rejeitar"
+},
+{
+"code": "05.06",
+"level": "submodule",
+"name": "Recebimento de mercadorias",
+"description": "Recebimento de mercadorias",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.recebimento"
+],
+"commercialUnit": "05.06",
+"includedIn": null,
+"dependencies": {
+"required": [
+"01.03",
+"01.04"
+],
+"optional": [
+"05.04"
+]
+},
+"permissions": [
+"purchase.receive"
+],
+"notes": "XML/manual, conferência, estoque e contas a pagar"
+},
+{
+"code": "05.07",
+"level": "submodule",
+"name": "Compras pendentes",
+"description": "Compras pendentes",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.pedidos"
+],
+"commercialUnit": null,
+"includedIn": "05.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Abertos/atrasados e rotina diária"
+},
+{
+"code": "05.08",
+"level": "submodule",
+"name": "Sugestão de reposição",
+"description": "Sugestão de reposição",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.reposicao"
+],
+"commercialUnit": "05.08",
+"includedIn": null,
+"dependencies": {
+"required": [
+"01.04"
+],
+"optional": [
+"05.02",
+"05.04"
+]
+},
+"permissions": [],
+"notes": "Sugestão por cobertura, gera rascunhos/cotação"
+},
+{
+"code": "05.09",
+"level": "submodule",
+"name": "Histórico de compras",
+"description": "Histórico de compras",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.pedidos"
+],
+"commercialUnit": null,
+"includedIn": "05.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Pedidos/recebimentos e último custo por fornecedor"
+},
+{
+"code": "05.10",
+"level": "submodule",
+"name": "Custos de aquisição",
+"description": "Custos de aquisição",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.recebimento"
+],
+"commercialUnit": null,
+"includedIn": "05.06",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Rateio de frete/IPI/despesas/CT-e no custo"
+},
+{
+"code": "05.11",
+"level": "submodule",
+"name": "Compras recorrentes",
+"description": "Compras recorrentes",
+"parent": "05",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem pedido recorrente"
+},
+{
+"code": "05.12",
+"level": "submodule",
+"name": "Compras programadas",
+"description": "Compras programadas",
+"parent": "05",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem programação de compras"
+},
+{
+"code": "05.13",
+"level": "submodule",
+"name": "Contratos de fornecimento",
+"description": "Contratos de fornecimento",
+"parent": "05",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": "27.09",
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": "27.09",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem contratos de fornecimento · Contratos de fornecimento = contratos (tipo fornecimento)"
+},
+{
+"code": "05.14",
+"level": "submodule",
+"name": "Avaliação de fornecedores",
+"description": "Avaliação de fornecedores",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.fornecedores"
+],
+"commercialUnit": null,
+"includedIn": "01.03",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Nota medida 0–5 (pontualidade/conformidade)"
+},
+{
+"code": "05.15",
+"level": "submodule",
+"name": "Compras por centro de custo",
+"description": "Compras por centro de custo",
+"parent": "05",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.pedidos"
+],
+"commercialUnit": null,
+"includedIn": "05.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Centro de custo vai ao título; sem relatório"
+},
+{
+"code": "05.16",
+"level": "submodule",
+"name": "Controle de entregas de fornecedores",
+"description": "Controle de entregas de fornecedores",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.pedidos"
+],
+"commercialUnit": null,
+"includedIn": "05.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Em trânsito, alerta de atraso e pontualidade"
+},
+{
+"code": "05.17",
+"level": "submodule",
+"name": "Compras emergenciais",
+"description": "Compras emergenciais",
+"parent": "05",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem compra emergencial"
+},
+{
+"code": "05.18",
+"level": "submodule",
+"name": "Portal do fornecedor",
+"description": "Portal do fornecedor",
+"parent": "05",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Só rótulo de canal de envio; sem portal"
+},
+{
+"code": "05.19",
+"level": "submodule",
+"name": "Entrada de mercadoria com nota a confirmar",
+"description": "Entrada de mercadoria com nota a confirmar",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.nota_a_confirmar"
+],
+"commercialUnit": "05.19",
+"includedIn": null,
+"dependencies": {
+"required": [
+"05.06"
+],
+"optional": []
+},
+"permissions": [
+"purchase.receive_pending_invoice",
+"purchase.confirm_invoice"
+],
+"notes": ""
+},
+{
+"code": "05.20",
+"level": "submodule",
+"name": "Precificação após a entrada",
+"description": "Precificação após a entrada",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.precificacao"
+],
+"commercialUnit": "05.20",
+"includedIn": null,
+"dependencies": {
+"required": [
+"05.06"
+],
+"optional": []
+},
+"permissions": [
+"purchase.pricing"
+],
+"notes": ""
+},
+{
+"code": "05.21",
+"level": "submodule",
+"name": "Orçamento mensal de compras por filial",
+"description": "Orçamento mensal de compras por filial",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.aprovacoes"
+],
+"commercialUnit": null,
+"includedIn": "05.05",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "05.22",
+"level": "submodule",
+"name": "Revisões e envio do pedido de compra ao fornecedor",
+"description": "Revisões e envio do pedido de compra ao fornecedor",
+"parent": "05",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.pedidos"
+],
+"commercialUnit": null,
+"includedIn": "05.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "07",
+"level": "module",
+"name": "PDV — PONTO DE VENDA",
+"description": "PDV — PONTO DE VENDA",
+"parent": null,
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv",
+"caixa.operacao",
+"produtos.balanca",
+"tec.pagamentos",
+"vendas.pdv_offline",
+"pdv.recebimento_crediario"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "07.01",
+"level": "submodule",
+"name": "Frente de caixa",
+"description": "Frente de caixa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": "07.01",
+"includedIn": null,
+"dependencies": {
+"required": [
+"01.04",
+"07.02"
+],
+"optional": [
+"01.02",
+"04.02",
+"06.01",
+"18.02"
+]
+},
+"permissions": [
+"sale.cancel",
+"sale.discount_over_limit"
+],
+"notes": "PDV completo"
+},
+{
+"code": "07.02",
+"level": "submodule",
+"name": "Abertura de caixa",
+"description": "Abertura de caixa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": "07.02",
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [
+"cash.reopen",
+"cash.withdrawal"
+],
+"notes": "Fundo inicial e periféricos"
+},
+{
+"code": "07.03",
+"level": "submodule",
+"name": "Fechamento de caixa",
+"description": "Fechamento de caixa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": null,
+"includedIn": "07.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Fechamento por forma, cego opcional"
+},
+{
+"code": "07.04",
+"level": "submodule",
+"name": "Sangria de caixa",
+"description": "Sangria de caixa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": null,
+"includedIn": "07.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sangria com transferência para conta"
+},
+{
+"code": "07.05",
+"level": "submodule",
+"name": "Suprimento de caixa",
+"description": "Suprimento de caixa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": null,
+"includedIn": "07.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Suprimento com comprovante"
+},
+{
+"code": "07.06",
+"level": "submodule",
+"name": "Venda por código de barras",
+"description": "Venda por código de barras",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Busca por código de barras"
+},
+{
+"code": "07.07",
+"level": "submodule",
+"name": "Venda por balança",
+"description": "Venda por balança",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": "46.01",
+"reuses": null,
+"v1Keys": [
+"produtos.balanca"
+],
+"commercialUnit": null,
+"includedIn": "46.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "EAN de balança; sem balança serial no caixa · Venda por balança usa a integração de balança etiquetadora"
+},
+{
+"code": "07.08",
+"level": "submodule",
+"name": "Múltiplas formas de pagamento",
+"description": "Múltiplas formas de pagamento",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Pagamentos combinados"
+},
+{
+"code": "07.09",
+"level": "submodule",
+"name": "Venda suspensa",
+"description": "Venda suspensa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Estacionar e retomar"
+},
+{
+"code": "07.10",
+"level": "submodule",
+"name": "Cancelamento de venda",
+"description": "Cancelamento de venda",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "PERMISSAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [
+"sale.cancel"
+],
+"notes": "Cancelamento com permissão · Cancelamento de venda é ação de perfil dentro do PDV"
+},
+{
+"code": "07.11",
+"level": "submodule",
+"name": "Desconto mediante autorização",
+"description": "Desconto mediante autorização",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "PERMISSAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [
+"sale.discount_over_limit"
+],
+"notes": "Senha de supervisor para desconto · Desconto acima do limite com autorização de supervisor"
+},
+{
+"code": "07.12",
+"level": "submodule",
+"name": "Integração TEF",
+"description": "Integração TEF",
+"parent": "07",
+"devStatus": "EXT",
+"availability": "indisponivel",
+"commercialClass": "INTEGRACAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "TEF só via conector local (inexistente); NSU manual · TEF depende de conector local externo"
+},
+{
+"code": "07.13",
+"level": "submodule",
+"name": "Integração PIX",
+"description": "Integração PIX",
+"parent": "07",
+"devStatus": "EXT",
+"availability": "indisponivel",
+"commercialClass": "INTEGRACAO",
+"aliasOf": "36.04",
+"reuses": null,
+"v1Keys": [
+"tec.pagamentos"
+],
+"commercialUnit": null,
+"includedIn": "36.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Mercado Pago sem credencial; simulação · Pix PDV (Mercado Pago) · PIX do PDV usa o mesmo motor de intenções de pagamento (src/domain/payments)"
+},
+{
+"code": "07.14",
+"level": "submodule",
+"name": "Impressão de comprovantes",
+"description": "Impressão de comprovantes",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Impressão pelo navegador"
+},
+{
+"code": "07.15",
+"level": "submodule",
+"name": "Conferência de caixa",
+"description": "Conferência de caixa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": null,
+"includedIn": "07.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Conferência cega com recontagem"
+},
+{
+"code": "07.16",
+"level": "submodule",
+"name": "Múltiplos caixas",
+"description": "Múltiplos caixas",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Vários terminais, uma sessão por terminal"
+},
+{
+"code": "07.17",
+"level": "submodule",
+"name": "Gestão de operadores",
+"description": "Gestão de operadores",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": null,
+"includedIn": "07.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Operadores = usuários/perfis"
+},
+{
+"code": "07.18",
+"level": "submodule",
+"name": "PDV offline e sincronização",
+"description": "PDV offline e sincronização",
+"parent": "07",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv_offline"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "PDV offline planejado"
+},
+{
+"code": "07.19",
+"level": "submodule",
+"name": "Fechamento consolidado",
+"description": "Fechamento consolidado",
+"parent": "07",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": "18.22",
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": null,
+"includedIn": "07.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Somas por período/filial; sem fechamento consolidado · Fechamento consolidado do PDV alimenta o fechamento financeiro (são distintos: físico x financeiro)"
+},
+{
+"code": "07.20",
+"level": "submodule",
+"name": "Consulta rápida de preços",
+"description": "Consulta rápida de preços",
+"parent": "07",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Só a busca do PDV mostra preço"
+},
+{
+"code": "07.21",
+"level": "submodule",
+"name": "Identificação de vendedor",
+"description": "Identificação de vendedor",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Vendedor no atendimento"
+},
+{
+"code": "07.22",
+"level": "submodule",
+"name": "Identificação de cliente",
+"description": "Identificação de cliente",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Cliente/CPF na nota, cadastro rápido"
+},
+{
+"code": "07.23",
+"level": "submodule",
+"name": "Autoatendimento",
+"description": "Autoatendimento",
+"parent": "07",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem autoatendimento"
+},
+{
+"code": "07.24",
+"level": "submodule",
+"name": "PDV móvel",
+"description": "PDV móvel",
+"parent": "07",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "PDV responsivo como PWA; sem smart POS nem offline"
+},
+{
+"code": "07.25",
+"level": "submodule",
+"name": "Reabertura de caixa",
+"description": "Reabertura de caixa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "PERMISSAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": null,
+"includedIn": "07.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [
+"cash.reopen"
+],
+"notes": "Reabertura com motivo e permissão cash.reopen · Reabertura de caixa é ação de perfil"
+},
+{
+"code": "07.26",
+"level": "submodule",
+"name": "Controle de divergências de caixa",
+"description": "Controle de divergências de caixa",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"caixa.operacao"
+],
+"commercialUnit": null,
+"includedIn": "07.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Diferenças com justificativa e acumulado"
+},
+{
+"code": "07.27",
+"level": "submodule",
+"name": "Recebimento de parcelas do crediário no PDV",
+"description": "Recebimento de parcelas do crediário no PDV",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"pdv.recebimento_crediario"
+],
+"commercialUnit": "07.27",
+"includedIn": null,
+"dependencies": {
+"required": [
+"07.01",
+"18.02"
+],
+"optional": []
+},
+"permissions": [
+"pdv.receive_installments",
+"pdv.reverse_receipt"
+],
+"notes": ""
+},
+{
+"code": "07.28",
+"level": "submodule",
+"name": "Terminais e checagem de periféricos",
+"description": "Terminais e checagem de periféricos",
+"parent": "07",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "24",
+"level": "module",
+"name": "ADMINISTRAÇÃO E SEGURANÇA",
+"description": "ADMINISTRAÇÃO E SEGURANÇA",
+"parent": null,
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao",
+"plataforma.acesso",
+"compras.aprovacoes",
+"ecommerce.loja",
+"implantacao.importacao",
+"contabil.carteira",
+"plataforma.backup",
+"cadastros.clientes",
+"plataforma.painel",
+"integracao.contabilidade"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "24.01",
+"level": "submodule",
+"name": "Gestão de usuários",
+"description": "Gestão de usuários",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Usuários com convite, suspensão e escopo plataforma.administracao"
+},
+{
+"code": "24.02",
+"level": "submodule",
+"name": "Gestão de cargos",
+"description": "Gestão de cargos",
+"parent": "24",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": "31.03",
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem cargo · Cargos: um cadastro"
+},
+{
+"code": "24.03",
+"level": "submodule",
+"name": "Gestão de permissões",
+"description": "Gestão de permissões",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Perfis com módulos e ações plataforma.administracao"
+},
+{
+"code": "24.04",
+"level": "submodule",
+"name": "Gestão de filiais",
+"description": "Gestão de filiais",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Filiais plataforma.administracao"
+},
+{
+"code": "24.05",
+"level": "submodule",
+"name": "Auditoria de operações",
+"description": "Auditoria de operações",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Auditoria com antes/depois plataforma.administracao"
+},
+{
+"code": "24.06",
+"level": "submodule",
+"name": "Histórico de alterações",
+"description": "Histórico de alterações",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Diff na auditoria plataforma.administracao"
+},
+{
+"code": "24.07",
+"level": "submodule",
+"name": "Autenticação em dois fatores",
+"description": "Autenticação em dois fatores",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.acesso"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "TOTP e recuperação plataforma.acesso"
+},
+{
+"code": "24.08",
+"level": "submodule",
+"name": "Gestão de sessões",
+"description": "Gestão de sessões",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.acesso"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sessões encerradas ao suspender; sem tela plataforma.acesso"
+},
+{
+"code": "24.09",
+"level": "submodule",
+"name": "Aprovação de operações",
+"description": "Aprovação de operações",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"compras.aprovacoes"
+],
+"commercialUnit": null,
+"includedIn": "05.05",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Política de compras, autorização de pagar, supervisor compras.aprovacoes"
+},
+{
+"code": "24.10",
+"level": "submodule",
+"name": "Configurações empresariais",
+"description": "Configurações empresariais",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Parâmetros por empresa/filial plataforma.administracao"
+},
+{
+"code": "24.11",
+"level": "submodule",
+"name": "API para integrações externas",
+"description": "API para integrações externas",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "API só para o Interos plataforma.administracao"
+},
+{
+"code": "24.12",
+"level": "submodule",
+"name": "Webhooks",
+"description": "Webhooks",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"ecommerce.loja"
+],
+"commercialUnit": null,
+"includedIn": "12.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Só recebe avisos ecommerce.loja"
+},
+{
+"code": "24.13",
+"level": "submodule",
+"name": "Importação de dados",
+"description": "Importação de dados",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"implantacao.importacao"
+],
+"commercialUnit": "24.13",
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "CSV de cadastros, saldos e títulos implantacao.importacao"
+},
+{
+"code": "24.14",
+"level": "submodule",
+"name": "Exportação de dados",
+"description": "Exportação de dados",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Exportação CSV/XLSX plataforma.administracao"
+},
+{
+"code": "24.15",
+"level": "submodule",
+"name": "Gestão de departamentos",
+"description": "Gestão de departamentos",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": "31.02",
+"v1Keys": [
+"contabil.carteira"
+],
+"commercialUnit": null,
+"includedIn": "51.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Departamentos só no escritório contabil.carteira · Departamentos (segurança) e departamentos (RH): um cadastro"
+},
+{
+"code": "24.16",
+"level": "submodule",
+"name": "Gestão de funções",
+"description": "Gestão de funções",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Funções = perfis plataforma.administracao"
+},
+{
+"code": "24.17",
+"level": "submodule",
+"name": "Políticas de segurança",
+"description": "Políticas de segurança",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.acesso"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Bloqueio após 5 falhas, 2FA por perfil plataforma.acesso"
+},
+{
+"code": "24.18",
+"level": "submodule",
+"name": "Restrição de acesso",
+"description": "Restrição de acesso",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.acesso"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Restrição por empresa, filial, módulo plataforma.acesso · Restrição por empresa/filial/módulo"
+},
+{
+"code": "24.19",
+"level": "submodule",
+"name": "Gestão de dispositivos autorizados",
+"description": "Gestão de dispositivos autorizados",
+"parent": "24",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem dispositivos confiáveis"
+},
+{
+"code": "24.20",
+"level": "submodule",
+"name": "Backup e recuperação",
+"description": "Backup e recuperação",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.backup"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Backup, verificação e restauração plataforma.backup"
+},
+{
+"code": "24.21",
+"level": "submodule",
+"name": "Privacidade e LGPD",
+"description": "Privacidade e LGPD",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"ecommerce.loja"
+],
+"commercialUnit": null,
+"includedIn": "12.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Texto de privacidade; sem direitos do titular ecommerce.loja"
+},
+{
+"code": "24.22",
+"level": "submodule",
+"name": "Gestão de consentimentos",
+"description": "Gestão de consentimentos",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.clientes"
+],
+"commercialUnit": null,
+"includedIn": "01.02",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Opt-in de promoções cadastros.clientes"
+},
+{
+"code": "24.23",
+"level": "submodule",
+"name": "Gestão de credenciais",
+"description": "Gestão de credenciais",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Credenciais por referência; segredos cifrados plataforma.administracao"
+},
+{
+"code": "24.24",
+"level": "submodule",
+"name": "Configurações de notificações",
+"description": "Configurações de notificações",
+"parent": "24",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "CORE",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.painel"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Silenciar tipos por usuário plataforma.painel"
+},
+{
+"code": "24.25",
+"level": "submodule",
+"name": "Gestão de acessos externos",
+"description": "Gestão de acessos externos",
+"parent": "24",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"integracao.contabilidade"
+],
+"commercialUnit": null,
+"includedIn": "22.07",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Acesso externo só do escritório e do Interos integracao.contabilidade"
+},
+{
+"code": "27",
+"level": "module",
+"name": "CONTRATOS E RECORRÊNCIA",
+"description": "CONTRATOS E RECORRÊNCIA",
+"parent": null,
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "27.01",
+"level": "submodule",
+"name": "Cadastro de contratos",
+"description": "Cadastro de contratos",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "sem tabela de contratos"
+},
+{
+"code": "27.02",
+"level": "submodule",
+"name": "Modelos de contratos",
+"description": "Modelos de contratos",
+"parent": "27",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "sem modelos de contrato"
+},
+{
+"code": "27.03",
+"level": "submodule",
+"name": "Assinatura eletrônica",
+"description": "Assinatura eletrônica",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "sem provedor de assinatura eletrônica"
+},
+{
+"code": "27.04",
+"level": "submodule",
+"name": "Gestão de vigência",
+"description": "Gestão de vigência",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "vigência de contrato ausente"
+},
+{
+"code": "27.05",
+"level": "submodule",
+"name": "Renovação contratual",
+"description": "Renovação contratual",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "renovação ausente"
+},
+{
+"code": "27.06",
+"level": "submodule",
+"name": "Reajuste contratual",
+"description": "Reajuste contratual",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "reajuste ausente"
+},
+{
+"code": "27.07",
+"level": "submodule",
+"name": "Faturamento recorrente",
+"description": "Faturamento recorrente",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "faturamento recorrente ausente"
+},
+{
+"code": "27.08",
+"level": "submodule",
+"name": "Contratos de prestação de serviços",
+"description": "Contratos de prestação de serviços",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "contrato de serviços ausente"
+},
+{
+"code": "27.09",
+"level": "submodule",
+"name": "Contratos de fornecimento",
+"description": "Contratos de fornecimento",
+"parent": "27",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "inexistente"
+},
+{
+"code": "27.10",
+"level": "submodule",
+"name": "Contratos de locação",
+"description": "Contratos de locação",
+"parent": "27",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "inexistente"
+},
+{
+"code": "27.11",
+"level": "submodule",
+"name": "Aditivos contratuais",
+"description": "Aditivos contratuais",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "aditivos ausentes"
+},
+{
+"code": "27.12",
+"level": "submodule",
+"name": "Rescisões",
+"description": "Rescisões",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "distrato ausente"
+},
+{
+"code": "27.13",
+"level": "submodule",
+"name": "Gestão de SLA",
+"description": "Gestão de SLA",
+"parent": "27",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "sem SLA contratual"
+},
+{
+"code": "27.14",
+"level": "submodule",
+"name": "Controle de obrigações contratuais",
+"description": "Controle de obrigações contratuais",
+"parent": "27",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "inexistente"
+},
+{
+"code": "27.15",
+"level": "submodule",
+"name": "Alertas de vencimento",
+"description": "Alertas de vencimento",
+"parent": "27",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "alertas só de certificados/obrigações"
+},
+{
+"code": "27.16",
+"level": "submodule",
+"name": "Histórico contratual",
+"description": "Histórico contratual",
+"parent": "27",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "histórico contratual ausente"
+},
+{
+"code": "36",
+"level": "module",
+"name": "PAGAMENTOS E GATEWAYS",
+"description": "PAGAMENTOS E GATEWAYS",
+"parent": null,
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"ecommerce.loja",
+"contabil.certificados",
+"vendas.pdv",
+"tec.pagamentos",
+"rede.financeiro",
+"financeiro.taxas_adquirente",
+"financeiro.cartoes",
+"plataforma.administracao",
+"ecommerce.banco"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "36.01",
+"level": "submodule",
+"name": "Gateway de pagamento",
+"description": "Gateway de pagamento",
+"parent": "36",
+"devStatus": "EXT",
+"availability": "indisponivel",
+"commercialClass": "INTEGRACAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"ecommerce.loja"
+],
+"commercialUnit": null,
+"includedIn": "12.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Gateway Intercert não conectado; simulação ecommerce.loja · Gateway Intercert"
+},
+{
+"code": "36.02",
+"level": "submodule",
+"name": "Link de pagamento",
+"description": "Link de pagamento",
+"parent": "36",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"contabil.certificados"
+],
+"commercialUnit": null,
+"includedIn": "48.06",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Só URL fixa da certificação e {link_pix} contabil.certificados"
+},
+{
+"code": "36.03",
+"level": "submodule",
+"name": "Pagamento por cartão",
+"description": "Pagamento por cartão",
+"parent": "36",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"vendas.pdv"
+],
+"commercialUnit": null,
+"includedIn": "07.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "PDV com NSU manual; cartão da loja simulado vendas.pdv"
+},
+{
+"code": "36.04",
+"level": "submodule",
+"name": "Pagamento por PIX",
+"description": "Pagamento por PIX",
+"parent": "36",
+"devStatus": "EXT",
+"availability": "indisponivel",
+"commercialClass": "INTEGRACAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"tec.pagamentos"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Pix dinâmico Mercado Pago (sem credencial: simulação) e estático tec.pagamentos · Pix (Mercado Pago)"
+},
+{
+"code": "36.05",
+"level": "submodule",
+"name": "Pagamento por boleto",
+"description": "Pagamento por boleto",
+"parent": "36",
+"devStatus": "EXT",
+"availability": "indisponivel",
+"commercialClass": "INTEGRACAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Boleto só simulado na loja"
+},
+{
+"code": "36.06",
+"level": "submodule",
+"name": "Pagamento recorrente",
+"description": "Pagamento recorrente",
+"parent": "36",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem cobrança recorrente"
+},
+{
+"code": "36.07",
+"level": "submodule",
+"name": "Split de pagamento",
+"description": "Split de pagamento",
+"parent": "36",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"rede.financeiro"
+],
+"commercialUnit": null,
+"includedIn": "52.07",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Split modelado na rede rede.financeiro"
+},
+{
+"code": "36.08",
+"level": "submodule",
+"name": "Estorno de pagamento",
+"description": "Estorno de pagamento",
+"parent": "36",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_COMPARTILHADO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"tec.pagamentos"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Estorno Pix pelo Mercado Pago tec.pagamentos"
+},
+{
+"code": "36.09",
+"level": "submodule",
+"name": "Gestão de chargeback",
+"description": "Gestão de chargeback",
+"parent": "36",
+"devStatus": "EXT",
+"availability": "indisponivel",
+"commercialClass": "INTEGRACAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Chargeback via aviso do gateway (não conectado)"
+},
+{
+"code": "36.10",
+"level": "submodule",
+"name": "Antifraude",
+"description": "Antifraude",
+"parent": "36",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem antifraude"
+},
+{
+"code": "36.11",
+"level": "submodule",
+"name": "Conciliação de transações",
+"description": "Conciliação de transações",
+"parent": "36",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"financeiro.taxas_adquirente"
+],
+"commercialUnit": null,
+"includedIn": "18.11",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Adquirente × vendas e gateway financeiro.taxas_adquirente"
+},
+{
+"code": "36.12",
+"level": "submodule",
+"name": "Tokenização por provedor",
+"description": "Tokenização por provedor",
+"parent": "36",
+"devStatus": "EXT",
+"availability": "indisponivel",
+"commercialClass": "INTEGRACAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Token de cartão só simulado"
+},
+{
+"code": "36.13",
+"level": "submodule",
+"name": "Gestão de taxas",
+"description": "Gestão de taxas",
+"parent": "36",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"financeiro.taxas_adquirente"
+],
+"commercialUnit": null,
+"includedIn": "18.11",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Taxas por bandeira e parcela financeiro.taxas_adquirente"
+},
+{
+"code": "36.14",
+"level": "submodule",
+"name": "Gestão de adquirentes",
+"description": "Gestão de adquirentes",
+"parent": "36",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"financeiro.cartoes"
+],
+"commercialUnit": null,
+"includedIn": "18.44",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Layouts por adquirente financeiro.cartoes"
+},
+{
+"code": "36.15",
+"level": "submodule",
+"name": "Gestão de subadquirentes",
+"description": "Gestão de subadquirentes",
+"parent": "36",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Sem subadquirentes"
+},
+{
+"code": "36.16",
+"level": "submodule",
+"name": "Integrações individuais por provedor",
+"description": "Integrações individuais por provedor",
+"parent": "36",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "INTEGRACAO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"plataforma.administracao"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "Só Mercado Pago e Focus reais plataforma.administracao · Conectores por provedor"
+},
+{
+"code": "36.17",
+"level": "submodule",
+"name": "Banco Intercert: conciliação do gateway e repasses",
+"description": "Banco Intercert: conciliação do gateway e repasses",
+"parent": "36",
+"devStatus": "EXT",
+"availability": "indisponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"ecommerce.banco"
+],
+"commercialUnit": "36.17",
+"includedIn": null,
+"dependencies": {
+"required": [
+"12.01"
+],
+"optional": []
+},
+"permissions": [
+"ecommerce.finance"
+],
+"notes": "Provedor Banco Intercert reservado; simulação"
+},
+{
+"code": "46",
+"level": "module",
+"name": "GESTÃO DE SUPERMERCADOS E VAREJO ALIMENTAR",
+"description": "GESTÃO DE SUPERMERCADOS E VAREJO ALIMENTAR",
+"parent": null,
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"produtos.balanca",
+"estoque.lotes",
+"produtos.kits",
+"cadastros.produtos",
+"estoque.gestao",
+"produtos.etiquetas",
+"produtos.promocoes"
+],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": ""
+},
+{
+"code": "46.01",
+"level": "submodule",
+"name": "Integração com balanças etiquetadoras",
+"description": "Integração com balanças etiquetadoras",
+"parent": "46",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"produtos.balanca"
+],
+"commercialUnit": "46.01",
+"includedIn": null,
+"dependencies": {
+"required": [
+"01.04"
+],
+"optional": [
+"07.01"
+]
+},
+"permissions": [],
+"notes": "arquivo de carga Toledo/Filizola; layout a conferir produtos.balanca"
+},
+{
+"code": "46.02",
+"level": "submodule",
+"name": "Produtos com código de peso variável",
+"description": "Produtos com código de peso variável",
+"parent": "46",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"produtos.balanca"
+],
+"commercialUnit": null,
+"includedIn": "46.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "EAN 2 peso/valor no PDV produtos.balanca"
+},
+{
+"code": "46.03",
+"level": "submodule",
+"name": "Controle de perecíveis",
+"description": "Controle de perecíveis",
+"parent": "46",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": "10.10",
+"v1Keys": [
+"estoque.lotes"
+],
+"commercialUnit": null,
+"includedIn": "10.10",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "lotes, validades e alerta diário estoque.lotes · Perecíveis usam lotes e validade"
+},
+{
+"code": "46.04",
+"level": "submodule",
+"name": "Controle de hortifrúti",
+"description": "Controle de hortifrúti",
+"parent": "46",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "sem controle específico"
+},
+{
+"code": "46.05",
+"level": "submodule",
+"name": "Controle de açougue",
+"description": "Controle de açougue",
+"parent": "46",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "sem controle de açougue"
+},
+{
+"code": "46.06",
+"level": "submodule",
+"name": "Controle de padaria",
+"description": "Controle de padaria",
+"parent": "46",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "sem controle de padaria"
+},
+{
+"code": "46.07",
+"level": "submodule",
+"name": "Transformação e desossa",
+"description": "Transformação e desossa",
+"parent": "46",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"produtos.kits"
+],
+"commercialUnit": null,
+"includedIn": "15.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "desmembramento com rateio de custo produtos.kits"
+},
+{
+"code": "46.08",
+"level": "submodule",
+"name": "Fracionamento de produtos",
+"description": "Fracionamento de produtos",
+"parent": "46",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"cadastros.produtos"
+],
+"commercialUnit": null,
+"includedIn": "01.04",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "conversões e desmembramento cadastros.produtos"
+},
+{
+"code": "46.09",
+"level": "submodule",
+"name": "Controle de perdas alimentares",
+"description": "Controle de perdas alimentares",
+"parent": "46",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "MODULO_COMERCIAL",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"estoque.gestao"
+],
+"commercialUnit": null,
+"includedIn": "10.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "movimento perda/avaria sem análise estoque.gestao"
+},
+{
+"code": "46.10",
+"level": "submodule",
+"name": "Etiquetas de gôndola",
+"description": "Etiquetas de gôndola",
+"parent": "46",
+"devStatus": "OP",
+"availability": "disponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": "09.13",
+"reuses": null,
+"v1Keys": [
+"produtos.etiquetas"
+],
+"commercialUnit": null,
+"includedIn": "09.13",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "gôndola/adesiva/A4 produtos.etiquetas · Etiquetas de gôndola = etiquetas de produtos"
+},
+{
+"code": "46.11",
+"level": "submodule",
+"name": "Consulta de preços em loja",
+"description": "Consulta de preços em loja",
+"parent": "46",
+"devStatus": "PLAN",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "VEN-13 terminal de consulta ausente"
+},
+{
+"code": "46.12",
+"level": "submodule",
+"name": "Promoções de encarte",
+"description": "Promoções de encarte",
+"parent": "46",
+"devStatus": "PARC",
+"availability": "indisponivel",
+"commercialClass": "ADD_ON",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [
+"produtos.promocoes"
+],
+"commercialUnit": null,
+"includedIn": "25.01",
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "promoções com vigência; sem encarte produtos.promocoes"
+},
+{
+"code": "46.13",
+"level": "submodule",
+"name": "Gestão de vasilhames retornáveis",
+"description": "Gestão de vasilhames retornáveis",
+"parent": "46",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "sem vasilhames"
+},
+{
+"code": "46.14",
+"level": "submodule",
+"name": "Gestão de embalagens retornáveis",
+"description": "Gestão de embalagens retornáveis",
+"parent": "46",
+"devStatus": "NAO",
+"availability": "indisponivel",
+"commercialClass": "RECURSO_FUTURO",
+"aliasOf": null,
+"reuses": null,
+"v1Keys": [],
+"commercialUnit": null,
+"includedIn": null,
+"dependencies": {
+"required": [],
+"optional": []
+},
+"permissions": [],
+"notes": "inexistente"
+}
+]
+}

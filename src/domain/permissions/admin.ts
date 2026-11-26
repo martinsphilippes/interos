@@ -812,7 +812,23 @@ export const ADMIN = {
         wave: 5,
       },
       sections: [],
-      actions: [],
+      actions: [
+        {
+          key: "admin.integracoes.erp-catalogo",
+          label: "ERP Intercert: importar agora o catálogo de módulos",
+          verb: "erp-catalogo",
+          // Novo: busca GET /api/interos/v2/catalog e grava a versão se mudou (a rotina diária também importa).
+          rule: { role: "admin" },
+          guards: ["src/server/erp/actions.ts#importErpCatalogAction"],
+        },
+        {
+          key: "admin.integracoes.erp-reprocessar",
+          label: "ERP Intercert: reenviar agora as alterações aguardando sincronização (mesma chave, sem duplicar)",
+          verb: "erp-reprocessar",
+          rule: { role: "admin" },
+          guards: ["src/server/erp/actions.ts#reprocessErpChangesAction"],
+        },
+      ],
       scope: null,
     },
   ],

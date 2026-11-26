@@ -168,6 +168,14 @@ export const COLLECTIONS = {
   storedFiles: "stored_files",
   /** Partes dos arquivos de `stored_files`: id `<arquivo>__<nº da parte>`. Apagadas quando o arquivo é removido. */
   storedFileChunks: "stored_file_chunks",
+  /** Vínculo cliente ↔ empresa no ERP Intercert (id ERP, CNPJ, ambiente). Um ativo por cliente e por empresa. */
+  erpLinks: "erp_links",
+  /** Versões importadas do catálogo técnico de módulos do ERP (e a diferença para a anterior). */
+  erpCatalogs: "erp_catalogs",
+  /** Licença contratada pelo INTEROS para cada empresa vinculada (itens, versão emitida e a confirmada pelo ERP). */
+  erpLicenses: "erp_licenses",
+  /** Alterações enviadas ao ERP (licença, provisionamento, vínculo): pedido, antes/depois, tentativas e resposta. */
+  erpChangeRequests: "erp_change_requests",
 } as const;
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 

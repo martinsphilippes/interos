@@ -9,6 +9,7 @@ import { KpiStrip } from "@/components/ui/kpi-strip";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { IntegrationCard } from "@/components/integrations/integration-card";
+import { ErpAdminPanel } from "@/components/erp/erp-admin-panel";
 
 export const metadata: Metadata = { title: "Integrações" };
 
@@ -18,7 +19,7 @@ export const metadata: Metadata = { title: "Integrações" };
  * onde configurar. Nenhuma integração aparece como conectada sem credencial e adaptador.
  */
 export default async function IntegrationsPage() {
-  await requireScreen("admin.integracoes");
+  const user = await requireScreen("admin.integracoes");
   const integrations = getIntegrationStatus();
   const count = (state: string) => integrations.filter((i) => i.state === state).length;
 
@@ -57,6 +58,8 @@ export default async function IntegrationsPage() {
           </li>
         ))}
       </ul>
+
+      <ErpAdminPanel user={user} />
     </PageContainer>
   );
 }

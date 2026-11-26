@@ -4,7 +4,7 @@
  */
 import type { Communication, Contract } from "@/domain/types";
 
-export const INTEGRATION_KEYS = ["whatsapp", "voip", "email", "assinatura", "cobranca", "mapas", "sso", "ia"] as const;
+export const INTEGRATION_KEYS = ["whatsapp", "voip", "email", "assinatura", "cobranca", "mapas", "sso", "ia", "erp"] as const;
 /** Chave da integração = categoria (um provedor por categoria). */
 export type IntegrationKey = (typeof INTEGRATION_KEYS)[number];
 
@@ -17,6 +17,7 @@ export const INTEGRATION_CATEGORY_LABELS: Record<IntegrationKey, string> = {
   mapas: "Mapas",
   sso: "Login corporativo (SSO)",
   ia: "Inteligência artificial",
+  erp: "ERP (módulos e licenças)",
 };
 
 /**
