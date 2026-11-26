@@ -165,7 +165,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
 
   return (
     <div className="flex flex-col gap-4">
-      <header className="sticky top-14 z-20 flex flex-col gap-3 rounded-xl border border-border bg-canvas/95 px-4 py-3 shadow-card backdrop-blur md:top-topbar md:flex-row md:items-center">
+      <header className="sticky top-14 z-20 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-canvas/95 px-4 py-3 shadow-card backdrop-blur md:top-topbar">
         <div className="min-w-0 flex-1">
           <p className="hidden text-xs text-muted sm:block">
             ERP Intercert{view.environmentLabel ? ` · ${view.environmentLabel}` : ""}
