@@ -186,14 +186,15 @@ export async function addModulePrice(input: z.output<typeof priceSchema>, actor:
   const problems = priceProblems(fields);
   if (problems.length) throw new BusinessError(problems.join(" "));
   const unit = units.get(input.code);
+  // Código fora do catálogo em uso (ficha antiga): guarda o histórico, mas não recebe preço novo.
+  if (!unit) throw new BusinessError("Este código não está no catálogo do ERP em uso: não recebe preço novo.");
   const today = todayKey();
   const now = nowIso();
 
   let saved: { doc: ModuleDoc; created: PriceVersion; previous: PriceVersion | null } | null = null;
   await inTransaction(async (tx) => {
     const current = await readModule(tx, input.code);
-    if (!current && !unit) throw new BusinessError("Este código não é uma unidade comercial do catálogo do ERP.");
-    const doc = current ?? blankModule(unit as QuoteUnit, actorRef(actor), now);
+    const doc = current ?? blankModule(unit, actorRef(actor), now);
     const previous = versionAt(doc.prices, input.validFrom);
     const { versions, created } = appendVersion<PriceVersion>(doc.prices, { ...fields, validFrom: input.validFrom, reason: input.reason, createdAt: now, createdBy: actorRef(actor) }, today);
     const next: ModuleDoc = { ...doc, prices: versions, updatedAt: now, updatedBy: actorRef(actor) };
@@ -375,6 +376,9 @@ export async function cancelProductPackageVersion(input: z.output<typeof cancelP
     const doc = await readPackage(tx, input.id);
     if (!doc) throw new BusinessError("Pacote não encontrado.");
     const { versions, cancelled } = cancelVersion<PackageVersion>(doc.versions, input.version, today, actorRef(actor), input.reason, now);
+    if (doc.status === "a_venda" && !versions.some((v) => !v.cancelledAt)) {
+      throw new BusinessError("Este pacote está à venda e esta é a única versão: crie outra versão antes ou mude a situação do pacote.");
+    }
     const next: PackageDoc = { ...doc, versions, updatedAt: now, updatedBy: actorRef(actor) };
     tx.set(packageRef(input.id), stripUndefined({ ...next, id: undefined }));
     result = { doc: next, cancelled };

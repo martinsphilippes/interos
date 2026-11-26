@@ -129,6 +129,10 @@ describe("versões de preço", () => {
     expect(m?.prices).toHaveLength(1);
   });
 
+  it("código fora do catálogo em uso não recebe preço novo", async () => {
+    await expect(addModulePrice({ ...fixo(10, today), code: "97.01" }, actor, units)).rejects.toThrow(/não recebe preço novo/);
+  });
+
   it("modelo por faixa com faixas fora de ordem é recusado com a explicação", async () => {
     await expect(
       addModulePrice({ code: C, model: "por_faixa", monthly: 0, unitPrice: 0, includedQuantity: 0, unitLabel: "usuário", tiers: [{ upTo: 5, monthly: 10 }, { upTo: 3, monthly: 20 }, { upTo: null, monthly: 30 }], setup: 0, validFrom: today, reason: "Faixas" }, actor, units),
@@ -171,5 +175,7 @@ describe("pacotes", () => {
     expect(versionAt(pkg!.versions, day(8))?.version).toBe(1);
     expect(await events(id, "product_package.updated")).toHaveLength(1);
     expect(await events(id, "product_package.version_cancelled")).toHaveLength(1);
+    // À venda: a única versão ativa (a de hoje) não pode ser cancelada.
+    await expect(cancelProductPackageVersion({ id, version: 1, reason: "Teste" }, actor)).rejects.toThrow(/única versão/);
   });
 });
