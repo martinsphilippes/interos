@@ -94,7 +94,8 @@ export interface ErpCompanyView {
 }
 
 function forScreen(change: ErpChangeRequest): ErpChangeRequest {
-  return { ...change, requestBody: null, snapshot: null };
+  // Sem o corpo enviado, o retrato inteiro e o e-mail do administrador da empresa (a tela não usa).
+  return { ...change, requestBody: null, snapshot: null, provisioning: change.provisioning ? { ...change.provisioning, adminEmail: "" } : change.provisioning };
 }
 
 function blank(state: ErpCompanyView["state"], integration: ErpIntegrationState, extra: Partial<ErpCompanyView> = {}): ErpCompanyView {

@@ -555,8 +555,14 @@ export async function approveLicenseChange(id: string, approver: UserRef): Promi
   if (change.status !== "aguardando_aprovacao") throw new ErpChangeBlocked("Esta alteração não está aguardando aprovação.", "estado_invalido");
   if (change.requestedBy.id === approver.id) throw new ErpChangeBlocked("Quem pediu não aprova o próprio pedido: peça a outra pessoa com a permissão de aprovar.", "estado_invalido");
   const { loaded, record } = await context(change.clientId);
-  const status = change.erpCompanyId ? await getLicenseStatus(change.erpCompanyId).then((r) => r.data).catch(() => null) : null;
-  const base = record?.current?.items ?? change.before;
+  // Lê o ERP de novo: a versão aplicada (para a versão nova) e, na primeira licença, o que a empresa usa AGORA (pode ter
+  // mudado desde o pedido). Sem essa leitura a primeira licença não sai, como no pedido.
+  const reading = change.erpCompanyId ? await readErpState(change.erpCompanyId) : null;
+  const status = reading?.status ?? null;
+  if (!record?.current && (!reading || reading.error)) {
+    throw new ErpChangeBlocked("Não foi possível ler no ERP o que esta empresa usa hoje. A primeira licença parte dessa leitura: aprove quando o ERP responder.", "erp_indisponivel");
+  }
+  const base = record?.current?.items ?? baseItemsFromErp(loaded.index, reading?.runtime ?? null, reading?.status ?? null);
   const plan = planLicenseChanges(loaded.index, base, change.draft);
   if (plan.errors.length) throw new ErpChangeBlocked(plan.errors.map((e) => e.message).join(" "), "lote_invalido");
   const now = nowIso();
