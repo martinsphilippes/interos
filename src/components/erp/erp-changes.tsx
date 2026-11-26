@@ -23,6 +23,7 @@ export interface ErpChangeCaps {
 
 const stateLabel = (s: string | null) => (s ? ((ERP_ITEM_STATE_LABELS as Record<string, string>)[s] ?? s) : "Não contratado");
 const ORIGIN_LABEL: Record<string, string> = { pedido: "pedido", dependencia: "dependência", cascata: "cascata" };
+const RESULT_LABEL: Record<string, string> = { applied: "aplicada", duplicate: "já aplicada (repetição)", stale: "desatualizada (o ERP já tinha versão maior)", rejected: "recusada" };
 /** Alteração "enviando" há mais que isso: a resposta se perdeu, dá para tentar de novo (mesma chave). */
 const STUCK_MS = 3 * 60 * 1000;
 
@@ -299,7 +300,7 @@ export function ErpHistoryList({ changes, nameOf }: { changes: ErpChangeRequest[
                     <>
                       <dt className="text-muted">Resposta do ERP</dt>
                       <dd>
-                        {c.result.status} em {fmtDateTime(c.result.at)}
+                        {RESULT_LABEL[c.result.status] ?? c.result.status} em {fmtDateTime(c.result.at)}
                         {c.result.appliedVersion ? ` · versão aplicada ${c.result.appliedVersion}` : ""}
                       </dd>
                     </>

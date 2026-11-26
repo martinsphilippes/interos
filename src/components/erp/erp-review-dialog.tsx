@@ -269,7 +269,7 @@ function SimulationView({ review }: { review: ReviewSummary }) {
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-muted">Sem pendências operacionais no ERP para o que vai desligar.</p>
+        <p className="text-sm text-muted">{review.plan.some((p) => p.to === "inactive" || p.to === "suspended" || p.to === "read_only" || p.to === "suspension_scheduled") ? "Sem pendências operacionais no ERP para o que vai desligar." : "O ERP validou o lote."}</p>
       )}
       {sim.rejected.filter((r) => r.reason === "not_homologated").map((r) => (
         <p key={r.message} className="text-xs text-warning-fg">

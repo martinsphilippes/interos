@@ -286,7 +286,8 @@ export async function provisionErpCompanyAction(input: unknown): Promise<Result<
       reason: data.reason,
       actor: actorOf(user),
     });
-    revalidateClient(data.clientId);
+    // Sem revalidar aqui: a aba trocaria de painel na hora e o resultado (com o link do convite, mostrado uma única
+    // vez) sumiria. A tela recarrega quando a pessoa fecha o resultado.
     return { ok: true, data: { change: outcome(res.change), linked: Boolean(res.link), invite: res.invite, license: res.licenseChange ? outcome(res.licenseChange) : null, licenseError: res.licenseError, implantacao: res.implantacao } };
   } catch (error) {
     return fail(error, "Não foi possível criar a empresa no ERP");

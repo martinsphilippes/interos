@@ -297,7 +297,7 @@ export async function submitLicenseChange(input: SubmitInput): Promise<ErpChange
       const open = openSnap ? (openSnap.data() as unknown as ErpChangeRequest) : null;
       if (open && OPEN_STATUSES.has(open.status)) throw new ErpChangeBlocked("Há outra alteração de módulos desta empresa em andamento. Conclua, aprove ou cancele a anterior antes de enviar outra.", "alteracao_aberta");
     }
-    if (record.issuedVersion !== input.baseVersion) throw new ErpChangeBlocked("Outra pessoa alterou os módulos desta empresa enquanto você revisava. O estado foi recarregado: revise suas alterações de novo.", "versao_mudou");
+    if (record.issuedVersion !== input.baseVersion) throw new ErpChangeBlocked("Outra pessoa alterou os módulos desta empresa enquanto você revisava. O estado foi recarregado.", "versao_mudou");
     const version = needsApproval ? null : Math.max(record.issuedVersion, review.erpAppliedVersion) + 1;
     const snapshot: ErpLicenseSnapshot | null = version ? buildSnapshot({ companyId: link.erpCompanyId, licenseVersion: version, items: review.plan.items, previous: record.current, controlMode: review.controlMode, issuedAt: now }) : null;
     const doc: Omit<ErpChangeRequest, "id"> = {

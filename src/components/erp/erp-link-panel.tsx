@@ -15,6 +15,13 @@ import { ErpProvisionDialog, type ProvisionDefaults } from "./erp-provision-dial
 
 type Found = { companyId: string; name: string; cnpj: string | null; kind: string; status: string; isDemo: boolean };
 
+const KIND_LABELS: Record<string, string> = { retail: "varejo", varejo: "varejo", accounting: "escritório contábil", escritorio_contabil: "escritório contábil", certification: "certificação digital" };
+const STATUS_LABELS: Record<string, string> = { active: "ativa", ativa: "ativa", inactive: "inativa", inativa: "inativa", suspended: "suspensa", suspensa: "suspensa" };
+const fmtCnpj = (v: string | null) => {
+  const d = (v ?? "").replace(/\D/g, "");
+  return d.length === 14 ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}` : (v ?? "sem CNPJ");
+};
+
 /** Cliente sem empresa do ERP: criar pelo INTEROS ou vincular uma que já existe. */
 export function ErpLinkPanel({ clientId, view, canProvision, defaults }: { clientId: string; view: ErpCompanyView; canProvision: boolean; defaults: ProvisionDefaults }) {
   const router = useRouter();
@@ -91,7 +98,7 @@ export function ErpLinkPanel({ clientId, view, canProvision, defaults }: { clien
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">{c.name}</span>
                       <span className="block font-mono text-xs text-muted">
-                        {c.companyId} · {c.cnpj ?? "sem CNPJ"} · {c.kind} · {c.status}
+                        {c.companyId} · {fmtCnpj(c.cnpj)} · {KIND_LABELS[c.kind] ?? c.kind} · {STATUS_LABELS[c.status] ?? c.status}
                       </span>
                     </span>
                     {c.isDemo ? (

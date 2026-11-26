@@ -21,7 +21,7 @@ export async function ErpAdminPanel({ user }: { user: CurrentUser }) {
           <div className="min-w-0 flex-1">
             <p className="label-caps">ERP Intercert · módulos por empresa</p>
             <h2 className="text-base font-semibold">
-              {integration.configured ? `Ligado ao ${s.environmentLabel?.toLowerCase() ?? "ERP"}` : "Integração não configurada"}
+              {integration.configured ? `Ligado ao ERP de ${s.environmentLabel?.toLowerCase() ?? "homologação"}` : "Integração não configurada"}
               {integration.host ? <span className="ml-2 font-mono text-xs font-normal text-muted">{integration.host}</span> : null}
             </h2>
             {!integration.configured && integration.missing.length ? <p className="mt-1 text-xs text-muted">Faltam: {integration.missing.join(", ")}.</p> : null}

@@ -132,7 +132,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
     const on = units.filter((u) => isOnState(contracted.get(u.code)?.state ?? null));
     const activeNow = units.filter((u) => u.status?.operational.state === "ativo" || u.status?.operational.state === "em_encerramento");
     const configured = on.filter((u) => u.status?.operational.state === "ativo" && (!u.status.configuration || u.status.configuration.ready));
-    return { units: units.filter((u) => u.sellable || isOnState(contracted.get(u.code)?.state ?? null)).length, contracted: on.length, configured: configured.length, active: activeNow.length };
+    return { units: units.length, contracted: on.length, configured: configured.length, active: activeNow.length };
   }, [view.items, contracted]);
 
   async function refresh() {
@@ -167,7 +167,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
     <div className="flex flex-col gap-4">
       <header className="sticky top-14 z-20 flex flex-col gap-3 rounded-xl border border-border bg-canvas/95 px-4 py-3 shadow-card backdrop-blur md:top-topbar md:flex-row md:items-center">
         <div className="min-w-0 flex-1">
-          <p className="text-xs text-muted">
+          <p className="hidden text-xs text-muted sm:block">
             ERP Intercert{view.environmentLabel ? ` · ${view.environmentLabel}` : ""}
             {view.host ? ` · ${view.host}` : ""}
           </p>
@@ -184,12 +184,13 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
                 <Copy className="size-3.5" aria-hidden />
               </button>
             </span>
-            {currentMode ? <span>Controle: {MODE_SHORT[currentMode]}</span> : null}
-            <span>
-              Licença v{view.license.appliedVersion || "—"}
+            {currentMode ? <span className="hidden sm:inline">Controle: {MODE_SHORT[currentMode]}</span> : null}
+            <span className="hidden sm:inline" title="Versão da licença emitida pelo INTEROS e confirmada pelo ERP">
+              {view.license.appliedVersion ? `Licença v${view.license.appliedVersion}` : "Licença ainda não registrada pelo INTEROS"}
               {view.license.issuedVersion > view.license.appliedVersion ? ` (emitida v${view.license.issuedVersion})` : ""}
+              {view.erp?.appliedVersion && view.erp.appliedVersion !== view.license.appliedVersion ? ` · ERP na v${view.erp.appliedVersion}` : ""}
             </span>
-            {view.erp?.readAt ? <span>lido {fmtDateTime(view.erp.readAt)}</span> : null}
+            {view.erp?.readAt ? <span className="hidden sm:inline">lido {fmtDateTime(view.erp.readAt)}</span> : null}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -214,7 +215,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
             </>
           ) : null}
           <Button variant="outline" size="sm" onClick={refresh} loading={refreshing} aria-label="Atualizar estado do ERP">
-            <RefreshCw aria-hidden /> Atualizar
+            <RefreshCw aria-hidden /> <span className="hidden sm:inline">Atualizar</span>
           </Button>
         </div>
       </header>
@@ -223,7 +224,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
         <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-fg" role="status">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
           <span>
-            {conflict} Sua seleção pendente foi mantida{pending ? "" : " (nada pendente)"}: revise e envie de novo.
+            {conflict} {pending ? "Sua seleção pendente foi mantida: revise e envie de novo." : "Nada ficou pendente."}
           </span>
         </p>
       ) : null}
@@ -231,7 +232,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
         <p className="flex items-start gap-2 rounded-lg border border-danger/35 bg-danger-soft px-3 py-2 text-sm text-danger-fg" role="status">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
           <span>
-            O ERP não respondeu agora ({view.erp?.error?.message}). Mostrando o último estado confirmado pelo INTEROS.
+            Não foi possível ler esta empresa no ERP agora: {view.erp?.error?.message} Mostrando o último estado confirmado pelo INTEROS; alterações ficam travadas até a leitura voltar.
             {view.erp?.error?.requestId ? <span className="ml-1 font-mono text-xs">ref. {view.erp.error.requestId}</span> : null}
           </span>
         </p>

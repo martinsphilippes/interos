@@ -325,6 +325,8 @@ export async function linkByIdentification(input: { clientId: string; erpCompany
   const matches = await findErpCompaniesByCnpj(input.clientId);
   const company = matches.find((c) => c.companyId === input.erpCompanyId);
   if (!company) throw new ErpChangeBlocked("O ERP não tem empresa com este id e o CNPJ do cliente.", "lote_invalido");
+  // Empresa de demonstração do ERP serve para homologar, nunca para cliente real em produção.
+  if (company.isDemo && config.environment === "producao") throw new ErpChangeBlocked("Esta é uma empresa de demonstração do ERP: não pode ser vinculada a um cliente em produção.", "lote_invalido");
   const { link } = await linkClientToErp({ clientId: input.clientId, environment: config.environment, erpCompanyId: company.companyId, erpCompanyName: company.name, cnpj: company.cnpj, erpKind: company.kind, method: "identificacao", actor: input.actor });
   return link;
 }

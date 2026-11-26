@@ -203,7 +203,8 @@ export function ErpModuleTree({ view, canChange, locked, lockedReason, draft, on
                         {pending} preparada{pending > 1 ? "s" : ""}
                       </Badge>
                     ) : null}
-                    {module.devStatus !== "OP" ? (
+                    {module.devStatus !== "OP" && module.devStatus !== "PARC" ? (
+                      // Operacional e parcial são o normal do ERP (parcial = nem todo submódulo pronto): só o resto aparece.
                       <Badge variant="muted" size="sm" title="Situação técnica do módulo no ERP (não é a contratação)">
                         ERP: {module.devStatusLabel.toLowerCase()}
                       </Badge>

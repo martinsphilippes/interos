@@ -77,7 +77,7 @@ export function ErpTowerPanel({ clientId, counts, usage, onLoadUsage }: Props) {
   return (
     <div className="flex flex-col gap-4">
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Módulos da empresa">
-        <Counter label="Unidades contratáveis" value={counts.units} />
+        <Counter label="Unidades no catálogo" value={counts.units} hint="Unidades comerciais do catálogo do ERP (vendáveis ou já em uso)" />
         <Counter label="Contratadas" value={counts.contracted} />
         <Counter label="Configuradas" value={counts.configured} hint="Ligadas e sem configuração pendente no ERP" />
         <Counter label="Ativas no ERP" value={counts.active} />

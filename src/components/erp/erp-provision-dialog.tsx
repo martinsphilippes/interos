@@ -140,11 +140,15 @@ function ProvisionInner({ onOpenChange, clientId, view, defaults }: { onOpenChan
       router.refresh();
       return;
     }
+    // Não recarrega agora: a aba trocaria de painel e o resultado (com o link do convite, mostrado uma vez) sumiria.
     setOutcome(res.data);
-    router.refresh();
   }
 
-  const close = () => (sending ? undefined : onOpenChange(false));
+  const close = () => {
+    if (sending) return;
+    onOpenChange(false);
+    if (outcome) router.refresh();
+  };
   const stepIndex = STEPS.findIndex((s) => s.key === step);
   const query = search.trim().toLowerCase();
   const grouped = React.useMemo(() => {
@@ -349,7 +353,7 @@ function ProvisionInner({ onOpenChange, clientId, view, defaults }: { onOpenChan
         </DialogBody>
         <DialogFooter>
           {outcome ? (
-            <Button onClick={() => onOpenChange(false)}>Fechar</Button>
+            <Button onClick={close}>Fechar</Button>
           ) : (
             <>
               <Button variant="outline" onClick={() => (stepIndex === 0 ? close() : setStep(STEPS[stepIndex - 1].key))} disabled={sending}>
@@ -372,13 +376,15 @@ function ProvisionInner({ onOpenChange, clientId, view, defaults }: { onOpenChan
   );
 }
 
+const STAGE_LABELS: Record<string, string> = { concluida: "concluída", em_andamento: "em andamento", falhou: "parada (retome pela aba)", nao_iniciada: "não iniciada" };
+
 function ProvisionResult({ outcome }: { outcome: ProvisionOutcome }) {
   const [copied, setCopied] = React.useState(false);
   const link = outcome.invite?.link ?? null;
   return (
     <div className="flex flex-col gap-3 text-sm">
       <p className="flex items-center gap-2 font-medium text-success-fg">
-        <CheckCircle2 className="size-4" aria-hidden /> Empresa criada e vinculada a este cliente{outcome.implantacao ? ` (implantação: ${outcome.implantacao})` : ""}.
+        <CheckCircle2 className="size-4" aria-hidden /> Empresa criada e vinculada a este cliente{outcome.implantacao ? ` (implantação ${STAGE_LABELS[outcome.implantacao] ?? outcome.implantacao})` : ""}.
       </p>
       {link ? (
         <div className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2">
@@ -406,7 +412,18 @@ function ProvisionResult({ outcome }: { outcome: ProvisionOutcome }) {
       ) : null}
       {outcome.license ? (
         <p className="text-xs">
-          Licença inicial: <strong>{outcome.license.status === "aplicada" ? `aplicada (versão ${outcome.license.licenseVersion})` : outcome.license.status === "falhou" ? "aguardando sincronização (nova tentativa automática)" : outcome.license.status}</strong>.
+          Licença inicial:{" "}
+          <strong>
+            {outcome.license.status === "aplicada"
+              ? `aplicada (versão ${outcome.license.licenseVersion})`
+              : outcome.license.status === "falhou"
+                ? outcome.license.nextAttemptAt
+                  ? `aguardando sincronização (nova tentativa automática em ${new Date(outcome.license.nextAttemptAt).toLocaleString("pt-BR")})`
+                  : "aguardando sincronização"
+                : outcome.license.status}
+          </strong>
+          .{outcome.license.status === "falhou" && outcome.license.lastError ? ` ${outcome.license.lastError.message}` : ""}
+          {outcome.license.status === "falhou" && !outcome.license.nextAttemptAt ? " Envie de novo pela aba Módulos ERP depois de corrigir a causa." : ""}
         </p>
       ) : outcome.licenseError ? (
         <p className="text-xs text-warning-fg">Licença inicial não enviada: {outcome.licenseError} Envie pela aba Módulos ERP.</p>
