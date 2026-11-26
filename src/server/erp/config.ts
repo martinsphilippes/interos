@@ -20,6 +20,8 @@ export type ErpApi = "licencas" | "provisionamento" | "torre";
 
 export const ERP_ENV_VARS = {
   url: "ERP_INTERCERT_URL",
+  provisioningUrl: "ERP_INTERCERT_URL_PROVISIONAMENTO",
+  towerUrl: "ERP_INTERCERT_URL_TORRE",
   environment: "ERP_INTERCERT_AMBIENTE",
   licenseToken: "ERP_INTERCERT_TOKEN_LICENCAS",
   licenseSigningSecret: "ERP_INTERCERT_SEGREDO_ASSINATURA",
@@ -31,6 +33,11 @@ export interface ErpConfig {
   environment: ErpEnvironment;
   /** Origem do ERP, sem barra final e sem caminho (ex.: https://intercerterp.vercel.app). */
   baseUrl: string;
+  /**
+   * Origem de cada família quando o ERP ainda publica as APIs em lugares diferentes (transição: o provisionamento e a
+   * Torre num deploy, as licenças em outro). Padrão: `baseUrl`. Em produção é uma só.
+   */
+  apiBaseUrls?: Partial<Record<ErpApi, string>>;
   /** Token das APIs de módulos e licenças (`Authorization: Bearer <token>`). */
   licenseToken: string | null;
   /** Segredo HMAC das escritas de licença (cabeçalho X-Interos-Signature). */
@@ -44,6 +51,11 @@ export interface ErpConfig {
 function read(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
+}
+
+/** Origem usada por uma família de API. */
+export function baseUrlFor(config: ErpConfig, api: ErpApi): string {
+  return config.apiBaseUrls?.[api] ?? config.baseUrl;
 }
 
 /** Normaliza a URL do ERP: só origem https (http apenas para localhost, em desenvolvimento e testes). */
@@ -73,9 +85,12 @@ export function getErpConfig(): ErpConfig | null {
   const baseUrl = normalizeErpBaseUrl(read(ERP_ENV_VARS.url));
   const environment = parseEnvironment(read(ERP_ENV_VARS.environment));
   if (!baseUrl || !environment) return null;
+  const provisioningUrl = normalizeErpBaseUrl(read(ERP_ENV_VARS.provisioningUrl));
+  const towerUrl = normalizeErpBaseUrl(read(ERP_ENV_VARS.towerUrl));
   return {
     environment,
     baseUrl,
+    apiBaseUrls: { ...(provisioningUrl ? { provisionamento: provisioningUrl } : {}), ...(towerUrl ? { torre: towerUrl } : {}) },
     licenseToken: read(ERP_ENV_VARS.licenseToken),
     licenseSigningSecret: read(ERP_ENV_VARS.licenseSigningSecret),
     provisioningCredential: read(ERP_ENV_VARS.provisioningCredential),

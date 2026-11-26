@@ -23,6 +23,7 @@ import { TabCs } from "@/components/clients/tab-cs";
 import { TabSuporte } from "@/components/clients/tab-suporte";
 import { TabDocumentos } from "@/components/clients/tab-documentos";
 import { TabTarefas } from "@/components/clients/tab-tarefas";
+import { TabErp } from "@/components/erp/tab-erp";
 import { getClientCs } from "@/server/cs/queries";
 import { csCapabilities, csLinks } from "@/server/cs/access";
 import { getSupportOptions } from "@/server/support/queries";
@@ -173,6 +174,8 @@ export default async function ClientePage({ params, searchParams }: { params: Pa
       />
     ),
     tarefas: <TabTarefas data={data} canCreate={caps.createTask} />,
+    // Módulos ERP: lê o ERP só quando a aba está aberta (streaming, sem segurar a ficha).
+    erp: <TabErp user={user} client={data.client} initialView={typeof query.vista === "string" ? query.vista : undefined} />,
   };
 
   return (

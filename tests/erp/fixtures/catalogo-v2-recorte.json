@@ -7,6 +7,27 @@
 "name": "ERP Intercert",
 "slug": "erp_intercert"
 },
+"v1Compatibility": {
+"unitsByV1Key": {
+"cadastros.clientes": "01.02",
+"cadastros.fornecedores": "01.03",
+"cadastros.produtos": "01.04",
+"caixa.operacao": "07.02",
+"compras.aprovacoes": "05.05",
+"compras.cotacoes": "05.02",
+"compras.nota_a_confirmar": "05.19",
+"compras.pedidos": "05.04",
+"compras.precificacao": "05.20",
+"compras.recebimento": "05.06",
+"compras.reposicao": "05.08",
+"ecommerce.banco": "36.17",
+"implantacao.importacao": "24.13",
+"pdv.recebimento_crediario": "07.27",
+"produtos.balanca": "46.01",
+"vendas.pdv": "07.01"
+},
+"v1KeysWithoutV2Unit": []
+},
 "items": [
 {
 "code": "01",

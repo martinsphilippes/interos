@@ -56,6 +56,8 @@ export interface ErpCatalogItem {
   reuses: string | null;
   /** Chaves do runtime v1 que este item envolve. */
   v1Keys: string[];
+  /** Unidade comercial: a chave do runtime v1 que ela liga e desliga no ERP (ponte para o estado operacional). */
+  v1Key: string | null;
   /** É uma unidade comercial (contratada por si). */
   unit: boolean;
   /** Unidade ou item em que este está incluído (sem cobrança própria). */
@@ -149,6 +151,10 @@ export function normalizeCatalog(raw: unknown): ErpCatalog {
   if (!doc || !list) throw new Error("Documento do catálogo sem a lista de itens.");
   const items: ErpCatalogItem[] = [];
   const seen = new Set<string>();
+  // Unidade → chave v1 (o documento traz o inverso em v1Compatibility.unitsByV1Key).
+  const keyByUnit = new Map<string, string>();
+  const byV1 = asRecord(asRecord(doc.v1Compatibility)?.unitsByV1Key);
+  for (const [key, unit] of Object.entries(byV1 ?? {})) if (typeof unit === "string" && !keyByUnit.has(unit)) keyByUnit.set(unit, key);
   for (const entry of list) {
     const r = asRecord(entry);
     const code = str(r?.code);
@@ -171,6 +177,7 @@ export function normalizeCatalog(raw: unknown): ErpCatalog {
       aliasOf: str(r.aliasOf),
       reuses: str(r.reuses),
       v1Keys: strList(r.v1Keys),
+      v1Key: str(r.commercialUnit) === code ? (keyByUnit.get(code) ?? (strList(r.v1Keys).length === 1 ? strList(r.v1Keys)[0] : null)) : null,
       unit: str(r.commercialUnit) === code,
       includedIn: str(r.includedIn),
       requires: strList(deps?.required),
@@ -361,8 +368,15 @@ function rootIsCore(item: ErpCatalogItem, byCode: ReadonlyMap<string, ErpCatalog
 export function isUnitSellable(item: ErpCatalogItem): boolean {
   if (!item.unit) return false;
   if (item.sellable !== null) return item.sellable;
-  return item.available && (item.devStatus === "OP" || item.devStatus === "PARC");
+  return SELLABLE_DEV_STATUS.has(item.devStatus);
 }
+
+/**
+ * Mesma regra do ERP (scripts/modules/build-catalog-v2.ts): unidade implementada — operacional, parcial ou com falhas —
+ * é vendável; integração externa pendente (EXT), em desenvolvimento, planejada ou inexistente, não (decisão 1 do
+ * contrato v2: só depois da homologação). O ERP recusa ativar o que não é vendável (`not_homologated`).
+ */
+const SELLABLE_DEV_STATUS = new Set(["OP", "PARC", "FALHA"]);
 
 /**
  * Fechamento das dependências obrigatórias: as unidades pedidas mais todas as que elas exigem (em cadeia). Devolve as

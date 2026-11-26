@@ -28,6 +28,7 @@ export const CLIENT_SECTION_KEYS: Record<ClientSection, PermissionKey> = {
   comercial: "operacao.clientes.comercial.ver",
   implantacao: "operacao.clientes.implantacao.ver",
   cs: "operacao.clientes.cs.ver",
+  erp: "operacao.clientes.erp.ver",
 };
 
 type Owned = Pick<Client, "ownerSalesId" | "ownerCsId" | "ownerImplementationId">;

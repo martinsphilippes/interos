@@ -9,7 +9,7 @@ import "server-only";
  * em falha temporária: a decisão de repetir escritas fica com quem guarda a chave de idempotência.
  */
 import { randomBytes } from "node:crypto";
-import { getErpConfig, type ErpApi, type ErpConfig } from "./config";
+import { baseUrlFor, getErpConfig, type ErpApi, type ErpConfig } from "./config";
 import { ErpError, type ErpFieldError } from "./errors";
 import { signBody } from "./signature";
 
@@ -36,6 +36,11 @@ export interface ErpRequest {
   retries?: number;
   /** Configuração explícita (testes e scripts); sem ela, lê as variáveis de ambiente. */
   config?: ErpConfig;
+  /**
+   * Status não 2xx que chegam no envelope de SUCESSO e são resposta de negócio (ex.: 422 com `{ data: { status:
+   * "rejected" } }` no PUT da licença). Com `data` no corpo, voltam como resposta em vez de erro.
+   */
+  acceptStatuses?: readonly number[];
 }
 
 export interface ErpResponse<T> {
@@ -171,7 +176,7 @@ export async function erpRequest<T>(request: ErpRequest): Promise<ErpResponse<T>
     throw new ErpError({ api: request.api, status: 0, code: "not_configured", message: "Segredo de assinatura das licenças não configurado.", requestId, kind: "not_configured" });
   }
 
-  const url = buildErpUrl(config.baseUrl, request.path, request.query);
+  const url = buildErpUrl(baseUrlFor(config, request.api), request.path, request.query);
   const bodyText = request.body === undefined ? undefined : JSON.stringify(request.body);
   const retries = request.retries ?? (request.method === "GET" ? 1 : 0);
 
@@ -222,7 +227,8 @@ export async function erpRequest<T>(request: ErpRequest): Promise<ErpResponse<T>
     const echoedId = response.headers.get("x-request-id") ?? requestId;
     console.info(`[erp] ${request.api} ${request.method} ${request.path} ${response.status} ${durationMs}ms req=${echoedId}`);
 
-    if (response.ok) {
+    const acceptedBody = !response.ok && request.acceptStatuses?.includes(response.status) && request.api === "licencas" && asRecord(parsed.json) !== null && "data" in (asRecord(parsed.json) as Record<string, unknown>) && !("error" in (asRecord(parsed.json) as Record<string, unknown>));
+    if (response.ok || acceptedBody) {
       const body = asRecord(parsed.json);
       const isLicenseEnvelope = request.api === "licencas" && body !== null && "data" in body;
       return {
