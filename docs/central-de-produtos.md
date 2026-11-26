@@ -278,7 +278,7 @@ quando e em que pacote, nem como evitar cobrar duas vezes um módulo que já vem
 
 | Aba | O que faz |
 | --- | --- |
-| Módulos do ERP | As 67 unidades comerciais do catálogo agrupadas pelos 53 módulos do ERP, com situação comercial (em definição, à venda, sob consulta, descontinuado), preço vigente e preço agendado. A ficha tem nome comercial, texto para proposta, segmentos, dependências comerciais, observações internas, o histórico de preços (nova versão, cancelamento da que ainda não começou) e o que a unidade inclui, exige e quem depende dela no ERP |
+| Módulos do ERP | As 67 unidades comerciais do catálogo agrupadas pelos 24 módulos do ERP que as têm (de 53 no catálogo), com situação comercial (em definição, à venda, sob consulta, descontinuado), preço vigente e preço agendado. A ficha tem nome comercial, texto para proposta, segmentos, dependências comerciais, observações internas, o histórico de preços (nova versão, cancelamento da que ainda não começou) e o que a unidade inclui, exige e quem depende dela no ERP |
 | Pacotes | Pacotes por segmento com versões (módulos incluídos, mensalidade, implantação, início da vigência, motivo). Novo pacote parte de um pacote de partida do ERP (varejo essencial, moda, supermercado, bebidas, e-commerce, escritório contábil) ou do zero; mostra dependências que faltam, módulos que o ERP ainda não vende e a economia sobre os mesmos módulos avulsos |
 | Simulador | Pacote + módulos avulsos com quantidades, pelo preço vigente na data escolhida, sem cobrança dupla; aponta dependências que faltam (com "Acrescentar") e copia o resumo para a proposta |
 
