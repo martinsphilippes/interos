@@ -286,8 +286,9 @@ Administração não podem ser desligados. O sistema avisa quantas pessoas perde
 **Valores financeiros**: "Visualizar valores" (Financeiro) controla se a pessoa vê quantias em contratos, cobranças,
 recebíveis, Cliente 360 e Implantação; sem ela os números aparecem como "Restrito".
 
-**Proteções** (o sistema recusa e registra a tentativa): ninguém altera as próprias exceções, muda o próprio papel, se
-desativa ou se exclui; ninguém concede um acesso que não tem; só quem tem "Gerir acessos" altera perfis, exceções e
+**Proteções** (o sistema recusa e registra a tentativa): ninguém altera as próprias exceções, se desativa ou se exclui;
+mudar o próprio papel (ex.: o administrador que passa a gestor) pede confirmação, só vale se houver outro administrador
+ativo, nunca dá acesso novo e encerra a sessão para entrar de novo já com o novo papel; ninguém concede um acesso que não tem; só quem tem "Gerir acessos" altera perfis, exceções e
 módulos ou atribui o papel Administrador; o perfil Administrador não aceita perder os acessos de administração; Início
 e Meu Dia nunca são negados.
 

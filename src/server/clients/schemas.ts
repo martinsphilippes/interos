@@ -170,6 +170,14 @@ export const removeDocumentSchema = z.object({
     .max(500, "Motivo muito longo (máximo de 500 caracteres)."),
 });
 
+/** Editar nome e categoria de um documento da aba (o servidor confere quem pode). */
+export const updateDocumentSchema = z.object({
+  clientId: z.string().min(1).max(64),
+  documentId: z.string().min(1).max(64),
+  title: z.string().trim().min(2).max(160),
+  category: z.string().trim().max(60).nullish(),
+});
+
 export const upsellSchema = z.object({
   clientId: z.string().min(1, "Cliente inválido"),
   productId: z.string().min(1, "Escolha o produto"),

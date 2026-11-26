@@ -74,6 +74,8 @@ export type CreateUserInput = z.input<typeof createUserSchema>;
 export const updateUserSchema = userFieldsSchema.extend({
   id: idSchema,
   active: z.boolean(),
+  /** A pessoa confirmou trocar o PRÓPRIO papel (só vale se sobrar outro administrador ativo). */
+  confirmSelfRoleChange: z.boolean().optional(),
 });
 export type UpdateUserInput = z.input<typeof updateUserSchema>;
 

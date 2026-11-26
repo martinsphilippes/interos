@@ -364,7 +364,8 @@ export async function updateUser(input: unknown): Promise<ActionResult<{ id: str
     // Invariantes no estado resultante (papel/situação/departamento do alvo mudam as permissões efetivas).
     const loaded = await loadAccessState();
     const next = accessUserOf({ ...current, ...patch, id: current.id } as User);
-    await enforceInvariants(user, loaded, withUser(loaded.state, next), { kind: "user.update", userId: current.id }, { entity: { type: "user", id: current.id }, label: current.name, kind: "usuario" }, { role: data.role, active: data.active });
+    const selfRoleConfirmed = current.id === user.id && current.role !== data.role && data.confirmSelfRoleChange === true;
+    await enforceInvariants(user, loaded, withUser(loaded.state, next), { kind: "user.update", userId: current.id, selfRoleConfirmed }, { entity: { type: "user", id: current.id }, label: current.name, kind: "usuario" }, { role: data.role, active: data.active });
 
     const names = new Map([...loaded.usersById.values()].map((u) => [u.id, u.name]));
     const audit = redactSalary(auditChanges<Record<string, unknown>>(userAuditView(current, names), userAuditView({ ...current, ...patch }, names), USER_FIELDS));

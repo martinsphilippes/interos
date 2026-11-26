@@ -64,6 +64,8 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "operacao.clientes.erp.alterar",
   "operacao.clientes.erp.aprovar",
   "operacao.clientes.erp.provisionar",
+  // Documentos do cliente: editar nome e categoria de qualquer documento da aba.
+  "operacao.clientes.documentos.editar",
   "admin.integracoes.erp-catalogo",
   "admin.integracoes.erp-reprocessar",
 ];

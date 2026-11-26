@@ -207,6 +207,14 @@ export function canRemoveClientDocument(input: { canRemoveAny: boolean; canRemov
   return canRemoveUpload({ ...input, undoMs: CLIENT_DOCUMENT_UNDO_MS });
 }
 
+/**
+ * Pode editar nome e categoria? Quem tem a chave de editar (`canEditAny`), sempre; quem enviou e ainda pode anexar
+ * (`canEditOwn`), o próprio documento a qualquer tempo. Não apaga nada: o antes e o depois ficam no histórico.
+ */
+export function canEditClientDocument(input: { canEditAny: boolean; canEditOwn: boolean; viewerId: string; uploadedById: string }): boolean {
+  return input.canEditAny || (input.canEditOwn && input.viewerId === input.uploadedById);
+}
+
 /** Documento que vale: removido não conta em listas, nos portões do workflow nem nos documentos do contrato. */
 export function isActiveDocument(doc: { status?: string }): boolean {
   return doc.status !== "removido";

@@ -33,6 +33,7 @@ import {
   noteSchema,
   removeContactSchema,
   removeDocumentSchema,
+  updateDocumentSchema,
   updateClientSchema,
   updateContactSchema,
   upsellSchema,
@@ -41,7 +42,7 @@ import { createWorkflowInstanceForClient } from "@/server/workflow/service";
 import { syncContractSignersFromContact } from "@/server/finance/service";
 import { canSeeClient, clientScope, scopeClients } from "./access";
 import { createContact } from "./contacts";
-import { documentViewer, nextDocumentVersion, removeClientDocument } from "./documents";
+import { documentViewer, nextDocumentVersion, removeClientDocument, updateClientDocument } from "./documents";
 
 /**
  * Server Actions do módulo Clientes 360º.
@@ -449,6 +450,23 @@ export async function removeClientDocumentAction(input: unknown): Promise<Action
     return { ok: true, data: { id: data.documentId } };
   } catch (error) {
     return fail(error, "Não foi possível remover o documento");
+  }
+}
+
+/** Edita nome e categoria de um documento da aba: quem enviou (o próprio) ou quem tem a chave de editar (qualquer). */
+export async function updateClientDocumentAction(input: unknown): Promise<ActionResult<{ id: string; version: number }>> {
+  try {
+    const viewer = await requireUser();
+    const user = can(viewer, "operacao.clientes.documentos.editar")
+      ? await requirePermission("operacao.clientes.documentos.editar")
+      : await requirePermission("operacao.clientes.documentos.anexar");
+    const data = updateDocumentSchema.parse(input);
+    const client = await loadClient(user, data.clientId);
+    const doc = await updateClientDocument(client.id, data.documentId, { title: data.title, category: data.category ?? null }, { ...actor(user), departmentId: user.departmentId }, documentViewer(user));
+    revalidateClient(client.id);
+    return { ok: true, data: { id: doc.id, version: doc.version } };
+  } catch (error) {
+    return fail(error, "Não foi possível editar o documento");
   }
 }
 
