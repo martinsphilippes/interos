@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MODELO DE CARGA MASSIVA DE CLIENTES – Interos (versão 1.0)
+  Esquema: docs/importacao/clientes.xsd · valide com:
+    xmllint (opções noout e schema): docs/importacao/clientes.xsd clientes-em-branco.xml
+
+  REGRAS DE PREENCHIMENTO
+  - Copie e cole o bloco <cliente> abaixo para cada cliente (um bloco = um cliente).
+    Exemplo preenchido: clientes-modelo.xml.
+  - Obrigatórios: atributo codigoExterno, razaoSocial, nomeFantasia, status. O resto é opcional:
+    omita a tag (não deixe vazia) quando não tiver o dado.
+  - codigoExterno = código do cliente no sistema antigo. Único no arquivo. É ele que permite
+    reenviar o arquivo corrigido sem duplicar ninguém.
+  - Números SÓ COM DÍGITOS: documento (CPF 11 / CNPJ 14), telefone/whatsapp (DDD + número, 10 ou 11),
+    cep (8), cpf do contato (11). Sem ponto, traço, barra, parênteses ou +55.
+  - Datas no formato AAAA-MM-DD. Valores com ponto decimal: 1250.90 (sem R$ e sem milhar).
+  - Responsáveis são o E-MAIL DE LOGIN do usuário no Interos (o importador converte para o usuário).
+  - Escape de caracteres: & vira &amp;  < vira &lt;  (ex.: "Silva &amp; Filhos Ltda").
+
+  VALORES ACEITOS
+  - status:   lead | prospect | ativo | em_implantacao | inativo | cancelado
+  - segmento: varejo | supermercado | farmacia | restaurante | atacado | loja_de_roupas | autopecas |
+              material_de_construcao | otica | pet_shop | servicos | industria | outro
+  - status do produto: ativo | em_implantacao | suspenso | cancelado
+  - uf: sigla com 2 letras maiúsculas (SP, RJ, MG...)
+  - origem: chave da origem de lead cadastrada no Interos (ex.: indicacao, site, google, legado)
+  - tags: até 20 por cliente, até 40 caracteres cada
+  - contato: atributos principal="true|false" e decisor="true|false" (no máximo 1 principal por cliente)
+  - produto/nome: nome exatamente igual ao do catálogo (Admin › Produtos)
+-->
+<cargaClientes versao="1.0">
+
+  <!-- CLIENTE (copie este bloco inteiro para cada novo cliente) -->
+  <cliente codigoExterno="">
+    <razaoSocial></razaoSocial>
+    <nomeFantasia></nomeFantasia>
+    <documento></documento>
+    <segmento></segmento>
+    <status></status>
+    <origem></origem>
+    <telefone></telefone>
+    <whatsapp></whatsapp>
+    <email></email>
+    <site></site>
+    <clienteDesde></clienteDesde>
+    <endereco>
+      <logradouro></logradouro>
+      <numero></numero>
+      <complemento></complemento>
+      <bairro></bairro>
+      <cidade></cidade>
+      <uf></uf>
+      <cep></cep>
+    </endereco>
+    <responsaveis>
+      <comercial></comercial>
+      <cs></cs>
+      <implantacao></implantacao>
+    </responsaveis>
+    <tags>
+      <tag></tag>
+    </tags>
+    <observacoes></observacoes>
+    <optOutComunicacao>
+      <whatsapp>false</whatsapp>
+      <email>false</email>
+    </optOutComunicacao>
+    <contatos>
+      <contato principal="true" decisor="true">
+        <nome></nome>
+        <cargo></cargo>
+        <telefone></telefone>
+        <whatsapp></whatsapp>
+        <email></email>
+        <cpf></cpf>
+      </contato>
+    </contatos>
+    <produtos>
+      <produto>
+        <nome></nome>
+        <plano></plano>
+        <quantidade></quantidade>
+        <valorSetup></valorSetup>
+        <valorMensal></valorMensal>
+        <valorHardware></valorHardware>
+        <status></status>
+        <inicio></inicio>
+        <cancelamento></cancelamento>
+        <motivoCancelamento></motivoCancelamento>
+      </produto>
+    </produtos>
+  </cliente>
+
+</cargaClientes>
