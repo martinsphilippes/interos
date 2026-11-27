@@ -75,10 +75,12 @@ export const KEYS_AFTER_T0: readonly string[] = [
   "admin.produtos.pacotes.editar",
   "admin.integracoes.erp-catalogo",
   "admin.integracoes.erp-reprocessar",
+  // Administração › Empresas ERP: lista central das empresas vinculadas ao ERP (tela nova, item novo no menu).
+  "admin.empresas-erp",
 ];
 
 /** Rotas de telas novas em módulos antigos (itens de menu criados depois do T0). */
-export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento", "/estoque", "/compras"];
+export const HREFS_AFTER_T0: readonly string[] = ["/financeiro/faturamento", "/estoque", "/compras", "/admin/empresas-erp"];
 
 /** A chave (ou tela) pertence a um módulo criado depois do T0 (ou é uma chave nova)? */
 export function isAfterT0Key(key: string): boolean {

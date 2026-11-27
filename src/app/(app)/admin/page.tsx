@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ChevronRight, Network, Package, Plug, Settings, Users, Workflow, Zap } from "lucide-react";
+import { Building2, ChevronRight, Network, Package, Plug, Settings, Users, Workflow, Zap } from "lucide-react";
 import { requireScreen } from "@/server/auth/session";
 import { getAdminOverview } from "@/server/admin/queries";
 import { getIntegrationStatus } from "@/server/integrations/status";
@@ -102,6 +102,13 @@ export default async function AdminPage() {
         { label: "a verificar", value: formatNumber(toCheck) },
       ],
       warning: connected === 0 ? "Nenhuma integração externa conectada: canais em registro manual" : undefined,
+    },
+    {
+      href: "/admin/empresas-erp",
+      title: "Empresas ERP",
+      description: "Todas as empresas vinculadas ao ERP Intercert: licença, alterações em andamento, avisos do ERP e clientes ainda sem empresa no ERP.",
+      icon: <Building2 />,
+      stats: [],
     },
   ];
 

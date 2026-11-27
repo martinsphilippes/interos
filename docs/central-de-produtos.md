@@ -494,3 +494,60 @@ unidade escolhida, mudança só de exibição, valor inválido e o envio assinad
   - 6 de unidade;
   - 7 de banco: licença inicial sem simulação, aprovador que não viu, nova tentativa com o ERP mudado e os 4 da
     primeira revisão.
+
+## 19. Administração › Empresas ERP (27/11/2026)
+
+Pedido: "Onde vou fazer a gestão das empresas? Não estou encontrando no INTEROS". Antes, cada empresa só aparecia na
+aba Módulos ERP do próprio cliente. Esta tela junta todas numa lista só (`/admin/empresas-erp`, tela
+`admin.empresas-erp`, só administrador).
+
+**O que mostra.**
+- **Indicadores:**
+  - vinculadas;
+  - precisam de atenção;
+  - aguardando aprovação;
+  - clientes sem empresa no ERP.
+- **Uma linha por empresa vinculada** no ambiente configurado, com:
+  - cliente e situação do cliente;
+  - empresa no ERP: nome, ID, CNPJ e tipo;
+  - licença registrada no INTEROS: versão, unidades e módulos ligados, exibição do desligado;
+  - situação;
+  - última leitura do ERP e último evento recebido.
+- **Situação**, da mais urgente à normal (vale a primeira que se aplica):
+  1. alteração não sincronizada;
+  2. aguardando aprovação;
+  3. enviando ao ERP;
+  4. ERP não respondeu (última leitura com erro);
+  5. aviso do ERP nos últimos 7 dias (licença recusada ou limite atingido);
+  6. licença não registrada;
+  7. em dia.
+
+  O aviso diário "licença sem novidade" é só informativo e não entra.
+- **Busca** por cliente, empresa no ERP, ID ou CNPJ (com ou sem pontuação, sem diferenciar acento).
+- **Filtro de situação**, inclusive "Precisam de atenção" e "Clientes sem empresa no ERP" (ativos ou em implantação
+  ainda sem vínculo neste ambiente). `?situacao=` abre a tela já filtrada.
+- **Ações:** cada linha leva à aba Módulos ERP do cliente, onde ficam as ações (alterar módulos, aprovar, tentar de
+  novo, vincular ou criar a empresa). A tela em si é só leitura.
+
+**Decisões.**
+- **Nada é consultado no ERP empresa por empresa.** A lista usa só o que o INTEROS guarda: vínculo, licença,
+  alterações abertas, última leitura e eventos recebidos. Ela abre rápido mesmo com milhares de empresas. O estado
+  ao vivo continua na aba do cliente.
+- **Permissões:**
+  - a tela segue a regra das demais telas da Administração (`{ role: "admin" }`);
+  - o link para a aba do cliente só aparece para quem tem `operacao.clientes.erp.ver`.
+- **Onde está no código:**
+  - regras puras em `src/domain/erp/companies.ts`;
+  - leitura em `src/server/erp/companies-overview.ts`;
+  - tela em `src/app/(app)/admin/empresas-erp/page.tsx` e `src/components/erp/erp-companies-list.tsx`.
+
+**Testes.** 5 de unidade (`tests/erp/companies.test.ts`):
+- situação mais urgente primeiro;
+- vínculo encerrado fora da lista;
+- unidades e módulos ligados;
+- aviso só nos 7 dias, sem o informativo;
+- alteração aberta mais antiga;
+- leitura com erro só quando é mais nova que a boa;
+- busca por nome, ID e CNPJ.
+
+Mais as contagens do catálogo de acessos (78 telas, 105 páginas).

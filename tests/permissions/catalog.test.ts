@@ -29,12 +29,12 @@ import { screenForHref } from "@/server/auth/permissions";
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+$/;
 
 describe("catálogo — números e chaves", () => {
-  it("tem 12 módulos, 75 telas, 161 seções e 297 ações (545 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 20 abas, 27 ações); fase 4: + 2 relatórios, agendar envio; assinatura eletrônica: + 3 abas e 4 ações (inclui testar a conexão com a Clicksign); reajuste: + aba Índices (4 ações), seção Reajuste anual e aplicar/dispensar o reajuste do contrato; faturamento: + tela Faturamento (1 aba, 7 ações); estoque: + tela Estoque (custos, 1 aba, 6 ações); compras: + tela Compras (1 aba, 4 ações); comprovantes do consentimento LGPD: + 2 ações em Leads (anexar e remover); documentos do cliente: + 2 ações (remover, editar); módulos do ERP: + 3 seções na ficha (Módulos ERP, histórico, Torre) e 5 ações (alterar, aprovar, provisionar, importar catálogo, reprocessar); Gestão de Produtos: + 3 abas em Produtos (Módulos, Pacotes, Simulador) e 3 ações (ficha, preço, pacotes)", () => {
+  it("tem 12 módulos, 78 telas, 170 seções e 319 ações (579 chaves únicas) — Central de Atendimento: + módulo Comunicação (8 telas, 20 abas, 27 ações); fase 4: + 2 relatórios, agendar envio; assinatura eletrônica: + 3 abas e 4 ações (inclui testar a conexão com a Clicksign); reajuste: + aba Índices (4 ações), seção Reajuste anual e aplicar/dispensar o reajuste do contrato; faturamento: + tela Faturamento (1 aba, 7 ações); estoque: + tela Estoque (custos, 1 aba, 6 ações); compras: + tela Compras (1 aba, 4 ações); comprovantes do consentimento LGPD: + 2 ações em Leads (anexar e remover); documentos do cliente: + 2 ações (remover, editar); módulos do ERP: + 3 seções na ficha (Módulos ERP, histórico, Torre) e 5 ações (alterar, aprovar, provisionar, importar catálogo, reprocessar); Gestão de Produtos: + 3 abas em Produtos (Módulos, Pacotes, Simulador) e 3 ações (ficha, preço, pacotes); Empresas ERP: + tela em Administração (lista central, só leitura)", () => {
     expect(MODULES.length).toBe(12);
-    expect(SCREENS.length).toBe(77);
+    expect(SCREENS.length).toBe(78);
     expect(SCREENS.reduce((n, s) => n + s.sections.length, 0)).toBe(170);
     expect(SCREENS.reduce((n, s) => n + s.actions.length, 0)).toBe(319);
-    expect(PERMISSION_KEYS.length).toBe(578);
+    expect(PERMISSION_KEYS.length).toBe(579);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 
@@ -201,8 +201,8 @@ describe("catálogo — cobertura de páginas", () => {
       .filter((s) => s && !/^\(.*\)$/.test(s))
       .join("/");
 
-  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (102 páginas — Central de Atendimento: + /comunicacao, canais, historico, supervisao, supervisao/tv, ativacao, ligacoes, correio-de-voz e pabx; faturamento: + /financeiro/faturamento; estoque: + /estoque; compras: + /compras)", () => {
-    expect(pages.length).toBe(104);
+  it("toda page.tsx é rota de uma tela/seção do catálogo ou isenção justificada (105 páginas — Central de Atendimento: + /comunicacao, canais, historico, supervisao, supervisao/tv, ativacao, ligacoes, correio-de-voz e pabx; faturamento: + /financeiro/faturamento; estoque: + /estoque; compras: + /compras; Empresas ERP: + /admin/empresas-erp)", () => {
+    expect(pages.length).toBe(105);
     const exempt = new Set<string>(EXEMPTIONS.filter((e) => e.kind === "page").map((e) => e.target));
     const routes = new Set(SCREENS.flatMap((s) => [...s.routes, ...s.sections.flatMap((x) => x.routes ?? [])]));
     const missing = pages.filter((p) => !exempt.has(p) && !routes.has(toRoute(p)));
