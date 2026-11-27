@@ -1,18 +1,21 @@
 import Link from "next/link";
 import type { CurrentUser } from "@/domain/types";
 import { ERP_CHANGE_STATUS_LABELS } from "@/domain/erp/types";
+import { ERP_EVENTS_WEBHOOK_PATH, ERP_INBOUND_STATUS_LABELS } from "@/domain/erp/events";
 import { can } from "@/server/auth/session";
 import { getErpAdminSummary } from "@/server/erp/admin-view";
+import { resolvePortalBaseUrl } from "@/server/portal/service";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { CHANGE_STATUS_BADGE, fmtDateTime } from "./erp-format";
+import { CopyLine } from "@/components/conversations/channel-connect";
+import { CHANGE_STATUS_BADGE, INBOUND_STATUS_BADGE, fmtDateTime } from "./erp-format";
 import { ErpAdminActions } from "./erp-admin-actions";
 
 const API_LABELS = { licencas: "Licenças e módulos", provisionamento: "Criação e vínculo de empresas", torre: "Torre de Controle" } as const;
 
-/** Administração › Integrações: detalhe operacional do ERP Intercert (catálogo e fila de alterações). */
+/** Administração › Integrações: detalhe operacional do ERP Intercert (catálogo, fila de alterações e eventos recebidos). */
 export async function ErpAdminPanel({ user }: { user: CurrentUser }) {
-  const s = await getErpAdminSummary();
+  const [s, base] = await Promise.all([getErpAdminSummary(), resolvePortalBaseUrl()]);
   const { integration } = s;
   return (
     <Card className="mt-5">
@@ -86,6 +89,57 @@ export async function ErpAdminPanel({ user }: { user: CurrentUser }) {
             ) : (
               <p className="text-xs text-muted">Nenhuma alteração pendente.</p>
             )}
+          </section>
+        ) : null}
+
+        {integration.environment ? (
+          <section className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Avisos do ERP na hora</h3>
+              {integration.events ? <Badge variant="success" size="sm">Recebendo</Badge> : <Badge variant="warning" size="sm">Desligados</Badge>}
+              <span className="text-xs text-muted">
+                {s.events?.lastReceivedAt ? `último em ${fmtDateTime(s.events.lastReceivedAt)}` : "nenhum recebido ainda"}
+                {s.events?.staleCompanies ? ` · ${s.events.staleCompanies} empresa(s) com o aviso diário de licença sem novidade (informativo)` : ""}
+              </span>
+            </div>
+            <p className="text-xs text-muted">
+              O ERP avisa licença aplicada ou recusada, mudança automática de módulos, pedido de módulo e limite do contrato atingido. Pedidos e limites viram tarefa para o
+              comercial do cliente; o resto entra no histórico. Sem os avisos, a rotina de 5 minutos continua confirmando as alterações.
+            </p>
+            <CopyLine label="Endereço a cadastrar no ERP (INTEROS_EVENTS_URL)" value={`${base ?? "https://<dominio>"}${ERP_EVENTS_WEBHOOK_PATH}`} />
+            {!integration.events ? (
+              <p className="text-xs text-warning-fg">
+                Para ligar: gere um segredo e salve o mesmo valor na Vercel (ERP_INTERCERT_SEGREDO_EVENTOS) e no ERP (INTEROS_OUTBOUND_SECRET), cadastre o endereço acima no ERP e
+                faça um novo deploy.
+              </p>
+            ) : null}
+            {s.events?.recent.length ? (
+              <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
+                {s.events.recent.map((e) => (
+                  <li key={e.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium">{e.label}</span>
+                      {" · "}
+                      {e.clientId ? (
+                        <Link href={`/clientes/${e.clientId}?aba=erp`} className="hover:underline">
+                          {e.clientName ?? e.clientId}
+                        </Link>
+                      ) : (
+                        <span className="text-muted">empresa {e.erpCompanyId} (sem vínculo)</span>
+                      )}
+                    </span>
+                    <Badge variant={INBOUND_STATUS_BADGE[e.status]} size="sm">
+                      {ERP_INBOUND_STATUS_LABELS[e.status]}
+                    </Badge>
+                    <span className="w-full text-xs text-muted">
+                      {fmtDateTime(e.receivedAt)}
+                      {e.attempts > 1 ? ` · ${e.attempts} entregas` : ""}
+                      {e.error ? ` · ${e.error}` : e.outcome ? ` · ${e.outcome}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </section>
         ) : null}
       </CardContent>

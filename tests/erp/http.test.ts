@@ -16,6 +16,7 @@ const CONFIG: ErpConfig = {
   licenseSigningSecret: "segredo-de-assinatura-com-mais-de-32-caracteres",
   provisioningCredential: "interos-prov.SEGREDO",
   towerCredential: "interos-torre.SEGREDO",
+  eventsSecret: "segredo-dos-eventos-com-mais-de-32-caracteres",
 };
 
 interface Captured {
@@ -52,7 +53,10 @@ describe("configuração", () => {
     const state = erpIntegrationState({ ...CONFIG, licenseSigningSecret: null, towerCredential: null });
     expect(state.apis.licencas).toEqual({ read: true, write: false });
     expect(state.apis.torre.read).toBe(false);
+    expect(state.events).toBe(true);
+    expect(erpIntegrationState({ ...CONFIG, eventsSecret: null }).events).toBe(false);
     expect(JSON.stringify(state)).not.toContain("tok-licencas");
+    expect(JSON.stringify(state)).not.toContain("segredo-dos-eventos");
   });
 });
 

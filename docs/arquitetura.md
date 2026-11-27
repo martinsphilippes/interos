@@ -1169,10 +1169,18 @@ mexer no código:
   (`domain/erp/tower.ts`) separa módulo desativado, sem movimento e dado indisponível.
 - **Rotina**: passo "ERP Intercert" do agendador de 5 minutos (`sweep.ts`): reenvios só de licença do ambiente
   configurado e conferência do catálogo a cada 6 horas.
+- **Avisos do ERP** (`inbound.ts`, `POST /api/webhooks/erp`, isento de sessão em `exemptions.ts`): assinatura
+  `X-ERP-Signature` com `ERP_INTERCERT_SEGREDO_EVENTOS` (sem ele, 503); `receiveErpEvent` reserva o registro em
+  `erp_events` numa transação (id = ambiente + hash do `eventId`; repetida = 200 sem refazer; em andamento há menos de
+  2 min = 503; depois disso é retomada) e só então processa. Licença aplicada/recusada chama `reconcileChange` (a verdade
+  é o histórico do ERP); pedido de módulo e limite viram tarefa com id fixo (`createTaskInternal({ id })`, que só cria
+  se o id não existe) e linha no histórico (`erp.module_requested`, `erp.limit_reached`, `erp.license_transition`,
+  uma vez por registro). `sync.stale` fica em um registro por empresa. Detalhes em `docs/central-de-produtos.md`,
+  seção 17.
 - **Permissões**: seções `operacao.clientes.erp.ver`, `erp-historico.ver`, `erp-torre.ver`; ações `erp.alterar`,
   `erp.aprovar`, `erp.provisionar`, `admin.integracoes.erp-catalogo`, `admin.integracoes.erp-reprocessar`.
-- **Testes**: `tests/erp/*.test.ts` (puros e cliente HTTP) e `tests/erp/erp-changes.dbtest.ts` (serviço contra o ERP
-  simulado de `tests/erp/fake-erp.ts`).
+- **Testes**: `tests/erp/*.test.ts` (puros e cliente HTTP), `tests/erp/erp-changes.dbtest.ts` (serviço contra o ERP
+  simulado de `tests/erp/fake-erp.ts`) e `tests/erp/erp-events.dbtest.ts` (avisos do ERP pela função do webhook).
 
 ## Gestão de Produtos (`src/server/products/*`, `src/domain/products/*`, abas de /admin/produtos)
 

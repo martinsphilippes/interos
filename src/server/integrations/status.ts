@@ -176,6 +176,7 @@ const CATALOG: CatalogEntry[] = [
       { name: "ERP_INTERCERT_URL_PROVISIONAMENTO", description: "Endereço próprio da API de provisionamento (só se for diferente de ERP_INTERCERT_URL)." },
       { name: "ERP_INTERCERT_CREDENCIAL_TORRE", description: "Credencial <id>.<segredo> da Torre de Controle (somente leitura)." },
       { name: "ERP_INTERCERT_URL_TORRE", description: "Endereço próprio da Torre de Controle (só se for diferente de ERP_INTERCERT_URL)." },
+      { name: "ERP_INTERCERT_SEGREDO_EVENTOS", description: "Segredo HMAC dos avisos do ERP (POST /api/webhooks/erp, X-ERP-Signature); o mesmo valor vai no ERP como INTEROS_OUTBOUND_SECRET." },
     ],
     descriptions: {
       ERP_INTERCERT_URL: "Endereço base do ERP (https://…; http só para localhost).",

@@ -5,6 +5,7 @@ import type { BadgeProps } from "@/components/ui/badge";
 import type { ErpItemRole } from "@/domain/erp/catalog";
 import type { StatusTone } from "@/domain/erp/status";
 import type { ErpChangeStatus } from "@/domain/erp/types";
+import type { ErpInboundStatus } from "@/domain/erp/events";
 
 export type BadgeVariant = NonNullable<BadgeProps["variant"]>;
 
@@ -26,6 +27,14 @@ export const ROLE_LABELS: Record<ErpItemRole, string> = {
   integration: "Integração",
   permission: "Permissão de perfil",
   future: "Futuro",
+};
+
+/** Situação de um aviso recebido do ERP (Administração › Integrações). */
+export const INBOUND_STATUS_BADGE: Record<ErpInboundStatus, BadgeVariant> = {
+  processando: "info",
+  processado: "success",
+  ignorado: "muted",
+  falhou: "danger",
 };
 
 export const CHANGE_STATUS_BADGE: Record<ErpChangeStatus, BadgeVariant> = {
