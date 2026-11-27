@@ -238,11 +238,10 @@ com as credenciais de homologação. Dados de teste: dois clientes "TESTE HML", 
 | Cenário | Resultado |
 | --- | --- |
 | Vincular empresa existente | Aurora (empresa A do piloto) achada pelo CNPJ e vinculada; a aba mostrou "Licença ainda não registrada pelo INTEROS · ERP na v1" |
-| Criar empresa pelo INTEROS | Empresa, administrador e convite criados. A licença inicial foi recusada (`403 company_not_allowed`): a empresa nova não estava na lista `empresas` da credencial de licenças. Incluída a empresa e publicado o ERP, "Tentar de novo" aplicou a licença versão 1 |
+| Criar empresa pelo INTEROS | Empresa, administrador e convite criados. A licença inicial foi recusada (`403 company_not_allowed`) antes de qualquer gravação: a empresa nova não estava na lista `empresas` da credencial de licenças (isolamento conferido). Incluída a empresa e publicado o ERP, "Tentar de novo" aplicou a licença versão 1 |
 | Convite e pedido de módulo | O administrador ativou o acesso, entrou no ERP e pediu 05.02 Cotação com fornecedores; o aviso chegou na hora e virou tarefa de vendas |
 | Alteração de módulo | Primeira licença da Aurora pelo INTEROS: 03.13 Importação de CT-e com 05.06 Recebimento por dependência, simulada e aplicada (licença versão 2) |
 | "Basta um" no catálogo real | 02.09 e 02.14 barrados na revisão: exigem 04.01 ou 04.02 |
-| Isolamento | A empresa fora da lista da credencial de licenças foi recusada pelo ERP antes de qualquer gravação |
 | Torre e uso | Torre de Controle e "Uso e limites" das duas empresas, pelas credenciais da Torre e de licenças |
 | Avisos | `license.applied` das duas empresas processados ("a alteração já estava concluída"); nenhum erro no navegador |
 
@@ -274,8 +273,9 @@ licença junto com o time do ERP e a validação do catálogo v2 pelo titular. O
    credenciais de produção e o endereço de produção do ERP. Vínculos e histórico de homologação ficam separados. As
    credenciais de produção vão **sem lista de empresas** (decisão de 27/11), e o ERP só deixa a de licenças alcançar as
    empresas ligadas ao INTEROS: as criadas por ele e as vinculadas com o código do administrador. A empresa criada pelo
-   INTEROS recebe a licença inicial na hora. Uma empresa que já usa o ERP se vincula com o código de vínculo, porque a
-   busca pelo CNPJ só acha empresas já ligadas ao INTEROS (seção 12.1).
+   INTEROS recebe a licença inicial na hora. Uma empresa que já usa o ERP se vincula com o código de vínculo, porque na
+   produção a busca pelo CNPJ só acha empresas já ligadas ao INTEROS (`docs/interos/credenciais.md`, §4, no repositório
+   do ERP).
 7. **Avisos do ERP** (opcional, seção 17): aplique `20261127000000_erp_eventos.sql`, gere um segredo e salve o mesmo
    valor na Vercel (`ERP_INTERCERT_SEGREDO_EVENTOS`) e no ERP (`INTEROS_OUTBOUND_SECRET`), com
    `INTEROS_EVENTS_URL=https://<domínio do INTEROS>/api/webhooks/erp` no ERP. O endereço exato aparece em
@@ -288,7 +288,8 @@ licença junto com o time do ERP e a validação do catálogo v2 pelo titular. O
 ## 14. Limitações conhecidas e decisões pendentes
 
 - ~~Branches do ERP separadas~~: resolvido em 27/11/2026. O ERP unificado está na `master` do ERP (PR #8), com as
-  quatro APIs num endereço e credencial única por família. Homologado com o INTEROS. A empresa criada pelo INTEROS
+  quatro APIs num endereço e credencial única por família. Homologação com o INTEROS feita em 27/11; falta aprovar
+  (seção 12.1). A empresa criada pelo INTEROS
   recebe a licença inicial na hora quando a credencial de licenças não tem lista (produção); na homologação, depois que
   o ERP inclui o id dela na lista (seção 13, passo 2).
 - Dependências "basta um" do catálogo v2 (`requiredAnyOf`, ex.: 06.12 Comissões exige 06.01, 07.01 ou 12.01): o
@@ -379,7 +380,7 @@ novas tentativas. O INTEROS passou a recebê-los em `POST /api/webhooks/erp`:
 | `license.transition` | Linha "Mudança automática de módulos no ERP" no histórico do cliente, com o "de → para" de cada módulo (ex.: "vendas.pdv: ligado → desligado · situação da empresa: suspensa") |
 | `upsell.requested` | Linha "Pediram … no ERP" no histórico + tarefa de prioridade alta para o comercial do cliente (ou o CS; sem nenhum, fica em vendas sem responsável), prazo de 2 dias, avisada pela notificação de tarefa |
 | `limit.reached` | Linha "Limite de usuários atingido no ERP (5 de 5)" + tarefa de ampliação do contrato, **uma por mês e tipo** (o ERP avisa no máximo uma vez por dia). Documentos fiscais: só aviso, o ERP não bloqueia |
-| `sync.stale` | Só informativo: o INTEROS envia a licença apenas quando algo muda, então este aviso diário é esperado. Fica um registro por empresa, fora da lista de recentes |
+| `sync.stale` | Só informativo. O ERP conta desde a última confirmação (retrato recebido ou consulta do INTEROS) e só manda este aviso com a consulta diária do retrato configurada, que o INTEROS não oferece; então ele não deve chegar. Se chegar, fica um registro por empresa, fora da lista de recentes |
 | Tipo novo | Registrado e ignorado (200), para o ERP não repetir à toa |
 
 **Regras e garantias.**

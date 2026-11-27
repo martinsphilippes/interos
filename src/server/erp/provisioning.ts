@@ -316,8 +316,9 @@ export async function linkWithCode(input: { clientId: string; erpCompanyId: stri
 }
 
 /**
- * Empresas do ERP com o CNPJ do cliente (API de licenças, que mostra as empresas visíveis à credencial): para vincular
- * por identificação conferida, quando o ERP ainda não tem o fluxo de código. Exige CNPJ igual.
+ * Empresas do ERP com o CNPJ do cliente, entre as que a API de licenças mostra para a credencial (com lista, as da lista;
+ * sem lista, só as já ligadas ao INTEROS): para vincular por identificação conferida. Uma empresa que ainda não está
+ * ligada se vincula com o código do administrador dela. Exige CNPJ igual.
  */
 export async function findErpCompaniesByCnpj(clientId: string): Promise<{ companyId: string; name: string; cnpj: string | null; kind: string; status: string; isDemo: boolean }[]> {
   const client = await loadClient(clientId);

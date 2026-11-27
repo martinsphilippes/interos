@@ -26,7 +26,7 @@ export interface ErpLicenseCompany {
   runtimeVersion: number;
 }
 
-/** Empresas visíveis para a credencial (o ERP pode restringir por `companyIds`). */
+/** Empresas que o ERP mostra para a credencial: as da lista `empresas` dela ou, sem lista, só as já ligadas ao INTEROS. */
 export async function listLicenseCompanies(): Promise<ErpLicenseCompany[]> {
   const res = await erpRequest<ErpLicenseCompany[]>({ api: "licencas", method: "GET", path: `${V2}/companies` });
   return Array.isArray(res.data) ? res.data : [];
