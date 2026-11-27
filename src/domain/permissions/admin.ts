@@ -849,6 +849,27 @@ export const ADMIN = {
       scope: null,
     },
     {
+      key: "admin.empresas-erp",
+      module: "admin",
+      label: "Empresas ERP",
+      description:
+        "Todas as empresas vinculadas ao ERP Intercert numa lista só: licença registrada, alteração em andamento, última leitura e avisos do ERP, e os clientes ativos ainda sem empresa no ERP. Somente leitura: as ações ficam na aba Módulos ERP do cliente.",
+      routes: ["/admin/empresas-erp"],
+      // Novo (27/11/2026): pedido "onde vou fazer a gestão das empresas?". Lê só o INTEROS (nada é consultado no ERP).
+      rule: { role: "admin" },
+      nav: {
+        menu: "admin",
+        href: "/admin/empresas-erp",
+        order: 9,
+        label: "Empresas ERP",
+        icon: "Building2",
+        wave: 5,
+      },
+      sections: [],
+      actions: [],
+      scope: null,
+    },
+    {
       key: "admin.integracoes",
       module: "admin",
       label: "Integrações",

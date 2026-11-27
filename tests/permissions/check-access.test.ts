@@ -106,8 +106,8 @@ describe("repositório real", () => {
   // Comprovantes do consentimento LGPD: + 1 action (remover) e 4 rotas (abrir o envio, mandar parte, concluir, abrir/baixar).
   // Documentos do cliente: + 1 action (remover) e 4 rotas (abrir o envio, mandar parte, concluir, abrir/baixar).
   // Gestão de Produtos: + 8 actions (ficha, preço criar/cancelar, pacote criar/editar/versão/cancelar, detalhe da unidade).
-  it("inventário: 104 páginas (10 isentas), 373 funções 'use server' (3 isentas), 43 handlers de API (24 isentos)", () => {
-    expect(report.totals).toMatchObject({ pages: 104, pagesExempt: 10, serverFunctions: 373, serverFunctionsExempt: 3, apiHandlers: 43, apiExempt: 24 });
+  it("inventário: 105 páginas (10 isentas), 373 funções 'use server' (3 isentas), 43 handlers de API (24 isentos)", () => {
+    expect(report.totals).toMatchObject({ pages: 105, pagesExempt: 10, serverFunctions: 373, serverFunctionsExempt: 3, apiHandlers: 43, apiExempt: 24 });
   });
 
   it("categorias estruturais zeradas: toda página/função/rota tem dono, toda chave existe, todo guard aponta para função", () => {
