@@ -83,6 +83,13 @@ export interface ErpLink extends BaseEntity {
   /** Última leitura bem-sucedida do estado no ERP. */
   lastSyncAt: string | null;
   lastSyncError: { code: string; message: string; at: string; requestId: string | null } | null;
+  /**
+   * Último evento recebido do ERP desta empresa (sem o aviso diário "licença sem novidade"), gravado ao processar o
+   * evento: Administração › Empresas ERP lê daqui, sem varrer os eventos. `at` é o instante no ERP.
+   */
+  lastEvent?: { type: string; at: string; receivedAt: string } | null;
+  /** Último aviso que pede atenção (licença recusada ou limite atingido). A licença aplicada depois limpa a recusa. */
+  lastWarning?: { type: string; at: string } | null;
 }
 
 /** Estado de um item na licença (contrato v2): vocabulário do ERP, preservado. */

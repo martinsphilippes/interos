@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { docdb } from "@/server/docdb";
 import { create, getById, list, update } from "@/server/db";
 import { COLLECTIONS, type Client, type DomainEvent, type Notification, type Task, type TimelineEvent, type User } from "@/domain/types";
+import type { ErpLink } from "@/domain/erp/types";
 import { setErpFetch } from "@/server/erp/http";
 import { signBody } from "@/server/erp/signature";
 import { importErpCatalog, resetCatalogCache } from "@/server/erp/catalog-store";
@@ -280,5 +281,37 @@ describe("retomada e avisos diários", () => {
     expect(overview.staleCompanies).toBeGreaterThanOrEqual(1);
     const sorted = [...overview.recent].sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
     expect(overview.recent.map((r) => r.id)).toEqual(sorted.map((r) => r.id));
+  });
+});
+
+describe("resumo no vínculo (Administração › Empresas ERP)", () => {
+  const linkOf = (clientId: string) => getById<ErpLink>(COLLECTIONS.erpLinks, `homologacao__${clientId}`);
+
+  it("limite atingido vira o último evento e o último aviso da empresa", async () => {
+    const raw = body("limit.reached", COMPANY_B, { kind: "devices", used: 3, limit: 3 }, "2027-01-05T10:00:00.000Z");
+    expect((await deliver(raw)).status).toBe(200);
+    const link = await linkOf(CLIENT_B);
+    expect(link?.lastEvent).toMatchObject({ type: "limit.reached", at: "2027-01-05T10:00:00.000Z" });
+    expect(link?.lastWarning).toEqual({ type: "limit.reached", at: "2027-01-05T10:00:00.000Z" });
+  });
+
+  it("licença recusada é aviso; a licença aplicada depois resolve; evento atrasado e o aviso diário não mexem", async () => {
+    const rejected = body("license.rejected", COMPANY_A, { licenseVersion: 999, rejectedItems: [{ code: "05.02", reason: "dependency_missing", message: "Falta 05.04" }] }, "2027-01-06T10:00:00.000Z");
+    expect((await deliver(rejected)).status).toBe(200);
+    expect((await linkOf(CLIENT_A))?.lastWarning).toEqual({ type: "license.rejected", at: "2027-01-06T10:00:00.000Z" });
+    const applied = body("license.applied", COMPANY_A, { licenseVersion: 998 }, "2027-01-07T10:00:00.000Z");
+    expect((await deliver(applied)).status).toBe(200);
+    let link = await linkOf(CLIENT_A);
+    expect(link?.lastWarning).toBeNull();
+    expect(link?.lastEvent).toMatchObject({ type: "license.applied", at: "2027-01-07T10:00:00.000Z" });
+    // nova tentativa atrasada de um evento antigo não apaga o mais novo
+    const late = body("upsell.requested", COMPANY_A, { requestId: "req_atrasado", code: "05.02" }, "2026-01-01T10:00:00.000Z");
+    expect((await deliver(late)).status).toBe(200);
+    // o aviso diário "licença sem novidade" é só informativo: não vira o último evento
+    const stale = body("sync.stale", COMPANY_A, { appliedVersion: 1, ageDays: 9 }, "2027-01-08T03:00:00.000Z");
+    expect((await deliver(stale)).status).toBe(200);
+    link = await linkOf(CLIENT_A);
+    expect(link?.lastEvent).toMatchObject({ type: "license.applied", at: "2027-01-07T10:00:00.000Z" });
+    expect(link?.lastWarning).toBeNull();
   });
 });

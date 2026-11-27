@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AlertTriangle, Building2, CircleDashed, ShieldQuestion } from "lucide-react";
 import { can, requireScreen } from "@/server/auth/session";
 import { getErpCompaniesOverview } from "@/server/erp/companies-overview";
+import { clientScope } from "@/server/clients/access";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -11,6 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { KpiStrip } from "@/components/ui/kpi-strip";
 import { StatCard } from "@/components/ui/stat-card";
 import { ErpCompaniesList } from "@/components/erp/erp-companies-list";
+import { needsAttention } from "@/domain/erp/companies";
 
 export const metadata: Metadata = { title: "Empresas ERP" };
 
@@ -25,10 +27,18 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 export default async function ErpCompaniesPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireScreen("admin.empresas-erp");
   const sp = await searchParams;
-  const overview = await getErpCompaniesOverview();
-  const canOpenClient = can(user, "operacao.clientes.erp.ver");
+  // os dados do ERP dos clientes seguem as mesmas regras da aba Módulos ERP: a permissão de ver e o escopo de clientes
+  const canSeeErp = can(user, "operacao.clientes.erp.ver");
+  if (!canSeeErp) {
+    return (
+      <PageContainer>
+        <PageHeader title="Empresas ERP" breadcrumbs={[{ label: "Administração", href: "/admin" }, { label: "Empresas ERP" }]} />
+        <EmptyState icon={<Building2 />} title="Sem acesso aos módulos ERP dos clientes" description="Esta lista mostra os dados do ERP de cada cliente. Peça a permissão “Clientes › Módulos ERP” a um administrador." />
+      </PageContainer>
+    );
+  }
+  const overview = await getErpCompaniesOverview(await clientScope(user));
   const rows = overview.rows;
-  const count = (pred: (s: (typeof rows)[number]["situation"]) => boolean) => rows.filter((r) => pred(r.situation)).length;
   const initialFilter = typeof sp.situacao === "string" ? sp.situacao : undefined;
 
   return (
@@ -56,17 +66,17 @@ export default async function ErpCompaniesPage({ searchParams }: { searchParams:
             <StatCard label="Vinculadas" value={formatNumber(rows.length)} icon={<Building2 />} tone="info" compact />
             <StatCard
               label="Precisam de atenção"
-              value={formatNumber(count((s) => s === "falha" || s === "erro_leitura" || s === "aviso_erp" || s === "aguardando_aprovacao"))}
+              value={formatNumber(rows.filter(needsAttention).length)}
               icon={<AlertTriangle />}
               tone="warning"
-              hint="Falha ao sincronizar, ERP sem resposta, aviso do ERP ou aprovação pendente"
+              hint="Alteração não sincronizada ou não aplicada, leitura que falhou, aviso do ERP ou aprovação pendente"
               compact
             />
-            <StatCard label="Aguardando aprovação" value={formatNumber(count((s) => s === "aguardando_aprovacao"))} icon={<ShieldQuestion />} tone="neutral" compact />
+            <StatCard label="Aguardando aprovação" value={formatNumber(rows.filter((r) => r.awaitingApproval).length)} icon={<ShieldQuestion />} tone="neutral" compact />
             <StatCard label="Clientes sem empresa no ERP" value={formatNumber(overview.unlinked.length)} icon={<CircleDashed />} tone="neutral" hint="Ativos ou em implantação" compact />
           </KpiStrip>
           {overview.lastEventAt ? <p className="mb-3 text-xs text-muted">Último evento recebido do ERP: {formatDateTime(overview.lastEventAt)}.</p> : null}
-          <ErpCompaniesList rows={rows} unlinked={overview.unlinked} canOpenClient={canOpenClient} initialFilter={initialFilter} />
+          <ErpCompaniesList rows={rows} unlinked={overview.unlinked} canOpenClient={canSeeErp} initialFilter={initialFilter} />
         </>
       )}
     </PageContainer>

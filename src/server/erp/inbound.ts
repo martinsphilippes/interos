@@ -41,6 +41,7 @@ import { col, getById, list, nowIso, ORG_ID, orgQuery, stripUndefined, txGetOwn,
 import { docdb, type Transaction } from "@/server/docdb";
 import { emitEvent } from "@/server/events";
 import { createTaskInternal } from "@/server/tasks/service";
+import { ERP_WARNING_EVENTS } from "@/domain/erp/companies";
 import { getErpConfig } from "./config";
 import { verifySignature } from "./signature";
 import { getChange, reconcileChange } from "./changes";
@@ -128,7 +129,7 @@ export async function receiveErpEvent(input: { rawBody: string; signature: strin
   if (claim.kind === "ocupado") return { status: 503, body: { error: "Este evento está sendo processado; tente de novo em instantes." } };
 
   try {
-    const result = await processEvent(environment, event, claim.record);
+    const result = await processEvent(environment, event, claim.record, now);
     await update<ErpInboundRecord>(COLLECTIONS.erpEvents, id, { status: result.status, outcome: result.outcome, clientId: result.clientId, processedAt: nowIso(), error: null });
     return { status: 200, body: { received: true, status: result.status }, clientId: result.clientId };
   } catch (error) {
@@ -226,10 +227,31 @@ interface Outcome {
   clientId: string | null;
 }
 
-async function processEvent(environment: ErpEnvironment, event: ErpInboundEvent, record: ErpInboundRecord): Promise<Outcome> {
+/**
+ * Guarda no vínculo o último evento e o último aviso da empresa: Administração › Empresas ERP lê daqui, sem varrer os
+ * eventos (que crescem sem limite). Evento atrasado não apaga um mais novo; a licença aplicada depois de uma recusa
+ * resolve o aviso da recusa. Falha aqui só é registrada: o evento segue processado.
+ */
+async function noteOnLink(link: ErpLink, event: ErpInboundEvent, now: Date): Promise<void> {
+  try {
+    const patch: Partial<ErpLink> = {};
+    if (!link.lastEvent || event.at >= link.lastEvent.at) patch.lastEvent = { type: event.type, at: event.at, receivedAt: now.toISOString() };
+    if (ERP_WARNING_EVENTS.includes(event.type)) {
+      if (!link.lastWarning || event.at >= link.lastWarning.at) patch.lastWarning = { type: event.type, at: event.at };
+    } else if (event.type === "license.applied" && link.lastWarning?.type === "license.rejected" && event.at >= link.lastWarning.at) {
+      patch.lastWarning = null;
+    }
+    if (Object.keys(patch).length) await update<ErpLink>(COLLECTIONS.erpLinks, link.id, patch);
+  } catch (error) {
+    console.error(`[erp:eventos] evento ${event.eventId} processado, mas o resumo no vínculo falhou`, error);
+  }
+}
+
+async function processEvent(environment: ErpEnvironment, event: ErpInboundEvent, record: ErpInboundRecord, now: Date): Promise<Outcome> {
   if (!event.known) return { status: "ignorado", outcome: `Tipo "${event.type}" ainda não tratado pelo INTEROS.`, clientId: null };
   const link = await findLink(environment, event.erpCompanyId);
   if (!link) return { status: "ignorado", outcome: "Empresa do ERP sem vínculo ativo com um cliente do INTEROS.", clientId: null };
+  await noteOnLink(link, event, now);
   const clientId = link.clientId;
   /** Linha no histórico do cliente uma vez só por evento (mesmo se o processamento for retomado). */
   const once = async (input: Omit<TimelineInput, "clientId" | "recordId">) => {

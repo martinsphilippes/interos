@@ -1,8 +1,9 @@
 "use client";
 /**
  * Lista de Administração › Empresas ERP: busca (cliente, empresa no ERP, id ou CNPJ) e filtro por situação, com a
- * opção "Sem empresa no ERP" para os clientes ativos que ainda não foram vinculados. Cada linha leva à aba Módulos ERP
- * do cliente, onde ficam as ações (alterar módulos, aprovar, tentar de novo, vincular ou criar a empresa).
+ * opção "Sem empresa no ERP" para os clientes ativos que ainda não foram vinculados. Paginada (a tela aguenta milhares
+ * de empresas). Cada linha leva à aba Módulos ERP do cliente, onde ficam as ações (alterar módulos, aprovar, tentar de
+ * novo, vincular ou criar a empresa).
  */
 import * as React from "react";
 import Link from "next/link";
@@ -10,34 +11,44 @@ import { ArrowRight, Building2 } from "lucide-react";
 import { CLIENT_STATUS_LABELS, type ClientStatus } from "@/domain/constants";
 import { ERP_DISPLAY_SHORT, type ErpDisplayMode } from "@/domain/erp/license";
 import { ERP_EVENT_LABELS, type ErpEventType } from "@/domain/erp/events";
-import { ERP_COMPANY_SITUATIONS, ERP_COMPANY_SITUATION_HINTS, ERP_COMPANY_SITUATION_LABELS, countBySituation, matchesErpCompany, type ErpCompanyRow, type ErpCompanySituation } from "@/domain/erp/companies";
-import { normalizeSearch } from "@/domain/erp/catalog";
+import {
+  ERP_COMPANY_SITUATIONS,
+  ERP_COMPANY_SITUATION_HINTS,
+  ERP_COMPANY_SITUATION_LABELS,
+  countBySituation,
+  matchesErpCompany,
+  needsAttention,
+  type ErpCompanyRow,
+  type ErpCompanySituation,
+} from "@/domain/erp/companies";
 import { formatDateTime, formatDocument } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilterBar, FilterField } from "@/components/ui/filter-bar";
+import { Pagination, paginate } from "@/components/ui/pagination";
 import { SearchInput } from "@/components/ui/search-input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Filter = "todas" | "atencao" | ErpCompanySituation | "sem_vinculo";
+const PAGE_SIZE = 50;
 
 const TONE: Record<ErpCompanySituation, "danger" | "warning" | "info" | "muted" | "success"> = {
   falha: "danger",
+  nao_aplicada: "danger",
   aguardando_aprovacao: "warning",
   enviando: "info",
-  erro_leitura: "danger",
+  erro_leitura: "warning",
   aviso_erp: "warning",
   sem_licenca: "muted",
   em_dia: "success",
 };
-/** Situações que pedem alguém olhar (o filtro "Precisam de atenção"). */
-const ATTENTION = new Set<ErpCompanySituation>(["falha", "aguardando_aprovacao", "erro_leitura", "aviso_erp"]);
 
 export interface ErpUnlinkedRow {
   clientId: string;
   clientName: string;
   clientStatus: string;
+  document: string | null;
 }
 
 export interface ErpCompaniesListProps {
@@ -51,6 +62,8 @@ export interface ErpCompaniesListProps {
 const clientHref = (clientId: string) => `/clientes/${encodeURIComponent(clientId)}?aba=erp`;
 const eventLabel = (type: string) => ERP_EVENT_LABELS[type as ErpEventType] ?? type;
 const statusLabel = (status: string | null) => (status ? (CLIENT_STATUS_LABELS[status as ClientStatus] ?? status) : "—");
+/** "Aguardando aprovação" vale por qualquer alteração esperando aprovação, mesmo que outra seja mais urgente. */
+const inFilter = (r: ErpCompanyRow, f: Filter) => (f === "todas" ? true : f === "atencao" ? needsAttention(r) : f === "aguardando_aprovacao" ? r.awaitingApproval : r.situation === f);
 
 function licenseText(row: ErpCompanyRow): { main: string; detail: string | null } {
   if (!row.license) return { main: "Não registrada", detail: "a primeira alteração parte do que a empresa usa no ERP" };
@@ -76,10 +89,20 @@ function SituationCell({ row }: { row: ErpCompanyRow }) {
         </span>
       ) : null}
       {row.open?.lastError ? <span className="line-clamp-2 text-xs text-danger-fg">{row.open.lastError}</span> : null}
-      {row.situation === "erro_leitura" && row.lastSyncError ? <span className="line-clamp-2 text-xs text-danger-fg">{row.lastSyncError.message}</span> : null}
+      {row.open?.status === "falhou" ? (
+        <span className="text-xs text-muted">{row.open.nextAttemptAt ? `Nova tentativa automática: ${formatDateTime(row.open.nextAttemptAt)}` : "Sem nova tentativa automática: resolva na aba Módulos ERP."}</span>
+      ) : null}
+      {row.awaitingApproval && row.situation !== "aguardando_aprovacao" ? <span className="text-xs text-warning-fg">Também há alteração aguardando aprovação.</span> : null}
+      {row.situation === "nao_aplicada" && row.notApplied ? (
+        <span className="line-clamp-2 text-xs text-danger-fg">
+          {row.notApplied.status === "conflito" ? "Outra versão já estava no ERP" : "Recusada pelo ERP"} em {formatDateTime(row.notApplied.at)}
+          {row.notApplied.message ? `: ${row.notApplied.message}` : ""}
+        </span>
+      ) : null}
+      {row.situation === "erro_leitura" && row.lastSyncError ? <span className="line-clamp-2 text-xs text-warning-fg">{row.lastSyncError.message}</span> : null}
       {row.warning ? (
         <span className="text-xs text-warning-fg">
-          {eventLabel(row.warning.type)} · {formatDateTime(row.warning.receivedAt)}
+          {eventLabel(row.warning.type)} · {formatDateTime(row.warning.at)}
         </span>
       ) : null}
     </div>
@@ -96,26 +119,44 @@ function ClientName({ clientId, name, canOpen }: { clientId: string; name: strin
   );
 }
 
+function OpenLink({ row, canOpen }: { row: Pick<ErpCompanyRow, "clientId" | "clientName">; canOpen: boolean }) {
+  if (!canOpen) return null;
+  return (
+    <Link href={clientHref(row.clientId)} aria-label={`Abrir os módulos ERP de ${row.clientName}`} className="inline-flex shrink-0 rounded p-1 text-muted hover:bg-surface-hover hover:text-foreground">
+      <ArrowRight className="size-4" aria-hidden />
+    </Link>
+  );
+}
+
 export function ErpCompaniesList({ rows, unlinked, canOpenClient, initialFilter }: ErpCompaniesListProps) {
   const counts = React.useMemo(() => countBySituation(rows), [rows]);
-  const attention = rows.filter((r) => ATTENTION.has(r.situation)).length;
+  const attention = React.useMemo(() => rows.filter(needsAttention).length, [rows]);
+  const awaiting = React.useMemo(() => rows.filter((r) => r.awaitingApproval).length, [rows]);
   const valid = (f: string | undefined): f is Filter => f === "todas" || f === "atencao" || f === "sem_vinculo" || (ERP_COMPANY_SITUATIONS as readonly string[]).includes(f ?? "");
   const [filter, setFilter] = React.useState<Filter>(valid(initialFilter) ? initialFilter : "todas");
   const [query, setQuery] = React.useState("");
+  const [page, setPage] = React.useState(1);
+  // filtro ou busca novos voltam à primeira página
+  const changeFilter = (f: Filter) => {
+    setFilter(f);
+    setPage(1);
+  };
+  const changeQuery = (q: string) => {
+    setQuery(q);
+    setPage(1);
+  };
 
-  const shown = React.useMemo(
-    () => rows.filter((r) => (filter === "todas" ? true : filter === "atencao" ? ATTENTION.has(r.situation) : r.situation === filter)).filter((r) => matchesErpCompany(r, query)),
-    [rows, filter, query],
-  );
-  const shownUnlinked = React.useMemo(() => {
-    const q = normalizeSearch(query.trim());
-    return q ? unlinked.filter((c) => normalizeSearch(c.clientName).includes(q)) : unlinked;
-  }, [unlinked, query]);
+  const shown = React.useMemo(() => rows.filter((r) => inFilter(r, filter) && matchesErpCompany(r, query)), [rows, filter, query]);
+  const shownUnlinked = React.useMemo(() => unlinked.filter((c) => matchesErpCompany({ clientName: c.clientName, cnpj: c.document }, query)), [unlinked, query]);
+  const pageRows = paginate(shown, page, PAGE_SIZE);
+  const pageUnlinked = paginate(shownUnlinked, page, PAGE_SIZE);
 
   const options = [
     { value: "todas", label: `Todas as vinculadas (${rows.length})` },
     { value: "atencao", label: `Precisam de atenção (${attention})` },
-    ...ERP_COMPANY_SITUATIONS.filter((s) => counts[s] > 0 || s === filter).map((s) => ({ value: s, label: `${ERP_COMPANY_SITUATION_LABELS[s]} (${counts[s]})` })),
+    ...ERP_COMPANY_SITUATIONS.map((s) => ({ s, n: s === "aguardando_aprovacao" ? awaiting : counts[s] }))
+      .filter(({ s, n }) => n > 0 || s === filter)
+      .map(({ s, n }) => ({ value: s, label: `${ERP_COMPANY_SITUATION_LABELS[s]} (${n})` })),
     { value: "sem_vinculo", label: `Clientes sem empresa no ERP (${unlinked.length})` },
   ];
 
@@ -123,15 +164,18 @@ export function ErpCompaniesList({ rows, unlinked, canOpenClient, initialFilter 
     <section className="flex flex-col gap-3">
       <FilterBar className="mb-0">
         <FilterField label="Buscar" htmlFor="erp-empresas-busca" className="min-w-[240px] flex-1">
-          <SearchInput id="erp-empresas-busca" value={query} onChange={setQuery} debounceMs={150} placeholder="Cliente, empresa no ERP, ID ou CNPJ" />
+          <SearchInput id="erp-empresas-busca" value={query} onChange={changeQuery} debounceMs={150} placeholder="Cliente, empresa no ERP, ID ou CNPJ" />
         </FilterField>
         <FilterField label="Situação" htmlFor="erp-empresas-filtro" className="min-w-[240px]">
-          <Select id="erp-empresas-filtro" value={filter} onChange={(e) => setFilter(e.target.value as Filter)} options={options} aria-label="Filtrar por situação" />
+          <Select id="erp-empresas-filtro" value={filter} onChange={(e) => changeFilter(e.target.value as Filter)} options={options} aria-label="Filtrar por situação" />
         </FilterField>
       </FilterBar>
 
       {filter === "sem_vinculo" ? (
-        <UnlinkedList rows={shownUnlinked} canOpenClient={canOpenClient} />
+        <>
+          <UnlinkedList rows={pageUnlinked} total={shownUnlinked.length} canOpenClient={canOpenClient} />
+          {shownUnlinked.length > PAGE_SIZE ? <Pagination page={page} pageSize={PAGE_SIZE} total={shownUnlinked.length} onPageChange={setPage} /> : null}
+        </>
       ) : shown.length === 0 ? (
         <EmptyState
           icon={<Building2 />}
@@ -150,7 +194,7 @@ export function ErpCompaniesList({ rows, unlinked, canOpenClient, initialFilter 
           </p>
           {/* Celular: cartões. */}
           <ul className="flex flex-col gap-2 md:hidden">
-            {shown.map((r) => {
+            {pageRows.map((r) => {
               const lic = licenseText(r);
               return (
                 <li key={r.linkId} className="rounded-lg border border-border bg-surface p-3">
@@ -161,11 +205,7 @@ export function ErpCompaniesList({ rows, unlinked, canOpenClient, initialFilter 
                         {r.erpCompanyName ?? "—"} · ID ERP <span className="font-mono">{r.erpCompanyId}</span>
                       </p>
                     </div>
-                    {canOpenClient ? (
-                      <Link href={clientHref(r.clientId)} aria-label={`Abrir os módulos ERP de ${r.clientName}`} className="shrink-0 rounded p-1 text-muted hover:bg-surface-hover hover:text-foreground">
-                        <ArrowRight className="size-4" aria-hidden />
-                      </Link>
-                    ) : null}
+                    <OpenLink row={r} canOpen={canOpenClient} />
                   </div>
                   <p className="mt-2 text-sm">{lic.main}</p>
                   {lic.detail ? <p className="text-xs text-muted">{lic.detail}</p> : null}
@@ -193,7 +233,7 @@ export function ErpCompaniesList({ rows, unlinked, canOpenClient, initialFilter 
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {shown.map((r) => {
+                {pageRows.map((r) => {
                   const lic = licenseText(r);
                   return (
                     <TableRow key={r.linkId}>
@@ -219,14 +259,10 @@ export function ErpCompaniesList({ rows, unlinked, canOpenClient, initialFilter 
                       </TableCell>
                       <TableCell className="align-top text-xs text-muted">
                         <p>Leitura: {r.lastSyncAt ? formatDateTime(r.lastSyncAt) : "—"}</p>
-                        <p>{r.lastEvent ? `${eventLabel(r.lastEvent.type)}: ${formatDateTime(r.lastEvent.receivedAt)}` : "Nenhum evento recebido"}</p>
+                        <p>{r.lastEvent ? `${eventLabel(r.lastEvent.type)}: ${formatDateTime(r.lastEvent.at)}` : "Sem evento registrado"}</p>
                       </TableCell>
                       <TableCell className="align-top">
-                        {canOpenClient ? (
-                          <Link href={clientHref(r.clientId)} aria-label={`Abrir os módulos ERP de ${r.clientName}`} className="inline-flex rounded p-1 text-muted hover:bg-surface-hover hover:text-foreground">
-                            <ArrowRight className="size-4" aria-hidden />
-                          </Link>
-                        ) : null}
+                        <OpenLink row={r} canOpen={canOpenClient} />
                       </TableCell>
                     </TableRow>
                   );
@@ -234,26 +270,30 @@ export function ErpCompaniesList({ rows, unlinked, canOpenClient, initialFilter 
               </TableBody>
             </Table>
           </div>
+          {shown.length > PAGE_SIZE ? <Pagination page={page} pageSize={PAGE_SIZE} total={shown.length} onPageChange={setPage} /> : null}
         </>
       )}
     </section>
   );
 }
 
-function UnlinkedList({ rows, canOpenClient }: { rows: ErpUnlinkedRow[]; canOpenClient: boolean }) {
-  if (!rows.length) return <EmptyState icon={<Building2 />} title="Todos os clientes ativos já têm empresa no ERP" description="Ou nenhum cliente desta busca está sem empresa." size="sm" />;
+function UnlinkedList({ rows, total, canOpenClient }: { rows: ErpUnlinkedRow[]; total: number; canOpenClient: boolean }) {
+  if (!total) return <EmptyState icon={<Building2 />} title="Todos os clientes ativos já têm empresa no ERP" description="Ou nenhum cliente desta busca está sem empresa." size="sm" />;
   return (
     <>
       <p className="text-xs text-muted">
-        {rows.length} {rows.length === 1 ? "cliente ativo ou em implantação" : "clientes ativos ou em implantação"} sem empresa no ERP neste ambiente. Na aba Módulos ERP do cliente dá para vincular uma empresa
-        que já usa o ERP ou criar a empresa.
+        {total} {total === 1 ? "cliente ativo ou em implantação" : "clientes ativos ou em implantação"} sem empresa no ERP neste ambiente. Na aba Módulos ERP do cliente dá para vincular uma empresa que
+        já usa o ERP ou criar a empresa.
       </p>
       <ul className="divide-y divide-border rounded-lg border border-border">
         {rows.map((c) => (
           <li key={c.clientId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
             <span className="min-w-0">
               <ClientName clientId={c.clientId} name={c.clientName} canOpen={canOpenClient} />
-              <span className="ml-2 text-xs text-muted">{statusLabel(c.clientStatus)}</span>
+              <span className="ml-2 text-xs text-muted">
+                {statusLabel(c.clientStatus)}
+                {c.document ? ` · ${formatDocument(c.document)}` : ""}
+              </span>
             </span>
             {canOpenClient ? (
               <Link href={clientHref(c.clientId)} className="text-xs font-medium text-brand-fg hover:underline">

@@ -514,40 +514,52 @@ aba Módulos ERP do próprio cliente. Esta tela junta todas numa lista só (`/ad
   - situação;
   - última leitura do ERP e último evento recebido.
 - **Situação**, da mais urgente à normal (vale a primeira que se aplica):
-  1. alteração não sincronizada;
-  2. aguardando aprovação;
-  3. enviando ao ERP;
-  4. ERP não respondeu (última leitura com erro);
-  5. aviso do ERP nos últimos 7 dias (licença recusada ou limite atingido);
-  6. licença não registrada;
-  7. em dia.
+  1. alteração não sincronizada, com a próxima tentativa automática ou o aviso de que não haverá outra;
+  2. alteração não aplicada: o ERP recusou ou já tinha outra versão, depois da última licença confirmada, com o
+     motivo;
+  3. aguardando aprovação;
+  4. enviando ao ERP;
+  5. última leitura falhou (ao abrir a aba do cliente);
+  6. aviso do ERP nos últimos 7 dias: licença recusada ou limite atingido. A licença aplicada depois resolve o aviso
+     de recusa;
+  7. licença não registrada;
+  8. em dia.
 
   O aviso diário "licença sem novidade" é só informativo e não entra.
-- **Busca** por cliente, empresa no ERP, ID ou CNPJ (com ou sem pontuação, sem diferenciar acento).
+- **Aprovação pendente** conta no indicador e no filtro mesmo quando outra alteração da empresa é mais urgente.
+- **Busca** por cliente, empresa no ERP, ID ou CNPJ, sem diferenciar acento. O CNPJ, com ou sem pontuação, entra só
+  quando o termo parece um documento.
 - **Filtro de situação**, inclusive "Precisam de atenção" e "Clientes sem empresa no ERP" (ativos ou em implantação
-  ainda sem vínculo neste ambiente). `?situacao=` abre a tela já filtrada.
+  ainda sem vínculo neste ambiente, com busca também pelo documento). `?situacao=` abre a tela já filtrada.
+- **Paginação** de 50 por página.
 - **Ações:** cada linha leva à aba Módulos ERP do cliente, onde ficam as ações (alterar módulos, aprovar, tentar de
   novo, vincular ou criar a empresa). A tela em si é só leitura.
 
 **Decisões.**
-- **Nada é consultado no ERP empresa por empresa.** A lista usa só o que o INTEROS guarda: vínculo, licença,
-  alterações abertas, última leitura e eventos recebidos. Ela abre rápido mesmo com milhares de empresas. O estado
-  ao vivo continua na aba do cliente.
-- **Permissões:**
-  - a tela segue a regra das demais telas da Administração (`{ role: "admin" }`);
-  - o link para a aba do cliente só aparece para quem tem `operacao.clientes.erp.ver`.
+- **Nada é consultado no ERP empresa por empresa, e nenhum evento é varrido.** Os eventos crescem sem limite, e o
+  aviso diário de cada empresa empurraria os outros para fora de qualquer janela. Por isso, cada evento recebido do
+  ERP grava no próprio vínculo o último evento e o último aviso (`lastEvent`, `lastWarning`), e a lista lê só isso,
+  junto com a licença e as alterações. O estado ao vivo continua na aba do cliente.
+- **Acesso:** os dados seguem as mesmas regras da aba Módulos ERP.
+  - A tela é de administrador (`{ role: "admin" }`, como as outras da Administração).
+  - Os dados só aparecem com `operacao.clientes.erp.ver`.
+  - O escopo de clientes de quem vê vale; o administrador vê a base inteira.
 - **Onde está no código:**
   - regras puras em `src/domain/erp/companies.ts`;
   - leitura em `src/server/erp/companies-overview.ts`;
+  - resumo no vínculo em `src/server/erp/inbound.ts` (`noteOnLink`);
   - tela em `src/app/(app)/admin/empresas-erp/page.tsx` e `src/components/erp/erp-companies-list.tsx`.
 
-**Testes.** 5 de unidade (`tests/erp/companies.test.ts`):
-- situação mais urgente primeiro;
-- vínculo encerrado fora da lista;
-- unidades e módulos ligados;
-- aviso só nos 7 dias, sem o informativo;
-- alteração aberta mais antiga;
-- leitura com erro só quando é mais nova que a boa;
-- busca por nome, ID e CNPJ.
-
-Mais as contagens do catálogo de acessos (78 telas, 105 páginas).
+**Testes.**
+- 6 de unidade (`tests/erp/companies.test.ts`):
+  - situação mais urgente primeiro, com vínculo encerrado fora;
+  - licença, evento e aviso vindos do vínculo, com o aviso só nos 7 dias;
+  - alteração não aplicada depois da licença confirmada;
+  - alteração aberta mais urgente, com aprovação pendente contada;
+  - leitura com erro só quando é mais nova que a boa;
+  - busca por nome, ID e CNPJ.
+- 2 de banco (`tests/erp/erp-events.dbtest.ts`):
+  - limite atingido vira aviso no vínculo;
+  - recusa resolvida pela licença aplicada;
+  - evento atrasado e aviso diário não mexem no vínculo.
+- Mais as contagens do catálogo de acessos (78 telas, 105 páginas).
