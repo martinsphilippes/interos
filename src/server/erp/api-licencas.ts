@@ -4,7 +4,7 @@ import "server-only";
  * envelope `{ data, meta }`). Só leitura, simulação e o envio assinado do retrato completo. Tipos tolerantes: campos
  * desconhecidos são ignorados e enumerações novas tratadas como "outro" (contrato §17).
  */
-import type { ErpLicenseSnapshot, ErpControlMode, ErpDisplayMode, ErpItemIssue } from "@/domain/erp/license";
+import type { ErpLicenseSnapshot, ErpControlMode, ErpDisplayMode, ErpItemIssue, ErpUnitDisplay } from "@/domain/erp/license";
 
 export type { ErpItemIssue };
 import type { ErpEffectiveEntry, ErpRuntimeModule } from "@/domain/erp/status";
@@ -38,9 +38,12 @@ export interface ErpLicenseStatus {
   companyName: string;
   appliedVersion: number;
   commercialStatus: string | null;
+  /** Padrão da empresa para o que está desligado (o escolhido pelo INTEROS ou o do ERP). */
   display: ErpDisplayMode | string | null;
+  /** Escolhas por unidade aplicadas (fase A do ERP; ausente em ERP anterior). */
+  displays?: ErpUnitDisplay[] | null;
   limits: Record<string, number | null> | null;
-  /** Estado efetivo por chave v1 (unidade, ligada, estado, aviso). */
+  /** Estado efetivo por chave v1 (unidade, ligada, estado, aviso e, na fase A, a exibição). */
   effective: Record<string, ErpEffectiveEntry> | null;
   rejectedItems: ErpItemIssue[];
   warnings: ErpItemIssue[];

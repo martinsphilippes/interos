@@ -231,6 +231,40 @@ describe("falha e retomada sem duplicar", () => {
   });
 });
 
+describe("exibição do desligado (fase A)", () => {
+  const display = { companyDefault: "locked" as const, units: [{ code: "05.20", display: "upsell" as const }] };
+
+  it("mudar só a exibição não pede aprovação, não liga nem desliga nada e vai no retrato", async () => {
+    const before = await licenseOf(CLIENT_A);
+    expect(before?.openChangeId ?? null).toBeNull();
+    const modulesBefore = [...erp.companies.get(COMPANY_A)!.modules.entries()];
+    const review = await reviewLicenseChange({ clientId: CLIENT_A, draft: [], display });
+    expect(review.requiresApproval).toBe(false);
+    expect(review.plan.changes).toEqual([]);
+    expect(review.displayPlan.changes).toEqual([
+      { code: null, from: "hidden", to: "locked" },
+      { code: "05.20", from: null, to: "upsell" },
+    ]);
+    const change = await submitLicenseChange({ clientId: CLIENT_A, draft: [], display, baseVersion: before!.issuedVersion, reason: "Oferta: precificação com contratar", actor: ANA, canApprove: false });
+    expect(change.status).toBe("aplicada");
+    expect(change.approval).toBeNull();
+    expect(change.snapshot).toMatchObject({ display: "locked", displays: [{ code: "05.20", display: "upsell" }] });
+    expect(change.displayChanges).toHaveLength(2);
+    expect([...erp.companies.get(COMPANY_A)!.modules.entries()]).toEqual(modulesBefore);
+    expect((await licenseOf(CLIENT_A))?.current).toMatchObject({ display: "locked", displays: [{ code: "05.20", display: "upsell" }] });
+  });
+
+  it("a próxima alteração de módulos leva a exibição junto; pedir a mesma exibição de novo não é mudança", async () => {
+    const record = await licenseOf(CLIENT_A);
+    expect(await blocked(submitLicenseChange({ clientId: CLIENT_A, draft: [], display, baseVersion: record!.issuedVersion, reason: "Repetição", actor: ANA, canApprove: false }))).toBe("sem_mudanca");
+    const change = await submitLicenseChange({ clientId: CLIENT_A, draft: [{ code: "24.13", state: "active" }], baseVersion: record!.issuedVersion, reason: "Implantação: importação de dados", actor: ANA, canApprove: false });
+    expect(change.status).toBe("aplicada");
+    expect(change.snapshot).toMatchObject({ display: "locked", displays: [{ code: "05.20", display: "upsell" }] });
+    expect(change.displayChanges).toEqual([]);
+    expect(erp.companies.get(COMPANY_A)?.current?.displays).toEqual([{ code: "05.20", display: "upsell" }]);
+  });
+});
+
 describe("isolamento e histórico", () => {
   it("a outra empresa não muda e não tem histórico desta", async () => {
     expect([...erp.companies.get(COMPANY_B)!.modules.entries()]).toEqual([["cadastros.produtos", "enabled"]]);

@@ -5,7 +5,7 @@
  */
 import type { BaseEntity, UserRef } from "../types";
 import type { ErpCatalogDiff, ErpCatalogItem } from "./catalog";
-import type { ErpControlMode, ErpDraftChange, ErpItemIssue, ErpLicenseItem, ErpLicenseSnapshot, PlannedChange } from "./license";
+import type { DisplayChange, ErpControlMode, ErpDisplayDraft, ErpDraftChange, ErpItemIssue, ErpLicenseItem, ErpLicenseSnapshot, PlannedChange } from "./license";
 
 export type ErpEnvironment = "homologacao" | "producao";
 
@@ -175,6 +175,10 @@ export interface ErpChangeRequest extends BaseEntity {
   draft: ErpDraftChange[];
   /** O conjunto completo: pedidos + incluídos por dependência + desligados em cascata. */
   plan: PlannedChange[];
+  /** Exibição pedida (padrão da empresa e por unidade); ausente nas alterações anteriores à fase A. */
+  displayDraft?: ErpDisplayDraft | null;
+  /** Mudanças de exibição do lote (como o desligado aparece no ERP). */
+  displayChanges?: DisplayChange[];
   /** Troca do modo de controle da empresa no ERP (legado → observação → aplicado). */
   controlMode: ErpControlMode | null;
   /** Primeira licença registrada pelo INTEROS (parte do que a empresa já usa no ERP). */

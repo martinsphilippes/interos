@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, ChevronDown, ChevronRight, Clock3, RotateCw, ShieldQuestion, XCircle } from "lucide-react";
-import { ERP_ITEM_STATE_LABELS } from "@/domain/erp/license";
+import { ERP_ITEM_STATE_LABELS, describeDisplayChange } from "@/domain/erp/license";
 import { ERP_CHANGE_STATUS_LABELS, type ErpChangeRequest } from "@/domain/erp/types";
 import { approveErpChangeAction, cancelErpChangeAction, resumeErpProvisioningAction, retryErpChangeAction } from "@/server/erp/actions";
 import { Badge } from "@/components/ui/badge";
@@ -113,6 +113,7 @@ export function ErpOpenChangeCard({ change, caps, nameOf }: { change: ErpChangeR
         </p>
       ) : null}
       {change.plan.length ? <PlanList change={change} nameOf={nameOf} /> : null}
+      <DisplayList change={change} nameOf={nameOf} />
 
       {cancelOpen ? <CancelDialog change={change} onClose={() => setCancelOpen(false)} /> : null}
     </section>
@@ -154,6 +155,21 @@ function CancelDialog({ change, onClose }: { change: ErpChangeRequest; onClose: 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Mudanças de exibição do lote (fase A): como o desligado aparece no ERP. */
+function DisplayList({ change, nameOf }: { change: ErpChangeRequest; nameOf: (code: string) => string }) {
+  const items = change.displayChanges ?? [];
+  if (!items.length) return null;
+  return (
+    <ul className="mt-2 flex flex-col gap-1 text-xs">
+      {items.map((d) => (
+        <li key={d.code ?? "empresa"} className="text-muted">
+          Exibição · {describeDisplayChange(d, d.code ? nameOf(d.code) : null)}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -258,7 +274,17 @@ export function ErpHistoryList({ changes, nameOf }: { changes: ErpChangeRequest[
               <Icon className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden />
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                  {c.kind === "provisionamento" ? "Criação da empresa" : c.initial ? "Licença inicial" : `${c.plan.length} ${c.plan.length === 1 ? "item" : "itens"}${c.controlMode ? " + modo de controle" : ""}`}
+                  {c.kind === "provisionamento"
+                    ? "Criação da empresa"
+                    : c.initial
+                      ? "Licença inicial"
+                      : c.plan.length
+                        ? `${c.plan.length} ${c.plan.length === 1 ? "item" : "itens"}${c.displayChanges?.length ? " + exibição" : ""}${c.controlMode ? " + modo de controle" : ""}`
+                        : c.displayChanges?.length
+                          ? `Exibição (${c.displayChanges.length})${c.controlMode ? " + modo de controle" : ""}`
+                          : c.controlMode
+                            ? "Modo de controle"
+                            : "0 itens"}
                   <Badge variant={CHANGE_STATUS_BADGE[c.status]} size="sm">
                     {ERP_CHANGE_STATUS_LABELS[c.status]}
                   </Badge>
@@ -272,6 +298,7 @@ export function ErpHistoryList({ changes, nameOf }: { changes: ErpChangeRequest[
             {expanded ? (
               <div className="flex flex-col gap-2 px-4 pb-4 pl-15 text-xs">
                 {c.plan.length ? <PlanList change={c} nameOf={nameOf} /> : null}
+                <DisplayList change={c} nameOf={nameOf} />
                 {c.controlMode ? <p>Modo de controle no ERP → {c.controlMode}</p> : null}
                 <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
                   {c.contractReference ? (

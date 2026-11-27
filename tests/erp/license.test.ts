@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { catalogDiff, indexCatalog, normalizeCatalog } from "@/domain/erp/catalog";
-import { buildSnapshot, deactivations, isOnState, planLicenseChanges, type ErpLicenseItem } from "@/domain/erp/license";
+import { buildSnapshot, deactivations, describeDisplayChange, isOnState, planDisplayChanges, planLicenseChanges, type ErpLicenseItem } from "@/domain/erp/license";
 
 const index = indexCatalog(normalizeCatalog(JSON.parse(readFileSync(new URL("./fixtures/catalogo-v2-recorte.json", import.meta.url), "utf8"))));
 const NOW = new Date("2026-11-26T12:00:00.000Z");
@@ -106,6 +106,60 @@ describe("buildSnapshot", () => {
       { code: "05.02", state: "trial", until: FUTURE, effectiveAt: null, reason: null },
     ]);
     expect(s.items.some((i) => /^\d\d$/.test(i.code))).toBe(false);
+  });
+
+  it("exibição por unidade segue em toda versão; o lote com exibição nova substitui", () => {
+    const previous = { commercialStatus: "active" as const, display: "hidden" as const, displays: [{ code: "05.02", display: "upsell" as const }] };
+    const kept = buildSnapshot({ companyId: "c0ffee", licenseVersion: 9, items: [], previous, issuedAt: NOW.toISOString() });
+    expect(kept).toMatchObject({ display: "hidden", displays: [{ code: "05.02", display: "upsell" }] });
+    const changed = buildSnapshot({ companyId: "c0ffee", licenseVersion: 10, items: [], previous, display: { display: "locked", displays: [] }, issuedAt: NOW.toISOString() });
+    expect(changed).toMatchObject({ display: "locked", displays: [] });
+    // sem retrato anterior: lista vazia (o ERP usa o padrão dele)
+    expect(buildSnapshot({ companyId: "c0ffee", licenseVersion: 1, items: [], previous: null, issuedAt: NOW.toISOString() })).toMatchObject({ display: null, displays: [] });
+  });
+});
+
+describe("planDisplayChanges (fase A: exibição do que está desligado)", () => {
+  const current = { display: "hidden" as const, displays: [{ code: "05.02", display: "upsell" as const }] };
+
+  it("padrão da empresa e escolha por unidade; igual ao atual não conta; null volta ao padrão", () => {
+    const plan = planDisplayChanges(index, current, {
+      companyDefault: "locked",
+      units: [
+        { code: "05.04", display: "upsell" },
+        { code: "05.02", display: null },
+        { code: "07.01", display: null }, // já segue o padrão: sem mudança
+      ],
+    });
+    expect(plan.errors).toEqual([]);
+    expect(plan.display).toBe("locked");
+    expect(plan.displays).toEqual([{ code: "05.04", display: "upsell" }]);
+    expect(plan.changes).toEqual([
+      { code: null, from: "hidden", to: "locked" },
+      { code: "05.02", from: "upsell", to: null },
+      { code: "05.04", from: null, to: "upsell" },
+    ]);
+    // nada pedido: nada muda, e a exibição atual continua
+    expect(planDisplayChanges(index, current, null)).toEqual({ display: "hidden", displays: [{ code: "05.02", display: "upsell" }], changes: [], errors: [] });
+    expect(planDisplayChanges(index, current, { companyDefault: "hidden" }).changes).toEqual([]);
+  });
+
+  it("recusa o que não é unidade (função incluída, código inexistente) e unidade repetida", () => {
+    const plan = planDisplayChanges(index, current, { units: [{ code: "01.05", display: "upsell" }, { code: "99.99", display: "hidden" }, { code: "05.04", display: "locked" }, { code: "05.04", display: "upsell" }] });
+    expect(plan.errors.map((e) => [e.code, e.reason])).toEqual([
+      ["01.05", "nao_e_unidade"],
+      ["99.99", "nao_e_unidade"],
+      ["05.04", "repetida"],
+    ]);
+    expect(plan.displays).toEqual([
+      { code: "05.02", display: "upsell" },
+      { code: "05.04", display: "locked" },
+    ]);
+  });
+
+  it("texto da mudança para a revisão e o histórico", () => {
+    expect(describeDisplayChange({ code: "05.02", from: null, to: "upsell" }, "Cotações")).toBe("05.02 Cotações: seguir o padrão da empresa → mostrar com “contratar”");
+    expect(describeDisplayChange({ code: null, from: "hidden", to: "locked" }, null)).toBe("Padrão da empresa: esconder → mostrar com cadeado");
   });
 });
 

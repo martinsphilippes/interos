@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { AlertTriangle, CheckCircle2, CircleSlash, Clock3, Loader2, ShieldQuestion } from "lucide-react";
-import { ERP_ITEM_STATE_LABELS, type ErpDraftChange } from "@/domain/erp/license";
+import { ERP_ITEM_STATE_LABELS, describeDisplayChange, type ErpDisplayDraft, type ErpDisplayMode, type ErpDraftChange } from "@/domain/erp/license";
 import type { ErpLicenseItemState } from "@/domain/erp/types";
 import { reviewErpChangesAction, submitErpChangesAction, type ChangeOutcome, type ReviewSummary } from "@/server/erp/actions";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,8 @@ export interface ErpReviewDialogProps {
   onOpenChange: (open: boolean) => void;
   clientId: string;
   draft: ErpDraftChange[];
+  /** Exibição preparada (padrão da empresa e por unidade). */
+  display?: ErpDisplayDraft | null;
   controlMode: "legacy" | "shadow" | "enforced" | null;
   /** Envio concluído (qualquer resultado do ERP): a tela limpa a seleção e recarrega. */
   onDone: (outcome: ChangeOutcome) => void;
@@ -33,7 +35,7 @@ export function ErpReviewDialog(props: ErpReviewDialogProps) {
   return props.open ? <ReviewDialogInner {...props} /> : null;
 }
 
-function ReviewDialogInner({ onOpenChange, clientId, draft, controlMode, onDone, onConflict }: ErpReviewDialogProps) {
+function ReviewDialogInner({ onOpenChange, clientId, draft, display = null, controlMode, onDone, onConflict }: ErpReviewDialogProps) {
   const [review, setReview] = React.useState<ReviewSummary | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -45,7 +47,7 @@ function ReviewDialogInner({ onOpenChange, clientId, draft, controlMode, onDone,
 
   React.useEffect(() => {
     let alive = true;
-    reviewErpChangesAction({ clientId, draft, controlMode }).then(
+    reviewErpChangesAction({ clientId, draft, display, controlMode }).then(
       (res) => {
         if (!alive) return;
         setLoading(false);
@@ -61,7 +63,7 @@ function ReviewDialogInner({ onOpenChange, clientId, draft, controlMode, onDone,
     return () => {
       alive = false;
     };
-  }, [clientId, draft, controlMode]);
+  }, [clientId, draft, display, controlMode]);
 
   const asked = review?.plan.filter((p) => p.origin === "pedido") ?? [];
   const deps = review?.plan.filter((p) => p.origin === "dependencia") ?? [];
@@ -75,7 +77,7 @@ function ReviewDialogInner({ onOpenChange, clientId, draft, controlMode, onDone,
     if (!review) return;
     setSending(true);
     setError(null);
-    const res = await submitErpChangesAction({ clientId, draft, controlMode, baseVersion: review.baseVersion, reason, contractReference: contractRef || null }).catch(() => ({
+    const res = await submitErpChangesAction({ clientId, draft, display, controlMode, baseVersion: review.baseVersion, reason, contractReference: contractRef || null }).catch(() => ({
       ok: false as const,
       error: "A conexão caiu durante o envio. Recarregue a aba: se o ERP recebeu, a alteração aparece em andamento (o reenvio usa a mesma chave, sem duplicar).",
       code: undefined,
@@ -139,6 +141,18 @@ function ReviewDialogInner({ onOpenChange, clientId, draft, controlMode, onDone,
                 <p className="text-sm">
                   Modo de controle no ERP: <strong>{review.modeFrom ?? "—"}</strong> → <strong>{review.controlMode}</strong>
                 </p>
+              ) : null}
+              {review.displayChanges.length ? (
+                <section>
+                  <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">Exibição do que está desligado (não precisa de aprovação)</h3>
+                  <ul className="divide-y divide-border rounded-lg border border-border">
+                    {review.displayChanges.map((c) => (
+                      <li key={c.code ?? "empresa"} className="px-3 py-2 text-sm">
+                        {describeDisplayChange({ code: c.code, from: c.from as ErpDisplayMode | null, to: c.to as ErpDisplayMode | null }, c.name)}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ) : null}
               {review.warnings.length ? (
                 <ul className="flex flex-col gap-1 text-xs text-muted">

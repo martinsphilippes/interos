@@ -93,7 +93,8 @@ preparar (seleção na tela, guardada na sessão)
   revisou ainda é a atual ("outra pessoa alterou… o estado foi recarregado"; a seleção pendente é mantida).
 - **Aprovação:** exigida para desligamento com pendência, obrigação ou cascata, para suspensão e somente leitura e para
   passar a aplicar o contrato no ERP. Quem pediu não aprova o próprio pedido; quem tem a permissão de aprovar e pede
-  envia direto (registrado como aprovado por ele). Aprovadores recebem notificação com link para a aba.
+  envia direto (registrado como aprovado por ele). Aprovadores recebem notificação com link para a aba. Mudar só a
+  exibição do que está desligado (seção 18) nunca pede aprovação (decisão de 27/11).
 - **Travas de segurança:** a primeira licença parte do que a empresa usa hoje no ERP e **não sai sem essa leitura**
   (sem ela desligaria tudo que não estivesse na lista); **desligamento não sai sem a simulação** do ERP (ela mostra o
   que está em andamento); empresa de demonstração do ERP não pode ser vinculada em produção.
@@ -132,6 +133,7 @@ preparar (seleção na tela, guardada na sessão)
 | 4. Permissões internas | Ver, alterar, aprovar, ver histórico, ver Torre e criar/vincular, separadas no catálogo; escopo de cliente conferido no servidor; histórico com empresa, autor, data, motivo, antes/depois e referência da operação no ERP |
 | 5. Torre de Controle | Contratadas, configuradas e ativas; blocos com "ativo", "sem movimento", "módulo desativado" (com a data) e "dados indisponíveis"; períodos anteriores à desativação consultáveis; uso e limites |
 | 6. Homologação ponta a ponta | Ver item 12 |
+| 7. Tirar e esconder por unidade (fase A, 27/11) | Padrão da empresa no topo da aba ("Quando desligado") e escolha por unidade no detalhe ("Quando desligada"): esconder, mostrar com cadeado ou mostrar com "contratar". Ver seção 18 |
 
 ---
 
@@ -412,3 +414,41 @@ sem reenvio, aviso de alteração já concluída, retomada depois de queda e avi
 **Pedidos ao time do ERP (atendidos em 27/11).** Os avisos estão configurados na homologação e chegam na hora (seção
 12.1). O `sync.stale` passou a contar desde a última confirmação, e as mudanças de `license.transition` trazem o código
 comercial da unidade (`05.02`) além da chave interna do módulo (pendências do ERP, §8, itens 3 e 4).
+
+---
+
+## 18. Exibição do que está desligado, por unidade (fase A, 27/11/2026)
+
+Pedido: "mesmo a linha fazendo parte do módulo, tem que ser possível tirar ou ocultar daquele módulo uma parte ou
+outra", escolhendo unidade por unidade. Especificação completa (as 14 seções, fases A, B1 e B2) no documento
+"Tirar e esconder por unidade e por função". Esta seção é a fase A: a exibição por unidade.
+
+**Na aba Módulos ERP.**
+- **Padrão da empresa** ("Quando desligado", ao lado de "Controle no ERP"): como a empresa vê no ERP o que não está
+  contratado: esconder, mostrar com cadeado ou mostrar com "contratar".
+- **Por unidade** (detalhe da unidade, "Quando desligada"): a mesma escolha só para ela, ou "seguir o padrão da
+  empresa". Vale também para unidade nunca contratada, por exemplo para oferecer uma unidade com "contratar".
+- Na lista, a unidade com escolha própria mostra a etiqueta "Se desligada: esconder / cadeado / contratar"; a
+  preparada aparece destacada e entra no filtro "Alterações preparadas".
+- A escolha preparada fica guardada na sessão do navegador, como a seleção de módulos, e vai na mesma revisão. A
+  revisão mostra a seção "Exibição do que está desligado", e o histórico registra cada mudança ("Exibição · 05.02
+  Cotações: seguir o padrão da empresa → mostrar com “contratar”").
+
+**Regras.**
+- Mudar só a exibição **não pede aprovação** e não liga nem desliga nada (decisão de 27/11). Num lote com
+  desligamento que pede aprovação, o lote inteiro espera a aprovação, como antes.
+- O retrato é completo: a exibição de cada unidade segue em toda versão nova da licença até alguém mudar.
+- Antes do primeiro retrato do INTEROS, vale a exibição que o ERP aplica (sem escolha: escondido para clientes atuais
+  e "contratar" para empresa criada pelo INTEROS).
+- Função dentro da unidade ainda não tem exibição própria (fase B): o INTEROS só oferece a escolha por unidade.
+
+**Contrato com o ERP (correção 17 do ERP).** O retrato leva `display` (padrão da empresa) e `displays: [{ code,
+display }]`, fora de `items`, para não criar item desligado em unidade nunca contratada. O ERP devolve `displays` no
+`GET .../license` e `effective[].display` no `PUT`. ERP sem a fase A ignora o campo novo; o INTEROS sem a fase A não o
+envia. Menu, página "módulo indisponível" e "Solicitar contratação" do ERP seguem a unidade, e o pedido de
+contratação só é aceito para unidade em "contratar".
+
+**Testes.** INTEROS: 4 de unidade (plano de exibição, recusa do que não é unidade, retrato que mantém a exibição e
+texto da mudança) e 2 de banco (exibição sem aprovação e sem mexer nos módulos; a alteração seguinte leva a exibição
+junto). ERP: 6 testes (escolha por unidade e por módulo, tela liberada por mais de uma unidade, "contratar" só na
+unidade escolhida, mudança só de exibição, valor inválido e o envio assinado pela API).

@@ -74,7 +74,9 @@ export function createFakeErp(options: { catalog?: unknown } = {}): FakeErp {
     companyName: c.name,
     appliedVersion: c.appliedVersion,
     commercialStatus: c.current?.commercialStatus ?? null,
-    display: "hidden",
+    // como o ERP com a fase A: o padrão fixado (ou o dele) e as escolhas por unidade aplicadas
+    display: c.current?.display ?? "hidden",
+    displays: c.current?.displays ?? [],
     limits: null,
     effective: effectiveOf(c),
     rejectedItems: [],

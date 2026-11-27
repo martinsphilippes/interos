@@ -16,7 +16,24 @@ import type { ErpLicenseItemState } from "./types";
 import { compareCodes, dependentsClosure, isUnitSellable, requiredClosure, type ErpCatalogIndex } from "./catalog";
 
 export type ErpControlMode = "legacy" | "shadow" | "enforced";
-export type ErpDisplayMode = "hidden" | "locked" | "upsell";
+export const ERP_DISPLAY_MODES = ["hidden", "locked", "upsell"] as const;
+export type ErpDisplayMode = (typeof ERP_DISPLAY_MODES)[number];
+
+/** Como o que está desligado aparece para a empresa no ERP (menu, telas e pedido de contratação). */
+export const ERP_DISPLAY_LABELS: Record<ErpDisplayMode, string> = {
+  hidden: "Esconder",
+  locked: "Mostrar com cadeado",
+  upsell: "Mostrar com “contratar”",
+};
+
+/** Versão curta, para etiquetas na lista. */
+export const ERP_DISPLAY_SHORT: Record<ErpDisplayMode, string> = { hidden: "esconder", locked: "cadeado", upsell: "contratar" };
+
+/** Exibição escolhida para uma unidade quando ela está desligada (vence o padrão da empresa só para ela). */
+export interface ErpUnitDisplay {
+  code: string;
+  display: ErpDisplayMode;
+}
 
 /** Item recusado ou aviso do ERP sobre o retrato (motivo do contrato: not_homologated, dependency_missing...). */
 export interface ErpItemIssue {
@@ -43,7 +60,13 @@ export interface ErpLicenseSnapshot {
   trial?: { until: string | null } | null;
   branches?: { mode: "all" | "list"; branchIds: string[] } | null;
   limits?: { users?: number | null; devices?: number | null; branches?: number | null; fiscalDocumentsPerMonth?: number | null } | null;
+  /** Padrão da empresa para o que está desligado. */
   display?: ErpDisplayMode | null;
+  /**
+   * Exibição por unidade (fase A, 27/11/2026): fica fora de `items` para valer também em unidade nunca contratada
+   * (ex.: mostrar com "contratar") sem criar item desligado. ERP sem a fase A ignora o campo.
+   */
+  displays?: ErpUnitDisplay[] | null;
   controlMode?: ErpControlMode | null;
   items: ErpLicenseItem[];
   issuedAt: string;
@@ -230,13 +253,78 @@ export function planLicenseChanges(index: ErpCatalogIndex, currentItems: readonl
   return { changes: [...changes.values()].sort((a, b) => compareCodes(a.code, b.code)), errors, warnings, items };
 }
 
+/** Exibição preparada na tela: o padrão da empresa e a escolha de cada unidade (`null` = volta ao padrão). */
+export interface ErpDisplayDraft {
+  companyDefault?: ErpDisplayMode | null;
+  units?: { code: string; display: ErpDisplayMode | null }[] | null;
+}
+
+/** Uma mudança de exibição: `code` null é o padrão da empresa; `null` em `from`/`to` é "segue o padrão". */
+export interface DisplayChange {
+  code: string | null;
+  from: ErpDisplayMode | null;
+  to: ErpDisplayMode | null;
+}
+
+export interface DisplayPlan {
+  /** Padrão da empresa depois do lote (null = o INTEROS ainda não fixou; o ERP usa o dele). */
+  display: ErpDisplayMode | null;
+  /** Escolhas por unidade depois do lote, em ordem de código. */
+  displays: ErpUnitDisplay[];
+  changes: DisplayChange[];
+  errors: PlanIssue[];
+}
+
+/**
+ * Planeja as mudanças de exibição sobre o que vale hoje. Só mexe em como o desligado aparece: não liga nem desliga
+ * nada e, por isso, nunca pede aprovação (decisão de 27/11). Escolha igual à atual não conta como mudança.
+ */
+export function planDisplayChanges(index: ErpCatalogIndex, current: { display: ErpDisplayMode | null; displays: readonly ErpUnitDisplay[] }, draft: ErpDisplayDraft | null | undefined): DisplayPlan {
+  const errors: PlanIssue[] = [];
+  const changes: DisplayChange[] = [];
+  const byCode = new Map(current.displays.map((d) => [d.code, d.display]));
+  let display = current.display;
+  if (draft?.companyDefault && draft.companyDefault !== current.display) {
+    changes.push({ code: null, from: current.display, to: draft.companyDefault });
+    display = draft.companyDefault;
+  }
+  const seen = new Set<string>();
+  for (const unit of draft?.units ?? []) {
+    if (seen.has(unit.code)) {
+      errors.push({ code: unit.code, reason: "repetida", message: `${unit.code} aparece duas vezes na exibição.` });
+      continue;
+    }
+    seen.add(unit.code);
+    if (!index.byCode.get(unit.code)?.unit) {
+      errors.push({ code: unit.code, reason: "nao_e_unidade", message: `${unit.code} não é uma unidade comercial do catálogo: a exibição é escolhida por unidade.` });
+      continue;
+    }
+    const before = byCode.get(unit.code) ?? null;
+    if (before === unit.display) continue;
+    changes.push({ code: unit.code, from: before, to: unit.display });
+    if (unit.display) byCode.set(unit.code, unit.display);
+    else byCode.delete(unit.code);
+  }
+  const displays = [...byCode].map(([code, d]) => ({ code, display: d })).sort((a, b) => compareCodes(a.code, b.code));
+  return { display, displays, changes: changes.sort((a, b) => (a.code === null ? -1 : b.code === null ? 1 : compareCodes(a.code, b.code))), errors };
+}
+
+/** Texto de uma mudança de exibição, para a revisão e o histórico ("05.02 Cotações: seguir o padrão → mostrar com “contratar”"). */
+export function describeDisplayChange(change: Pick<DisplayChange, "code" | "from" | "to">, name: string | null): string {
+  const what = change.code === null ? "Padrão da empresa" : `${change.code}${name ? ` ${name}` : ""}`;
+  const fmt = (d: ErpDisplayMode | null) => (d ? ERP_DISPLAY_LABELS[d].toLowerCase() : change.code === null ? "—" : "seguir o padrão da empresa");
+  return `${what}: ${fmt(change.from)} → ${fmt(change.to)}`;
+}
+
 /** Retrato completo da próxima versão (o que vai no PUT). */
 export function buildSnapshot(input: {
   companyId: string;
   licenseVersion: number;
   items: readonly ErpLicenseItem[];
-  previous: Pick<ErpLicenseSnapshot, "commercialStatus" | "activationAt" | "validUntil" | "trial" | "branches" | "limits" | "display" | "controlMode"> | null;
+  previous: Pick<ErpLicenseSnapshot, "commercialStatus" | "activationAt" | "validUntil" | "trial" | "branches" | "limits" | "display" | "displays" | "controlMode"> | null;
   controlMode?: ErpControlMode | null;
+  /** Exibição do lote (`planDisplayChanges`); sem ela, vale a do retrato anterior. */
+  display?: Pick<DisplayPlan, "display" | "displays"> | null;
   issuedAt: string;
 }): ErpLicenseSnapshot {
   const prev = input.previous;
@@ -250,7 +338,9 @@ export function buildSnapshot(input: {
     trial: prev?.trial ?? null,
     branches: prev?.branches ?? null,
     limits: prev?.limits ?? null,
-    display: prev?.display ?? null,
+    display: input.display ? input.display.display : (prev?.display ?? null),
+    // o retrato é completo: as escolhas por unidade seguem em toda versão até alguém mudar
+    displays: (input.display ? input.display.displays : (prev?.displays ?? [])).map((d) => ({ code: d.code, display: d.display })),
     controlMode: input.controlMode ?? null,
     items: input.items.map((i) => ({ code: i.code, state: i.state, until: i.until ?? null, effectiveAt: i.effectiveAt ?? null, reason: i.reason ?? null })),
     issuedAt: input.issuedAt,

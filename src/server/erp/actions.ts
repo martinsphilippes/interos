@@ -9,6 +9,7 @@ import { z } from "zod";
 import { PermissionError, can, failAction, requirePermission } from "@/server/auth/session";
 import { canSeeClientId } from "@/server/clients/access";
 import { ERP_LICENSE_ITEM_STATES, type ErpChangeRequest } from "@/domain/erp/types";
+import { ERP_DISPLAY_MODES } from "@/domain/erp/license";
 import type { CurrentUser, UserRef } from "@/domain/types";
 import { ErpChangeBlocked, approveLicenseChange, cancelLicenseChange, getChange, processPendingErpChanges, reviewLicenseChange, sendLicenseChange, submitLicenseChange } from "./changes";
 import { findErpCompaniesByCnpj, linkByIdentification, linkWithCode, provisionCompany, resumeProvisioning, retryProvisioning } from "./provisioning";
@@ -52,6 +53,16 @@ const draftSchema = z
   )
   .max(200);
 const modeSchema = z.enum(["legacy", "shadow", "enforced"]).nullish();
+/** Exibição preparada: padrão da empresa e escolha por unidade (`null` = volta ao padrão). */
+const displaySchema = z
+  .object({
+    companyDefault: z.enum(ERP_DISPLAY_MODES).nullish(),
+    units: z
+      .array(z.object({ code: z.string().regex(/^\d{2}\.\d{2}(\.\d{2})?$/), display: z.enum(ERP_DISPLAY_MODES).nullable() }))
+      .max(200)
+      .nullish(),
+  })
+  .nullish();
 
 /** Recarrega a aba (nova leitura do ERP na próxima renderização). */
 export async function refreshErpStateAction(input: unknown): Promise<Result<null>> {
@@ -70,6 +81,10 @@ export interface ReviewSummary {
   baseVersion: number;
   initial: boolean;
   plan: { code: string; name: string; from: string | null; to: string; origin: string; relatedTo: string | null; relatedName: string | null; until: string | null; effectiveAt: string | null }[];
+  /** Mudanças de exibição (`code` null = padrão da empresa; `null` em from/to = segue o padrão). Não pedem aprovação. */
+  displayChanges: { code: string | null; name: string | null; from: string | null; to: string | null }[];
+  /** Padrão da empresa depois do lote (para explicar "segue o padrão"). */
+  companyDisplay: string | null;
   errors: { code: string; message: string }[];
   warnings: { code: string; message: string }[];
   modeFrom: string | null;
@@ -86,9 +101,9 @@ export interface ReviewSummary {
 export async function reviewErpChangesAction(input: unknown): Promise<Result<ReviewSummary>> {
   try {
     const user = await requirePermission("operacao.clientes.erp.alterar");
-    const data = z.object({ clientId: clientIdSchema, draft: draftSchema, controlMode: modeSchema }).parse(input);
+    const data = z.object({ clientId: clientIdSchema, draft: draftSchema, display: displaySchema, controlMode: modeSchema }).parse(input);
     await assertClient(user, data.clientId);
-    const review = await reviewLicenseChange({ clientId: data.clientId, draft: data.draft, controlMode: data.controlMode ?? null });
+    const review = await reviewLicenseChange({ clientId: data.clientId, draft: data.draft, display: data.display ?? null, controlMode: data.controlMode ?? null });
     const loaded = await getCurrentCatalog(review.link.environment);
     const nameOf = (code: string | null | undefined) => (code ? (loaded?.index.byCode.get(code)?.name ?? code) : null);
     return {
@@ -97,6 +112,8 @@ export async function reviewErpChangesAction(input: unknown): Promise<Result<Rev
         baseVersion: review.baseVersion,
         initial: review.initial,
         plan: review.plan.changes.map((c) => ({ code: c.code, name: nameOf(c.code) ?? c.code, from: c.from, to: c.to, origin: c.origin, relatedTo: c.relatedTo ?? null, relatedName: nameOf(c.relatedTo), until: c.until ?? null, effectiveAt: c.effectiveAt ?? null })),
+        displayChanges: review.displayPlan.changes.map((c) => ({ code: c.code, name: nameOf(c.code), from: c.from, to: c.to })),
+        companyDisplay: review.displayPlan.display,
         errors: review.plan.errors.map((e) => ({ code: e.code, message: e.message })),
         warnings: review.plan.warnings.map((w) => ({ code: w.code, message: w.message })),
         modeFrom: review.modeFrom,
@@ -131,10 +148,10 @@ export async function submitErpChangesAction(input: unknown): Promise<Result<Cha
   try {
     const user = await requirePermission("operacao.clientes.erp.alterar");
     const data = z
-      .object({ clientId: clientIdSchema, draft: draftSchema, controlMode: modeSchema, baseVersion: z.number().int().min(0), reason: z.string().trim().min(3).max(300), contractReference: z.string().trim().max(100).nullish() })
+      .object({ clientId: clientIdSchema, draft: draftSchema, display: displaySchema, controlMode: modeSchema, baseVersion: z.number().int().min(0), reason: z.string().trim().min(3).max(300), contractReference: z.string().trim().max(100).nullish() })
       .parse(input);
     await assertClient(user, data.clientId);
-    const change = await submitLicenseChange({ ...data, controlMode: data.controlMode ?? null, actor: actorOf(user), canApprove: can(user, "operacao.clientes.erp.aprovar") });
+    const change = await submitLicenseChange({ ...data, display: data.display ?? null, controlMode: data.controlMode ?? null, actor: actorOf(user), canApprove: can(user, "operacao.clientes.erp.aprovar") });
     revalidateClient(data.clientId);
     return { ok: true, data: outcome(change) };
   } catch (error) {

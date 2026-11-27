@@ -9,14 +9,14 @@ import { after } from "next/server";
 import type { ErpChangeRequest, ErpEnvironment, ErpLink } from "@/domain/erp/types";
 import { ERP_ENVIRONMENT_LABELS } from "@/domain/erp/types";
 import { ERP_COMMERCIAL_CLASS_LABELS, ERP_DEV_STATUS_LABELS, isUnitSellable, type ErpItemLevel, type ErpItemRole } from "@/domain/erp/catalog";
-import type { ErpLicenseItem } from "@/domain/erp/license";
+import type { ErpDisplayMode, ErpLicenseItem, ErpUnitDisplay } from "@/domain/erp/license";
 import { moduleSummary, unitStatus, type ErpRuntimeModule, type ErpUnitStatus, type ModuleSummary } from "@/domain/erp/status";
 import { ERP_PACKAGES, packageUnits } from "@/domain/erp/packages";
 import { erpIntegrationState, getErpConfig, type ErpIntegrationState } from "./config";
 import { ErpError, erpErrorSummary } from "./errors";
 import { catalogNeedsRefresh, getCurrentCatalog, importErpCatalog } from "./catalog-store";
 import { getErpLink, markLinkSync } from "./links";
-import { baseItemsFromErp, getChange, getLicenseRecord, listClientChanges, readErpState, reconcileChange } from "./changes";
+import { baseItemsFromErp, currentDisplay, getChange, getLicenseRecord, listClientChanges, readErpState, reconcileChange } from "./changes";
 import { latestProvisioning } from "./provisioning";
 
 /** A ficha espera o ERP no máximo isto por leitura (as duas leituras correm em paralelo). */
@@ -87,7 +87,17 @@ export interface ErpCompanyView {
     nextTransitionAt: string | null;
     readAt: string;
   } | null;
-  license: { issuedVersion: number; appliedVersion: number; appliedAt: string | null; initial: boolean; items: ErpLicenseItem[] };
+  license: {
+    issuedVersion: number;
+    appliedVersion: number;
+    appliedAt: string | null;
+    initial: boolean;
+    items: ErpLicenseItem[];
+    /** Padrão da empresa para o desligado (o fixado pelo INTEROS ou, antes dele, o do ERP; null = desconhecido). */
+    display: ErpDisplayMode | null;
+    /** Escolhas de exibição por unidade que valem hoje. */
+    displays: ErpUnitDisplay[];
+  };
   modules: ErpModuleRow[];
   items: ErpItemRow[];
   openChange: ErpChangeRequest | null;
@@ -113,7 +123,7 @@ function blank(state: ErpCompanyView["state"], integration: ErpIntegrationState,
     catalog: null,
     catalogError: null,
     erp: null,
-    license: { issuedVersion: 0, appliedVersion: 0, appliedAt: null, initial: true, items: [] },
+    license: { issuedVersion: 0, appliedVersion: 0, appliedAt: null, initial: true, items: [], display: null, displays: [] },
     modules: [],
     items: [],
     openChange: null,
@@ -282,7 +292,7 @@ export async function getErpCompanyView(clientId: string, options: { withHistory
     catalog,
     catalogError,
     erp,
-    license: { issuedVersion: record?.issuedVersion ?? 0, appliedVersion: record?.appliedVersion ?? 0, appliedAt: record?.appliedAt ?? null, initial, items: contracted },
+    license: { issuedVersion: record?.issuedVersion ?? 0, appliedVersion: record?.appliedVersion ?? 0, appliedAt: record?.appliedAt ?? null, initial, items: contracted, ...currentDisplay(record, reading?.status ?? null) },
     modules,
     items,
     packages,
