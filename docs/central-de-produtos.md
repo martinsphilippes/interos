@@ -230,6 +230,24 @@ cancelamento, queda, empresa ocupada, resposta perdida, isolamento e histórico)
 corrigiram dois defeitos antes da homologação (cancelamento que lia depois de escrever e reenvio que podia sair depois de
 cancelado); a homologação achou um terceiro (resultado da criação da empresa sumia da tela).
 
+### 12.1 Homologação com o ERP publicado (27/11/2026)
+
+Ambiente: INTEROS de produção (`ERP_INTERCERT_AMBIENTE=homologacao`) ligado à prévia de homologação do ERP unificado,
+com as credenciais de homologação. Dados de teste: dois clientes "TESTE HML", apagados no fim (81 registros).
+
+| Cenário | Resultado |
+| --- | --- |
+| Vincular empresa existente | Aurora (empresa A do piloto) achada pelo CNPJ e vinculada; a aba mostrou "Licença ainda não registrada pelo INTEROS · ERP na v1" |
+| Criar empresa pelo INTEROS | Empresa, administrador e convite criados. A licença inicial foi recusada (`403 company_not_allowed`): a empresa nova não estava na lista `empresas` da credencial de licenças. Incluída a empresa e publicado o ERP, "Tentar de novo" aplicou (v1) |
+| Convite e pedido de módulo | O administrador ativou o acesso, entrou no ERP e pediu Cotações de compra (05.02); o aviso chegou na hora e virou tarefa de vendas |
+| Alteração de módulo | Primeira licença da Aurora pelo INTEROS: 03.13 Importação de CT-e com 05.06 Recebimento por dependência, simulada e aplicada (v2) |
+| "Basta um" no catálogo real | 02.09 e 02.14 barrados na revisão: exigem 04.01 ou 04.02 |
+| Torre e uso | Torre de Controle e "Uso e limites" das duas empresas, pelas credenciais da Torre e de licenças |
+| Avisos | `license.applied` das duas empresas processados ("a alteração já estava concluída"); nenhum erro no navegador |
+
+Não repetidos nesta rodada (passaram no §12 e nos testes): dois usuários na mesma empresa, desligar com pendência e
+aprovação, falha de assinatura e teste com data.
+
 ---
 
 ## 13. Ativação gradual
@@ -248,7 +266,9 @@ cancelado); a homologação achou um terceiro (resultado da criação da empresa
    usam (nada é desligado por omissão). Use o modo "Observação" antes de "Contrato aplicado" se quiser ver o que seria
    bloqueado sem bloquear.
 6. **Produção**: só depois da homologação aprovada, troque para `ERP_INTERCERT_AMBIENTE=producao` com as
-   credenciais de produção e o endereço de produção do ERP. Vínculos e histórico de homologação ficam separados.
+   credenciais de produção e o endereço de produção do ERP. Vínculos e histórico de homologação ficam separados. A
+   credencial de licenças de produção vai **sem lista de empresas** (decisão de 27/11): com lista, cada empresa criada
+   pelo INTEROS ficaria sem licença inicial até o ERP incluir o id e publicar de novo (12.1).
 7. **Avisos do ERP** (opcional, seção 17): aplique `20261127000000_erp_eventos.sql`, gere um segredo e salve o mesmo
    valor na Vercel (`ERP_INTERCERT_SEGREDO_EVENTOS`) e no ERP (`INTEROS_OUTBOUND_SECRET`), com
    `INTEROS_EVENTS_URL=https://<domínio do INTEROS>/api/webhooks/erp` no ERP. O endereço exato aparece em
