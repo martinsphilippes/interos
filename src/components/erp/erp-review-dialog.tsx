@@ -69,7 +69,8 @@ function ReviewDialogInner({ onOpenChange, clientId, draft, display = null, cont
   const deps = review?.plan.filter((p) => p.origin === "dependencia") ?? [];
   const cascade = review?.plan.filter((p) => p.origin === "cascata") ?? [];
   const needsSetConfirm = deps.length > 0 || cascade.length > 0;
-  const blocked = Boolean(review?.errors.length) || (review?.simulation ? !review.simulation.valid : false);
+  // nenhum envio segue sem a simulação do ERP (ela mostra o que está em andamento e o que seria desligado)
+  const blocked = Boolean(review?.errors.length) || (review ? !review.simulation || !review.simulation.valid : false);
   const willWait = Boolean(review?.requiresApproval && !review.canApprove);
   const canSend = review && !blocked && reason.trim().length >= 3 && (!needsSetConfirm || confirmSet) && !sending && !review.openChangeId;
 
@@ -148,7 +149,7 @@ function ReviewDialogInner({ onOpenChange, clientId, draft, display = null, cont
                   <ul className="divide-y divide-border rounded-lg border border-border">
                     {review.displayChanges.map((c) => (
                       <li key={c.code ?? "empresa"} className="px-3 py-2 text-sm">
-                        {describeDisplayChange({ code: c.code, from: c.from as ErpDisplayMode | null, to: c.to as ErpDisplayMode | null }, c.name)}
+                        {describeDisplayChange({ code: c.code, from: c.from as ErpDisplayMode | null, to: c.to as ErpDisplayMode | null, stale: c.stale }, c.name)}
                       </li>
                     ))}
                   </ul>
@@ -160,6 +161,20 @@ function ReviewDialogInner({ onOpenChange, clientId, draft, display = null, cont
                     <li key={`${w.code}-${w.message}`}>· {w.message}</li>
                   ))}
                 </ul>
+              ) : null}
+
+              {review.erpOnlyOff.length ? (
+                <section className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-fg">
+                  <h3 className="flex items-center gap-2 font-medium">
+                    <AlertTriangle className="size-4 shrink-0" aria-hidden /> O ERP também vai desligar
+                  </h3>
+                  <p className="mt-1 text-xs">Estão ligados no ERP, mas não no contratado do INTEROS (alguém ligou direto lá). O retrato enviado é completo, então este envio os desliga. Para manter, inclua no pedido como contratados.</p>
+                  <ul className="mt-1 list-disc pl-5 text-xs">
+                    {review.erpOnlyOff.map((o) => (
+                      <li key={`${o.code ?? ""}-${o.name}`}>{o.code ? `${o.code} ${o.name}` : o.name}</li>
+                    ))}
+                  </ul>
+                </section>
               ) : null}
 
               <SimulationView review={review} />
@@ -245,7 +260,11 @@ function ChangeGroup({ title, items, tone }: { title: string; items: ReviewSumma
 function SimulationView({ review }: { review: ReviewSummary }) {
   const sim = review.simulation;
   if (!sim) {
-    return review.simulationError ? <p className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-fg">{review.simulationError} O ERP valida de novo no envio.</p> : null;
+    return review.simulationError ? (
+      <p className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-fg">
+        {review.simulationError} Sem a simulação o envio não segue (ela mostra o que está em andamento e o que o ERP desligaria): tente de novo em instantes.
+      </p>
+    ) : null;
   }
   const impacts = sim.impacts.filter((i) => i.blockers.length || i.obligations.length || i.policy || i.cascadedFrom || i.integrationsAffected.length);
   return (

@@ -26,6 +26,8 @@ export interface ErpItemDrawerProps {
   draftDisplay?: ErpDisplayMode | null;
   /** Padrão da empresa (com o preparado, se houver). */
   companyDisplay?: ErpDisplayMode | null;
+  /** O ERP desta empresa ainda não aceita exibição por unidade (só o padrão da empresa). */
+  displayUnsupported?: boolean;
   /** `undefined` desfaz a escolha preparada. */
   onDisplayDraft?: (code: string, display: ErpDisplayMode | null | undefined) => void;
   onOpenItem: (code: string) => void;
@@ -42,7 +44,7 @@ export function ErpItemDrawer({ item, onClose, ...rest }: ErpItemDrawerProps) {
   );
 }
 
-function ItemDetails({ item, byCode, contracted, draft, canChange, usage, onLoadUsage, onDraft, ownDisplay = null, draftDisplay, companyDisplay = null, onDisplayDraft, onOpenItem }: Omit<ErpItemDrawerProps, "item" | "onClose"> & { item: ErpItemRow }) {
+function ItemDetails({ item, byCode, contracted, draft, canChange, usage, onLoadUsage, onDraft, ownDisplay = null, draftDisplay, companyDisplay = null, displayUnsupported = false, onDisplayDraft, onOpenItem }: Omit<ErpItemDrawerProps, "item" | "onClose"> & { item: ErpItemRow }) {
   const status = item.status;
   const isUnit = item.role === "unit";
   const current = contracted.get(item.code)?.state ?? null;
@@ -120,6 +122,7 @@ function ItemDetails({ item, byCode, contracted, draft, canChange, usage, onLoad
             ownDisplay={ownDisplay}
             draftDisplay={draftDisplay}
             companyDisplay={companyDisplay}
+            unsupported={displayUnsupported}
             canChange={canChange && Boolean(onDisplayDraft)}
             onDisplayDraft={(display) => onDisplayDraft?.(item.code, display)}
           />
@@ -240,6 +243,7 @@ function DisplaySection({
   ownDisplay,
   draftDisplay,
   companyDisplay,
+  unsupported,
   canChange,
   onDisplayDraft,
 }: {
@@ -247,12 +251,27 @@ function DisplaySection({
   ownDisplay: ErpDisplayMode | null;
   draftDisplay: ErpDisplayMode | null | undefined;
   companyDisplay: ErpDisplayMode | null;
+  unsupported: boolean;
   canChange: boolean;
   onDisplayDraft: (display: ErpDisplayMode | null | undefined) => void;
 }) {
   const value = draftDisplay !== undefined ? draftDisplay : ownDisplay;
   const fallback = companyDisplay ? ERP_DISPLAY_LABELS[companyDisplay].toLowerCase() : "o do ERP";
   const text = value ? ERP_DISPLAY_LABELS[value] : `Seguir o padrão da empresa (${fallback})`;
+  if (unsupported) {
+    return (
+      <section>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Quando desligada</h3>
+        <p className="text-sm">Segue o padrão da empresa ({fallback}).</p>
+        <p className="mt-1 text-xs text-muted">O ERP desta empresa ainda não aceita escolha por unidade.{ownDisplay ? ` A escolha registrada no INTEROS (${ERP_DISPLAY_LABELS[ownDisplay].toLowerCase()}) não está valendo lá.` : ""}</p>
+        {draftDisplay !== undefined ? (
+          <Button variant="ghost" size="sm" className="mt-1" onClick={() => onDisplayDraft(undefined)}>
+            Desfazer o preparado
+          </Button>
+        ) : null}
+      </section>
+    );
+  }
   return (
     <section>
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Quando desligada</h3>

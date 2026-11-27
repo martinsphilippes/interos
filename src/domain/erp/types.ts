@@ -141,6 +141,9 @@ export interface ErpChangeSimulation {
     unit: string | null;
     module: string;
     name: string;
+    /** "enable" ou "disable" (ausente nas simulações gravadas antes de 27/11). */
+    action?: string | null;
+    from?: string | null;
     to: string | null;
     policy: string | null;
     blockers: { key: string; label: string; count: number }[];
@@ -164,6 +167,13 @@ export interface ErpChangeError {
 }
 
 /** Alteração rastreável enviada ao ERP (`erp_change_requests`). O id é o `X-Interos-Event-Id` / `Idempotency-Key`. */
+/** Unidade (ou chave do runtime) ligada no ERP que o envio desligaria sem estar no plano do INTEROS. */
+export interface ErpOnlyOff {
+  module: string;
+  unit: string | null;
+  name: string;
+}
+
 export interface ErpChangeRequest extends BaseEntity {
   kind: "licenca" | "provisionamento";
   clientId: string;
@@ -179,6 +189,11 @@ export interface ErpChangeRequest extends BaseEntity {
   displayDraft?: ErpDisplayDraft | null;
   /** Mudanças de exibição do lote (como o desligado aparece no ERP). */
   displayChanges?: DisplayChange[];
+  /**
+   * Unidades que o ERP desligaria além do plano: ligadas lá, mas fora do contratado no INTEROS (simulação do pedido).
+   * A aprovação confere de novo e não segue se aparecer outra.
+   */
+  erpOnlyOff?: ErpOnlyOff[];
   /** Troca do modo de controle da empresa no ERP (legado → observação → aplicado). */
   controlMode: ErpControlMode | null;
   /** Primeira licença registrada pelo INTEROS (parte do que a empresa já usa no ERP). */

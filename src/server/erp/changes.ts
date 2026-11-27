@@ -12,14 +12,19 @@ import "server-only";
  */
 import { docdb, type Transaction } from "@/server/docdb";
 import { COLLECTIONS, type User, type UserRef } from "@/domain/types";
-import type { ErpChangeError, ErpChangeRequest, ErpChangeSimulation, ErpLicenseRecord, ErpLink } from "@/domain/erp/types";
+import type { ErpChangeError, ErpChangeRequest, ErpChangeSimulation, ErpLicenseRecord, ErpLink, ErpOnlyOff } from "@/domain/erp/types";
 import {
   ERP_DISPLAY_MODES,
   ERP_ITEM_STATE_LABELS,
   buildSnapshot,
   deactivations,
+  displayChangeParts,
+  displayDivergences,
+  hasDisplayWork,
+  isOffState,
   planDisplayChanges,
   planLicenseChanges,
+  type CurrentDisplay,
   type DisplayPlan,
   type ErpControlMode,
   type ErpDisplayDraft,
@@ -117,11 +122,13 @@ export interface ErpReading {
 /**
  * Exibição que vale hoje: a do último retrato do INTEROS; antes dele (ou sem o padrão fixado), a que o ERP aplica.
  * As escolhas por unidade do ERP só valem antes do primeiro retrato do INTEROS, que passa a ser a referência.
+ * `fixed` é só o padrão que o INTEROS escolheu: o calculado pelo ERP aparece na tela, mas nunca vai no retrato.
  */
-export function currentDisplay(record: Pick<ErpLicenseRecord, "current"> | null, status: Pick<ErpLicenseStatus, "display" | "displays"> | null): { display: ErpDisplayMode | null; displays: ErpUnitDisplay[] } {
+export function currentDisplay(record: Pick<ErpLicenseRecord, "current"> | null, status: Pick<ErpLicenseStatus, "display" | "displays"> | null): CurrentDisplay & { fixed: ErpDisplayMode | null; displays: ErpUnitDisplay[] } {
   const erpDefault = status?.display && (ERP_DISPLAY_MODES as readonly string[]).includes(status.display) ? (status.display as ErpDisplayMode) : null;
   const erpUnits = (status?.displays ?? []).filter((d) => (ERP_DISPLAY_MODES as readonly string[]).includes(d.display));
-  return { display: record?.current?.display ?? erpDefault, displays: record?.current ? (record.current.displays ?? []) : erpUnits };
+  const fixed = record?.current?.display ?? null;
+  return { display: fixed ?? erpDefault, fixed, displays: record?.current ? (record.current.displays ?? []) : erpUnits };
 }
 
 /** Lê o estado da empresa no ERP (licença v2 + runtime v1), em paralelo. Falha não interrompe: vira `error`. */
@@ -148,6 +155,8 @@ function summarizeSimulation(index: ErpCatalogIndex, plan: ErpLicensePlanResult,
       unit: unitByKey.get(i.module) ?? null,
       module: i.module,
       name: i.name ?? i.module,
+      action: i.action ?? null,
+      from: i.from ?? null,
       to: i.to ?? null,
       policy: i.policy ?? null,
       blockers: (i.blockers ?? []).filter((b) => b && b.count > 0),
@@ -162,14 +171,36 @@ function summarizeSimulation(index: ErpCatalogIndex, plan: ErpLicensePlanResult,
   };
 }
 
+const isDisableImpact = (i: ErpChangeSimulation["impacts"][number]) => i.action === "disable" || i.to === "disabled" || i.to === "draining";
+
+/**
+ * Desligamentos que o ERP faria além do plano (simulação): unidade ligada lá que não está ligada no contratado do
+ * INTEROS (alguém ligou direto no ERP). O retrato é completo, então qualquer envio a desligaria — inclusive um lote só
+ * de exibição. Nunca segue em silêncio: aparece na revisão e pede aprovação.
+ */
+export function erpOnlyDisables(plan: LicensePlan, simulation: ErpChangeSimulation | null): ErpOnlyOff[] {
+  if (!simulation) return [];
+  const planned = new Set(plan.changes.filter((c) => isOffState(c.to)).map((c) => c.code));
+  return simulation.impacts.filter((i) => isDisableImpact(i) && !(i.unit && planned.has(i.unit))).map((i) => ({ module: i.module, unit: i.unit, name: i.name }));
+}
+
 /**
  * Por que a alteração exige aprovação (lista vazia = não exige). Só desligamentos e a passagem para "aplicado" pedem
- * aprovação: ativar nunca. Desligamento simples (sem pendência, sem cascata) segue direto.
+ * aprovação: ativar nunca. Desligamento simples (sem pendência, sem cascata) segue direto; o que o ERP desligaria sem
+ * estar no plano (ligado só lá) sempre pede.
  */
 export function approvalReasons(index: ErpCatalogIndex, plan: LicensePlan, simulation: ErpChangeSimulation | null, modeFrom: string | null, modeTo: ErpControlMode | null): string[] {
   const reasons: string[] = [];
   const offs = deactivations(plan);
   const nameOf = (code: string) => `${code} ${index.byCode.get(code)?.name ?? ""}`.trim();
+  for (const off of erpOnlyDisables(plan, simulation)) {
+    const label = off.unit ? nameOf(off.unit) : off.name;
+    reasons.push(`${label}: está ligado no ERP, mas não no contratado do INTEROS; este envio também desliga`);
+    for (const impact of (simulation?.impacts ?? []).filter((i) => i.module === off.module)) {
+      for (const b of impact.blockers) reasons.push(`${label}: ${b.label} (${b.count}) em andamento`);
+      for (const o of impact.obligations) reasons.push(`${label}: ${o}`);
+    }
+  }
   for (const off of offs) {
     const impacts = (simulation?.impacts ?? []).filter((i) => i.unit === off.code);
     for (const impact of impacts) {
@@ -196,6 +227,12 @@ export interface LicenseReview {
   plan: LicensePlan;
   /** Mudanças de exibição do lote (padrão da empresa e por unidade): nunca pedem aprovação. */
   displayPlan: DisplayPlan;
+  /** O ERP aceita exibição por unidade (null = não deu para ler). */
+  displaySupported: boolean | null;
+  /** Versão do retrato registrado em que o plano se baseou (conferida de novo dentro da transação do envio). */
+  basedOnVersion: number;
+  /** Unidades ligadas só no ERP que o envio desligaria (pela simulação). */
+  erpOnlyOff: ErpOnlyOff[];
   modeFrom: string | null;
   controlMode: ErpControlMode | null;
   simulation: ErpChangeSimulation | null;
@@ -245,13 +282,18 @@ export async function reviewLicenseChange(
   const plan = planLicenseChanges(loaded.index, currentItems, input.draft, now);
   const displayPlan = planDisplayChanges(loaded.index, currentDisplay(record, reading.status), input.display);
   plan.errors.push(...displayPlan.errors);
+  // ERP sem a exibição por unidade ignoraria a escolha, e o INTEROS a mostraria como aplicada: não segue
+  const displaySupported = displayDivergences(loaded.index, record?.current ?? null, reading.status).supported;
+  if (displaySupported === false && displayPlan.changes.some((c) => c.code !== null && !c.stale)) {
+    plan.errors.push({ code: "-", reason: "exibicao_sem_suporte", message: "O ERP desta empresa ainda não aceita exibição por unidade (só o padrão da empresa). Tire as escolhas por unidade do lote." });
+  }
   const modeFrom = reading.runtime?.mode ?? reading.status?.runtime?.mode ?? null;
   const controlMode = input.controlMode && input.controlMode !== modeFrom ? input.controlMode : null;
   const openChange = record?.openChangeId ? await getChange(record.openChangeId) : null;
   const erpAppliedVersion = Math.max(reading.status?.appliedVersion ?? 0, record?.appliedVersion ?? 0);
   let simulation: ErpChangeSimulation | null = null;
   let simulationError: string | null = null;
-  const hasWork = plan.changes.length > 0 || displayPlan.changes.length > 0 || controlMode !== null || initial;
+  const hasWork = plan.changes.length > 0 || hasDisplayWork(displayPlan) || controlMode !== null || initial;
   if (plan.errors.length === 0 && hasWork) {
     const version = Math.max(record?.issuedVersion ?? 0, erpAppliedVersion) + 1;
     const snapshot = buildSnapshot({ companyId: link.erpCompanyId, licenseVersion: version, items: plan.items, previous: record?.current ?? null, controlMode, display: displayPlan, issuedAt: now.toISOString() });
@@ -271,6 +313,9 @@ export async function reviewLicenseChange(
     currentItems,
     plan,
     displayPlan,
+    displaySupported,
+    basedOnVersion: record?.current?.licenseVersion ?? 0,
+    erpOnlyOff: erpOnlyDisables(plan, simulation),
     modeFrom,
     controlMode,
     simulation,
@@ -311,10 +356,11 @@ export async function submitLicenseChange(input: SubmitInput): Promise<ErpChange
     const why = [...review.simulation.rejected.filter((r) => r.reason === "dependency_missing" || r.reason === "kind_not_supported"), ...review.simulation.errors].map((r) => r.message);
     throw new ErpChangeBlocked(`O ERP recusaria este lote: ${why.join(" ") || "regras de dependência"}.`, "lote_invalido");
   }
-  if (!review.plan.changes.length && !review.displayPlan.changes.length && !review.controlMode && !review.initial) throw new ErpChangeBlocked("Nada a alterar: a seleção já é o contratado.", "sem_mudanca");
-  // Desligar sem a simulação esconderia o que está em andamento (caixa aberto, notas pendentes): só com ela.
-  if (!review.simulation && deactivations(review.plan).length) {
-    throw new ErpChangeBlocked("O ERP não respondeu à simulação. Desligamentos só seguem com ela (mostra o que está em andamento): tente de novo em instantes.", "erp_indisponivel");
+  if (!review.plan.changes.length && !hasDisplayWork(review.displayPlan) && !review.controlMode && !review.initial) throw new ErpChangeBlocked("Nada a alterar: a seleção já é o contratado.", "sem_mudanca");
+  // O retrato é completo: sem a simulação não dá para ver o que está em andamento (caixa aberto, notas pendentes) nem
+  // o que o ERP desligaria por estar ligado só lá. Nenhum envio segue sem ela.
+  if (!review.simulation) {
+    throw new ErpChangeBlocked("O ERP não respondeu à simulação. Ela mostra o que está em andamento e o que o envio desligaria: tente de novo em instantes.", "erp_indisponivel");
   }
 
   const needsApproval = review.requiresApproval && !input.canApprove;
@@ -331,6 +377,8 @@ export async function submitLicenseChange(input: SubmitInput): Promise<ErpChange
       if (open && OPEN_STATUSES.has(open.status)) throw new ErpChangeBlocked("Há outra alteração de módulos desta empresa em andamento. Conclua, aprove ou cancele a anterior antes de enviar outra.", "alteracao_aberta");
     }
     if (record.issuedVersion !== input.baseVersion) throw new ErpChangeBlocked("Outra pessoa alterou os módulos desta empresa enquanto você revisava. O estado foi recarregado.", "versao_mudou");
+    // o plano foi montado sobre o retrato registrado na revisão: se outro foi aplicado depois, o lote o desfaria
+    if ((record.current?.licenseVersion ?? 0) !== review.basedOnVersion) throw new ErpChangeBlocked("O ERP confirmou outra alteração enquanto você revisava. O estado foi recarregado.", "versao_mudou");
     const version = needsApproval ? null : Math.max(record.issuedVersion, review.erpAppliedVersion) + 1;
     const snapshot: ErpLicenseSnapshot | null = version
       ? buildSnapshot({ companyId: link.erpCompanyId, licenseVersion: version, items: review.plan.items, previous: record.current, controlMode: review.controlMode, display: review.displayPlan, issuedAt: now })
@@ -349,6 +397,7 @@ export async function submitLicenseChange(input: SubmitInput): Promise<ErpChange
       plan: review.plan.changes,
       displayDraft: input.display ?? null,
       displayChanges: review.displayPlan.changes,
+      erpOnlyOff: review.erpOnlyOff,
       controlMode: review.controlMode,
       initial: review.initial,
       baseVersion: input.baseVersion,
@@ -554,16 +603,27 @@ async function recordOutcome(change: ErpChangeRequest): Promise<void> {
     const loaded = await getCurrentCatalog(change.environment);
     const nameOf = (code: string) => `${code} ${loaded?.index.byCode.get(code)?.name ?? ""}`.trim();
     const label = (state: string | null) => (state ? (ERP_ITEM_STATE_LABELS as Record<string, string>)[state] ?? state : "Não contratado");
-    const changes = Object.fromEntries(change.plan.map((p) => [nameOf(p.code), { from: label(p.from), to: label(p.to) }]));
+    const changes: Record<string, { from: string; to: string }> = Object.fromEntries(change.plan.map((p) => [nameOf(p.code), { from: label(p.from), to: label(p.to) }]));
+    // exibição do desligado (fase A): entra na linha do tempo como as unidades, com o texto da revisão
+    const displayChanges = change.displayChanges ?? [];
+    for (const d of displayChanges) {
+      const { what, from, to } = displayChangeParts(d, d.code ? (loaded?.index.byCode.get(d.code)?.name ?? null) : null);
+      changes[`Exibição · ${what}`] = { from, to };
+    }
     if (change.controlMode) changes["Modo de controle no ERP"] = { from: "—", to: change.controlMode };
     const applied = change.status === "aplicada";
+    const counts = [
+      change.plan.length ? `${change.plan.length} ${change.plan.length === 1 ? "item" : "itens"}` : null,
+      displayChanges.length ? `${displayChanges.length} de exibição` : null,
+      change.controlMode ? "modo de controle" : null,
+    ].filter(Boolean);
     await emitEvent({
       type: applied ? "erp.license_changed" : "erp.license_failed",
       actor: change.approval && !change.approval.self ? change.approval.by : change.requestedBy,
       clientId: change.clientId,
       entity: { type: "erp_change", id: change.id },
       title: applied
-        ? `Módulos do ERP alterados (${change.plan.length} ${change.plan.length === 1 ? "item" : "itens"}, versão ${change.licenseVersion})`
+        ? `Módulos do ERP alterados (${[...counts, `versão ${change.licenseVersion}`].join(", ")})`
         : change.status === "recusada"
           ? "Alteração de módulos recusada pelo ERP"
           : change.status === "conflito"
@@ -606,12 +666,35 @@ export async function approveLicenseChange(id: string, approver: UserRef): Promi
   plan.errors.push(...displayPlan.errors);
   if (plan.errors.length) throw new ErpChangeBlocked(plan.errors.map((e) => e.message).join(" "), "lote_invalido");
   const now = nowIso();
+  // Simula de novo o que sai agora: desde o pedido, o ERP pode ter algo novo ligado só lá (o envio desligaria sem
+  // ninguém ver) ou uma regra que recusaria o lote. Sem a simulação, a aprovação espera o ERP responder.
+  const erpCompanyId = change.erpCompanyId as string;
+  const probe = buildSnapshot({ companyId: erpCompanyId, licenseVersion: Math.max(record?.issuedVersion ?? 0, record?.appliedVersion ?? 0, status?.appliedVersion ?? 0) + 1, items: plan.items, previous: record?.current ?? null, controlMode: change.controlMode, display: displayPlan, issuedAt: now });
+  let simulation: ErpChangeSimulation;
+  try {
+    const res = await simulateLicense(erpCompanyId, probe);
+    simulation = summarizeSimulation(loaded.index, res.data, res.requestId, nowIso());
+  } catch {
+    throw new ErpChangeBlocked("O ERP não respondeu à simulação. Aprove quando ele responder: ela confirma o que o envio desliga agora.", "erp_indisponivel");
+  }
+  if (!simulation.valid) {
+    const why = [...simulation.rejected.filter((r) => r.reason === "dependency_missing" || r.reason === "kind_not_supported"), ...simulation.errors].map((r) => r.message);
+    throw new ErpChangeBlocked(`O ERP recusaria este lote agora: ${why.join(" ") || "regras de dependência"}. Cancele e peça de novo.`, "lote_invalido");
+  }
+  const known = new Set((change.erpOnlyOff ?? []).map((o) => o.module));
+  const surprise = erpOnlyDisables(plan, simulation).filter((o) => !known.has(o.module));
+  if (surprise.length) {
+    const names = surprise.map((o) => (o.unit ? `${o.unit} ${loaded.index.byCode.get(o.unit)?.name ?? ""}`.trim() : o.name)).join(", ");
+    throw new ErpChangeBlocked(`Desde o pedido, o ERP passou a ter ligado ${names}, fora do contratado no INTEROS: este envio também desligaria. Cancele e peça de novo para revisar.`, "estado_invalido");
+  }
   await docdb.runTransaction(async (tx) => {
     const snap = await txGetOwn(tx, changeRef(id));
     const fresh = snap ? (snap.data() as unknown as ErpChangeRequest) : null;
     if (!fresh || fresh.status !== "aguardando_aprovacao") throw new ErpChangeBlocked("Esta alteração não está mais aguardando aprovação.", "estado_invalido");
     const recSnap = await txGetOwn(tx, licenseRef(change.linkId as string));
     const rec = recSnap ? (recSnap.data() as unknown as ErpLicenseRecord) : null;
+    // o plano foi montado sobre o retrato lido acima: se outro foi aplicado entre a leitura e aqui, ele seria desfeito
+    if ((rec?.current?.licenseVersion ?? 0) !== (record?.current?.licenseVersion ?? 0)) throw new ErpChangeBlocked("O ERP confirmou outra alteração desta empresa agora há pouco. Recarregue e aprove de novo.", "versao_mudou");
     const issued = rec?.issuedVersion ?? 0;
     const version = Math.max(issued, rec?.appliedVersion ?? 0, status?.appliedVersion ?? 0) + 1;
     const snapshot = buildSnapshot({ companyId: change.erpCompanyId as string, licenseVersion: version, items: plan.items, previous: rec?.current ?? null, controlMode: change.controlMode, display: displayPlan, issuedAt: now });

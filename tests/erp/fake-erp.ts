@@ -11,6 +11,8 @@ import type { ErpLicenseSnapshot } from "@/domain/erp/license";
 const CATALOG = JSON.parse(readFileSync(new URL("./fixtures/catalogo-v2-recorte.json", import.meta.url), "utf8")) as { v1Compatibility?: { unitsByV1Key?: Record<string, string> } };
 const UNIT_BY_KEY: Record<string, string> = CATALOG.v1Compatibility?.unitsByV1Key ?? {};
 const KEY_BY_UNIT: Record<string, string> = Object.fromEntries(Object.entries(UNIT_BY_KEY).map(([k, u]) => [u, k]));
+/** Unidades do recorte com chave no runtime v1 (unidade → chave). */
+export const RUNTIME_KEYS: Readonly<Record<string, string>> = KEY_BY_UNIT;
 
 export interface FakeCompany {
   id: string;
@@ -25,6 +27,8 @@ export interface FakeCompany {
   blockers: Map<string, { key: string; label: string; count: number }[]>;
   history: { licenseVersion: number; status: string; eventId: string; at: string; rejectedItems: unknown[] }[];
   current: ErpLicenseSnapshot | null;
+  /** ERP sem a exibição por unidade (fase A): a leitura da licença não traz `displays`. */
+  noPhaseA?: boolean;
 }
 
 type Next = "network" | "lost_response" | "busy" | null;
@@ -37,6 +41,10 @@ export interface FakeErp {
   failNextPut: (...modes: Next[]) => void;
   /** Próximas leituras falham (ERP fora do ar). */
   downReads: (n: number) => void;
+  /** Próximas simulações falham (queda de rede). */
+  failSimulations: (n: number) => void;
+  /** Roda uma vez durante a próxima simulação (para reproduzir algo que acontece entre a revisão e o envio). */
+  duringNextSimulation: (hook: () => Promise<void>) => void;
   addCompany: (id: string, name: string, enabledUnits: string[]) => FakeCompany;
 }
 
@@ -55,6 +63,8 @@ export function createFakeErp(options: { catalog?: unknown } = {}): FakeErp {
   const eventResults = new Map<string, { bodyHash: string; status: number; data: unknown }>();
   const putQueue: Next[] = [];
   let downReads = 0;
+  let downSimulations = 0;
+  let simulationHook: (() => Promise<void>) | null = null;
 
   const runtimeOf = (c: FakeCompany) => ({
     companyId: c.id,
@@ -76,7 +86,7 @@ export function createFakeErp(options: { catalog?: unknown } = {}): FakeErp {
     commercialStatus: c.current?.commercialStatus ?? null,
     // como o ERP com a fase A: o padrão fixado (ou o dele) e as escolhas por unidade aplicadas
     display: c.current?.display ?? "hidden",
-    displays: c.current?.displays ?? [],
+    ...(c.noPhaseA ? {} : { displays: c.current?.displays ?? [] }),
     limits: null,
     effective: effectiveOf(c),
     rejectedItems: [],
@@ -131,6 +141,15 @@ export function createFakeErp(options: { catalog?: unknown } = {}): FakeErp {
     if (version === "v2" && tail === "/license" && method === "GET") return ok(200, statusOf(company));
     if (version === "v2" && tail === "/license/history" && method === "GET") return ok(200, [...company.history].sort((a, b) => b.licenseVersion - a.licenseVersion));
     if (version === "v2" && tail === "/license/simulate" && method === "POST") {
+      if (downSimulations > 0) {
+        downSimulations -= 1;
+        throw new TypeError("fetch failed");
+      }
+      if (simulationHook) {
+        const hook = simulationHook;
+        simulationHook = null;
+        await hook();
+      }
       const snap = body as ErpLicenseSnapshot;
       const on = onUnits(snap);
       const impacts = [...company.modules.entries()]
@@ -173,6 +192,12 @@ export function createFakeErp(options: { catalog?: unknown } = {}): FakeErp {
     failNextPut: (...modes) => putQueue.push(...modes),
     downReads: (n) => {
       downReads = n;
+    },
+    failSimulations: (n) => {
+      downSimulations = n;
+    },
+    duringNextSimulation: (hook) => {
+      simulationHook = hook;
     },
     addCompany: (id, name, enabledUnits) => {
       const modules = new Map<string, string>();

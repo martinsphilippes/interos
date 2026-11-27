@@ -452,3 +452,28 @@ contratação só é aceito para unidade em "contratar".
 texto da mudança) e 2 de banco (exibição sem aprovação e sem mexer nos módulos; a alteração seguinte leva a exibição
 junto). ERP: 6 testes (escolha por unidade e por módulo, tela liberada por mais de uma unidade, "contratar" só na
 unidade escolhida, mudança só de exibição, valor inválido e o envio assinado pela API).
+
+**Correções da revisão (27/11/2026).**
+- **Ligado só no ERP.** O retrato é completo, então qualquer envio (até um lote só de exibição) desliga a unidade que
+  alguém ligou direto no ERP sem estar no contratado do INTEROS. Agora isso nunca segue em silêncio:
+  - a revisão mostra "O ERP também vai desligar", com a lista;
+  - o lote pede aprovação, como a cascata;
+  - para manter a unidade, inclua-a no pedido como contratada.
+- **Simulação obrigatória.** Nenhum envio segue sem a simulação do ERP (antes, só os desligamentos exigiam). A
+  aprovação simula de novo; se o ERP ligou outra unidade desde o pedido, a aprovação não segue e pede um pedido novo.
+- **Exibição que o ERP não aplica.**
+  - ERP sem a fase A (não devolve `displays`): a escolha por unidade fica bloqueada, com aviso; o padrão da empresa
+    continua.
+  - Exibição do ERP diferente da registrada no INTEROS: a aba avisa, e o próximo envio reaplica a do INTEROS.
+- **Padrão calculado pelo ERP.** O padrão que o ERP calcula sozinho aparece na tela ("padrão do ERP"), mas só vai no
+  retrato o padrão escolhido de propósito.
+- **Corrida entre revisão e envio.** O envio confere, dentro da transação, se o retrato em que o plano se baseou ainda
+  é o registrado. Se outro foi confirmado no meio, para com "versão mudou", sem desfazê-lo. A aprovação faz a mesma
+  conferência.
+- **Rascunho que voltava.** A escolha preparada que já vale (aplicada por outra pessoa ou outra aba) sai da sessão do
+  navegador e não reaparece se a exibição mudar de novo. A seleção de módulos segue a mesma regra.
+- **Código que deixou de ser unidade.** Se o catálogo mudar, a escolha antiga sai da lista no próximo envio,
+  sozinha não gera envio, e a revisão mostra "sai da lista".
+- **Linha do tempo.** O evento do cliente traz as mudanças de exibição ("1 de exibição" no título e cada mudança nos
+  dados).
+- **Testes novos.** 4 de unidade e 4 de banco; todos falham sem as correções.

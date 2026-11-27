@@ -124,7 +124,7 @@ export interface PlannedChange {
 
 export interface PlanIssue {
   code: string;
-  reason: "nao_e_unidade" | "nao_vendavel" | "data_invalida" | "repetida" | "sem_mudanca" | "falta_alternativa";
+  reason: "nao_e_unidade" | "nao_vendavel" | "data_invalida" | "repetida" | "sem_mudanca" | "falta_alternativa" | "exibicao_sem_suporte";
   message: string;
 }
 
@@ -264,29 +264,60 @@ export interface DisplayChange {
   code: string | null;
   from: ErpDisplayMode | null;
   to: ErpDisplayMode | null;
+  /**
+   * Escolha de um código que deixou de ser unidade no catálogo: sai do retrato junto com o próximo envio. Sozinha não
+   * é motivo de envio (não muda nada que a empresa vê).
+   */
+  stale?: boolean;
 }
 
 export interface DisplayPlan {
-  /** Padrão da empresa depois do lote (null = o INTEROS ainda não fixou; o ERP usa o dele). */
+  /** Padrão da empresa que vai no retrato (null = o INTEROS ainda não fixou; o ERP usa o dele). */
   display: ErpDisplayMode | null;
+  /** Padrão que vale depois do lote (o fixado ou, sem ele, o do ERP): para a tela e para explicar "segue o padrão". */
+  effective: ErpDisplayMode | null;
   /** Escolhas por unidade depois do lote, em ordem de código. */
   displays: ErpUnitDisplay[];
   changes: DisplayChange[];
   errors: PlanIssue[];
 }
 
+/** Exibição que vale hoje: o padrão que a empresa vê, o fixado pelo INTEROS e as escolhas por unidade. */
+export interface CurrentDisplay {
+  /** Padrão que vale hoje (o fixado pelo INTEROS ou o do ERP; null = desconhecido). */
+  display: ErpDisplayMode | null;
+  /** Padrão fixado pelo INTEROS (o que vai no retrato). Ausente = igual a `display`. */
+  fixed?: ErpDisplayMode | null;
+  displays: readonly ErpUnitDisplay[];
+}
+
+/** O lote muda algo que a empresa vê (a limpeza de código que deixou de ser unidade não conta sozinha). */
+export function hasDisplayWork(plan: Pick<DisplayPlan, "changes">): boolean {
+  return plan.changes.some((c) => !c.stale);
+}
+
 /**
  * Planeja as mudanças de exibição sobre o que vale hoje. Só mexe em como o desligado aparece: não liga nem desliga
  * nada e, por isso, nunca pede aprovação (decisão de 27/11). Escolha igual à atual não conta como mudança.
+ * O padrão que o ERP calcula sozinho (antes de o INTEROS fixar um) nunca vira escolha fixa por tabela: só vai no
+ * retrato o padrão que a pessoa escolheu.
  */
-export function planDisplayChanges(index: ErpCatalogIndex, current: { display: ErpDisplayMode | null; displays: readonly ErpUnitDisplay[] }, draft: ErpDisplayDraft | null | undefined): DisplayPlan {
+export function planDisplayChanges(index: ErpCatalogIndex, current: CurrentDisplay, draft: ErpDisplayDraft | null | undefined): DisplayPlan {
   const errors: PlanIssue[] = [];
   const changes: DisplayChange[] = [];
   const byCode = new Map(current.displays.map((d) => [d.code, d.display]));
-  let display = current.display;
+  // escolha de código que deixou de ser unidade (o catálogo mudou): o ERP recusaria para sempre; sai do retrato
+  for (const [code, d] of [...byCode]) {
+    if (index.byCode.get(code)?.unit) continue;
+    changes.push({ code, from: d, to: null, stale: true });
+    byCode.delete(code);
+  }
+  let display = current.fixed === undefined ? current.display : current.fixed;
+  let effective = current.display;
   if (draft?.companyDefault && draft.companyDefault !== current.display) {
     changes.push({ code: null, from: current.display, to: draft.companyDefault });
     display = draft.companyDefault;
+    effective = draft.companyDefault;
   }
   const seen = new Set<string>();
   for (const unit of draft?.units ?? []) {
@@ -296,6 +327,8 @@ export function planDisplayChanges(index: ErpCatalogIndex, current: { display: E
     }
     seen.add(unit.code);
     if (!index.byCode.get(unit.code)?.unit) {
+      // voltar ao padrão um código que já está saindo da lista não é erro (é o mesmo pedido)
+      if (unit.display === null && changes.some((c) => c.stale && c.code === unit.code)) continue;
       errors.push({ code: unit.code, reason: "nao_e_unidade", message: `${unit.code} não é uma unidade comercial do catálogo: a exibição é escolhida por unidade.` });
       continue;
     }
@@ -306,14 +339,50 @@ export function planDisplayChanges(index: ErpCatalogIndex, current: { display: E
     else byCode.delete(unit.code);
   }
   const displays = [...byCode].map(([code, d]) => ({ code, display: d })).sort((a, b) => compareCodes(a.code, b.code));
-  return { display, displays, changes: changes.sort((a, b) => (a.code === null ? -1 : b.code === null ? 1 : compareCodes(a.code, b.code))), errors };
+  return { display, effective, displays, changes: changes.sort((a, b) => (a.code === null ? -1 : b.code === null ? 1 : compareCodes(a.code, b.code))), errors };
+}
+
+/** Partes de uma mudança de exibição: o que muda, de e para (textos da tela). */
+export function displayChangeParts(change: Pick<DisplayChange, "code" | "from" | "to" | "stale">, name: string | null): { what: string; from: string; to: string } {
+  const what = change.code === null ? "Padrão da empresa" : `${change.code}${name ? ` ${name}` : ""}`;
+  const fmt = (d: ErpDisplayMode | null) => (d ? ERP_DISPLAY_LABELS[d].toLowerCase() : change.code === null ? "—" : "seguir o padrão da empresa");
+  return { what, from: fmt(change.from), to: change.stale ? "sai da lista (deixou de ser unidade no catálogo)" : fmt(change.to) };
 }
 
 /** Texto de uma mudança de exibição, para a revisão e o histórico ("05.02 Cotações: seguir o padrão → mostrar com “contratar”"). */
-export function describeDisplayChange(change: Pick<DisplayChange, "code" | "from" | "to">, name: string | null): string {
-  const what = change.code === null ? "Padrão da empresa" : `${change.code}${name ? ` ${name}` : ""}`;
-  const fmt = (d: ErpDisplayMode | null) => (d ? ERP_DISPLAY_LABELS[d].toLowerCase() : change.code === null ? "—" : "seguir o padrão da empresa");
-  return `${what}: ${fmt(change.from)} → ${fmt(change.to)}`;
+export function describeDisplayChange(change: Pick<DisplayChange, "code" | "from" | "to" | "stale">, name: string | null): string {
+  const p = displayChangeParts(change, name);
+  return `${p.what}: ${p.from} → ${p.to}`;
+}
+
+const isDisplayMode = (v: unknown): v is ErpDisplayMode => typeof v === "string" && (ERP_DISPLAY_MODES as readonly string[]).includes(v);
+
+/**
+ * Confere a exibição registrada no INTEROS (último retrato aplicado) com a que o ERP devolve. `supported` false = o
+ * ERP ainda não tem a exibição por unidade (não devolve `displays`): as escolhas por unidade não valem lá. Só compara
+ * o que o ERP consegue representar (unidade com chave no runtime).
+ */
+export function displayDivergences(
+  index: ErpCatalogIndex,
+  current: Pick<ErpLicenseSnapshot, "display" | "displays"> | null,
+  status: { display?: string | null; displays?: readonly { code: string; display: string }[] | null } | null,
+): { supported: boolean | null; divergences: string[] } {
+  if (!status) return { supported: null, divergences: [] };
+  if (!Array.isArray(status.displays)) return { supported: false, divergences: [] };
+  if (!current) return { supported: true, divergences: [] };
+  const out: string[] = [];
+  const name = (code: string) => `${code} ${index.byCode.get(code)?.name ?? ""}`.trim();
+  const fmt = (d: string | null) => (isDisplayMode(d) ? ERP_DISPLAY_SHORT[d] : "o padrão");
+  if (current.display && isDisplayMode(status.display) && status.display !== current.display) out.push(`Padrão da empresa: INTEROS ${fmt(current.display)}, ERP ${fmt(status.display)}`);
+  const representable = (code: string) => Boolean(index.byCode.get(code)?.unit && index.byCode.get(code)?.v1Key);
+  const mine = new Map((current.displays ?? []).filter((d) => representable(d.code)).map((d) => [d.code, d.display as string]));
+  const theirs = new Map(status.displays.map((d) => [d.code, d.display]));
+  for (const code of [...new Set([...mine.keys(), ...theirs.keys()])].sort(compareCodes)) {
+    const a = mine.get(code) ?? null;
+    const b = theirs.get(code) ?? null;
+    if (a !== b) out.push(`${name(code)}: INTEROS ${fmt(a)}, ERP ${fmt(b)}`);
+  }
+  return { supported: true, divergences: out };
 }
 
 /** Retrato completo da próxima versão (o que vai no PUT). */

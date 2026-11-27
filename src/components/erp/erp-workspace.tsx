@@ -285,7 +285,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
               className="w-56"
               aria-label="Como a empresa vê no ERP o que está desligado (padrão da empresa)"
               options={[
-                { value: "", label: `Manter: ${view.license.display ? ERP_DISPLAY_LABELS[view.license.display].toLowerCase() : "—"}` },
+                { value: "", label: `Manter: ${view.license.display ? ERP_DISPLAY_LABELS[view.license.display].toLowerCase() : "—"}${view.license.display && !view.license.displayFixed ? " (padrão do ERP)" : ""}` },
                 ...ERP_DISPLAY_MODES.filter((m) => m !== view.license.display).map((m) => ({ value: m, label: ERP_DISPLAY_LABELS[m] })),
               ]}
             />
@@ -314,6 +314,29 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
         <p className="-mt-2 text-xs text-muted">
           Preparado: o que estiver desligado passa a {ERP_DISPLAY_LABELS[displayDraft.companyDefault].toLowerCase()} (exceto as unidades com escolha própria). Não precisa de aprovação.
         </p>
+      ) : null}
+      {sub === "modulos" && view.license.displaySupported === false ? (
+        <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-fg" role="status">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            O ERP desta empresa ainda não aceita exibição por unidade: lá vale só o padrão da empresa.
+            {view.license.displays.length ? " As escolhas por unidade registradas no INTEROS não estão valendo no ERP." : ""}
+          </span>
+        </p>
+      ) : null}
+      {sub === "modulos" && view.license.displayDivergences.length ? (
+        <div className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-fg" role="status">
+          <p className="flex items-center gap-2 font-medium">
+            <AlertTriangle className="size-4 shrink-0" aria-hidden /> A exibição no ERP está diferente da registrada no INTEROS
+          </p>
+          <ul className="mt-1 list-disc pl-5 text-xs">
+            {view.license.displayDivergences.slice(0, 8).map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+            {view.license.displayDivergences.length > 8 ? <li>e mais {view.license.displayDivergences.length - 8}</li> : null}
+          </ul>
+          <p className="mt-1 text-xs">O próximo envio reaplica a do INTEROS.</p>
+        </div>
       ) : null}
 
       {sub === "modulos" ? (
@@ -362,6 +385,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
         ownDisplay={openItem ? (ownDisplays.get(openItem) ?? null) : null}
         draftDisplay={openItem && displayDraft.units.has(openItem) ? (displayDraft.units.get(openItem) ?? null) : undefined}
         companyDisplay={companyDisplay}
+        displayUnsupported={view.license.displaySupported === false}
         onDisplayDraft={displayDraft.setUnit}
         onOpenItem={setOpenItem}
         onClose={() => setOpenItem(null)}

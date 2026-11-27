@@ -11,14 +11,14 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { docdb } from "@/server/docdb";
-import { create, getById, list } from "@/server/db";
+import { create, getById, list, update } from "@/server/db";
 import { COLLECTIONS, type Client, type DomainEvent } from "@/domain/types";
 import type { ErpChangeRequest, ErpLicenseRecord } from "@/domain/erp/types";
 import { setErpFetch } from "@/server/erp/http";
 import { importErpCatalog, resetCatalogCache } from "@/server/erp/catalog-store";
 import { linkClientToErp } from "@/server/erp/links";
 import { ErpChangeBlocked, approveLicenseChange, cancelLicenseChange, getChange, listClientChanges, processPendingErpChanges, reconcileChange, reviewLicenseChange, submitLicenseChange } from "@/server/erp/changes";
-import { createFakeErp, type FakeErp } from "./fake-erp";
+import { RUNTIME_KEYS, createFakeErp, type FakeErp } from "./fake-erp";
 
 const RUN = `erp${Date.now().toString(36)}`;
 const CLIENT_A = `${RUN}_a`;
@@ -234,24 +234,36 @@ describe("falha e retomada sem duplicar", () => {
 describe("exibição do desligado (fase A)", () => {
   const display = { companyDefault: "locked" as const, units: [{ code: "05.20", display: "upsell" as const }] };
 
-  it("mudar só a exibição não pede aprovação, não liga nem desliga nada e vai no retrato", async () => {
+  it("mudar só a exibição não pede aprovação, não liga nem desliga nada e vai no retrato; o padrão do ERP não vira escolha", async () => {
     const before = await licenseOf(CLIENT_A);
     expect(before?.openChangeId ?? null).toBeNull();
+    expect(before?.current?.display ?? null).toBeNull();
     const modulesBefore = [...erp.companies.get(COMPANY_A)!.modules.entries()];
     const review = await reviewLicenseChange({ clientId: CLIENT_A, draft: [], display });
     expect(review.requiresApproval).toBe(false);
+    expect(review.erpOnlyOff).toEqual([]);
     expect(review.plan.changes).toEqual([]);
     expect(review.displayPlan.changes).toEqual([
       { code: null, from: "hidden", to: "locked" },
       { code: "05.20", from: null, to: "upsell" },
     ]);
-    const change = await submitLicenseChange({ clientId: CLIENT_A, draft: [], display, baseVersion: before!.issuedVersion, reason: "Oferta: precificação com contratar", actor: ANA, canApprove: false });
+    // só a unidade: o padrão que o ERP calcula ("hidden") aparece na tela, mas não vai no retrato como escolha
+    const unitsOnly = await submitLicenseChange({ clientId: CLIENT_A, draft: [], display: { units: display.units }, baseVersion: before!.issuedVersion, reason: "Oferta: precificação com contratar", actor: ANA, canApprove: false });
+    expect(unitsOnly.status).toBe("aplicada");
+    expect(unitsOnly.approval).toBeNull();
+    expect(unitsOnly.snapshot).toMatchObject({ display: null, displays: [{ code: "05.20", display: "upsell" }] });
+    // depois o padrão da empresa, escolhido de propósito
+    const change = await submitLicenseChange({ clientId: CLIENT_A, draft: [], display, baseVersion: (await licenseOf(CLIENT_A))!.issuedVersion, reason: "Oferta: o resto com cadeado", actor: ANA, canApprove: false });
     expect(change.status).toBe("aplicada");
-    expect(change.approval).toBeNull();
     expect(change.snapshot).toMatchObject({ display: "locked", displays: [{ code: "05.20", display: "upsell" }] });
-    expect(change.displayChanges).toHaveLength(2);
+    expect(change.displayChanges).toEqual([{ code: null, from: "hidden", to: "locked" }]);
     expect([...erp.companies.get(COMPANY_A)!.modules.entries()]).toEqual(modulesBefore);
     expect((await licenseOf(CLIENT_A))?.current).toMatchObject({ display: "locked", displays: [{ code: "05.20", display: "upsell" }] });
+    // linha do tempo do cliente: a mudança de exibição aparece no título e nos dados
+    const events = await list<DomainEvent>(COLLECTIONS.events, { where: [["clientId", "==", CLIENT_A]] });
+    const ev = events.find((e) => e.type === "erp.license_changed" && e.entityId === unitsOnly.id);
+    expect(ev?.title).toMatch(/\(1 de exibição, versão \d+\)/);
+    expect(Object.keys((ev?.payload.changes ?? {}) as Record<string, unknown>)).toEqual([expect.stringMatching(/^Exibição · 05\.20/)]);
   });
 
   it("a próxima alteração de módulos leva a exibição junto; pedir a mesma exibição de novo não é mudança", async () => {
@@ -262,6 +274,82 @@ describe("exibição do desligado (fase A)", () => {
     expect(change.snapshot).toMatchObject({ display: "locked", displays: [{ code: "05.20", display: "upsell" }] });
     expect(change.displayChanges).toEqual([]);
     expect(erp.companies.get(COMPANY_A)?.current?.displays).toEqual([{ code: "05.20", display: "upsell" }]);
+  });
+
+  it("revisão: ERP sem a exibição por unidade não aceita escolha por unidade (o padrão da empresa continua)", async () => {
+    const b = erp.companies.get(COMPANY_B)!;
+    b.noPhaseA = true;
+    try {
+      const perUnit = await reviewLicenseChange({ clientId: CLIENT_B, draft: [], display: { units: [{ code: "05.20", display: "upsell" }] } });
+      expect(perUnit.displaySupported).toBe(false);
+      expect(perUnit.plan.errors.map((e) => e.reason)).toContain("exibicao_sem_suporte");
+      const companyOnly = await reviewLicenseChange({ clientId: CLIENT_B, draft: [], display: { companyDefault: "upsell" } });
+      expect(companyOnly.plan.errors).toEqual([]);
+    } finally {
+      b.noPhaseA = false;
+    }
+  });
+
+  it("revisão: sem a simulação do ERP nenhum envio segue, nem só de exibição", async () => {
+    const record = await licenseOf(CLIENT_A);
+    const puts = erp.calls.filter((c) => c.method === "PUT").length;
+    erp.failSimulations(2); // a simulação tenta duas vezes
+    try {
+      expect(await blocked(submitLicenseChange({ clientId: CLIENT_A, draft: [], display: { units: [{ code: "05.20", display: null }] }, baseVersion: record!.issuedVersion, reason: "Teste sem simulação", actor: ANA, canApprove: false }))).toBe("erp_indisponivel");
+    } finally {
+      erp.failSimulations(0);
+    }
+    expect(erp.calls.filter((c) => c.method === "PUT").length).toBe(puts);
+    expect((await licenseOf(CLIENT_A))?.issuedVersion).toBe(record!.issuedVersion);
+  });
+
+  it("revisão: retrato confirmado entre a revisão e a gravação faz o envio parar (versão mudou), sem desfazê-lo", async () => {
+    const record = (await licenseOf(CLIENT_A))!;
+    const current = record.current!;
+    // como se a alteração anterior ainda não estivesse confirmada quando a pessoa revisou...
+    await update<ErpLicenseRecord>(COLLECTIONS.erpLicenses, record.id, { current: { ...current, licenseVersion: current.licenseVersion - 1 } });
+    // ...e o ERP a confirmasse entre a revisão e a gravação
+    erp.duringNextSimulation(async () => {
+      await update<ErpLicenseRecord>(COLLECTIONS.erpLicenses, record.id, { current });
+    });
+    const changesBefore = (await listClientChanges(CLIENT_A)).length;
+    expect(await blocked(submitLicenseChange({ clientId: CLIENT_A, draft: [], display: { units: [{ code: "05.04", display: "locked" }] }, baseVersion: record.issuedVersion, reason: "Teste de corrida", actor: ANA, canApprove: false }))).toBe("versao_mudou");
+    expect((await listClientChanges(CLIENT_A)).length).toBe(changesBefore);
+    expect((await licenseOf(CLIENT_A))?.current).toEqual(current);
+  });
+
+  it("revisão: unidade ligada só no ERP — qualquer envio a desligaria: aparece na revisão e pede aprovação", async () => {
+    const a = erp.companies.get(COMPANY_A)!;
+    const record = (await licenseOf(CLIENT_A))!;
+    const contracted = new Set(record.current!.items.filter((i) => i.state === "active").map((i) => i.code));
+    const spare = Object.entries(RUNTIME_KEYS).filter(([unit, key]) => !contracted.has(unit) && a.modules.get(key) !== "enabled");
+    const [[unit1, key1], [, key2]] = spare;
+    const prev2 = a.modules.get(key2);
+    a.modules.set(key1, "enabled"); // alguém ligou direto no ERP
+    const display = { units: [{ code: "05.04", display: "locked" as const }] };
+    const review = await reviewLicenseChange({ clientId: CLIENT_A, draft: [], display });
+    expect(review.erpOnlyOff).toEqual([{ module: key1, unit: unit1, name: expect.any(String) }]);
+    expect(review.requiresApproval).toBe(true);
+    expect(review.approvalReasons.some((r) => r.startsWith(unit1) && r.includes("está ligado no ERP"))).toBe(true);
+    const change = await submitLicenseChange({ clientId: CLIENT_A, draft: [], display, baseVersion: record.issuedVersion, reason: "Exibição com algo ligado só no ERP", actor: ANA, canApprove: false });
+    expect(change.status).toBe("aguardando_aprovacao");
+    expect(change.erpOnlyOff).toEqual(review.erpOnlyOff);
+    expect(putsOf(change.id)).toHaveLength(0);
+    expect(a.modules.get(key1)).toBe("enabled");
+    // entre o pedido e a aprovação, outra unidade é ligada direto no ERP: a aprovação não segue (a pessoa não viu)
+    a.modules.set(key2, "enabled");
+    expect(await blocked(approveLicenseChange(change.id, BRUNO))).toBe("estado_invalido");
+    expect((await getChange(change.id))?.status).toBe("aguardando_aprovacao");
+    if (prev2 === undefined) a.modules.delete(key2);
+    else a.modules.set(key2, prev2);
+    // aprovada por outra pessoa: o ERP desliga a unidade que estava ligada só lá
+    const approved = await approveLicenseChange(change.id, BRUNO);
+    expect(approved.status).toBe("aplicada");
+    expect(a.modules.get(key1)).toBe("disabled");
+    expect((await licenseOf(CLIENT_A))?.current?.displays).toEqual([
+      { code: "05.04", display: "locked" },
+      { code: "05.20", display: "upsell" },
+    ]);
   });
 });
 
