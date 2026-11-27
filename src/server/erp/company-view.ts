@@ -9,7 +9,7 @@ import { after } from "next/server";
 import type { ErpChangeRequest, ErpEnvironment, ErpLink } from "@/domain/erp/types";
 import { ERP_ENVIRONMENT_LABELS } from "@/domain/erp/types";
 import { ERP_COMMERCIAL_CLASS_LABELS, ERP_DEV_STATUS_LABELS, isUnitSellable, type ErpItemLevel, type ErpItemRole } from "@/domain/erp/catalog";
-import type { ErpDisplayMode, ErpLicenseItem, ErpUnitDisplay } from "@/domain/erp/license";
+import { displayDivergences, type ErpDisplayMode, type ErpLicenseItem, type ErpUnitDisplay } from "@/domain/erp/license";
 import { moduleSummary, unitStatus, type ErpRuntimeModule, type ErpUnitStatus, type ModuleSummary } from "@/domain/erp/status";
 import { ERP_PACKAGES, packageUnits } from "@/domain/erp/packages";
 import { erpIntegrationState, getErpConfig, type ErpIntegrationState } from "./config";
@@ -97,6 +97,12 @@ export interface ErpCompanyView {
     display: ErpDisplayMode | null;
     /** Escolhas de exibição por unidade que valem hoje. */
     displays: ErpUnitDisplay[];
+    /** O padrão foi escolhido pelo INTEROS (false = é o que o ERP calcula sozinho). */
+    displayFixed: boolean;
+    /** O ERP aceita exibição por unidade (false = ainda não: lá vale só o padrão da empresa; null = não deu para ler). */
+    displaySupported: boolean | null;
+    /** Diferenças entre a exibição registrada no INTEROS e a que o ERP devolve. */
+    displayDivergences: string[];
   };
   modules: ErpModuleRow[];
   items: ErpItemRow[];
@@ -123,7 +129,7 @@ function blank(state: ErpCompanyView["state"], integration: ErpIntegrationState,
     catalog: null,
     catalogError: null,
     erp: null,
-    license: { issuedVersion: 0, appliedVersion: 0, appliedAt: null, initial: true, items: [], display: null, displays: [] },
+    license: { issuedVersion: 0, appliedVersion: 0, appliedAt: null, initial: true, items: [], display: null, displays: [], displayFixed: false, displaySupported: null, displayDivergences: [] },
     modules: [],
     items: [],
     openChange: null,
@@ -267,6 +273,9 @@ export async function getErpCompanyView(clientId: string, options: { withHistory
     summary: moduleSummary(index, m.code, statusByUnit),
   }));
 
+  // exibição: a registrada no INTEROS (ou, antes do primeiro retrato, a do ERP) e se o ERP de fato aplica a mesma
+  const shownDisplay = currentDisplay(record, reading?.status ?? null);
+  const displayCheck = displayDivergences(index, record?.current ?? null, reading?.status ?? null);
   const erp: ErpCompanyView["erp"] = reading
     ? {
         ok: !reading.error,
@@ -292,7 +301,18 @@ export async function getErpCompanyView(clientId: string, options: { withHistory
     catalog,
     catalogError,
     erp,
-    license: { issuedVersion: record?.issuedVersion ?? 0, appliedVersion: record?.appliedVersion ?? 0, appliedAt: record?.appliedAt ?? null, initial, items: contracted, ...currentDisplay(record, reading?.status ?? null) },
+    license: {
+      issuedVersion: record?.issuedVersion ?? 0,
+      appliedVersion: record?.appliedVersion ?? 0,
+      appliedAt: record?.appliedAt ?? null,
+      initial,
+      items: contracted,
+      display: shownDisplay.display,
+      displays: shownDisplay.displays,
+      displayFixed: shownDisplay.fixed !== null,
+      displaySupported: displayCheck.supported,
+      displayDivergences: displayCheck.divergences,
+    },
     modules,
     items,
     packages,

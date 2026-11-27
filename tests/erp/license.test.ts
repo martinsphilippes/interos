@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { catalogDiff, indexCatalog, normalizeCatalog } from "@/domain/erp/catalog";
-import { buildSnapshot, deactivations, describeDisplayChange, isOnState, planDisplayChanges, planLicenseChanges, type ErpLicenseItem } from "@/domain/erp/license";
+import { buildSnapshot, deactivations, describeDisplayChange, displayDivergences, erpOnlyDisables, hasDisplayWork, isOnState, planDisplayChanges, planLicenseChanges, type ErpLicenseItem, type PlannedChange } from "@/domain/erp/license";
 
 const index = indexCatalog(normalizeCatalog(JSON.parse(readFileSync(new URL("./fixtures/catalogo-v2-recorte.json", import.meta.url), "utf8"))));
 const NOW = new Date("2026-11-26T12:00:00.000Z");
@@ -140,7 +140,7 @@ describe("planDisplayChanges (fase A: exibição do que está desligado)", () =>
       { code: "05.04", from: null, to: "upsell" },
     ]);
     // nada pedido: nada muda, e a exibição atual continua
-    expect(planDisplayChanges(index, current, null)).toEqual({ display: "hidden", displays: [{ code: "05.02", display: "upsell" }], changes: [], errors: [] });
+    expect(planDisplayChanges(index, current, null)).toEqual({ display: "hidden", effective: "hidden", displays: [{ code: "05.02", display: "upsell" }], changes: [], errors: [] });
     expect(planDisplayChanges(index, current, { companyDefault: "hidden" }).changes).toEqual([]);
   });
 
@@ -160,6 +160,74 @@ describe("planDisplayChanges (fase A: exibição do que está desligado)", () =>
   it("texto da mudança para a revisão e o histórico", () => {
     expect(describeDisplayChange({ code: "05.02", from: null, to: "upsell" }, "Cotações")).toBe("05.02 Cotações: seguir o padrão da empresa → mostrar com “contratar”");
     expect(describeDisplayChange({ code: null, from: "hidden", to: "locked" }, null)).toBe("Padrão da empresa: esconder → mostrar com cadeado");
+    expect(describeDisplayChange({ code: "01.05", from: "locked", to: null, stale: true }, null)).toBe("01.05: mostrar com cadeado → sai da lista (deixou de ser unidade no catálogo)");
+  });
+
+  it("revisão: o padrão que o ERP calcula aparece, mas só vai no retrato o padrão escolhido", () => {
+    const fromErp = { display: "hidden" as const, fixed: null, displays: [] };
+    // nada escolhido: o retrato não fixa o padrão (o ERP continua decidindo); a tela mostra o do ERP
+    expect(planDisplayChanges(index, fromErp, { units: [{ code: "05.02", display: "upsell" }] })).toMatchObject({ display: null, effective: "hidden", displays: [{ code: "05.02", display: "upsell" }] });
+    // escolher o mesmo que o ERP já mostra não é mudança
+    expect(planDisplayChanges(index, fromErp, { companyDefault: "hidden" }).changes).toEqual([]);
+    // escolher outro: passa a ir no retrato
+    const chosen = planDisplayChanges(index, fromErp, { companyDefault: "locked" });
+    expect(chosen).toMatchObject({ display: "locked", effective: "locked", changes: [{ code: null, from: "hidden", to: "locked" }] });
+  });
+
+  it("revisão: escolha de código que deixou de ser unidade sai da lista, mas sozinha não é motivo de envio", () => {
+    const withStale = { display: "hidden" as const, displays: [{ code: "01.05", display: "locked" as const }, { code: "05.02", display: "upsell" as const }] };
+    const plan = planDisplayChanges(index, withStale, null);
+    expect(plan.errors).toEqual([]);
+    expect(plan.displays).toEqual([{ code: "05.02", display: "upsell" }]);
+    expect(plan.changes).toEqual([{ code: "01.05", from: "locked", to: null, stale: true }]);
+    expect(hasDisplayWork(plan)).toBe(false);
+    // pedir para voltar ao padrão o mesmo código não é erro; outra mudança junto é envio normal
+    const more = planDisplayChanges(index, withStale, { units: [{ code: "01.05", display: null }, { code: "05.04", display: "locked" }] });
+    expect(more.errors).toEqual([]);
+    expect(hasDisplayWork(more)).toBe(true);
+    expect(more.displays).toEqual([{ code: "05.02", display: "upsell" }, { code: "05.04", display: "locked" }]);
+  });
+
+  it("revisão: confere a exibição do INTEROS com a do ERP (e se o ERP aceita escolha por unidade)", () => {
+    const current = { display: "locked" as const, displays: [{ code: "05.02", display: "upsell" as const }] };
+    expect(displayDivergences(index, current, null)).toEqual({ supported: null, divergences: [] });
+    // ERP sem a fase A: não devolve `displays`
+    expect(displayDivergences(index, current, { display: "locked" })).toEqual({ supported: false, divergences: [] });
+    expect(displayDivergences(index, current, { display: "locked", displays: [{ code: "05.02", display: "upsell" }] })).toEqual({ supported: true, divergences: [] });
+    const diff = displayDivergences(index, current, { display: "hidden", displays: [{ code: "05.02", display: "locked" }, { code: "05.04", display: "upsell" }] });
+    expect(diff.supported).toBe(true);
+    expect(diff.divergences).toEqual([
+      "Padrão da empresa: INTEROS cadeado, ERP esconder",
+      expect.stringMatching(/^05\.02 .*: INTEROS contratar, ERP cadeado$/),
+      expect.stringMatching(/^05\.04 .*: INTEROS o padrão, ERP contratar$/),
+    ]);
+    // padrão ainda não fixado pelo INTEROS: o do ERP não é divergência
+    expect(displayDivergences(index, { display: null, displays: [] }, { display: "upsell", displays: [] }).divergences).toEqual([]);
+    // `displays: null` é "nenhuma escolha ainda" (ERP com a fase A), não ERP sem a fase A
+    expect(displayDivergences(index, { display: null, displays: [] }, { display: "hidden", displays: null })).toEqual({ supported: true, divergences: [] });
+    // o que o ERP não consegue representar (função incluída, código que não é unidade) não vira diferença dos dois lados
+    expect(displayDivergences(index, { display: null, displays: [{ code: "01.05", display: "locked" }] }, { display: "hidden", displays: [{ code: "99.99", display: "upsell" }] }).divergences).toEqual([]);
+  });
+
+  it("revisão: 'ligado só no ERP' conta só o que o ERP desligaria fora do plano", () => {
+    const planned: PlannedChange[] = [
+      { code: "07.02", from: "active", to: "inactive", origin: "pedido" },
+      { code: "07.01", from: "active", to: "suspension_scheduled", effectiveAt: FUTURE, origin: "cascata", relatedTo: "07.02" },
+    ];
+    const impact = (unit: string | null, extra: Record<string, string | null>) => ({ unit, module: `m.${unit ?? "x"}`, name: unit ?? "x", to: null, policy: null, blockers: [], obligations: [], integrationsAffected: [], cascadedFrom: null, ...extra });
+    const off = erpOnlyDisables({ changes: planned }, {
+      impacts: [
+        impact("07.02", { action: "disable", from: "enabled", to: "draining" }), // do plano
+        impact("07.01", { action: "disable", from: "enabled", to: "scheduled_off" }), // agendado no plano
+        impact("05.02", { action: "disable", from: "enabled", to: "disabled" }), // ligado só no ERP
+        impact("05.04", { action: null, from: "enabled", to: "scheduled_off" }), // agendado sem estar no plano
+        impact("05.05", { action: "disable", from: "draining", to: "disabled" }), // já estava em encerramento
+        impact("05.19", { action: "enable", from: "disabled", to: "enabled" }), // liga: não conta
+        impact(null, { action: "disable", from: "enabled", to: "disabled" }), // chave sem unidade no catálogo
+      ],
+    });
+    expect(off.map((o) => o.unit)).toEqual(["05.02", "05.04", null]);
+    expect(erpOnlyDisables({ changes: planned }, null)).toEqual([]);
   });
 });
 

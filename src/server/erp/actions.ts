@@ -82,9 +82,13 @@ export interface ReviewSummary {
   initial: boolean;
   plan: { code: string; name: string; from: string | null; to: string; origin: string; relatedTo: string | null; relatedName: string | null; until: string | null; effectiveAt: string | null }[];
   /** Mudanças de exibição (`code` null = padrão da empresa; `null` em from/to = segue o padrão). Não pedem aprovação. */
-  displayChanges: { code: string | null; name: string | null; from: string | null; to: string | null }[];
+  displayChanges: { code: string | null; name: string | null; from: string | null; to: string | null; stale: boolean }[];
   /** Padrão da empresa depois do lote (para explicar "segue o padrão"). */
   companyDisplay: string | null;
+  /** O ERP aceita exibição por unidade (null = não deu para ler). */
+  displaySupported: boolean | null;
+  /** Ligados só no ERP (fora do contratado no INTEROS) que o envio também desligaria (`module` volta na confirmação). */
+  erpOnlyOff: { module: string; code: string | null; name: string }[];
   errors: { code: string; message: string }[];
   warnings: { code: string; message: string }[];
   modeFrom: string | null;
@@ -112,8 +116,10 @@ export async function reviewErpChangesAction(input: unknown): Promise<Result<Rev
         baseVersion: review.baseVersion,
         initial: review.initial,
         plan: review.plan.changes.map((c) => ({ code: c.code, name: nameOf(c.code) ?? c.code, from: c.from, to: c.to, origin: c.origin, relatedTo: c.relatedTo ?? null, relatedName: nameOf(c.relatedTo), until: c.until ?? null, effectiveAt: c.effectiveAt ?? null })),
-        displayChanges: review.displayPlan.changes.map((c) => ({ code: c.code, name: nameOf(c.code), from: c.from, to: c.to })),
-        companyDisplay: review.displayPlan.display,
+        displayChanges: review.displayPlan.changes.map((c) => ({ code: c.code, name: nameOf(c.code), from: c.from, to: c.to, stale: Boolean(c.stale) })),
+        companyDisplay: review.displayPlan.effective,
+        displaySupported: review.displaySupported,
+        erpOnlyOff: review.erpOnlyOff.map((o) => ({ module: o.module, code: o.unit, name: o.unit ? (nameOf(o.unit) ?? o.name) : o.name })),
         errors: review.plan.errors.map((e) => ({ code: e.code, message: e.message })),
         warnings: review.plan.warnings.map((w) => ({ code: w.code, message: w.message })),
         modeFrom: review.modeFrom,
@@ -148,7 +154,17 @@ export async function submitErpChangesAction(input: unknown): Promise<Result<Cha
   try {
     const user = await requirePermission("operacao.clientes.erp.alterar");
     const data = z
-      .object({ clientId: clientIdSchema, draft: draftSchema, display: displaySchema, controlMode: modeSchema, baseVersion: z.number().int().min(0), reason: z.string().trim().min(3).max(300), contractReference: z.string().trim().max(100).nullish() })
+      .object({
+        clientId: clientIdSchema,
+        draft: draftSchema,
+        display: displaySchema,
+        controlMode: modeSchema,
+        baseVersion: z.number().int().min(0),
+        reason: z.string().trim().min(3).max(300),
+        contractReference: z.string().trim().max(100).nullish(),
+        // o que a revisão mostrou como "o ERP também vai desligar" (a confirmação confere de novo)
+        reviewedErpOnlyOff: z.array(z.string().min(1).max(100)).max(500).nullish(),
+      })
       .parse(input);
     await assertClient(user, data.clientId);
     const change = await submitLicenseChange({ ...data, display: data.display ?? null, controlMode: data.controlMode ?? null, actor: actorOf(user), canApprove: can(user, "operacao.clientes.erp.aprovar") });
