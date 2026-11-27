@@ -2,12 +2,13 @@
 
 import * as React from "react";
 import { Activity, ArrowRight, Lock } from "lucide-react";
-import { ERP_ITEM_STATE_LABELS, isOnState, type ErpDraftChange, type ErpLicenseItem } from "@/domain/erp/license";
+import { ERP_DISPLAY_LABELS, ERP_DISPLAY_MODES, ERP_ITEM_STATE_LABELS, isOnState, type ErpDisplayMode, type ErpDraftChange, type ErpLicenseItem } from "@/domain/erp/license";
 import type { ErpItemRow } from "@/server/erp/company-view";
 import type { ErpUsageView } from "@/server/erp/tower-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerBody, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
+import { Select } from "@/components/ui/select";
 import { ROLE_LABELS, TONE_BADGE, fmtDate, fmtDateTime } from "./erp-format";
 
 export interface ErpItemDrawerProps {
@@ -19,21 +20,29 @@ export interface ErpItemDrawerProps {
   usage: { loading: boolean; data: ErpUsageView | null };
   onLoadUsage: () => void;
   onDraft: (code: string, change: ErpDraftChange | null) => void;
+  /** Exibição própria da unidade quando desligada (null = segue o padrão da empresa). */
+  ownDisplay?: ErpDisplayMode | null;
+  /** Exibição preparada (undefined = nada preparado; null = voltar ao padrão). */
+  draftDisplay?: ErpDisplayMode | null;
+  /** Padrão da empresa (com o preparado, se houver). */
+  companyDisplay?: ErpDisplayMode | null;
+  /** `undefined` desfaz a escolha preparada. */
+  onDisplayDraft?: (code: string, display: ErpDisplayMode | null | undefined) => void;
   onOpenItem: (code: string) => void;
   onClose: () => void;
 }
 
-export function ErpItemDrawer({ item, byCode, contracted, draft, canChange, usage, onLoadUsage, onDraft, onOpenItem, onClose }: ErpItemDrawerProps) {
+export function ErpItemDrawer({ item, onClose, ...rest }: ErpItemDrawerProps) {
   return (
     <Drawer open={Boolean(item)} onOpenChange={(open) => (open ? undefined : onClose())}>
       <DrawerContent size="md" dismissOnOutsideClick>
-        {item ? <ItemDetails key={item.code} item={item} byCode={byCode} contracted={contracted} draft={draft} canChange={canChange} usage={usage} onLoadUsage={onLoadUsage} onDraft={onDraft} onOpenItem={onOpenItem} /> : null}
+        {item ? <ItemDetails key={item.code} item={item} {...rest} /> : null}
       </DrawerContent>
     </Drawer>
   );
 }
 
-function ItemDetails({ item, byCode, contracted, draft, canChange, usage, onLoadUsage, onDraft, onOpenItem }: Omit<ErpItemDrawerProps, "item" | "onClose"> & { item: ErpItemRow }) {
+function ItemDetails({ item, byCode, contracted, draft, canChange, usage, onLoadUsage, onDraft, ownDisplay = null, draftDisplay, companyDisplay = null, onDisplayDraft, onOpenItem }: Omit<ErpItemDrawerProps, "item" | "onClose"> & { item: ErpItemRow }) {
   const status = item.status;
   const isUnit = item.role === "unit";
   const current = contracted.get(item.code)?.state ?? null;
@@ -103,6 +112,17 @@ function ItemDetails({ item, byCode, contracted, draft, canChange, usage, onLoad
               </div>
             ) : null}
           </section>
+        ) : null}
+
+        {isUnit ? (
+          <DisplaySection
+            code={item.code}
+            ownDisplay={ownDisplay}
+            draftDisplay={draftDisplay}
+            companyDisplay={companyDisplay}
+            canChange={canChange && Boolean(onDisplayDraft)}
+            onDisplayDraft={(display) => onDisplayDraft?.(item.code, display)}
+          />
         ) : null}
 
         {item.role === "included" && owner ? (
@@ -209,6 +229,62 @@ function ItemDetails({ item, byCode, contracted, draft, canChange, usage, onLoad
         </DrawerFooter>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Como a empresa vê esta unidade no ERP quando ela está desligada (fase A): a escolha da unidade ou o padrão da
+ * empresa. Só muda a exibição; não liga nem desliga nada e não precisa de aprovação.
+ */
+function DisplaySection({
+  ownDisplay,
+  draftDisplay,
+  companyDisplay,
+  canChange,
+  onDisplayDraft,
+}: {
+  code: string;
+  ownDisplay: ErpDisplayMode | null;
+  draftDisplay: ErpDisplayMode | null | undefined;
+  companyDisplay: ErpDisplayMode | null;
+  canChange: boolean;
+  onDisplayDraft: (display: ErpDisplayMode | null | undefined) => void;
+}) {
+  const value = draftDisplay !== undefined ? draftDisplay : ownDisplay;
+  const fallback = companyDisplay ? ERP_DISPLAY_LABELS[companyDisplay].toLowerCase() : "o do ERP";
+  const text = value ? ERP_DISPLAY_LABELS[value] : `Seguir o padrão da empresa (${fallback})`;
+  return (
+    <section>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Quando desligada</h3>
+      <p className="mb-2 text-xs text-muted">Como a empresa vê esta unidade no ERP quando ela não está contratada. Só muda a exibição: não liga nem desliga nada e não precisa de aprovação.</p>
+      {canChange ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={value ?? ""}
+            onChange={(e) => {
+              const next = (e.target.value || null) as ErpDisplayMode | null;
+              onDisplayDraft(next === ownDisplay ? undefined : next);
+            }}
+            size="sm"
+            className="w-72"
+            aria-label="Exibição da unidade quando desligada"
+            options={[{ value: "", label: `Seguir o padrão da empresa (${fallback})` }, ...ERP_DISPLAY_MODES.map((m) => ({ value: m, label: ERP_DISPLAY_LABELS[m] }))]}
+          />
+          {draftDisplay !== undefined ? (
+            <>
+              <Badge variant="brand" size="sm">
+                Preparado
+              </Badge>
+              <Button variant="ghost" size="sm" onClick={() => onDisplayDraft(undefined)}>
+                Desfazer
+              </Button>
+            </>
+          ) : null}
+        </div>
+      ) : (
+        <p>{text}</p>
+      )}
+    </section>
   );
 }
 

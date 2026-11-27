@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Copy, History, LayoutGrid, RefreshCw, TowerControl } from "lucide-react";
-import { ERP_CONTROL_MODE_LABELS, ERP_ITEM_STATE_LABELS, isOnState, type ErpControlMode } from "@/domain/erp/license";
+import { ERP_CONTROL_MODE_LABELS, ERP_DISPLAY_LABELS, ERP_DISPLAY_MODES, ERP_ITEM_STATE_LABELS, isOnState, type ErpControlMode, type ErpDisplayMode } from "@/domain/erp/license";
 import type { ErpCompanyView } from "@/server/erp/company-view";
 import type { ErpUsageView } from "@/server/erp/tower-view";
 import { importErpCatalogAction, loadErpUsageAction, refreshErpStateAction, type ChangeOutcome } from "@/server/erp/actions";
@@ -16,7 +16,7 @@ import { FormField } from "@/components/ui/form-field";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
-import { useErpDraft } from "./erp-draft-store";
+import { useErpDisplayDraft, useErpDraft } from "./erp-draft-store";
 import { endOfDayIso, fmtDate, fmtDateTime, startOfDayIso } from "./erp-format";
 import { ErpModuleTree, type DateActionKind } from "./erp-module-tree";
 import { ErpReviewDialog } from "./erp-review-dialog";
@@ -108,7 +108,17 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
   const currentMode = (view.erp?.mode ?? null) as ErpControlMode | null;
   const [modeDraft, setModeDraft] = React.useState<ErpControlMode | null>(null);
   const pendingMode = modeDraft && modeDraft !== currentMode ? modeDraft : null;
-  const pending = list.length + (pendingMode ? 1 : 0);
+  // exibição do que está desligado (fase A): padrão da empresa e escolha por unidade, sem aprovação
+  const ownDisplays = React.useMemo(() => new Map(view.license.displays.map((d) => [d.code, d.display])), [view.license.displays]);
+  const displayDraft = useErpDisplayDraft(clientId, { display: view.license.display, displays: ownDisplays });
+  const companyDisplay = displayDraft.companyDefault ?? view.license.display;
+  const unitDisplays = React.useMemo(() => {
+    const out = new Map<string, { display: ErpDisplayMode | null; drafted: boolean }>();
+    for (const [code, d] of ownDisplays) out.set(code, { display: d, drafted: false });
+    for (const [code, d] of displayDraft.units) out.set(code, { display: d, drafted: true });
+    return out;
+  }, [ownDisplays, displayDraft.units]);
+  const pending = list.length + (pendingMode ? 1 : 0) + displayDraft.count;
   const [reviewOpen, setReviewOpen] = React.useState(false);
   const [conflict, setConflict] = React.useState<string | null>(null);
   const [openItem, setOpenItem] = React.useState<string | null>(null);
@@ -151,6 +161,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
 
   function onDone(outcome: ChangeOutcome) {
     clear();
+    displayDraft.clear();
     setModeDraft(null);
     setConflict(null);
     if (outcome.status === "aplicada") toast.success(`Aplicada pelo ERP (versão ${outcome.licenseVersion ?? "—"}).`);
@@ -204,6 +215,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
                 size="sm"
                 onClick={() => {
                   clear();
+                  displayDraft.clear();
                   setModeDraft(null);
                 }}
               >
@@ -263,7 +275,24 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
           ]}
         />
         {sub === "modulos" && caps.change ? (
-          <label className="ml-auto flex items-center gap-2 text-xs text-muted">
+          <label className="ml-auto flex items-center gap-2 text-xs text-muted" title="Como a empresa vê no ERP o que está desligado, quando a unidade não tem escolha própria">
+            Quando desligado
+            <Select
+              value={displayDraft.companyDefault ?? ""}
+              onChange={(e) => displayDraft.setCompanyDefault((e.target.value || null) as ErpDisplayMode | null)}
+              disabled={!canEdit}
+              size="sm"
+              className="w-56"
+              aria-label="Como a empresa vê no ERP o que está desligado (padrão da empresa)"
+              options={[
+                { value: "", label: `Manter: ${view.license.display ? ERP_DISPLAY_LABELS[view.license.display].toLowerCase() : "—"}` },
+                ...ERP_DISPLAY_MODES.filter((m) => m !== view.license.display).map((m) => ({ value: m, label: ERP_DISPLAY_LABELS[m] })),
+              ]}
+            />
+          </label>
+        ) : null}
+        {sub === "modulos" && caps.change ? (
+          <label className="flex items-center gap-2 text-xs text-muted">
             Controle no ERP
             <Select
               value={modeDraft ?? ""}
@@ -281,6 +310,11 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
         ) : null}
       </div>
       {pendingMode ? <p className="-mt-2 text-xs text-muted">Preparado: {ERP_CONTROL_MODE_LABELS[pendingMode]}.</p> : null}
+      {displayDraft.companyDefault ? (
+        <p className="-mt-2 text-xs text-muted">
+          Preparado: o que estiver desligado passa a {ERP_DISPLAY_LABELS[displayDraft.companyDefault].toLowerCase()} (exceto as unidades com escolha própria). Não precisa de aprovação.
+        </p>
+      ) : null}
 
       {sub === "modulos" ? (
         <>
@@ -294,6 +328,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
             lockedReason={erpDown ? sendBlockedReason : null}
             draft={draft}
             onDraft={set}
+            unitDisplays={unitDisplays}
             onRequestDate={(code, kind) => setDateAction({ code, kind })}
             onOpenItem={setOpenItem}
           />
@@ -307,6 +342,7 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
         onOpenChange={setReviewOpen}
         clientId={clientId}
         draft={list}
+        display={displayDraft.payload}
         controlMode={pendingMode}
         onDone={onDone}
         onConflict={(message) => {
@@ -323,6 +359,10 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
         usage={usage}
         onLoadUsage={loadUsage}
         onDraft={set}
+        ownDisplay={openItem ? (ownDisplays.get(openItem) ?? null) : null}
+        draftDisplay={openItem && displayDraft.units.has(openItem) ? (displayDraft.units.get(openItem) ?? null) : undefined}
+        companyDisplay={companyDisplay}
+        onDisplayDraft={displayDraft.setUnit}
         onOpenItem={setOpenItem}
         onClose={() => setOpenItem(null)}
       />

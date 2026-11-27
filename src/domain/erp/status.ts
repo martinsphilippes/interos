@@ -31,6 +31,8 @@ export interface ErpEffectiveEntry {
   on: boolean;
   state: string;
   notice?: string | null;
+  /** Como a unidade aparece quando desligada (ERP com a fase A, 27/11/2026). */
+  display?: string | null;
 }
 
 export type ErpOperationalState = "ativo" | "em_encerramento" | "somente_leitura" | "inativo" | "indisponivel" | "desconhecido";

@@ -13,7 +13,23 @@ import "server-only";
 import { docdb, type Transaction } from "@/server/docdb";
 import { COLLECTIONS, type User, type UserRef } from "@/domain/types";
 import type { ErpChangeError, ErpChangeRequest, ErpChangeSimulation, ErpLicenseRecord, ErpLink } from "@/domain/erp/types";
-import { ERP_ITEM_STATE_LABELS, buildSnapshot, deactivations, planLicenseChanges, type ErpControlMode, type ErpDraftChange, type ErpLicenseItem, type ErpLicenseSnapshot, type LicensePlan } from "@/domain/erp/license";
+import {
+  ERP_DISPLAY_MODES,
+  ERP_ITEM_STATE_LABELS,
+  buildSnapshot,
+  deactivations,
+  planDisplayChanges,
+  planLicenseChanges,
+  type DisplayPlan,
+  type ErpControlMode,
+  type ErpDisplayDraft,
+  type ErpDisplayMode,
+  type ErpDraftChange,
+  type ErpLicenseItem,
+  type ErpLicenseSnapshot,
+  type ErpUnitDisplay,
+  type LicensePlan,
+} from "@/domain/erp/license";
 import type { ErpCatalogIndex } from "@/domain/erp/catalog";
 import { BusinessError } from "@/server/auth/error-classes";
 import { resolvePermissionsForUser } from "@/server/auth/permission-store";
@@ -98,6 +114,16 @@ export interface ErpReading {
   error: ErpError | null;
 }
 
+/**
+ * Exibição que vale hoje: a do último retrato do INTEROS; antes dele (ou sem o padrão fixado), a que o ERP aplica.
+ * As escolhas por unidade do ERP só valem antes do primeiro retrato do INTEROS, que passa a ser a referência.
+ */
+export function currentDisplay(record: Pick<ErpLicenseRecord, "current"> | null, status: Pick<ErpLicenseStatus, "display" | "displays"> | null): { display: ErpDisplayMode | null; displays: ErpUnitDisplay[] } {
+  const erpDefault = status?.display && (ERP_DISPLAY_MODES as readonly string[]).includes(status.display) ? (status.display as ErpDisplayMode) : null;
+  const erpUnits = (status?.displays ?? []).filter((d) => (ERP_DISPLAY_MODES as readonly string[]).includes(d.display));
+  return { display: record?.current?.display ?? erpDefault, displays: record?.current ? (record.current.displays ?? []) : erpUnits };
+}
+
 /** Lê o estado da empresa no ERP (licença v2 + runtime v1), em paralelo. Falha não interrompe: vira `error`. */
 export async function readErpState(erpCompanyId: string, timeoutMs?: number): Promise<ErpReading> {
   const [status, runtime] = await Promise.allSettled([getLicenseStatus(erpCompanyId, { timeoutMs }), getRuntimeModules(erpCompanyId, { timeoutMs })]);
@@ -168,6 +194,8 @@ export interface LicenseReview {
   initial: boolean;
   currentItems: ErpLicenseItem[];
   plan: LicensePlan;
+  /** Mudanças de exibição do lote (padrão da empresa e por unidade): nunca pedem aprovação. */
+  displayPlan: DisplayPlan;
   modeFrom: string | null;
   controlMode: ErpControlMode | null;
   simulation: ErpChangeSimulation | null;
@@ -198,7 +226,7 @@ async function context(clientId: string): Promise<Context> {
 
 /** Revisa o lote: plano completo, simulação do ERP e se exige aprovação. Não grava nada. */
 export async function reviewLicenseChange(
-  input: { clientId: string; draft: readonly ErpDraftChange[]; controlMode?: ErpControlMode | null; startEmpty?: boolean },
+  input: { clientId: string; draft: readonly ErpDraftChange[]; display?: ErpDisplayDraft | null; controlMode?: ErpControlMode | null; startEmpty?: boolean },
   now = new Date(),
 ): Promise<LicenseReview> {
   const { link, loaded, record } = await context(input.clientId);
@@ -215,16 +243,18 @@ export async function reviewLicenseChange(
   }
   const currentItems = record?.current?.items ?? (startEmpty ? [] : baseItemsFromErp(loaded.index, reading.runtime, reading.status));
   const plan = planLicenseChanges(loaded.index, currentItems, input.draft, now);
+  const displayPlan = planDisplayChanges(loaded.index, currentDisplay(record, reading.status), input.display);
+  plan.errors.push(...displayPlan.errors);
   const modeFrom = reading.runtime?.mode ?? reading.status?.runtime?.mode ?? null;
   const controlMode = input.controlMode && input.controlMode !== modeFrom ? input.controlMode : null;
   const openChange = record?.openChangeId ? await getChange(record.openChangeId) : null;
   const erpAppliedVersion = Math.max(reading.status?.appliedVersion ?? 0, record?.appliedVersion ?? 0);
   let simulation: ErpChangeSimulation | null = null;
   let simulationError: string | null = null;
-  const hasWork = plan.changes.length > 0 || controlMode !== null || initial;
+  const hasWork = plan.changes.length > 0 || displayPlan.changes.length > 0 || controlMode !== null || initial;
   if (plan.errors.length === 0 && hasWork) {
     const version = Math.max(record?.issuedVersion ?? 0, erpAppliedVersion) + 1;
-    const snapshot = buildSnapshot({ companyId: link.erpCompanyId, licenseVersion: version, items: plan.items, previous: record?.current ?? null, controlMode, issuedAt: now.toISOString() });
+    const snapshot = buildSnapshot({ companyId: link.erpCompanyId, licenseVersion: version, items: plan.items, previous: record?.current ?? null, controlMode, display: displayPlan, issuedAt: now.toISOString() });
     try {
       const res = await simulateLicense(link.erpCompanyId, snapshot);
       simulation = summarizeSimulation(loaded.index, res.data, res.requestId, nowIso());
@@ -240,6 +270,7 @@ export async function reviewLicenseChange(
     initial,
     currentItems,
     plan,
+    displayPlan,
     modeFrom,
     controlMode,
     simulation,
@@ -254,6 +285,8 @@ export async function reviewLicenseChange(
 export interface SubmitInput {
   clientId: string;
   draft: readonly ErpDraftChange[];
+  /** Exibição preparada (padrão da empresa e por unidade). */
+  display?: ErpDisplayDraft | null;
   controlMode?: ErpControlMode | null;
   baseVersion: number;
   reason: string;
@@ -272,13 +305,13 @@ export interface SubmitInput {
 export async function submitLicenseChange(input: SubmitInput): Promise<ErpChangeRequest> {
   const reason = input.reason.trim();
   if (reason.length < 3) throw new ErpChangeBlocked("Informe o motivo da alteração (fica no histórico da empresa e no ERP).", "lote_invalido");
-  const review = await reviewLicenseChange({ clientId: input.clientId, draft: input.draft, controlMode: input.controlMode, startEmpty: input.startEmpty });
+  const review = await reviewLicenseChange({ clientId: input.clientId, draft: input.draft, display: input.display, controlMode: input.controlMode, startEmpty: input.startEmpty });
   if (review.plan.errors.length) throw new ErpChangeBlocked(review.plan.errors.map((e) => e.message).join(" "), "lote_invalido");
   if (review.simulation && !review.simulation.valid) {
     const why = [...review.simulation.rejected.filter((r) => r.reason === "dependency_missing" || r.reason === "kind_not_supported"), ...review.simulation.errors].map((r) => r.message);
     throw new ErpChangeBlocked(`O ERP recusaria este lote: ${why.join(" ") || "regras de dependência"}.`, "lote_invalido");
   }
-  if (!review.plan.changes.length && !review.controlMode && !review.initial) throw new ErpChangeBlocked("Nada a alterar: a seleção já é o contratado.", "sem_mudanca");
+  if (!review.plan.changes.length && !review.displayPlan.changes.length && !review.controlMode && !review.initial) throw new ErpChangeBlocked("Nada a alterar: a seleção já é o contratado.", "sem_mudanca");
   // Desligar sem a simulação esconderia o que está em andamento (caixa aberto, notas pendentes): só com ela.
   if (!review.simulation && deactivations(review.plan).length) {
     throw new ErpChangeBlocked("O ERP não respondeu à simulação. Desligamentos só seguem com ela (mostra o que está em andamento): tente de novo em instantes.", "erp_indisponivel");
@@ -299,7 +332,9 @@ export async function submitLicenseChange(input: SubmitInput): Promise<ErpChange
     }
     if (record.issuedVersion !== input.baseVersion) throw new ErpChangeBlocked("Outra pessoa alterou os módulos desta empresa enquanto você revisava. O estado foi recarregado.", "versao_mudou");
     const version = needsApproval ? null : Math.max(record.issuedVersion, review.erpAppliedVersion) + 1;
-    const snapshot: ErpLicenseSnapshot | null = version ? buildSnapshot({ companyId: link.erpCompanyId, licenseVersion: version, items: review.plan.items, previous: record.current, controlMode: review.controlMode, issuedAt: now }) : null;
+    const snapshot: ErpLicenseSnapshot | null = version
+      ? buildSnapshot({ companyId: link.erpCompanyId, licenseVersion: version, items: review.plan.items, previous: record.current, controlMode: review.controlMode, display: review.displayPlan, issuedAt: now })
+      : null;
     const doc: Omit<ErpChangeRequest, "id"> = {
       organizationId: ORG_ID,
       createdAt: now,
@@ -312,6 +347,8 @@ export async function submitLicenseChange(input: SubmitInput): Promise<ErpChange
       status: needsApproval ? "aguardando_aprovacao" : "enviando",
       draft: [...input.draft],
       plan: review.plan.changes,
+      displayDraft: input.display ?? null,
+      displayChanges: review.displayPlan.changes,
       controlMode: review.controlMode,
       initial: review.initial,
       baseVersion: input.baseVersion,
@@ -564,6 +601,9 @@ export async function approveLicenseChange(id: string, approver: UserRef): Promi
   }
   const base = record?.current?.items ?? baseItemsFromErp(loaded.index, reading?.runtime ?? null, reading?.status ?? null);
   const plan = planLicenseChanges(loaded.index, base, change.draft);
+  // a exibição pedida sobre a que vale AGORA (outra alteração pode ter mudado depois do pedido)
+  const displayPlan = planDisplayChanges(loaded.index, currentDisplay(record, status), change.displayDraft ?? null);
+  plan.errors.push(...displayPlan.errors);
   if (plan.errors.length) throw new ErpChangeBlocked(plan.errors.map((e) => e.message).join(" "), "lote_invalido");
   const now = nowIso();
   await docdb.runTransaction(async (tx) => {
@@ -574,8 +614,8 @@ export async function approveLicenseChange(id: string, approver: UserRef): Promi
     const rec = recSnap ? (recSnap.data() as unknown as ErpLicenseRecord) : null;
     const issued = rec?.issuedVersion ?? 0;
     const version = Math.max(issued, rec?.appliedVersion ?? 0, status?.appliedVersion ?? 0) + 1;
-    const snapshot = buildSnapshot({ companyId: change.erpCompanyId as string, licenseVersion: version, items: plan.items, previous: rec?.current ?? null, controlMode: change.controlMode, issuedAt: now });
-    tx.update(changeRef(id), { status: "enviando", approval: { by: approver, at: now, self: false }, plan: plan.changes, after: plan.items, snapshot, licenseVersion: version, updatedAt: now });
+    const snapshot = buildSnapshot({ companyId: change.erpCompanyId as string, licenseVersion: version, items: plan.items, previous: rec?.current ?? null, controlMode: change.controlMode, display: displayPlan, issuedAt: now });
+    tx.update(changeRef(id), { status: "enviando", approval: { by: approver, at: now, self: false }, plan: plan.changes, displayChanges: displayPlan.changes, after: plan.items, snapshot, licenseVersion: version, updatedAt: now });
     tx.update(licenseRef(change.linkId as string), { issuedVersion: version, openChangeId: id, updatedAt: now });
   });
   return sendLicenseChange(id);

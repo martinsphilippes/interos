@@ -4,7 +4,7 @@ import * as React from "react";
 import { ChevronDown, ChevronRight, CircleAlert, Clock3, Info, Lock, MoreHorizontal, Puzzle, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { normalizeSearch } from "@/domain/erp/catalog";
-import { isOnState, type ErpDraftChange } from "@/domain/erp/license";
+import { ERP_DISPLAY_LABELS, ERP_DISPLAY_SHORT, isOnState, type ErpDisplayMode, type ErpDraftChange } from "@/domain/erp/license";
 import type { ErpLicenseItemState } from "@/domain/erp/types";
 import type { ErpCompanyView, ErpItemRow, ErpModuleRow } from "@/server/erp/company-view";
 import { Badge } from "@/components/ui/badge";
@@ -54,6 +54,8 @@ export interface ErpModuleTreeProps {
   lockedReason: string | null;
   draft: ReadonlyMap<string, ErpDraftChange>;
   onDraft: (code: string, change: ErpDraftChange | null) => void;
+  /** Unidades com exibição própria (ou preparada) quando desligadas; `display` null = volta ao padrão. */
+  unitDisplays?: ReadonlyMap<string, { display: ErpDisplayMode | null; drafted: boolean }>;
   onRequestDate: (code: string, kind: DateActionKind) => void;
   onOpenItem: (code: string) => void;
 }
@@ -63,7 +65,7 @@ function useContracted(view: ErpCompanyView) {
   return React.useMemo(() => new Map(view.license.items.map((i) => [i.code, i])), [view.license.items]);
 }
 
-export function ErpModuleTree({ view, canChange, locked, lockedReason, draft, onDraft, onRequestDate, onOpenItem }: ErpModuleTreeProps) {
+export function ErpModuleTree({ view, canChange, locked, lockedReason, draft, onDraft, unitDisplays, onRequestDate, onOpenItem }: ErpModuleTreeProps) {
   const [search, setSearch] = React.useState("");
   const [filter, setFilter] = React.useState<ErpRowFilter>("todos");
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set());
@@ -109,10 +111,10 @@ export function ErpModuleTree({ view, canChange, locked, lockedReason, draft, on
         case "plataforma":
           return row.role === "core";
         case "preparados":
-          return draft.has(row.code);
+          return draft.has(row.code) || Boolean(unitDisplays?.get(row.code)?.drafted);
       }
     },
-    [filter, contracted, draft],
+    [filter, contracted, draft, unitDisplays],
   );
 
   const visibleRows = React.useCallback(
@@ -162,7 +164,7 @@ export function ErpModuleTree({ view, canChange, locked, lockedReason, draft, on
           {modules.map(({ module, rows }) => {
             const open = autoOpen || expanded.has(module.code);
             const s = module.summary;
-            const pending = rows.filter((r) => draft.has(r.code)).length;
+            const pending = rows.filter((r) => draft.has(r.code) || unitDisplays?.get(r.code)?.drafted).length;
             return (
               <li key={module.code} className="overflow-hidden rounded-xl border border-border bg-surface">
                 <button
@@ -220,6 +222,7 @@ export function ErpModuleTree({ view, canChange, locked, lockedReason, draft, on
                         owner={row.owner ? (byCode.get(row.owner) ?? null) : null}
                         desired={desiredState(row.code)}
                         drafted={draft.get(row.code) ?? null}
+                        display={unitDisplays?.get(row.code) ?? null}
                         canChange={canChange && !locked}
                         onDraft={onDraft}
                         contractedState={contracted.get(row.code)?.state ?? null}
@@ -245,6 +248,7 @@ interface RowProps {
   desired: ErpLicenseItemState | null;
   contractedState: ErpLicenseItemState | null;
   drafted: ErpDraftChange | null;
+  display: { display: ErpDisplayMode | null; drafted: boolean } | null;
   canChange: boolean;
   onDraft: (code: string, change: ErpDraftChange | null) => void;
   onRequestDate: (code: string, kind: DateActionKind) => void;
@@ -261,7 +265,7 @@ const DRAFT_LABELS: Partial<Record<ErpLicenseItemState, string>> = {
   read_only: "Somente leitura",
 };
 
-function ErpRow({ row, owner, desired, contractedState, drafted, canChange, onDraft, onRequestDate, onOpenItem }: RowProps) {
+function ErpRow({ row, owner, desired, contractedState, drafted, display, canChange, onDraft, onRequestDate, onOpenItem }: RowProps) {
   const isUnit = row.role === "unit";
   const status = row.status;
   const on = isOnState(desired);
@@ -303,6 +307,15 @@ function ErpRow({ row, owner, desired, contractedState, drafted, canChange, onDr
           <Badge variant="brand" size="sm">
             {DRAFT_LABELS[drafted.state] ?? "Alterado"}
             {drafted.until ? ` até ${fmtDate(drafted.until)}` : drafted.effectiveAt ? ` em ${fmtDate(drafted.effectiveAt)}` : ""}
+          </Badge>
+        ) : null}
+        {isUnit && display ? (
+          <Badge
+            variant={display.drafted ? "brand" : "muted"}
+            size="sm"
+            title={`Quando desligada: ${display.display ? ERP_DISPLAY_LABELS[display.display].toLowerCase() : "segue o padrão da empresa"}${display.drafted ? " (preparado)" : ""}`}
+          >
+            Se desligada: {display.display ? ERP_DISPLAY_SHORT[display.display] : "padrão"}
           </Badge>
         ) : null}
         <RowBadge row={row} ownerStatus={ownerStatus} />
