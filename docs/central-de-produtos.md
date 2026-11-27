@@ -334,7 +334,7 @@ novas tentativas. O INTEROS passou a recebê-los em `POST /api/webhooks/erp`:
 | Aviso do ERP | O que o INTEROS faz |
 | --- | --- |
 | `license.applied` / `license.rejected` | Se a alteração daquela versão ainda aguarda resposta (resposta perdida, queda), confere no histórico do ERP e conclui na hora, sem reenviar. Já concluída: só registra |
-| `license.transition` | Linha "Mudança automática de módulos no ERP" no histórico do cliente, com o "de → para" de cada módulo (ex.: "vendas.pdv: ligado → desligado · situação da empresa: suspended") |
+| `license.transition` | Linha "Mudança automática de módulos no ERP" no histórico do cliente, com o "de → para" de cada módulo (ex.: "vendas.pdv: ligado → desligado · situação da empresa: suspensa") |
 | `upsell.requested` | Linha "Pediram … no ERP" no histórico + tarefa de prioridade alta para o comercial do cliente (ou o CS; sem nenhum, fica em vendas sem responsável), prazo de 2 dias, avisada pela notificação de tarefa |
 | `limit.reached` | Linha "Limite de usuários atingido no ERP (5 de 5)" + tarefa de ampliação do contrato, **uma por mês e tipo** (o ERP avisa no máximo uma vez por dia). Documentos fiscais: só aviso, o ERP não bloqueia |
 | `sync.stale` | Só informativo: o INTEROS envia a licença apenas quando algo muda, então este aviso diário é esperado. Fica um registro por empresa, fora da lista de recentes |

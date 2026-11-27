@@ -24,6 +24,7 @@ import { COLLECTIONS, type BaseEntity, type Client, type Task, type User, type U
 import type { DepartmentKey } from "@/domain/constants";
 import { ERP_CHANGE_STATUS_LABELS, type ErpChangeRequest, type ErpEnvironment, type ErpLink } from "@/domain/erp/types";
 import {
+  companyStateLabel,
   eventLicenseVersion,
   limitOf,
   moduleRequestOf,
@@ -191,6 +192,8 @@ async function recordStale(environment: ErpEnvironment, event: ErpInboundEvent, 
   const age = typeof event.data.ageDays === "number" && Number.isFinite(event.data.ageDays) ? event.data.ageDays : null;
   const at = now.toISOString();
   const previous = await getById<ErpInboundRecord>(COLLECTIONS.erpEvents, id);
+  // Nova tentativa atrasada de um aviso mais antigo não apaga o mais recente.
+  if (previous && previous.at > event.at) return { status: 200, body: { received: true, status: previous.status } };
   const record: Omit<ErpInboundRecord, "id"> = {
     organizationId: ORG_ID,
     createdAt: previous?.createdAt ?? at,
@@ -247,7 +250,7 @@ async function processEvent(environment: ErpEnvironment, event: ErpInboundEvent,
       await once({
         type: "erp.license_transition",
         title: "Mudança automática de módulos no ERP",
-        description: [summary.length ? `${summary.join(", ")}${changes.length > summary.length ? "…" : ""}` : null, companyState ? `situação da empresa: ${companyState}` : null].filter(Boolean).join(" · ") || undefined,
+        description: [summary.length ? `${summary.join(", ")}${changes.length > summary.length ? "…" : ""}` : null, companyState ? `situação da empresa: ${companyStateLabel(companyState)}` : null].filter(Boolean).join(" · ") || undefined,
         payload: { erpEventId: event.eventId, licenseVersion: eventLicenseVersion(event), changes: transitionChangeMap(changes), items: changes, companyState },
       });
       return { status: "processado", outcome: `${changes.length} mudança(s) registrada(s) no histórico do cliente.`, clientId };
@@ -301,7 +304,7 @@ async function confirmLicense(environment: ErpEnvironment, event: ErpInboundEven
   const change = changes.find((c) => c.kind === "licenca") ?? null;
   const rejected = event.type === "license.rejected" ? rejectedItemsOf(event).map((r) => `${r.code}: ${r.message}`).join("; ") : "";
   const detail = rejected ? ` Recusados: ${rejected}` : "";
-  if (!change) return `Versão ${version} sem alteração do INTEROS com essa versão.${detail}`;
+  if (!change) return `Nenhuma alteração do INTEROS com a versão ${version}.${detail}`;
   if (change.status === "enviando" || change.status === "falhou") {
     if (await reconcileChange(change)) {
       const fresh = await getChange(change.id);

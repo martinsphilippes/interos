@@ -3,7 +3,7 @@
  * e os dados de cada tipo no formato que o ERP manda hoje (transição com `{ module, action }`, limite com e sem bloqueio).
  */
 import { describe, expect, it } from "vitest";
-import { eventLicenseVersion, limitOf, moduleRequestOf, monthOf, parseErpEvent, rejectedItemsOf, transitionChangeMap, transitionChangesOf } from "@/domain/erp/events";
+import { companyStateLabel, eventLicenseVersion, limitOf, moduleRequestOf, monthOf, parseErpEvent, rejectedItemsOf, transitionChangeMap, transitionChangesOf } from "@/domain/erp/events";
 
 const envelope = (over: Record<string, unknown> = {}) => ({ type: "license.applied", companyId: "emp_123", at: "2026-11-27T12:00:00.000Z", data: { licenseVersion: 3 }, eventId: "license.applied:emp_123:2026-11-27T12:00:00.000Z", ...over });
 
@@ -76,7 +76,10 @@ describe("dados de cada tipo", () => {
     expect(limitOf({ data: { kind: "outro" } })).toMatchObject({ kind: "outro", label: "outro", used: null, limit: null });
   });
 
-  it("mês de referência do instante", () => {
+  it("mês de referência do instante e situação da empresa em português", () => {
     expect(monthOf("2026-11-27T12:00:00.000Z")).toBe("2026-11");
+    expect(companyStateLabel("suspended")).toBe("suspensa");
+    expect(companyStateLabel("novo_estado")).toBe("novo_estado");
+    expect(companyStateLabel(null)).toBeNull();
   });
 });

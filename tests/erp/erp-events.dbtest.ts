@@ -211,7 +211,7 @@ describe("mudança automática de módulos", () => {
     const raw = body("license.transition", COMPANY_A, { licenseVersion: 1, changes: [{ module: "vendas.pdv", action: "disable", history: "read" }], companyState: "suspended" });
     expect((await deliver(raw)).status).toBe(200);
     const [event] = await clientEvents(CLIENT_A, "erp.license_transition");
-    expect(event.description).toBe("vendas.pdv desligado · situação da empresa: suspended");
+    expect(event.description).toBe("vendas.pdv desligado · situação da empresa: suspensa");
     expect(event.payload?.changes).toEqual({ "vendas.pdv": { from: "ligado", to: "desligado" } });
     // A linha do histórico do cliente leva o "de → para" (como as alterações feitas pelo INTEROS).
     const [line] = await list<TimelineEvent>(COLLECTIONS.timelineEvents, { where: [["eventId", "==", event.id]] });
@@ -244,7 +244,7 @@ describe("licença aplicada", () => {
     expect((await recordOf(again))?.outcome).toMatch(/já estava concluída/);
     const other = body("license.applied", COMPANY_A, { licenseVersion: version + 50 });
     expect((await deliver(other)).status).toBe(200);
-    expect((await recordOf(other))?.outcome).toMatch(/sem alteração do INTEROS/);
+    expect((await recordOf(other))?.outcome).toMatch(/Nenhuma alteração do INTEROS com a versão/);
   });
 });
 
@@ -268,6 +268,9 @@ describe("retomada e avisos diários", () => {
       const raw = body("sync.stale", COMPANY_A, { appliedVersion: 1, lastSnapshotAt: "2026-11-20T00:00:00.000Z", ageDays: 6 }, `${day}T03:00:00.000Z`);
       expect(await deliver(raw)).toMatchObject({ status: 200, body: { status: "processado" } });
     }
+    // Nova tentativa atrasada do aviso de um dia antes não volta o registro no tempo.
+    const late = body("sync.stale", COMPANY_A, { appliedVersion: 1, lastSnapshotAt: "2026-11-20T00:00:00.000Z", ageDays: 4 }, "2026-11-24T03:00:00.000Z");
+    expect((await deliver(late)).status).toBe(200);
     const stale = await getById<ErpInboundRecord>(COLLECTIONS.erpEvents, erpStaleDocId("homologacao", COMPANY_A));
     expect(stale).toMatchObject({ attempts: 2, clientId: CLIENT_A, at: "2026-11-26T03:00:00.000Z" });
     expect(stale?.outcome).toMatch(/há 6 dia\(s\)/);

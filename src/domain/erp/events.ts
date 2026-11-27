@@ -113,6 +113,21 @@ export function transitionChangeMap(changes: { code: string; from: string | null
   return Object.fromEntries(changes.map((c) => [c.code, { from: c.from ?? "—", to: c.to ?? "—" }]));
 }
 
+const COMPANY_STATE_LABELS: Record<string, string> = {
+  active: "ativa",
+  trial: "em teste",
+  suspended: "suspensa",
+  read_only: "somente leitura",
+  expired: "expirada",
+  inactive: "inativa",
+  cancelled: "cancelada",
+};
+
+/** Situação da empresa informada pelo ERP numa transição, em português (valor desconhecido segue como veio). */
+export function companyStateLabel(state: string | null): string | null {
+  return state ? COMPANY_STATE_LABELS[state] ?? state : null;
+}
+
 /** Mês de referência (AAAA-MM) de um instante, para não repetir a mesma tarefa de limite no mês. */
 export function monthOf(iso: string): string {
   return iso.slice(0, 7);
