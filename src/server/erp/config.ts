@@ -27,6 +27,7 @@ export const ERP_ENV_VARS = {
   licenseSigningSecret: "ERP_INTERCERT_SEGREDO_ASSINATURA",
   provisioningCredential: "ERP_INTERCERT_CREDENCIAL_PROVISIONAMENTO",
   towerCredential: "ERP_INTERCERT_CREDENCIAL_TORRE",
+  eventsSecret: "ERP_INTERCERT_SEGREDO_EVENTOS",
 } as const;
 
 export interface ErpConfig {
@@ -46,6 +47,8 @@ export interface ErpConfig {
   provisioningCredential: string | null;
   /** Credencial `<id>.<segredo>` da Torre de Controle. */
   towerCredential: string | null;
+  /** Segredo HMAC dos eventos que o ERP manda ao INTEROS (`X-ERP-Signature`); sem ele o webhook fica desligado. */
+  eventsSecret: string | null;
 }
 
 function read(name: string): string | null {
@@ -95,6 +98,7 @@ export function getErpConfig(): ErpConfig | null {
     licenseSigningSecret: read(ERP_ENV_VARS.licenseSigningSecret),
     provisioningCredential: read(ERP_ENV_VARS.provisioningCredential),
     towerCredential: read(ERP_ENV_VARS.towerCredential),
+    eventsSecret: read(ERP_ENV_VARS.eventsSecret),
   };
 }
 
@@ -111,6 +115,8 @@ export interface ErpIntegrationState {
   /** Host do ERP (sem caminho), para exibir. */
   host: string | null;
   apis: Record<ErpApi, ErpApiAvailability>;
+  /** Recebe os eventos do ERP (webhook com o segredo configurado). Opcional: sem ele, a rotina de 5 min confirma. */
+  events: boolean;
   /** Variáveis ausentes ou inválidas (só nomes). */
   missing: string[];
 }
@@ -138,6 +144,7 @@ export function erpIntegrationState(config: ErpConfig | null = getErpConfig()): 
       provisionamento: { read: base && provisioning, write: base && provisioning },
       torre: { read: base && tower, write: false },
     },
+    events: base && Boolean(config?.eventsSecret ?? read(ERP_ENV_VARS.eventsSecret)),
     missing: Array.from(new Set(missing)),
   };
 }

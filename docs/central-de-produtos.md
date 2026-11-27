@@ -110,10 +110,11 @@ preparar (seleção na tela, guardada na sessão)
 | Camada | Arquivos |
 | --- | --- |
 | Domínio puro | `src/domain/erp/catalog.ts` (catálogo, papéis, dependências), `license.ts` (plano e retrato), `status.ts` (estados), `tower.ts` (blocos da Torre), `packages.ts` (pacotes de partida), `types.ts` |
-| Servidor | `src/server/erp/config.ts`, `http.ts` (cliente HTTP, envelopes, repetição), `signature.ts` (HMAC), `errors.ts`, `api-licencas.ts`, `api-provisionamento.ts`, `api-torre.ts`, `catalog-store.ts`, `links.ts`, `changes.ts` (revisão, envio, aprovação, cancelamento, reconciliação, rotina), `provisioning.ts`, `company-view.ts`, `tower-view.ts`, `admin-view.ts`, `sweep.ts`, `actions.ts` |
+| Servidor | `src/server/erp/config.ts`, `http.ts` (cliente HTTP, envelopes, repetição), `signature.ts` (HMAC), `errors.ts`, `api-licencas.ts`, `api-provisionamento.ts`, `api-torre.ts`, `catalog-store.ts`, `links.ts`, `changes.ts` (revisão, envio, aprovação, cancelamento, reconciliação, rotina), `provisioning.ts`, `company-view.ts`, `tower-view.ts`, `admin-view.ts`, `sweep.ts`, `actions.ts`, `inbound.ts` (avisos do ERP, seção 17) |
 | Interface | `src/components/erp/*` (aba, árvore, revisão, detalhe do item, alteração em andamento, histórico, Torre, vínculo, criação da empresa, painel de Integrações) |
 | Rotina | passo "ERP Intercert" do agendador de 5 minutos (`/api/cron/central`) |
-| Banco | `supabase/migrations/20261126000000_erp_intercert.sql` |
+| Webhook | `src/app/api/webhooks/erp/route.ts` (avisos do ERP na hora, seção 17) |
+| Banco | `supabase/migrations/20261126000000_erp_intercert.sql`, `20261127000000_erp_eventos.sql` |
 
 ---
 
@@ -155,6 +156,7 @@ Toda action confere a permissão e o escopo do cliente no servidor; a interface 
 | `erp_catalogs` | Cada versão do catálogo importada (itens, contagens, diferença para a anterior, origem) e o ponteiro da versão vigente por ambiente |
 | `erp_licenses` | Licença por vínculo: versão emitida, último retrato confirmado pelo ERP, versão aplicada, alteração aberta |
 | `erp_change_requests` | Cada alteração: pedido, plano completo, retrato enviado, antes/depois, simulação vista, aprovação, motivo, contrato, tentativas, erros, resposta do ERP e referências (`requestId`) |
+| `erp_events` | Cada aviso recebido do ERP (id = ambiente + hash do `eventId`): tipo, empresa, cliente, dados, situação, entregas, resultado; o aviso diário "sem licença nova" fica em um registro por empresa |
 
 ---
 
@@ -165,6 +167,7 @@ Toda action confere a permissão e o escopo do cliente no servidor; a interface 
 | Licenças v2 + módulos v1 | catálogo, licença, simulação, envio assinado, histórico, uso, estado operacional | `ERP_INTERCERT_URL`, `ERP_INTERCERT_AMBIENTE`, `ERP_INTERCERT_TOKEN_LICENCAS`, `ERP_INTERCERT_SEGREDO_ASSINATURA` |
 | Provisionamento v1 | criar empresa, vincular com código, retomar implantação, reenviar convite | `ERP_INTERCERT_CREDENCIAL_PROVISIONAMENTO` (+ `ERP_INTERCERT_URL_PROVISIONAMENTO` se em outro endereço) |
 | Torre de Controle v1 | resumo e adoção | `ERP_INTERCERT_CREDENCIAL_TORRE` (+ `ERP_INTERCERT_URL_TORRE` se em outro endereço) |
+| Avisos do ERP (ERP → INTEROS) | `POST /api/webhooks/erp`, assinado com `X-ERP-Signature` (seção 17) | `ERP_INTERCERT_SEGREDO_EVENTOS` (no ERP: `INTEROS_OUTBOUND_SECRET` com o mesmo valor e `INTEROS_EVENTS_URL`) |
 
 Detalhes de cada variável em `.env.example`. Os valores nunca aparecem em tela nem em registro.
 
@@ -176,13 +179,20 @@ Detalhes de cada variável em `.env.example`. Os valores nunca aparecem em tela 
   6 horas.
 - Avisos: pedido de aprovação (para quem pode aprovar, com link para a aba); catálogo com itens novos (para quem
   administra a integração).
-- Eventos na linha do tempo do cliente: vínculo, criação no ERP, licença alterada, falha, pedido de aprovação.
+- Eventos na linha do tempo do cliente: vínculo, criação no ERP, licença alterada, falha, pedido de aprovação e, com os
+  avisos do ERP ligados (seção 17), mudança automática de módulos, pedido de módulo feito no ERP e limite do contrato
+  atingido.
+- Avisos do ERP na hora: licença aplicada ou recusada conclui na hora a alteração que perdeu a resposta; pedido de
+  módulo e limite do contrato viram tarefa para o comercial do cliente.
 
 ---
 
 ## 11. Segurança
 
 - Credenciais só no servidor; envio da licença assinado com HMAC (`X-Interos-Signature`) e evento único.
+- Avisos do ERP só com assinatura válida (`X-ERP-Signature`, HMAC com segredo próprio, janela de ±5 minutos, tempo
+  constante) e processados uma vez por `eventId`; o aviso de licença não muda nada sozinho, só antecipa a conferência no
+  histórico do ERP.
 - O link do convite do administrador é mostrado uma única vez e **nunca é gravado**; o corpo enviado ao ERP na criação
   (com dados do administrador) não vai para o navegador.
 - Endereço do ERP só `https` (ou `http` para `localhost` em desenvolvimento); redirecionamentos recusados.
@@ -230,7 +240,12 @@ cancelado); a homologação achou um terceiro (resultado da criação da empresa
    bloqueado sem bloquear.
 6. **Produção**: só depois do ERP unificado e homologado, troque para `ERP_INTERCERT_AMBIENTE=producao` com as
    credenciais de produção. Vínculos e histórico de homologação ficam separados.
-7. **Desligar**: remover `ERP_INTERCERT_URL` (ou o token) desliga a integração na hora; nada do ERP é apagado.
+7. **Avisos do ERP** (opcional, seção 17): aplique `20261127000000_erp_eventos.sql`, gere um segredo e salve o mesmo
+   valor na Vercel (`ERP_INTERCERT_SEGREDO_EVENTOS`) e no ERP (`INTEROS_OUTBOUND_SECRET`), com
+   `INTEROS_EVENTS_URL=https://<domínio do INTEROS>/api/webhooks/erp` no ERP. O endereço exato aparece em
+   Administração › Integrações › ERP Intercert.
+8. **Desligar**: remover `ERP_INTERCERT_URL` (ou o token) desliga a integração na hora; nada do ERP é apagado. Remover
+   `ERP_INTERCERT_SEGREDO_EVENTOS` desliga só os avisos (o webhook responde 503 e a rotina continua confirmando).
 
 ---
 
@@ -259,7 +274,7 @@ eventos desta.
 | 8 | **Preços e pacotes versionados**: modelos de preço (fixo, por unidade, por usuário, por faixa, setup), pacotes por segmento com versão, sem cobrança dupla (o que vem no pacote não é cobrado de novo) — **entregue (seção 16)** | 7 |
 | 9 | **Proposta → contrato → aditivo** com módulos: o aceite do aditivo prepara a alteração de licença (revisão e aprovação como hoje) | 8 + circuito de receita existente |
 | 10 | **Cobrança**: mensalidade por módulo no faturamento (boletos Bradesco já existentes), testes que viram contrato, limites e excedentes | 9 |
-| 11 | **Uso e inteligência comercial**: uso por módulo (já lido do ERP) → alertas de baixo uso (risco de cancelamento), módulos usados sem contrato e sugestões de venda; pedidos de módulo vindos do ERP | 7 + uso |
+| 11 | **Uso e inteligência comercial**: uso por módulo (já lido do ERP) → alertas de baixo uso (risco de cancelamento), módulos usados sem contrato e sugestões de venda; pedidos de módulo e limites do contrato vindos do ERP — **avisos entregues (seção 17)** | 7 + uso |
 | 12 | **Painéis**: MRR/ARR por módulo e pacote, churn, adoção, receita perdida; operações em massa com simulação (ex.: novo pacote para 50 clientes) | 8–11 |
 | 13 | **Segmentação e implantação**: pacotes por segmento a partir do uso real; implantação guiada pelos módulos contratados (tarefas por módulo) | 11 |
 
@@ -305,3 +320,52 @@ ficha, criar versões de preço e editar pacotes (as duas últimas são sensíve
 **Próximo passo (fase 9).** Usar a simulação na proposta e no contrato (guardando a versão de preço e de pacote usada),
 para o aceite preparar a alteração de licença no ERP.
 
+---
+
+## 17. Avisos do ERP na hora (webhook ERP → INTEROS, 27/11/2026)
+
+**Problema.** O INTEROS só sabia do ERP quando perguntava: a confirmação de uma licença cuja resposta se perdeu esperava
+a rotina de 5 minutos, e o que acontece só no ERP (fim de teste, suspensão agendada, alguém da empresa pedindo um
+módulo, limite de usuários atingido) não chegava ao comercial.
+
+**Solução.** O ERP já tem uma fila de avisos para o INTEROS (contrato v2, eventos de saída) com assinatura e até 12
+novas tentativas. O INTEROS passou a recebê-los em `POST /api/webhooks/erp`:
+
+| Aviso do ERP | O que o INTEROS faz |
+| --- | --- |
+| `license.applied` / `license.rejected` | Se a alteração daquela versão ainda aguarda resposta (resposta perdida, queda), confere no histórico do ERP e conclui na hora, sem reenviar. Já concluída: só registra |
+| `license.transition` | Linha "Mudança automática de módulos no ERP" no histórico do cliente, com o "de → para" de cada módulo (ex.: "vendas.pdv: ligado → desligado · situação da empresa: suspended") |
+| `upsell.requested` | Linha "Pediram … no ERP" no histórico + tarefa de prioridade alta para o comercial do cliente (ou o CS; sem nenhum, fica em vendas sem responsável), prazo de 2 dias, avisada pela notificação de tarefa |
+| `limit.reached` | Linha "Limite de usuários atingido no ERP (5 de 5)" + tarefa de ampliação do contrato, **uma por mês e tipo** (o ERP avisa no máximo uma vez por dia). Documentos fiscais: só aviso, o ERP não bloqueia |
+| `sync.stale` | Só informativo: o INTEROS envia a licença apenas quando algo muda, então este aviso diário é esperado. Fica um registro por empresa, fora da lista de recentes |
+| Tipo novo | Registrado e ignorado (200), para o ERP não repetir à toa |
+
+**Regras e garantias.**
+
+1. Só com assinatura válida: `X-ERP-Signature: t=<unix>,v1=<hex>` = HMAC-SHA256 de `${t}.${corpo}` com
+   `ERP_INTERCERT_SEGREDO_EVENTOS`, janela de ±5 minutos (o ERP assina de novo a cada tentativa).
+2. Uma vez só por `eventId` (`<tipo>:<empresa>:<instante>`, o mesmo em todas as tentativas): o registro é reservado em
+   transação; repetida depois de concluída responde 200 sem refazer nada; simultânea à que está em andamento responde
+   503 (o ERP tenta depois); interrompida há mais de 2 minutos é retomada sem repetir a linha do histórico.
+3. Tarefa com id fixo por chave (pedido, ou limite + mês): duas entregas ao mesmo tempo não criam duas tarefas.
+4. Empresa sem vínculo ativo no ambiente configurado: 200 e "ignorado".
+5. Respostas: 503 sem configuração ou em andamento · 413 corpo acima de 64 KB · 401 assinatura (com o motivo:
+   `missing`, `malformed`, `expired`, `mismatch`) · 400 corpo inválido · 200 recebido · 500 falha inesperada (o ERP
+   repete). 4xx faz o ERP desistir daquele aviso; 5xx faz repetir.
+
+**Administração.** Administração › Integrações › ERP Intercert › "Avisos do ERP na hora": se está recebendo, o endereço
+para cadastrar no ERP (com botão de copiar), o último aviso, quantas empresas estão com o aviso diário de licença sem
+novidade e os 20 avisos mais recentes com situação e resultado.
+
+**Ligar.** Ver passo 7 da seção 13. Sem o segredo, nada muda: a rotina de 5 minutos continua confirmando as alterações
+(pedidos de módulo e limites só chegam com os avisos ligados).
+
+**Testes.** 10 de unidade (envelope e dados de cada tipo, no formato que o ERP manda hoje) e 14 de banco pela mesma
+função do webhook: assinatura (ausente, malformada, outro segredo, vencida, corpo alterado), corpo grande e inválido,
+tipo novo, empresa sem vínculo, pedido com tarefa e aviso ao comercial, entrega repetida e simultânea, limite uma vez
+por mês, cliente sem comercial, documentos fiscais, transição no formato do ERP, resposta perdida concluída pelo aviso
+sem reenvio, aviso de alteração já concluída, retomada depois de queda e aviso diário em um registro por empresa.
+
+**Pedidos ao time do ERP.** Configurar `INTEROS_EVENTS_URL` e `INTEROS_OUTBOUND_SECRET` em homologação; avaliar se
+`sync.stale` deve continuar para o INTEROS (o INTEROS só envia licença quando algo muda, então o aviso vira rotina) e
+mandar o código comercial da unidade (`05.02`) nas mudanças de `license.transition`, além da chave interna do módulo.

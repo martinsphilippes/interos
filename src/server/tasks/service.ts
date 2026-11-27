@@ -7,7 +7,7 @@ import "server-only";
  */
 import { FieldValue } from "@/server/docdb";
 import { addDays, addMonths, addWeeks } from "date-fns";
-import { batchSet, col, create, getById, nowIso, update } from "@/server/db";
+import { batchSet, col, create, createIfAbsent, getById, nowIso, update, type CreateInput } from "@/server/db";
 import { emitEvent } from "@/server/events";
 import { completeSla, startDepartmentTaskSla } from "@/server/sla";
 import { formatDateTime } from "@/lib/format";
@@ -42,6 +42,11 @@ export interface CreateTaskInternalInput {
   /** Padrão: o ator. */
   creatorId?: string;
   status?: TaskStatus;
+  /**
+   * Id fixo (idempotência entre execuções concorrentes, ex.: o mesmo aviso do ERP entregue duas vezes ao mesmo
+   * tempo): a tarefa só nasce se esse id ainda não existe; se já existe, devolve a existente sem emitir nada.
+   */
+  id?: string;
 }
 
 /** Cria uma tarefa em nome de `actor`, denormaliza nomes e emite task.created (+ task.assigned). */
@@ -58,7 +63,7 @@ export async function createTaskInternal(input: CreateTaskInternalInput, actor: 
   );
   const origin = input.origin ?? "manual";
 
-  let task = await create<Task>(COLLECTIONS.tasks, {
+  const data: CreateInput<Task> = {
     title: input.title,
     description: input.description,
     clientId: client?.id,
@@ -82,7 +87,15 @@ export async function createTaskInternal(input: CreateTaskInternalInput, actor: 
     slaInstanceId: input.slaInstanceId,
     // Novas tarefas entram no fim da coluna do kanban.
     order: Date.now(),
-  });
+  };
+  let task: Task;
+  if (input.id) {
+    const once = await createIfAbsent<Task>(COLLECTIONS.tasks, input.id, data);
+    if (!once.created) return once.doc;
+    task = once.doc;
+  } else {
+    task = await create<Task>(COLLECTIONS.tasks, data);
+  }
 
   // SLA padrão do departamento: só para tarefa aberta, sem SLA próprio e quando o departamento tem regra ativa.
   const open = task.status !== "concluida" && task.status !== "cancelada";

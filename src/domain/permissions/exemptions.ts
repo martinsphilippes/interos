@@ -203,6 +203,13 @@ export const EXEMPTIONS = [
     reason: "Assinatura eletrônica (Clicksign): avisos de assinatura, recusa e finalização (SYSTEM_ACTOR). Guarda por assinatura.",
   },
   {
+    target: "src/app/api/webhooks/erp/route.ts#POST",
+    kind: "api",
+    // X-ERP-Signature (HMAC-SHA256 de `${t}.${corpo}` com ERP_INTERCERT_SEGREDO_EVENTOS, ±5 min, tempo constante) → 401;
+    // sem segredo → 503. Cada eventId é processado uma vez só (registro reservado em transação).
+    reason: "ERP Intercert: avisos de licença, mudança automática de módulos, pedido de módulo e limite do contrato (ator do sistema). Guarda por assinatura.",
+  },
+  {
     target: "src/app/api/webhooks/meta/route.ts#GET",
     kind: "api",
     reason: "Instagram/Messenger (Meta): verificação do webhook (hub.verify_token = META_VERIFY_TOKEN, comparação em tempo constante). Sem dados.",
