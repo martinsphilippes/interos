@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { catalogDiff, indexCatalog, normalizeCatalog } from "@/domain/erp/catalog";
-import { buildSnapshot, deactivations, describeDisplayChange, displayDivergences, hasDisplayWork, isOnState, planDisplayChanges, planLicenseChanges, type ErpLicenseItem } from "@/domain/erp/license";
+import { buildSnapshot, deactivations, describeDisplayChange, displayDivergences, erpOnlyDisables, hasDisplayWork, isOnState, planDisplayChanges, planLicenseChanges, type ErpLicenseItem, type PlannedChange } from "@/domain/erp/license";
 
 const index = indexCatalog(normalizeCatalog(JSON.parse(readFileSync(new URL("./fixtures/catalogo-v2-recorte.json", import.meta.url), "utf8"))));
 const NOW = new Date("2026-11-26T12:00:00.000Z");
@@ -203,6 +203,31 @@ describe("planDisplayChanges (fase A: exibição do que está desligado)", () =>
     ]);
     // padrão ainda não fixado pelo INTEROS: o do ERP não é divergência
     expect(displayDivergences(index, { display: null, displays: [] }, { display: "upsell", displays: [] }).divergences).toEqual([]);
+    // `displays: null` é "nenhuma escolha ainda" (ERP com a fase A), não ERP sem a fase A
+    expect(displayDivergences(index, { display: null, displays: [] }, { display: "hidden", displays: null })).toEqual({ supported: true, divergences: [] });
+    // o que o ERP não consegue representar (função incluída, código que não é unidade) não vira diferença dos dois lados
+    expect(displayDivergences(index, { display: null, displays: [{ code: "01.05", display: "locked" }] }, { display: "hidden", displays: [{ code: "99.99", display: "upsell" }] }).divergences).toEqual([]);
+  });
+
+  it("revisão: 'ligado só no ERP' conta só o que o ERP desligaria fora do plano", () => {
+    const planned: PlannedChange[] = [
+      { code: "07.02", from: "active", to: "inactive", origin: "pedido" },
+      { code: "07.01", from: "active", to: "suspension_scheduled", effectiveAt: FUTURE, origin: "cascata", relatedTo: "07.02" },
+    ];
+    const impact = (unit: string | null, extra: Record<string, string | null>) => ({ unit, module: `m.${unit ?? "x"}`, name: unit ?? "x", to: null, policy: null, blockers: [], obligations: [], integrationsAffected: [], cascadedFrom: null, ...extra });
+    const off = erpOnlyDisables({ changes: planned }, {
+      impacts: [
+        impact("07.02", { action: "disable", from: "enabled", to: "draining" }), // do plano
+        impact("07.01", { action: "disable", from: "enabled", to: "scheduled_off" }), // agendado no plano
+        impact("05.02", { action: "disable", from: "enabled", to: "disabled" }), // ligado só no ERP
+        impact("05.04", { action: null, from: "enabled", to: "scheduled_off" }), // agendado sem estar no plano
+        impact("05.05", { action: "disable", from: "draining", to: "disabled" }), // já estava em encerramento
+        impact("05.19", { action: "enable", from: "disabled", to: "enabled" }), // liga: não conta
+        impact(null, { action: "disable", from: "enabled", to: "disabled" }), // chave sem unidade no catálogo
+      ],
+    });
+    expect(off.map((o) => o.unit)).toEqual(["05.02", "05.04", null]);
+    expect(erpOnlyDisables({ changes: planned }, null)).toEqual([]);
   });
 });
 

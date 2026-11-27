@@ -459,21 +459,38 @@ unidade escolhida, mudança só de exibição, valor inválido e o envio assinad
   - a revisão mostra "O ERP também vai desligar", com a lista;
   - o lote pede aprovação, como a cascata;
   - para manter a unidade, inclua-a no pedido como contratada.
-- **Simulação obrigatória.** Nenhum envio segue sem a simulação do ERP (antes, só os desligamentos exigiam). A
-  aprovação simula de novo; se o ERP ligou outra unidade desde o pedido, a aprovação não segue e pede um pedido novo.
+- **Simulação obrigatória.** Nenhum envio segue sem a simulação do ERP (antes, só os desligamentos exigiam). O
+  bloqueio diz o motivo que o ERP deu. A exceção é a licença inicial da empresa recém-criada pelo INTEROS: ela fica
+  registrada e a sincronização tenta de novo.
+- **O ERP mudou no meio do caminho.** Se o ERP passa a ter algo ligado só lá, ninguém desliga isso sem ver:
+  - na confirmação, a lista que a revisão mostrou é conferida de novo; se aparecer outra unidade, o envio para com
+    "versão mudou", inclusive para quem pode aprovar;
+  - na aprovação, tudo é simulado de novo; se apareceu outra unidade desde o pedido, a aprovação não segue;
+  - antes de cada envio, inclusive nas novas tentativas automáticas e no "Tentar de novo", o mesmo retrato é simulado
+    de novo; se apareceu outra unidade, o envio não sai e as tentativas param (código `erp_mudou`). A pessoa cancela e
+    pede de novo.
+- **O que conta como "ligado só no ERP".** Os desligamentos do plano, inclusive os agendados e a cascata, não
+  contam, nem o que já estava em encerramento. O desligamento agendado que está fora do plano conta.
 - **Exibição que o ERP não aplica.**
   - ERP sem a fase A (não devolve `displays`): a escolha por unidade fica bloqueada, com aviso; o padrão da empresa
     continua.
   - Exibição do ERP diferente da registrada no INTEROS: a aba avisa, e o próximo envio reaplica a do INTEROS.
+  - Só o campo ausente indica ERP sem a fase A; `displays: null` quer dizer "nenhuma escolha ainda".
+  - A comparação usa o mesmo recorte nos dois lados: o que o ERP não consegue representar nunca vira diferença.
 - **Padrão calculado pelo ERP.** O padrão que o ERP calcula sozinho aparece na tela ("padrão do ERP"), mas só vai no
   retrato o padrão escolhido de propósito.
 - **Corrida entre revisão e envio.** O envio confere, dentro da transação, se o retrato em que o plano se baseou ainda
   é o registrado. Se outro foi confirmado no meio, para com "versão mudou", sem desfazê-lo. A aprovação faz a mesma
   conferência.
 - **Rascunho que voltava.** A escolha preparada que já vale (aplicada por outra pessoa ou outra aba) sai da sessão do
-  navegador e não reaparece se a exibição mudar de novo. A seleção de módulos segue a mesma regra.
+  navegador e não reaparece se a exibição mudar de novo. A seleção de módulos segue a mesma regra. A limpeza só
+  acontece com o estado confiável: licença registrada no INTEROS ou leitura do ERP que respondeu. Com o ERP fora do ar,
+  numa empresa ainda sem licença, nada preparado é apagado.
 - **Código que deixou de ser unidade.** Se o catálogo mudar, a escolha antiga sai da lista no próximo envio,
   sozinha não gera envio, e a revisão mostra "sai da lista".
 - **Linha do tempo.** O evento do cliente traz as mudanças de exibição ("1 de exibição" no título e cada mudança nos
   dados).
-- **Testes novos.** 4 de unidade e 4 de banco; todos falham sem as correções.
+- **Testes novos.** Todos falham sem as correções:
+  - 6 de unidade;
+  - 7 de banco: licença inicial sem simulação, aprovador que não viu, nova tentativa com o ERP mudado e os 4 da
+    primeira revisão.

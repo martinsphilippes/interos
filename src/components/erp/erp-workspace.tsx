@@ -104,13 +104,16 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
   const [sub, setSub] = React.useState<ErpSubView>(initialView && (initialView !== "torre" || caps.tower) && (initialView !== "historico" || caps.history) ? initialView : "modulos");
   const contracted = React.useMemo(() => new Map(view.license.items.map((i) => [i.code, i])), [view.license.items]);
   const byCode = React.useMemo(() => new Map(view.items.map((i) => [i.code, i])), [view.items]);
-  const { draft, list, set, clear } = useErpDraft(clientId, contracted);
+  // o estado mostrado é confiável: licença registrada no INTEROS, ou a leitura do ERP respondeu (senão a lista pode vir
+  // vazia só porque o ERP não respondeu, e a limpeza do rascunho apagaria o que foi preparado)
+  const settled = !view.license.initial || Boolean(view.erp?.ok);
+  const { draft, list, set, clear } = useErpDraft(clientId, contracted, settled);
   const currentMode = (view.erp?.mode ?? null) as ErpControlMode | null;
   const [modeDraft, setModeDraft] = React.useState<ErpControlMode | null>(null);
   const pendingMode = modeDraft && modeDraft !== currentMode ? modeDraft : null;
   // exibição do que está desligado (fase A): padrão da empresa e escolha por unidade, sem aprovação
   const ownDisplays = React.useMemo(() => new Map(view.license.displays.map((d) => [d.code, d.display])), [view.license.displays]);
-  const displayDraft = useErpDisplayDraft(clientId, { display: view.license.display, displays: ownDisplays });
+  const displayDraft = useErpDisplayDraft(clientId, { display: view.license.display, displays: ownDisplays }, settled);
   const companyDisplay = displayDraft.companyDefault ?? view.license.display;
   const unitDisplays = React.useMemo(() => {
     const out = new Map<string, { display: ErpDisplayMode | null; drafted: boolean }>();

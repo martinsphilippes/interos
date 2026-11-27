@@ -12,7 +12,7 @@
  *   obrigatória faz o ERP recusar o retrato inteiro — por isso a cascata é explícita;
  * - cada envio usa uma versão nova (a recusada continua recusada para sempre no ERP).
  */
-import type { ErpLicenseItemState } from "./types";
+import type { ErpChangeSimulation, ErpLicenseItemState, ErpOnlyOff } from "./types";
 import { compareCodes, dependentsClosure, isUnitSellable, requiredClosure, type ErpCatalogIndex } from "./catalog";
 
 export type ErpControlMode = "legacy" | "shadow" | "enforced";
@@ -368,15 +368,17 @@ export function displayDivergences(
   status: { display?: string | null; displays?: readonly { code: string; display: string }[] | null } | null,
 ): { supported: boolean | null; divergences: string[] } {
   if (!status) return { supported: null, divergences: [] };
-  if (!Array.isArray(status.displays)) return { supported: false, divergences: [] };
+  // só o campo AUSENTE quer dizer ERP sem a fase A; null é "nenhuma escolha ainda"
+  if (status.displays === undefined) return { supported: false, divergences: [] };
   if (!current) return { supported: true, divergences: [] };
   const out: string[] = [];
   const name = (code: string) => `${code} ${index.byCode.get(code)?.name ?? ""}`.trim();
   const fmt = (d: string | null) => (isDisplayMode(d) ? ERP_DISPLAY_SHORT[d] : "o padrão");
   if (current.display && isDisplayMode(status.display) && status.display !== current.display) out.push(`Padrão da empresa: INTEROS ${fmt(current.display)}, ERP ${fmt(status.display)}`);
   const representable = (code: string) => Boolean(index.byCode.get(code)?.unit && index.byCode.get(code)?.v1Key);
+  // os dois lados com o mesmo recorte: o que o ERP não consegue representar nunca vira diferença
   const mine = new Map((current.displays ?? []).filter((d) => representable(d.code)).map((d) => [d.code, d.display as string]));
-  const theirs = new Map(status.displays.map((d) => [d.code, d.display]));
+  const theirs = new Map((status.displays ?? []).filter((d) => representable(d.code)).map((d) => [d.code, d.display]));
   for (const code of [...new Set([...mine.keys(), ...theirs.keys()])].sort(compareCodes)) {
     const a = mine.get(code) ?? null;
     const b = theirs.get(code) ?? null;
@@ -420,4 +422,26 @@ export function buildSnapshot(input: {
 /** Desligamento que pode precisar de aprovação (o servidor completa com os bloqueios da simulação do ERP). */
 export function deactivations(plan: LicensePlan): PlannedChange[] {
   return plan.changes.filter((c) => isOnState(c.from) && (isOffState(c.to) || c.to === "suspension_scheduled"));
+}
+
+const RUNTIME_ON = new Set(["enabled", "scheduled_off"]);
+const RUNTIME_TURNING_OFF = new Set(["disabled", "draining", "scheduled_off"]);
+
+/** Impacto da simulação que desliga agora (ou agenda o desligamento) uma unidade que está ligada no runtime. */
+function turnsOff(i: ErpChangeSimulation["impacts"][number]): boolean {
+  if (i.from && !RUNTIME_ON.has(i.from)) return false; // já em encerramento/desligada: não é desligamento novo
+  if (i.from === "scheduled_off" && i.to === "scheduled_off") return false;
+  return i.action === "disable" || RUNTIME_TURNING_OFF.has(i.to ?? "");
+}
+
+/**
+ * Desligamentos que o ERP faria além do plano (simulação): unidade ligada lá que não está ligada no contratado do
+ * INTEROS (alguém ligou direto no ERP). O retrato é completo, então qualquer envio a desligaria — inclusive um lote só
+ * de exibição. Nunca segue em silêncio: aparece na revisão e pede aprovação. Desligamentos do plano (inclusive os
+ * agendados e a cascata) não contam.
+ */
+export function erpOnlyDisables(plan: Pick<LicensePlan, "changes">, simulation: Pick<ErpChangeSimulation, "impacts"> | null): ErpOnlyOff[] {
+  if (!simulation) return [];
+  const planned = new Set(plan.changes.filter((c) => isOffState(c.to) || c.to === "suspension_scheduled").map((c) => c.code));
+  return simulation.impacts.filter((i) => turnsOff(i) && !(i.unit && planned.has(i.unit))).map((i) => ({ module: i.module, unit: i.unit, name: i.name }));
 }

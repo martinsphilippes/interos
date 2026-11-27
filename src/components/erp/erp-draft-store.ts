@@ -65,7 +65,11 @@ export interface ErpDraftState {
   clear: () => void;
 }
 
-export function useErpDraft(clientId: string, contracted: ReadonlyMap<string, ErpLicenseItem>): ErpDraftState {
+/**
+ * `settled`: o contratado mostrado é confiável (licença registrada no INTEROS, ou a leitura do ERP respondeu). Sem isso
+ * (empresa sem licença e ERP fora do ar), a lista vem vazia e a limpeza apagaria os desligamentos preparados.
+ */
+export function useErpDraft(clientId: string, contracted: ReadonlyMap<string, ErpLicenseItem>, settled = true): ErpDraftState {
   const raw = React.useSyncExternalStore(
     subscribe,
     () => read(clientId),
@@ -76,11 +80,11 @@ export function useErpDraft(clientId: string, contracted: ReadonlyMap<string, Er
   // o que já é o contratado (aplicado por outra pessoa, outra aba ou pelo envio) sai da sessão: não volta a aparecer
   // como pendente se o contratado mudar de novo depois
   React.useEffect(() => {
-    if (!raw) return;
+    if (!raw || !settled) return;
     const all = parse(raw);
     const kept = all.filter((d) => !isNoopDraft(d, contracted.get(d.code)));
     if (kept.length !== all.length) write(clientId, kept.length ? JSON.stringify(kept) : null);
-  }, [raw, contracted, clientId]);
+  }, [raw, contracted, clientId, settled]);
   const set = React.useCallback(
     (code: string, change: ErpDraftChange | null) => {
       const next = new Map(parse(read(clientId)).map((d) => [d.code, d]));
@@ -130,8 +134,11 @@ export interface ErpDisplayDraftState {
   clear: () => void;
 }
 
-/** Exibição preparada por cliente, na sessão do navegador (como a seleção de módulos). Some quando volta ao que vale. */
-export function useErpDisplayDraft(clientId: string, current: { display: ErpDisplayMode | null; displays: ReadonlyMap<string, ErpDisplayMode> }): ErpDisplayDraftState {
+/**
+ * Exibição preparada por cliente, na sessão do navegador (como a seleção de módulos). Some quando volta ao que vale.
+ * `settled` como em `useErpDraft`: sem estado confiável, nada é apagado da sessão.
+ */
+export function useErpDisplayDraft(clientId: string, current: { display: ErpDisplayMode | null; displays: ReadonlyMap<string, ErpDisplayMode> }, settled = true): ErpDisplayDraftState {
   const key = displayKeyOf(clientId);
   const raw = React.useSyncExternalStore(
     subscribe,
@@ -163,11 +170,11 @@ export function useErpDisplayDraft(clientId: string, current: { display: ErpDisp
     [clientId, key, prune],
   );
   React.useEffect(() => {
-    if (!raw) return;
+    if (!raw || !settled) return;
     const prev = parseDisplay(raw);
     const pruned = prune(prev);
     if ((pruned.companyDefault ?? null) !== (prev.companyDefault ?? null) || Object.keys(pruned.units ?? {}).length !== Object.keys(prev.units ?? {}).length) save(pruned);
-  }, [raw, prune, save]);
+  }, [raw, prune, save, settled]);
   const setCompanyDefault = React.useCallback((display: ErpDisplayMode | null) => save({ ...parseDisplay(read(clientId, key)), companyDefault: display }), [save, clientId, key]);
   const setUnit = React.useCallback(
     (code: string, display: ErpDisplayMode | null | undefined) => {

@@ -20,8 +20,8 @@ import {
   deactivations,
   displayChangeParts,
   displayDivergences,
+  erpOnlyDisables,
   hasDisplayWork,
-  isOffState,
   planDisplayChanges,
   planLicenseChanges,
   type CurrentDisplay,
@@ -169,19 +169,6 @@ function summarizeSimulation(index: ErpCatalogIndex, plan: ErpLicensePlanResult,
     companyNotice: plan.companyNotice ?? null,
     nextTransitionAt: plan.nextTransitionAt ?? null,
   };
-}
-
-const isDisableImpact = (i: ErpChangeSimulation["impacts"][number]) => i.action === "disable" || i.to === "disabled" || i.to === "draining";
-
-/**
- * Desligamentos que o ERP faria além do plano (simulação): unidade ligada lá que não está ligada no contratado do
- * INTEROS (alguém ligou direto no ERP). O retrato é completo, então qualquer envio a desligaria — inclusive um lote só
- * de exibição. Nunca segue em silêncio: aparece na revisão e pede aprovação.
- */
-export function erpOnlyDisables(plan: LicensePlan, simulation: ErpChangeSimulation | null): ErpOnlyOff[] {
-  if (!simulation) return [];
-  const planned = new Set(plan.changes.filter((c) => isOffState(c.to)).map((c) => c.code));
-  return simulation.impacts.filter((i) => isDisableImpact(i) && !(i.unit && planned.has(i.unit))).map((i) => ({ module: i.module, unit: i.unit, name: i.name }));
 }
 
 /**
@@ -341,6 +328,11 @@ export interface SubmitInput {
   canApprove: boolean;
   /** Licença inicial de empresa recém-criada pelo INTEROS: o retrato é exatamente a seleção (não parte do ERP). */
   startEmpty?: boolean;
+  /**
+   * Chaves do runtime que a revisão mostrou como "o ERP também vai desligar". Se a confirmação encontrar outra, não
+   * segue (nem para quem pode aprovar): a pessoa revisa de novo. Ausente = sem conferência (chamadas internas).
+   */
+  reviewedErpOnlyOff?: readonly string[] | null;
 }
 
 /**
@@ -358,9 +350,23 @@ export async function submitLicenseChange(input: SubmitInput): Promise<ErpChange
   }
   if (!review.plan.changes.length && !hasDisplayWork(review.displayPlan) && !review.controlMode && !review.initial) throw new ErpChangeBlocked("Nada a alterar: a seleção já é o contratado.", "sem_mudanca");
   // O retrato é completo: sem a simulação não dá para ver o que está em andamento (caixa aberto, notas pendentes) nem
-  // o que o ERP desligaria por estar ligado só lá. Nenhum envio segue sem ela.
-  if (!review.simulation) {
-    throw new ErpChangeBlocked("O ERP não respondeu à simulação. Ela mostra o que está em andamento e o que o envio desligaria: tente de novo em instantes.", "erp_indisponivel");
+  // o que o ERP desligaria por estar ligado só lá. Nenhum envio segue sem ela — exceto a licença inicial da empresa
+  // recém-criada pelo INTEROS (nada foi ligado lá fora da seleção): ela fica registrada, e o envio simula de novo antes
+  // de cada tentativa.
+  if (!review.simulation && !(input.startEmpty && review.initial)) {
+    throw new ErpChangeBlocked(
+      `Sem a simulação do ERP o envio não segue (ela mostra o que está em andamento e o que o envio desligaria). ${review.simulationError ?? "O ERP não respondeu."} Tente de novo em instantes.`,
+      "erp_indisponivel",
+    );
+  }
+  // O ERP pode ter mudado entre a revisão e a confirmação: se agora o envio desligaria algo ligado só lá que a pessoa
+  // não viu na revisão, não segue — nem para quem pode aprovar (seria aprovar o que ninguém viu).
+  if (input.reviewedErpOnlyOff) {
+    const seen = new Set(input.reviewedErpOnlyOff);
+    const fresh = review.erpOnlyOff.filter((o) => !seen.has(o.module));
+    if (fresh.length) {
+      throw new ErpChangeBlocked(`O ERP mudou desde a revisão: agora este envio também desligaria ${fresh.map(offLabel).join(", ")}, ligado lá fora do contratado. Revise de novo.`, "versao_mudou");
+    }
   }
 
   const needsApproval = review.requiresApproval && !input.canApprove;
@@ -476,6 +482,36 @@ async function afterApprovalRequested(change: ErpChangeRequest): Promise<void> {
 }
 
 const actorHeader = (who: UserRef) => `${who.name} (${who.id})`.slice(0, 200);
+const offLabel = (o: ErpOnlyOff) => (o.unit ? `${o.unit} ${o.name}` : o.name);
+
+/**
+ * Antes de cada envio (inclusive as novas tentativas, que podem vir horas depois), simula de novo o MESMO retrato: se
+ * desde o pedido o ERP passou a ter algo ligado só lá, o envio o desligaria sem ninguém ver. Nesse caso não envia e
+ * para de tentar (a pessoa cancela e pede de novo). ERP fora do ar conta como tentativa que falhou (tenta de novo).
+ */
+async function erpChangedSince(change: ErpChangeRequest): Promise<ErpChangeError | null> {
+  if (!change.snapshot || !change.erpCompanyId) return null;
+  const loaded = await getCurrentCatalog(change.environment).catch(() => null);
+  if (!loaded) return null;
+  try {
+    const res = await simulateLicense(change.erpCompanyId, change.snapshot);
+    const simulation = summarizeSimulation(loaded.index, res.data, res.requestId, nowIso());
+    const known = new Set((change.erpOnlyOff ?? []).map((o) => o.module));
+    const fresh = erpOnlyDisables({ changes: change.plan }, simulation).filter((o) => !known.has(o.module));
+    if (!fresh.length) return null;
+    const names = fresh.map((o) => (o.unit ? `${o.unit} ${loaded.index.byCode.get(o.unit)?.name ?? o.name}` : o.name)).join(", ");
+    return {
+      code: "erp_mudou",
+      message: `Não enviado: desde o pedido, o ERP passou a ter ligado ${names}, fora do contratado no INTEROS, e este retrato também desligaria. Cancele e peça de novo para revisar.`,
+      kind: "rejected",
+      retryable: false,
+      requestId: res.requestId,
+      at: nowIso(),
+    };
+  } catch (error) {
+    return errorOf(error, nowIso());
+  }
+}
 
 function errorOf(error: unknown, at: string): ErpChangeError {
   if (error instanceof ErpError) return { code: error.code, message: erpErrorSummary(error) + (error.kind === "rejected" || error.kind === "auth" ? ` (${error.message})` : ""), kind: error.kind, retryable: error.retryable, requestId: error.requestId, at };
@@ -503,6 +539,8 @@ export async function sendLicenseChange(id: string): Promise<ErpChangeRequest> {
     proceed = true;
   });
   if (!proceed) return (await getChange(id)) ?? change;
+  const changedSince = await erpChangedSince(change);
+  if (changedSince) return failed(id, changedSince);
   try {
     const res = await putLicense(change.erpCompanyId, change.snapshot, { eventId: change.id, actor: actorHeader(change.approval && !change.approval.self ? change.approval.by : change.requestedBy) });
     return await finish(id, res.data, res.requestId);

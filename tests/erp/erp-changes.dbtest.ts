@@ -23,9 +23,11 @@ import { RUNTIME_KEYS, createFakeErp, type FakeErp } from "./fake-erp";
 const RUN = `erp${Date.now().toString(36)}`;
 const CLIENT_A = `${RUN}_a`;
 const CLIENT_B = `${RUN}_b`;
-const CLIENTS = [CLIENT_A, CLIENT_B];
+const CLIENT_C = `${RUN}_c`;
+const CLIENTS = [CLIENT_A, CLIENT_B, CLIENT_C];
 const COMPANY_A = `${RUN}companyA`;
 const COMPANY_B = `${RUN}companyB`;
+const COMPANY_C = `${RUN}companyC`;
 const ANA = { id: `${RUN}_ana`, name: "Ana Comercial" };
 const BRUNO = { id: `${RUN}_bruno`, name: "Bruno Diretor" };
 const ENV_KEYS = ["ERP_INTERCERT_URL", "ERP_INTERCERT_AMBIENTE", "ERP_INTERCERT_TOKEN_LICENCAS", "ERP_INTERCERT_SEGREDO_ASSINATURA"] as const;
@@ -34,14 +36,22 @@ let erp: FakeErp;
 
 const licenseOf = (clientId: string) => getById<ErpLicenseRecord>(COLLECTIONS.erpLicenses, `homologacao__${clientId}`);
 const putsOf = (eventId: string) => erp.calls.filter((c) => c.method === "PUT" && c.eventId === eventId);
-async function blocked(promise: Promise<unknown>): Promise<string> {
+async function blockedError(promise: Promise<unknown>): Promise<ErpChangeBlocked> {
   try {
     await promise;
   } catch (error) {
-    if (error instanceof ErpChangeBlocked) return error.code;
+    if (error instanceof ErpChangeBlocked) return error;
     throw error;
   }
   throw new Error("esperava ErpChangeBlocked");
+}
+const blocked = async (promise: Promise<unknown>) => (await blockedError(promise)).code;
+/** Unidades com chave no runtime que não estão contratadas no INTEROS nem ligadas no ERP (para "ligar direto no ERP"). */
+async function spareUnits(clientId: string, company: string): Promise<[string, string][]> {
+  const record = await licenseOf(clientId);
+  const contracted = new Set((record?.current?.items ?? []).filter((i) => ["active", "trial", "suspension_scheduled"].includes(i.state)).map((i) => i.code));
+  const c = erp.companies.get(company)!;
+  return Object.entries(RUNTIME_KEYS).filter(([unit, key]) => !contracted.has(unit) && c.modules.get(key) !== "enabled" && c.modules.get(key) !== "draining");
 }
 
 beforeAll(async () => {
@@ -57,14 +67,18 @@ beforeAll(async () => {
   // A: PDV, caixa, produtos, fornecedores e pedidos de compra ligados hoje. B: só produtos.
   erp.addCompany(COMPANY_A, "Loja A", ["01.03", "01.04", "05.04", "07.01", "07.02"]);
   erp.addCompany(COMPANY_B, "Loja B", ["01.04"]);
+  // C: criada agora pelo INTEROS (nada ligado ainda)
+  erp.addCompany(COMPANY_C, "Loja C", []);
   for (const [id, name] of [
     [CLIENT_A, "Loja A Teste"],
     [CLIENT_B, "Loja B Teste"],
+    [CLIENT_C, "Loja C Teste"],
   ]) {
     await create<Client>(COLLECTIONS.clients, { legalName: name, tradeName: name, status: "ativo", address: {}, mrr: 0, tags: [] } as unknown as Parameters<typeof create<Client>>[1], id);
   }
   await linkClientToErp({ clientId: CLIENT_A, environment: "homologacao", erpCompanyId: COMPANY_A, erpCompanyName: "Loja A", cnpj: null, erpKind: "varejo", method: "identificacao", actor: ANA });
   await linkClientToErp({ clientId: CLIENT_B, environment: "homologacao", erpCompanyId: COMPANY_B, erpCompanyName: "Loja B", cnpj: null, erpKind: "varejo", method: "identificacao", actor: ANA });
+  await linkClientToErp({ clientId: CLIENT_C, environment: "homologacao", erpCompanyId: COMPANY_C, erpCompanyName: "Loja C", cnpj: null, erpKind: "varejo", method: "identificacao", actor: ANA });
 });
 
 afterAll(async () => {
@@ -295,7 +309,9 @@ describe("exibição do desligado (fase A)", () => {
     const puts = erp.calls.filter((c) => c.method === "PUT").length;
     erp.failSimulations(2); // a simulação tenta duas vezes
     try {
-      expect(await blocked(submitLicenseChange({ clientId: CLIENT_A, draft: [], display: { units: [{ code: "05.20", display: null }] }, baseVersion: record!.issuedVersion, reason: "Teste sem simulação", actor: ANA, canApprove: false }))).toBe("erp_indisponivel");
+      const error = await blockedError(submitLicenseChange({ clientId: CLIENT_A, draft: [], display: { units: [{ code: "05.20", display: null }] }, baseVersion: record!.issuedVersion, reason: "Teste sem simulação", actor: ANA, canApprove: false }));
+      expect(error.code).toBe("erp_indisponivel");
+      expect(error.message).toMatch(/^Sem a simulação do ERP o envio não segue .+ Tente de novo em instantes\.$/);
     } finally {
       erp.failSimulations(0);
     }
@@ -350,6 +366,71 @@ describe("exibição do desligado (fase A)", () => {
       { code: "05.04", display: "locked" },
       { code: "05.20", display: "upsell" },
     ]);
+  });
+});
+
+describe("revisão 2: simulação, confirmação e novas tentativas", () => {
+  it("licença inicial da empresa criada pelo INTEROS fica registrada sem a simulação, e a sincronização envia depois", async () => {
+    erp.failSimulations(4); // revisão e envio tentam duas vezes cada
+    let change: ErpChangeRequest;
+    try {
+      change = await submitLicenseChange({ clientId: CLIENT_C, draft: [{ code: "05.04", state: "active" }], controlMode: "enforced", baseVersion: 0, reason: "Licença inicial da implantação", actor: ANA, canApprove: true, startEmpty: true });
+    } finally {
+      erp.failSimulations(0);
+    }
+    expect(change.status).toBe("falhou");
+    expect(change.lastError?.retryable).toBe(true);
+    expect(putsOf(change.id)).toHaveLength(0);
+    await processPendingErpChanges(new Date(Date.parse(change.nextAttemptAt!) + 1000));
+    const done = await getChange(change.id);
+    expect(done?.status).toBe("aplicada");
+    expect(done?.snapshot?.items.map((i) => i.code)).toContain("05.04");
+    expect(done?.snapshot?.controlMode).toBe("enforced");
+    expect(erp.companies.get(COMPANY_C)?.mode).toBe("enforced");
+  });
+
+  it("quem pode aprovar também não desliga o que não viu: o ERP ligou outra unidade depois da revisão", async () => {
+    const a = erp.companies.get(COMPANY_A)!;
+    const record = (await licenseOf(CLIENT_A))!;
+    const [[unit, key]] = await spareUnits(CLIENT_A, COMPANY_A);
+    const display = { units: [{ code: "05.04", display: "upsell" as const }] };
+    const review = await reviewLicenseChange({ clientId: CLIENT_A, draft: [], display });
+    expect(review.erpOnlyOff).toEqual([]);
+    a.modules.set(key, "enabled"); // ligada direto no ERP com a revisão aberta
+    const input = { clientId: CLIENT_A, draft: [], display, baseVersion: record.issuedVersion, reason: "Aprovador confirmando", actor: BRUNO, canApprove: true };
+    expect(await blocked(submitLicenseChange({ ...input, reviewedErpOnlyOff: review.erpOnlyOff.map((o) => o.module) }))).toBe("versao_mudou");
+    expect(a.modules.get(key)).toBe("enabled");
+    // revisada de novo (agora a revisão mostra), segue aprovada por quem pode aprovar
+    const again = await reviewLicenseChange({ clientId: CLIENT_A, draft: [], display });
+    expect(again.erpOnlyOff.map((o) => o.unit)).toEqual([unit]);
+    const change = await submitLicenseChange({ ...input, reviewedErpOnlyOff: again.erpOnlyOff.map((o) => o.module) });
+    expect(change.status).toBe("aplicada");
+    expect(change.approval).toMatchObject({ self: true });
+    expect(a.modules.get(key)).toBe("disabled");
+  });
+
+  it("nova tentativa simula de novo: se o ERP ligou algo só lá desde o pedido, não envia e para de tentar", async () => {
+    const a = erp.companies.get(COMPANY_A)!;
+    const record = (await licenseOf(CLIENT_A))!;
+    erp.failNextPut("network");
+    const change = await submitLicenseChange({ clientId: CLIENT_A, draft: [], display: { units: [{ code: "05.04", display: null }] }, baseVersion: record.issuedVersion, reason: "Teste de nova tentativa", actor: ANA, canApprove: false });
+    expect(change.status).toBe("falhou");
+    const [[, key]] = await spareUnits(CLIENT_A, COMPANY_A);
+    const before = a.modules.get(key);
+    a.modules.set(key, "enabled"); // ligada direto no ERP depois do pedido
+    const puts = putsOf(change.id).length;
+    await processPendingErpChanges(new Date(Date.parse(change.nextAttemptAt!) + 1000));
+    const after = await getChange(change.id);
+    expect(after?.status).toBe("falhou");
+    expect(after?.lastError).toMatchObject({ code: "erp_mudou", retryable: false });
+    expect(after?.nextAttemptAt).toBeNull();
+    expect(putsOf(change.id).length).toBe(puts);
+    expect(a.modules.get(key)).toBe("enabled");
+    // a pessoa cancela; a empresa fica livre para um pedido novo
+    expect((await cancelLicenseChange(change.id, BRUNO, "O ERP mudou desde o pedido")).status).toBe("cancelada");
+    expect((await licenseOf(CLIENT_A))?.openChangeId ?? null).toBeNull();
+    if (before === undefined) a.modules.delete(key);
+    else a.modules.set(key, before);
   });
 });
 

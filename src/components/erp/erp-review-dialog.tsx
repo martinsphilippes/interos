@@ -78,7 +78,7 @@ function ReviewDialogInner({ onOpenChange, clientId, draft, display = null, cont
     if (!review) return;
     setSending(true);
     setError(null);
-    const res = await submitErpChangesAction({ clientId, draft, display, controlMode, baseVersion: review.baseVersion, reason, contractReference: contractRef || null }).catch(() => ({
+    const res = await submitErpChangesAction({ clientId, draft, display, controlMode, baseVersion: review.baseVersion, reason, contractReference: contractRef || null, reviewedErpOnlyOff: review.erpOnlyOff.map((o) => o.module) }).catch(() => ({
       ok: false as const,
       error: "A conexão caiu durante o envio. Recarregue a aba: se o ERP recebeu, a alteração aparece em andamento (o reenvio usa a mesma chave, sem duplicar).",
       code: undefined,
