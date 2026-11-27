@@ -277,7 +277,7 @@ function SimulationView({ review }: { review: ReviewSummary }) {
         </p>
       ))}
       {sim.companyNotice ? <p className="text-xs text-muted">{sim.companyNotice}</p> : null}
-      <p className="text-xs text-muted-light">Testes, agendamentos e encerramentos são aplicados pela rotina diária do ERP (até 24 h depois da data).</p>
+      <p className="text-xs text-muted-light">Testes, agendamentos e encerramentos valem na data: o ERP aplica sozinho, sem esperar a rotina diária.</p>
     </section>
   );
 }

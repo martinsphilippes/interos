@@ -344,8 +344,8 @@ function Workspace({ clientId, clientName, view, caps, initialView }: ErpWorkspa
 }
 
 const DATE_COPY: Record<DateActionKind, { title: string; label: string; hint: string }> = {
-  trial: { title: "Liberar teste", label: "Teste até", hint: "Fica ligado até o fim do dia escolhido; depois o ERP desliga sozinho (rotina diária, até 24 h depois)." },
-  activation_scheduled: { title: "Agendar ativação", label: "Ativar em", hint: "Continua desligado até a data; o ERP liga na rotina diária." },
+  trial: { title: "Liberar teste", label: "Teste até", hint: "Fica ligado até o fim do dia escolhido; depois o ERP desliga sozinho, já na data." },
+  activation_scheduled: { title: "Agendar ativação", label: "Ativar em", hint: "Continua desligado até a data; o ERP liga sozinho na data." },
   suspension_scheduled: { title: "Agendar desligamento", label: "Desligar em", hint: "Continua ligado até a data. Pendências em andamento seguem a regra do ERP (mostrada na revisão)." },
 };
 
