@@ -238,15 +238,18 @@ com as credenciais de homologação. Dados de teste: dois clientes "TESTE HML", 
 | Cenário | Resultado |
 | --- | --- |
 | Vincular empresa existente | Aurora (empresa A do piloto) achada pelo CNPJ e vinculada; a aba mostrou "Licença ainda não registrada pelo INTEROS · ERP na v1" |
-| Criar empresa pelo INTEROS | Empresa, administrador e convite criados. A licença inicial foi recusada (`403 company_not_allowed`): a empresa nova não estava na lista `empresas` da credencial de licenças. Incluída a empresa e publicado o ERP, "Tentar de novo" aplicou (v1) |
-| Convite e pedido de módulo | O administrador ativou o acesso, entrou no ERP e pediu Cotações de compra (05.02); o aviso chegou na hora e virou tarefa de vendas |
-| Alteração de módulo | Primeira licença da Aurora pelo INTEROS: 03.13 Importação de CT-e com 05.06 Recebimento por dependência, simulada e aplicada (v2) |
+| Criar empresa pelo INTEROS | Empresa, administrador e convite criados. A licença inicial foi recusada (`403 company_not_allowed`): a empresa nova não estava na lista `empresas` da credencial de licenças. Incluída a empresa e publicado o ERP, "Tentar de novo" aplicou a licença versão 1 |
+| Convite e pedido de módulo | O administrador ativou o acesso, entrou no ERP e pediu 05.02 Cotação com fornecedores; o aviso chegou na hora e virou tarefa de vendas |
+| Alteração de módulo | Primeira licença da Aurora pelo INTEROS: 03.13 Importação de CT-e com 05.06 Recebimento por dependência, simulada e aplicada (licença versão 2) |
 | "Basta um" no catálogo real | 02.09 e 02.14 barrados na revisão: exigem 04.01 ou 04.02 |
+| Isolamento | A empresa fora da lista da credencial de licenças foi recusada pelo ERP antes de qualquer gravação |
 | Torre e uso | Torre de Controle e "Uso e limites" das duas empresas, pelas credenciais da Torre e de licenças |
 | Avisos | `license.applied` das duas empresas processados ("a alteração já estava concluída"); nenhum erro no navegador |
 
-Não repetidos nesta rodada (passaram no §12 e nos testes): dois usuários na mesma empresa, desligar com pendência e
-aprovação, falha de assinatura e teste com data.
+Não repetidos nesta rodada (passaram na seção 12 e nos testes): dois usuários na mesma empresa, desligar com pendência e
+aprovação, falha de assinatura e teste com data. Para aprovar a homologação ainda faltam a conferência do histórico de
+licença junto com o time do ERP e a validação do catálogo v2 pelo titular. O mesmo resultado, visto do ERP:
+`docs/interos/pendencias-integracao.md`, §10, no repositório do ERP.
 
 ---
 
@@ -256,8 +259,10 @@ aprovação, falha de assinatura e teste com data.
 2. **Homologação primeiro**: na Vercel, no ambiente **Production** (as prévias do INTEROS não têm banco), defina
    `ERP_INTERCERT_AMBIENTE=homologacao` e as variáveis do ERP de homologação (ver `.env.example`) e publique. O
    endereço da homologação do ERP é o da prévia da branch de integração. Sem as variáveis a aba só explica o que falta
-   — nada é enviado. Empresa criada depois pelo INTEROS só recebe licença quando o ERP inclui o id dela na lista de
-   empresas da credencial de licenças (restrita ao piloto); até lá o ERP responde "empresa não permitida".
+   — nada é enviado. Na homologação, a credencial de licenças é restrita às empresas do piloto: a empresa criada pelo
+   INTEROS só recebe a licença inicial depois que o ERP inclui o id dela na lista e publica de novo. Até lá o ERP
+   responde `403 company_not_allowed`, e a aba mostra "O ERP recusou a credencial do INTEROS… (Esta credencial não
+   pode operar esta empresa.)". Corrigida a lista, use "Tentar de novo".
 3. **Catálogo**: Administração › Integrações › ERP Intercert › "Conferir catálogo agora" (ou abra a aba de qualquer
    cliente).
 4. **Quem vê**: por padrão só diretoria e administradores veem a aba; só administradores alteram e aprovam. Libere por
@@ -266,9 +271,11 @@ aprovação, falha de assinatura e teste com data.
    usam (nada é desligado por omissão). Use o modo "Observação" antes de "Contrato aplicado" se quiser ver o que seria
    bloqueado sem bloquear.
 6. **Produção**: só depois da homologação aprovada, troque para `ERP_INTERCERT_AMBIENTE=producao` com as
-   credenciais de produção e o endereço de produção do ERP. Vínculos e histórico de homologação ficam separados. A
-   credencial de licenças de produção vai **sem lista de empresas** (decisão de 27/11): com lista, cada empresa criada
-   pelo INTEROS ficaria sem licença inicial até o ERP incluir o id e publicar de novo (12.1).
+   credenciais de produção e o endereço de produção do ERP. Vínculos e histórico de homologação ficam separados. As
+   credenciais de produção vão **sem lista de empresas** (decisão de 27/11), e o ERP só deixa a de licenças alcançar as
+   empresas ligadas ao INTEROS: as criadas por ele e as vinculadas com o código do administrador. A empresa criada pelo
+   INTEROS recebe a licença inicial na hora. Uma empresa que já usa o ERP se vincula com o código de vínculo, porque a
+   busca pelo CNPJ só acha empresas já ligadas ao INTEROS (seção 12.1).
 7. **Avisos do ERP** (opcional, seção 17): aplique `20261127000000_erp_eventos.sql`, gere um segredo e salve o mesmo
    valor na Vercel (`ERP_INTERCERT_SEGREDO_EVENTOS`) e no ERP (`INTEROS_OUTBOUND_SECRET`), com
    `INTEROS_EVENTS_URL=https://<domínio do INTEROS>/api/webhooks/erp` no ERP. O endereço exato aparece em
@@ -281,18 +288,20 @@ aprovação, falha de assinatura e teste com data.
 ## 14. Limitações conhecidas e decisões pendentes
 
 - ~~Branches do ERP separadas~~: resolvido em 27/11/2026. O ERP unificado está na `master` do ERP (PR #8), com as
-  quatro APIs num endereço e credencial única por família. Homologado com o INTEROS: a empresa criada pelo INTEROS
-  recebe a licença inicial na hora.
+  quatro APIs num endereço e credencial única por família. Homologado com o INTEROS. A empresa criada pelo INTEROS
+  recebe a licença inicial na hora quando a credencial de licenças não tem lista (produção); na homologação, depois que
+  o ERP inclui o id dela na lista (seção 13, passo 2).
 - Dependências "basta um" do catálogo v2 (`requiredAnyOf`, ex.: 06.12 Comissões exige 06.01, 07.01 ou 12.01): o
   INTEROS mostra no detalhe da unidade, para o lote com a explicação quando nenhuma alternativa fica ligada e desliga
   em cascata quem perde a última alternativa. A escolha da alternativa é de quem pede. Na criação da empresa, o
   assistente não deixa continuar sem a alternativa e o servidor confere de novo ANTES de chamar o ERP (a empresa não
   fica criada lá sem a licença inicial).
 - O catálogo v2 ainda é "proposta" do ERP; preços e pacotes comerciais oficiais são da fase de Gestão de Produtos.
-- Teste, agendamento e encerramento dependem da rotina diária do ERP (até 24 h).
+- Teste, agendamento e encerramento valem na data: o ERP aplica sozinho na primeira requisição da empresa ou na
+  próxima leitura do INTEROS (correção 3 do ERP), sem esperar a rotina diária.
 - O catálogo v2 do ERP unificado traz `companyKinds` por unidade; o INTEROS já lê o campo.
-- Pendências do ERP: validação do catálogo v2 pelo titular (sair de "proposta") e credenciais de homologação e
-  produção.
+- Pendências do ERP: validação do catálogo v2 pelo titular (sair de "proposta") e credenciais de produção, sem lista
+  de empresas (seção 13, passo 6).
 
 ---
 
@@ -399,6 +408,6 @@ tipo novo, empresa sem vínculo, pedido com tarefa e aviso ao comercial, entrega
 por mês, cliente sem comercial, documentos fiscais, transição no formato do ERP, resposta perdida concluída pelo aviso
 sem reenvio, aviso de alteração já concluída, retomada depois de queda e aviso diário em um registro por empresa.
 
-**Pedidos ao time do ERP.** Configurar `INTEROS_EVENTS_URL` e `INTEROS_OUTBOUND_SECRET` em homologação; avaliar se
-`sync.stale` deve continuar para o INTEROS (o INTEROS só envia licença quando algo muda, então o aviso vira rotina) e
-mandar o código comercial da unidade (`05.02`) nas mudanças de `license.transition`, além da chave interna do módulo.
+**Pedidos ao time do ERP (atendidos em 27/11).** Os avisos estão configurados na homologação e chegam na hora (seção
+12.1). O `sync.stale` passou a contar desde a última confirmação, e as mudanças de `license.transition` trazem o código
+comercial da unidade (`05.02`) além da chave interna do módulo (pendências do ERP, §8, itens 3 e 4).

@@ -81,7 +81,7 @@ export function ErpLinkPanel({ clientId, view, canProvision, defaults }: { clien
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             <Link2 className="size-4 text-muted" aria-hidden /> Vincular empresa que já usa o ERP
           </h3>
-          <p className="text-sm text-muted">Procura pelo CNPJ deste cliente. Também dá para vincular com o código gerado pelo administrador da empresa no ERP.</p>
+          <p className="text-sm text-muted">Procura pelo CNPJ deste cliente entre as empresas que o ERP libera para o INTEROS. Uma empresa que ainda não foi liberada se vincula com o código gerado pelo administrador dela no ERP.</p>
           <div className="mt-auto flex flex-wrap gap-2">
             <Button variant="outline" onClick={search} loading={searching}>
               <Search aria-hidden /> Procurar pelo CNPJ
@@ -113,7 +113,7 @@ export function ErpLinkPanel({ clientId, view, canProvision, defaults }: { clien
                 ))}
               </ul>
             ) : (
-              <p className="mt-2 text-sm text-muted">Nenhuma empresa do ERP com o CNPJ deste cliente.</p>
+              <p className="mt-2 text-sm text-muted">Nenhuma empresa liberada para o INTEROS com o CNPJ deste cliente. Se ela já usa o ERP, peça ao administrador dela o código de vínculo e use “Tenho o código de vínculo”.</p>
             )
           ) : null}
         </section>
