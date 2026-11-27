@@ -35,6 +35,10 @@ divergentes**, que precisam ser unificadas pelo time do ERP:
 
 A `master` do ERP não tem API para o INTEROS. Um merge de teste das duas branches deu **11 arquivos em conflito**.
 
+> **Atualização (27/11/2026):** as duas branches foram unificadas e estão na `master` do ERP (PR #8 do repositório do
+> ERP): as APIs ficam num endereço só e as três credenciais usam `Bearer <id>.<segredo>`, com escopos de uma família
+> cada. O que ainda falta do lado do ERP está na seção 14.
+
 **Riscos encontrados no ERP (para o time do ERP decidir):**
 
 1. As duas branches usam o mesmo prefixo `/api/interos/v1` com contratos diferentes (rotas e envelopes em conflito).
@@ -165,11 +169,13 @@ Toda action confere a permissão e o escopo do cliente no servidor; a interface 
 | API do ERP | Uso | Variáveis |
 | --- | --- | --- |
 | Licenças v2 + módulos v1 | catálogo, licença, simulação, envio assinado, histórico, uso, estado operacional | `ERP_INTERCERT_URL`, `ERP_INTERCERT_AMBIENTE`, `ERP_INTERCERT_TOKEN_LICENCAS`, `ERP_INTERCERT_SEGREDO_ASSINATURA` |
-| Provisionamento v1 | criar empresa, vincular com código, retomar implantação, reenviar convite | `ERP_INTERCERT_CREDENCIAL_PROVISIONAMENTO` (+ `ERP_INTERCERT_URL_PROVISIONAMENTO` se em outro endereço) |
-| Torre de Controle v1 | resumo e adoção | `ERP_INTERCERT_CREDENCIAL_TORRE` (+ `ERP_INTERCERT_URL_TORRE` se em outro endereço) |
+| Provisionamento v1 | criar empresa, vincular com código, retomar implantação, reenviar convite | `ERP_INTERCERT_CREDENCIAL_PROVISIONAMENTO` |
+| Torre de Controle v1 | resumo e adoção | `ERP_INTERCERT_CREDENCIAL_TORRE` |
 | Avisos do ERP (ERP → INTEROS) | `POST /api/webhooks/erp`, assinado com `X-ERP-Signature` (seção 17) | `ERP_INTERCERT_SEGREDO_EVENTOS` (no ERP: `INTEROS_OUTBOUND_SECRET` com o mesmo valor e `INTEROS_EVENTS_URL`) |
 
-Detalhes de cada variável em `.env.example`. Os valores nunca aparecem em tela nem em registro.
+Detalhes de cada variável em `.env.example`. Os valores nunca aparecem em tela nem em registro. Desde a unificação do
+ERP (27/11/2026), as três APIs ficam no mesmo endereço (`ERP_INTERCERT_URL`) e as três credenciais têm o formato
+`<id>.<segredo>`, cada uma com escopos de uma família só (`docs/interos/credenciais.md` no repositório do ERP).
 
 ---
 
@@ -229,8 +235,11 @@ cancelado); a homologação achou um terceiro (resultado da criação da empresa
 ## 13. Ativação gradual
 
 1. **Migration**: `supabase/migrations/20261126000000_erp_intercert.sql` aplicada no Supabase (aditiva, 4 coleções).
-2. **Homologação primeiro**: na Vercel, defina `ERP_INTERCERT_AMBIENTE=homologacao` e as variáveis do ERP de
-   homologação (ver `.env.example`) e publique. Sem as variáveis a aba só explica o que falta — nada é enviado.
+2. **Homologação primeiro**: na Vercel, no ambiente **Production** (as prévias do INTEROS não têm banco), defina
+   `ERP_INTERCERT_AMBIENTE=homologacao` e as variáveis do ERP de homologação (ver `.env.example`) e publique. O
+   endereço da homologação do ERP é o da prévia da branch de integração. Sem as variáveis a aba só explica o que falta
+   — nada é enviado. Empresa criada depois pelo INTEROS só recebe licença quando o ERP inclui o id dela na lista de
+   empresas da credencial de licenças (restrita ao piloto); até lá o ERP responde "empresa não permitida".
 3. **Catálogo**: Administração › Integrações › ERP Intercert › "Conferir catálogo agora" (ou abra a aba de qualquer
    cliente).
 4. **Quem vê**: por padrão só diretoria e administradores veem a aba; só administradores alteram e aprovam. Libere por
@@ -238,8 +247,8 @@ cancelado); a homologação achou um terceiro (resultado da criação da empresa
 5. **Primeiras empresas**: vincule 2 ou 3 clientes piloto; a primeira alteração de cada um registra o retrato do que já
    usam (nada é desligado por omissão). Use o modo "Observação" antes de "Contrato aplicado" se quiser ver o que seria
    bloqueado sem bloquear.
-6. **Produção**: só depois do ERP unificado e homologado, troque para `ERP_INTERCERT_AMBIENTE=producao` com as
-   credenciais de produção. Vínculos e histórico de homologação ficam separados.
+6. **Produção**: só depois da homologação aprovada, troque para `ERP_INTERCERT_AMBIENTE=producao` com as
+   credenciais de produção e o endereço de produção do ERP. Vínculos e histórico de homologação ficam separados.
 7. **Avisos do ERP** (opcional, seção 17): aplique `20261127000000_erp_eventos.sql`, gere um segredo e salve o mesmo
    valor na Vercel (`ERP_INTERCERT_SEGREDO_EVENTOS`) e no ERP (`INTEROS_OUTBOUND_SECRET`), com
    `INTEROS_EVENTS_URL=https://<domínio do INTEROS>/api/webhooks/erp` no ERP. O endereço exato aparece em
@@ -251,15 +260,19 @@ cancelado); a homologação achou um terceiro (resultado da criação da empresa
 
 ## 14. Limitações conhecidas e decisões pendentes
 
-- Enquanto as duas branches do ERP não forem unificadas, empresa criada pelo provisionamento não aparece na API de
-  licenças (licença inicial fica aguardando) e o vínculo por código (branch do provisionamento) não vale para a API de
-  licenças (branch de módulos).
+- ~~Branches do ERP separadas~~: resolvido em 27/11/2026. O ERP unificado está na `master` do ERP (PR #8), com as
+  quatro APIs num endereço e credencial única por família. Homologado com o INTEROS: a empresa criada pelo INTEROS
+  recebe a licença inicial na hora.
+- Dependências "basta um" do catálogo v2 (`requiredAnyOf`, ex.: 06.12 Comissões exige 06.01, 07.01 ou 12.01): o
+  INTEROS mostra no detalhe da unidade, para o lote com a explicação quando nenhuma alternativa fica ligada e desliga
+  em cascata quem perde a última alternativa. A escolha da alternativa é de quem pede. Na criação da empresa, o
+  assistente não deixa continuar sem a alternativa e o servidor confere de novo ANTES de chamar o ERP (a empresa não
+  fica criada lá sem a licença inicial).
 - O catálogo v2 ainda é "proposta" do ERP; preços e pacotes comerciais oficiais são da fase de Gestão de Produtos.
 - Teste, agendamento e encerramento dependem da rotina diária do ERP (até 24 h).
-- O catálogo não traz para quais tipos de empresa cada unidade vale: o assistente de criação ainda mostra unidades de
-  escritório contábil para varejo (o ERP recusa na licença). Pedido ao ERP: preencher `kinds` por unidade.
-- Decisões do time do ERP: unificar as branches e o prefixo `/api/interos`; um vocabulário de módulos; restringir a v1
-  por `companyIds`; idempotência do `POST /empresas`; validar o catálogo; credenciais de homologação e produção.
+- O catálogo v2 do ERP unificado traz `companyKinds` por unidade; o INTEROS já lê o campo.
+- Pendências do ERP: validação do catálogo v2 pelo titular (sair de "proposta") e credenciais de homologação e
+  produção.
 
 ---
 

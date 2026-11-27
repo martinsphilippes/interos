@@ -119,7 +119,10 @@ function ItemDetails({ item, byCode, contracted, draft, canChange, usage, onLoad
         ) : null}
         {item.role === "core" ? <p className="text-muted">Recurso obrigatório da plataforma: sempre ativo para todas as empresas, não entra na contratação.</p> : null}
 
-        <CodeList title="Precisa de (liga junto)" codes={item.requires} byCode={byCode} contracted={contracted} onOpenItem={onOpenItem} empty={isUnit ? "Não depende de outra unidade." : null} />
+        <CodeList title="Precisa de (liga junto)" codes={item.requires} byCode={byCode} contracted={contracted} onOpenItem={onOpenItem} empty={isUnit && !item.requiresAny.length ? "Não depende de outra unidade." : null} />
+        {item.requiresAny.map((group) => (
+          <CodeList key={group.join()} title="Precisa de um destes (basta um)" codes={group} byCode={byCode} contracted={contracted} onOpenItem={onOpenItem} empty={null} />
+        ))}
         {isUnit ? <CodeList title="Usado por (desliga junto)" codes={item.dependents} byCode={byCode} contracted={contracted} onOpenItem={onOpenItem} empty="Nenhuma outra unidade depende desta." /> : null}
         <CodeList title="Opcionais que combinam" codes={item.optional} byCode={byCode} contracted={contracted} onOpenItem={onOpenItem} empty={null} />
 

@@ -101,7 +101,7 @@ export interface PlannedChange {
 
 export interface PlanIssue {
   code: string;
-  reason: "nao_e_unidade" | "nao_vendavel" | "data_invalida" | "repetida" | "sem_mudanca";
+  reason: "nao_e_unidade" | "nao_vendavel" | "data_invalida" | "repetida" | "sem_mudanca" | "falta_alternativa";
   message: string;
 }
 
@@ -182,6 +182,23 @@ export function planLicenseChanges(index: ErpCatalogIndex, currentItems: readonl
     next.set(added.code, { code: added.code, state: "active" });
     onNow.add(added.code);
     changes.set(added.code, { code: added.code, from: before?.state ?? null, to: "active", origin: "dependencia", relatedTo: added.requiredBy });
+  }
+
+  // "Basta um": quem passa a ficar ligado precisa de pelo menos uma alternativa de cada grupo ligada (ou entrando no
+  // lote). A escolha é de quem pede (não se adivinha qual): o lote para com a explicação.
+  const willBeOn = (code: string) => {
+    const state = next.get(code)?.state;
+    return isOnState(state) || state === "activation_scheduled";
+  };
+  const labelOf = (code: string) => `${code} ${index.byCode.get(code)?.name ?? ""}`.trim();
+  for (const change of [...changes.values()]) {
+    if (!(isOnState(change.to) || change.to === "activation_scheduled")) continue;
+    for (const group of index.requiredAnyUnitsOf(change.code)) {
+      if (group.some(willBeOn)) continue;
+      const names = group.map(labelOf);
+      const options = names.length > 1 ? `${names.slice(0, -1).join(", ")} ou ${names[names.length - 1]}` : names[0];
+      errors.push({ code: change.code, reason: "falta_alternativa", message: `${index.byCode.get(change.code)?.name ?? change.code} exige um destes: ${options}. Inclua um deles no pedido.` });
+    }
   }
 
   // Cascata de quem desliga (agora ou na data agendada): dependentes ainda ligados perderiam a dependência. O ERP

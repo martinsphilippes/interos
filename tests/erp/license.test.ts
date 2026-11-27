@@ -5,7 +5,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { indexCatalog, normalizeCatalog } from "@/domain/erp/catalog";
+import { catalogDiff, indexCatalog, normalizeCatalog } from "@/domain/erp/catalog";
 import { buildSnapshot, deactivations, isOnState, planLicenseChanges, type ErpLicenseItem } from "@/domain/erp/license";
 
 const index = indexCatalog(normalizeCatalog(JSON.parse(readFileSync(new URL("./fixtures/catalogo-v2-recorte.json", import.meta.url), "utf8"))));
@@ -106,5 +106,51 @@ describe("buildSnapshot", () => {
       { code: "05.02", state: "trial", until: FUTURE, effectiveAt: null, reason: null },
     ]);
     expect(s.items.some((i) => /^\d\d$/.test(i.code))).toBe(false);
+  });
+});
+
+describe("dependências \"basta um\" (requiredAnyOf do catálogo v2)", () => {
+  // O recorte não tem unidade com "basta um": a 05.08 passa a exigir pedido de compra OU recebimento.
+  const fixture = () => JSON.parse(readFileSync(new URL("./fixtures/catalogo-v2-recorte.json", import.meta.url), "utf8"));
+  const raw = fixture();
+  const reposicao = raw.items.find((i: { code: string }) => i.code === "05.08");
+  reposicao.dependencies = { ...(reposicao.dependencies ?? {}), requiredAnyOf: [["05.04", "05.06"]] };
+  const anyIndex = indexCatalog(normalizeCatalog(raw));
+
+  it("o índice resolve o grupo para unidades e a diferença do catálogo registra a mudança", () => {
+    expect(anyIndex.requiredAnyUnitsOf("05.08")).toEqual([["05.04", "05.06"]]);
+    expect(anyIndex.anyOfDependentUnitsOf("05.06")).toEqual(["05.08"]);
+    expect(anyIndex.requiredAnyUnitsOf("05.02")).toEqual([]);
+    expect(catalogDiff(normalizeCatalog(fixture()), normalizeCatalog(raw)).changed).toContainEqual({ code: "05.08", fields: ["requiresAny"] });
+  });
+
+  it("catálogo gravado por uma versão anterior (sem o campo) continua abrindo e não acusa mudança à toa", () => {
+    const stored = normalizeCatalog(fixture());
+    for (const item of stored.items) delete (item as Partial<typeof item>).requiresAny;
+    expect(() => indexCatalog(stored)).not.toThrow();
+    expect(indexCatalog(stored).requiredAnyUnitsOf("05.08")).toEqual([]);
+    expect(catalogDiff(stored, normalizeCatalog(fixture())).changed).toEqual([]);
+    expect(catalogDiff(stored, normalizeCatalog(raw)).changed).toEqual([{ code: "05.08", fields: ["requiresAny"] }]);
+  });
+
+  it("ligar sem nenhuma das alternativas para o lote, com a explicação (a escolha é de quem pede)", () => {
+    const plan = planLicenseChanges(anyIndex, on("01.04"), [{ code: "05.08", state: "active" }], NOW);
+    expect(plan.errors).toEqual([expect.objectContaining({ code: "05.08", reason: "falta_alternativa" })]);
+    expect(plan.errors[0].message).toBe("Sugestão de reposição exige um destes: 05.04 Pedido de compra ou 05.06 Recebimento de mercadorias. Inclua um deles no pedido.");
+  });
+
+  it("com uma alternativa no mesmo lote (ou já ligada), passa", () => {
+    const plan = planLicenseChanges(anyIndex, [], [{ code: "05.08", state: "active" }, { code: "05.06", state: "active" }], NOW);
+    expect(plan.errors).toEqual([]);
+    expect(plan.items.map((i) => i.code)).toEqual(["01.03", "01.04", "05.06", "05.08"]);
+    expect(planLicenseChanges(anyIndex, on("01.03", "01.04", "05.04"), [{ code: "05.08", state: "active" }], NOW).errors).toEqual([]);
+  });
+
+  it("desligar a única alternativa leva junto, explicitamente; com outra ligada, não", () => {
+    const only = planLicenseChanges(anyIndex, on("01.03", "01.04", "05.06", "05.08"), [{ code: "05.06", state: "inactive" }], NOW);
+    expect(only.changes.find((c) => c.code === "05.08")).toMatchObject({ to: "inactive", origin: "cascata", relatedTo: "05.06" });
+    const both = planLicenseChanges(anyIndex, on("01.03", "01.04", "05.04", "05.06", "05.08"), [{ code: "05.06", state: "inactive" }], NOW);
+    expect(both.changes.find((c) => c.code === "05.08")).toBeUndefined();
+    expect(both.items.find((i) => i.code === "05.08")?.state).toBe("active");
   });
 });

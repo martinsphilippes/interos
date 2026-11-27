@@ -63,6 +63,8 @@ export interface ErpCatalogItem {
   /** Unidade ou item em que este está incluído (sem cobrança própria). */
   includedIn: string | null;
   requires: string[];
+  /** Dependências "basta um" (`requiredAnyOf`): cada grupo exige pelo menos UM dos itens ligado. */
+  requiresAny: string[][];
   optional: string[];
   /** Permissões de perfil do ERP ligadas ao item (só informação: quem usa é decidido no ERP). */
   permissions: string[];
@@ -181,6 +183,7 @@ export function normalizeCatalog(raw: unknown): ErpCatalog {
       unit: str(r.commercialUnit) === code,
       includedIn: str(r.includedIn),
       requires: strList(deps?.required),
+      requiresAny: Array.isArray(deps?.requiredAnyOf) ? (deps.requiredAnyOf as unknown[]).map(strList).filter((group) => group.length > 0) : [],
       optional: strList(deps?.optional),
       permissions: strList(r.permissions),
       routes: strList(r.routes),
@@ -243,6 +246,10 @@ export interface ErpCatalogIndex {
   dependentUnitsOf: (unitCode: string) => readonly string[];
   /** Unidades exigidas diretamente pela unidade dada (dependências diretas resolvidas para unidades). */
   requiredUnitsOf: (unitCode: string) => readonly string[];
+  /** Grupos "basta um" da unidade, resolvidos para unidades: pelo menos uma de cada grupo precisa estar ligada. */
+  requiredAnyUnitsOf: (unitCode: string) => readonly (readonly string[])[];
+  /** Unidades que têm a unidade dada como alternativa num grupo "basta um". */
+  anyOfDependentUnitsOf: (unitCode: string) => readonly string[];
   /** Texto de busca normalizado (código, nome, descrição, observação e chaves v1). */
   searchTextOf: (code: string) => string;
 }
@@ -322,6 +329,22 @@ export function indexCatalog(catalog: ErpCatalog): ErpCatalogIndex {
       (dependentUnits.get(toUnit) ?? dependentUnits.set(toUnit, new Set()).get(toUnit)!).add(fromUnit);
     }
   }
+  // "Basta um": cada grupo vira um conjunto de unidades; grupo satisfeito pela própria unidade não conta.
+  const anyGroups = new Map<string, string[][]>();
+  const anyDependents = new Map<string, Set<string>>();
+  for (const item of catalog.items) {
+    const fromUnit = ownerUnitOf(item.code);
+    if (!fromUnit) continue;
+    // Catálogo gravado antes do campo existir (importado por uma versão anterior do INTEROS) não o tem.
+    for (const group of item.requiresAny ?? []) {
+      const options = [...new Set(group.map((code) => ownerUnitOf(code)).filter((u): u is string => Boolean(u)))].sort(compareCodes);
+      if (!options.length || options.includes(fromUnit)) continue;
+      const list = anyGroups.get(fromUnit) ?? [];
+      if (!list.some((g) => g.join() === options.join())) list.push(options);
+      anyGroups.set(fromUnit, list);
+      for (const option of options) (anyDependents.get(option) ?? anyDependents.set(option, new Set()).get(option)!).add(fromUnit);
+    }
+  }
   const sortedList = (set: Set<string> | undefined) => (set ? [...set].sort(compareCodes) : []);
 
   const searchCache = new Map<string, string>();
@@ -344,6 +367,8 @@ export function indexCatalog(catalog: ErpCatalog): ErpCatalogIndex {
     ownerUnitOf,
     dependentUnitsOf: (unitCode) => sortedList(dependentUnits.get(unitCode)),
     requiredUnitsOf: (unitCode) => sortedList(requiredUnits.get(unitCode)),
+    requiredAnyUnitsOf: (unitCode) => anyGroups.get(unitCode) ?? [],
+    anyOfDependentUnitsOf: (unitCode) => sortedList(anyDependents.get(unitCode)),
     searchTextOf,
   };
 }
@@ -406,19 +431,28 @@ export function requiredClosure(index: ErpCatalogIndex, requested: Iterable<stri
 
 /**
  * Unidades ligadas que deixariam de ter uma dependência obrigatória se as unidades dadas fossem desligadas (cascata em
- * cadeia), com a unidade que as faz cair.
+ * cadeia), com a unidade que as faz cair. Num grupo "basta um", a unidade só cai quando nenhuma alternativa continua
+ * ligada.
  */
 export function dependentsClosure(index: ErpCatalogIndex, turningOff: Iterable<string>, enabled: ReadonlySet<string>): { code: string; because: string }[] {
   const off = new Set(turningOff);
   const out: { code: string; because: string }[] = [];
   const queue = [...off];
+  const stillOn = (code: string) => enabled.has(code) && !off.has(code);
   while (queue.length) {
     const code = queue.shift() as string;
-    for (const dependent of index.dependentUnitsOf(code)) {
-      if (!enabled.has(dependent) || off.has(dependent)) continue;
+    const fall = (dependent: string) => {
       off.add(dependent);
       queue.push(dependent);
       out.push({ code: dependent, because: code });
+    };
+    for (const dependent of index.dependentUnitsOf(code)) {
+      if (!enabled.has(dependent) || off.has(dependent)) continue;
+      fall(dependent);
+    }
+    for (const dependent of index.anyOfDependentUnitsOf(code)) {
+      if (!enabled.has(dependent) || off.has(dependent)) continue;
+      if (index.requiredAnyUnitsOf(dependent).some((group) => group.includes(code) && !group.some(stillOn))) fall(dependent);
     }
   }
   return out.sort((a, b) => compareCodes(a.code, b.code));
@@ -431,7 +465,7 @@ export interface ErpCatalogDiff {
   changed: { code: string; fields: string[] }[];
 }
 
-const DIFF_FIELDS: (keyof ErpCatalogItem)[] = ["name", "devStatus", "available", "commercialClass", "unit", "includedIn", "aliasOf", "requires", "sellable", "kinds"];
+const DIFF_FIELDS: (keyof ErpCatalogItem)[] = ["name", "devStatus", "available", "commercialClass", "unit", "includedIn", "aliasOf", "requires", "requiresAny", "sellable", "kinds"];
 
 /** Diferença entre duas versões do catálogo (novos, retirados, alterados), para o registro da importação. */
 export function catalogDiff(previous: ErpCatalog | null, next: ErpCatalog): ErpCatalogDiff {
@@ -443,7 +477,9 @@ export function catalogDiff(previous: ErpCatalog | null, next: ErpCatalog): ErpC
   for (const [code, item] of after) {
     const old = before.get(code);
     if (!old) continue;
-    const fields = DIFF_FIELDS.filter((f) => JSON.stringify(old[f]) !== JSON.stringify(item[f])).map(String);
+    // Campo ausente num catálogo gravado por uma versão anterior vale como vazio (não é mudança do ERP).
+    const value = (entry: ErpCatalogItem, f: keyof ErpCatalogItem) => JSON.stringify(f === "requiresAny" ? (entry[f] ?? []) : entry[f]);
+    const fields = DIFF_FIELDS.filter((f) => value(old, f) !== value(item, f)).map(String);
     if (fields.length) changed.push({ code, fields });
   }
   return { added: previous ? added : [], removed, changed: changed.sort((a, b) => compareCodes(a.code, b.code)) };
