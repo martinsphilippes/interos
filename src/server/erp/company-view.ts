@@ -41,6 +41,10 @@ export interface ErpItemRow {
   reuses: string | null;
   /** Unidades: dependências obrigatórias e quem depende desta (diretos). */
   requires: string[];
+  /** Unidades: grupos "basta um" (pelo menos uma de cada grupo ligada). */
+  requiresAny: string[][];
+  /** Tipos de empresa a que a unidade se aplica, como o ERP informa (`retail`, `accounting`...); null = todos. */
+  kinds: string[] | null;
   dependents: string[];
   optional: string[];
   v1Key: string | null;
@@ -232,6 +236,8 @@ export async function getErpCompanyView(clientId: string, options: { withHistory
         aliasOf: i.aliasOf,
         reuses: i.reuses,
         requires: i.unit ? [...index.requiredUnitsOf(i.code)] : i.requires,
+        requiresAny: i.unit ? index.requiredAnyUnitsOf(i.code).map((group) => [...group]) : [],
+        kinds: i.kinds,
         dependents: i.unit ? [...index.dependentUnitsOf(i.code)] : [],
         optional: i.optional,
         v1Key: i.v1Key,

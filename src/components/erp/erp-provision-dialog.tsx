@@ -63,6 +63,17 @@ function withDependencies(selected: ReadonlySet<string>, byCode: ReadonlyMap<str
   return { all: [...all].sort(compareCodes), added };
 }
 
+/** "A, B ou C" (mesmo texto da recusa no servidor). */
+const orList = (names: readonly string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} ou ${names[names.length - 1]}` : (names[0] ?? ""));
+
+/** Grupos "basta um" sem nenhuma alternativa no conjunto final: a escolha é de quem cria a empresa. */
+function missingAlternatives(finalCodes: readonly string[], byCode: ReadonlyMap<string, ErpItemRow>): { code: string; options: string[] }[] {
+  const set = new Set(finalCodes);
+  const out: { code: string; options: string[] }[] = [];
+  for (const code of finalCodes) for (const group of byCode.get(code)?.requiresAny ?? []) if (!group.some((option) => set.has(option))) out.push({ code, options: group });
+  return out;
+}
+
 export function ErpProvisionDialog({ open, onOpenChange, clientId, view, defaults }: { open: boolean; onOpenChange: (open: boolean) => void; clientId: string; view: ErpCompanyView; defaults: ProvisionDefaults }) {
   return open ? <ProvisionInner onOpenChange={onOpenChange} clientId={clientId} view={view} defaults={defaults} /> : null;
 }
@@ -87,20 +98,23 @@ function ProvisionInner({ onOpenChange, clientId, view, defaults }: { onOpenChan
   const [outcome, setOutcome] = React.useState<ProvisionOutcome | null>(null);
 
   const byCode = React.useMemo(() => new Map(view.items.map((i) => [i.code, i])), [view.items]);
-  const sellable = React.useMemo(() => view.items.filter((i) => i.role === "unit" && i.sellable), [view.items]);
+  // Só as unidades que o ERP vende para o tipo escolhido (catálogo v2: `companyKinds`; sem a informação, todas).
+  const erpKind = tipo === "varejo" ? "retail" : "accounting";
+  const sellable = React.useMemo(() => view.items.filter((i) => i.role === "unit" && i.sellable && (!i.kinds || i.kinds.includes(erpKind))), [view.items, erpKind]);
   const moduleName = React.useMemo(() => new Map(view.modules.map((m) => [m.code, m.name])), [view.modules]);
   const finalSet = React.useMemo(() => withDependencies(selected, byCode), [selected, byCode]);
+  const missing = React.useMemo(() => missingAlternatives(finalSet.all, byCode), [finalSet, byCode]);
   const custom = pkg ? packageCustomizations(pkg.units, [...selected]) : null;
 
   const cnpjOk = isValidCnpj(company.cnpj);
   const companyOk = company.razaoSocial.trim().length >= 2 && cnpjOk && (!company.email || /.+@.+\..+/.test(company.email)) && (!addr.uf || addr.uf.length === 2);
   const adminOk = admin.nome.trim().length >= 2 && /.+@.+\..+/.test(admin.email);
-  const canNext: Record<Step, boolean> = { empresa: companyOk, modulos: selected.size > 0, admin: adminOk, revisao: reason.trim().length >= 3 && !sending };
+  const canNext: Record<Step, boolean> = { empresa: companyOk, modulos: selected.size > 0 && missing.length === 0, admin: adminOk, revisao: reason.trim().length >= 3 && !sending };
 
   const choosePackage = (key: string) => {
     setPackageKey(key);
-    const next = view.packages.find((p) => p.key === key);
-    if (next) setSelected(new Set(next.units));
+    // "Nenhum (escolher do zero)" começa sem nada marcado; um pacote troca a seleção pela dele.
+    setSelected(new Set(view.packages.find((p) => p.key === key)?.units ?? []));
   };
   const toggle = (code: string, on: boolean) =>
     setSelected((prev) => {
@@ -257,6 +271,15 @@ function ProvisionInner({ onOpenChange, clientId, view, defaults }: { onOpenChan
                 <p className="text-xs">
                   Personalização desta empresa: <strong>+{custom.added.length}</strong> adicionada{custom.added.length === 1 ? "" : "s"}, <strong>−{custom.removed.length}</strong> retirada{custom.removed.length === 1 ? "" : "s"} em relação ao pacote.
                 </p>
+              ) : null}
+              {missing.length ? (
+                <div role="alert" className="rounded-md bg-warning-soft px-3 py-2 text-xs text-warning-fg">
+                  {missing.map((m) => (
+                    <p key={`${m.code}-${m.options.join()}`}>
+                      {m.code} {byCode.get(m.code)?.name ?? ""} exige um destes: {orList(m.options.map((o) => `${o} ${byCode.get(o)?.name ?? ""}`.trim()))}. Marque um deles para continuar.
+                    </p>
+                  ))}
+                </div>
               ) : null}
               <SearchInput value={search} onChange={setSearch} debounceMs={100} placeholder="Buscar unidade (código ou nome)" aria-label="Buscar unidade" />
               <ul className="flex flex-col gap-3">

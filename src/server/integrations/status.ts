@@ -173,9 +173,9 @@ const CATALOG: CatalogEntry[] = [
     ],
     optional: [
       { name: "ERP_INTERCERT_CREDENCIAL_PROVISIONAMENTO", description: "Credencial <id>.<segredo> da API de provisionamento: criar e vincular empresas." },
-      { name: "ERP_INTERCERT_URL_PROVISIONAMENTO", description: "Endereço próprio da API de provisionamento (só se for diferente de ERP_INTERCERT_URL)." },
+      { name: "ERP_INTERCERT_URL_PROVISIONAMENTO", description: "Só para versões antigas do ERP com a API de provisionamento em outro endereço (no ERP unificado, deixe vazia)." },
       { name: "ERP_INTERCERT_CREDENCIAL_TORRE", description: "Credencial <id>.<segredo> da Torre de Controle (somente leitura)." },
-      { name: "ERP_INTERCERT_URL_TORRE", description: "Endereço próprio da Torre de Controle (só se for diferente de ERP_INTERCERT_URL)." },
+      { name: "ERP_INTERCERT_URL_TORRE", description: "Só para versões antigas do ERP com a Torre em outro endereço (no ERP unificado, deixe vazia)." },
       { name: "ERP_INTERCERT_SEGREDO_EVENTOS", description: "Segredo HMAC dos avisos do ERP (POST /api/webhooks/erp, X-ERP-Signature); o mesmo valor vai no ERP como INTEROS_OUTBOUND_SECRET." },
     ],
     descriptions: {

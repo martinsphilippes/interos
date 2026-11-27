@@ -43,7 +43,13 @@ export interface FakeErp {
 const ok = (status: number, data: unknown) => new Response(JSON.stringify({ data, meta: { apiVersion: "2", requestId: `req-${Math.random().toString(36).slice(2, 10)}` } }), { status, headers: { "content-type": "application/json" } });
 const fail = (status: number, code: string, message: string) => new Response(JSON.stringify({ error: { code, message }, meta: { apiVersion: "2", requestId: "req-err" } }), { status, headers: { "content-type": "application/json" } });
 
-export function createFakeErp(): FakeErp {
+/** Cópia do catálogo do recorte, para um teste ajustar sem afetar os outros (ex.: incluir um "basta um"). */
+export function fixtureCatalog(): { items: Record<string, unknown>[] } & Record<string, unknown> {
+  return structuredClone(CATALOG) as { items: Record<string, unknown>[] } & Record<string, unknown>;
+}
+
+export function createFakeErp(options: { catalog?: unknown } = {}): FakeErp {
+  const catalog = options.catalog ?? CATALOG;
   const companies = new Map<string, FakeCompany>();
   const calls: FakeErp["calls"] = [];
   const eventResults = new Map<string, { bodyHash: string; status: number; data: unknown }>();
@@ -111,7 +117,7 @@ export function createFakeErp(): FakeErp {
       downReads -= 1;
       throw new TypeError("fetch failed");
     }
-    if (version === "v2" && rest === "catalog" && method === "GET") return ok(200, CATALOG);
+    if (version === "v2" && rest === "catalog" && method === "GET") return ok(200, catalog);
 
     const cm = rest.match(/^companies\/([^/]+)(\/.*)?$/);
     if (!cm) return fail(404, "not_found", "rota");

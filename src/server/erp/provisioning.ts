@@ -21,6 +21,8 @@ import { getErpLink, linkClientToErp } from "./links";
 import { createCompany, getCompany, linkCompany, provisioningModulesFor, resumeImplementation, type CreateCompanyBody, type ErpConvite, type ErpEmpresa } from "./api-provisionamento";
 import { listLicenseCompanies } from "./api-licencas";
 import { ErpChangeBlocked, submitLicenseChange } from "./changes";
+import { getCurrentCatalog } from "./catalog-store";
+import { planLicenseChanges } from "@/domain/erp/license";
 
 export interface ProvisionInput {
   clientId: string;
@@ -99,6 +101,13 @@ export async function provisionCompany(input: ProvisionInput): Promise<Provision
   if (!isValidCnpj(input.company.cnpj)) throw new ErpChangeBlocked("CNPJ inválido (confira os dígitos).", "lote_invalido");
   if (input.reason.trim().length < 3) throw new ErpChangeBlocked("Informe o motivo (ex.: contrato assinado, número do contrato).", "lote_invalido");
   if (!input.units.length) throw new ErpChangeBlocked("Escolha ao menos um módulo para a empresa.", "lote_invalido");
+  // A licença inicial (enviada logo depois da criação) passa pelo mesmo plano das alterações. Se esse plano recusaria
+  // a seleção (ex.: "basta um" sem nenhuma alternativa), para aqui: a empresa não fica criada no ERP sem a licença.
+  if (config.licenseSigningSecret) {
+    const catalog = await getCurrentCatalog(config.environment);
+    const plan = catalog ? planLicenseChanges(catalog.index, [], input.units.map((code) => ({ code, state: "active" as const }))) : null;
+    if (plan?.errors.length) throw new ErpChangeBlocked(plan.errors.map((e) => e.message).join(" "), "lote_invalido");
+  }
 
   const pending = await openProvisioning(client.id, config.environment);
   if (pending) throw new ErpChangeBlocked("Há uma criação desta empresa aguardando confirmação do ERP. Use \"Tentar de novo\" nela (mesma chave) em vez de criar outra.", "alteracao_aberta");
